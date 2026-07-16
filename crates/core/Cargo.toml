@@ -1,0 +1,16 @@
+[package]
+name = "genaryx-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Genaryx core: all console logic (ingest, store, conform, commands, signing, evidence)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+jsonschema = { workspace = true }
+chrono = { workspace = true }

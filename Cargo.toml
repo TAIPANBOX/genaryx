@@ -1,0 +1,37 @@
+# Genaryx workspace — closed-source enterprise control room over the open TAIPANBOX stack.
+# Architecture source of truth: ~/Development/itrat-console (files 00-09).
+# Rule D3: this repo is proprietary and never published; the open stack is never relicensed.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/connectors",
+    "crates/signing",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "LicenseRef-Genaryx-Proprietary"
+authors = ["IT-RAT / TAIPANBOX"]
+publish = false
+
+[workspace.dependencies]
+# All logic lives in the core; shells stay thin (06 §0.9). Deps are declared
+# centrally here and activated per-crate with `workspace = true`.
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+jsonschema = "0.48.0"
+chrono = { version = "0.4.45", features = ["serde"] }
+# Activated by later Phase-0 workstreams (Store / Ingest / demo):
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+tokio = { version = "1.52.4", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
+notify = "8"
+regex = "1.13.1"
+
+[profile.release]
+lto = "thin"
+strip = true

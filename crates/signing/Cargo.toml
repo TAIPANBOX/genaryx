@@ -1,0 +1,12 @@
+[package]
+name = "genaryx-signing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Genaryx signing ceremonies: canonical-string prep, ES256 device-pairing, ML-DSA verify."
+
+[dependencies]
+genaryx-core = { path = "../core" }

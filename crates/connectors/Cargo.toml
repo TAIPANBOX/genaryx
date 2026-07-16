@@ -1,0 +1,12 @@
+[package]
+name = "genaryx-connectors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Genaryx environment/service connectors (FS, SSH, Cloud SSE, cloud inventory)."
+
+[dependencies]
+genaryx-core = { path = "../core" }

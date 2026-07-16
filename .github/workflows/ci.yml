@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "phase-*"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  core:
+    name: core (rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins 1.96.1 + rustfmt + clippy; rustup honors it.
+      - name: Toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+  # Parity checklist v0 (09 §3, 06 §0.9): a feature is done only when it lands in
+  # BOTH shells within the same phase. This job fails if one shell exists without
+  # the other, so parity drift is caught in CI rather than silently.
+  parity:
+    name: shell parity (v0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Both shells present or both absent
+        run: |
+          macos=0; desktop=0
+          [ -e apps/macos/Package.swift ] || [ -d apps/macos/*.xcodeproj ] 2>/dev/null && macos=1
+          [ -e apps/desktop/package.json ] && desktop=1
+          echo "macos=$macos desktop=$desktop"
+          if [ "$macos" != "$desktop" ]; then
+            echo "::error::Shell parity broken: SwiftUI ($macos) and Tauri ($desktop) must land together (09 §3)."
+            exit 1
+          fi
+          echo "Parity OK (both=$macos)."
+
+  # Placeholder jobs, wired when the shells land (Phase 0 delegation):
+  #   swiftui:  runs-on: macos-14; DEVELOPER_DIR=/Applications/Xcode.app; xcodebuild test
+  #   tauri:    runs-on: ubuntu-latest; pnpm i; pnpm build; tauri-driver smoke

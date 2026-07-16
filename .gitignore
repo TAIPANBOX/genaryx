@@ -1,0 +1,32 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+
+# genaryx runtime data (never commit local console state or events)
+/.taipan
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+/scratch
+
+# macOS
+.DS_Store
+
+# Xcode / SwiftPM
+apps/macos/.build
+apps/macos/*.xcodeproj/xcuserdata
+apps/macos/*.xcodeproj/project.xcworkspace/xcuserdata
+DerivedData/
+*.xcframework
+
+# Node / Tauri (desktop shell)
+node_modules/
+apps/desktop/dist
+apps/desktop/src-tauri/target
+
+# Secrets / keys (defense-in-depth; nothing signed lives in the tree)
+*.pem
+*.p8
+*.key
+!**/testdata/**/*.pem
