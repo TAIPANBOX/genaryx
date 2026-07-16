@@ -26,7 +26,7 @@ golden NDJSON fixtures + an ingest bench report are committed.
 |---|-------|--------|---------|
 | 1 | UniFFI boundary: Swift bindings, async event streams, XCFramework packaging | TODO | — |
 | 2 | Secure Enclave two ways (SwiftUI CryptoKit + Tauri security-framework), full pair → signed-ack vs local `tokenfuse-cloud` | TODO | — |
-| 3 | SQLite ingest bench ≥ 50k NDJSON lines/min on M-series | TODO | — |
+| 3 | SQLite ingest bench ≥ 50k NDJSON lines/min on M-series | DONE | GO: measured 6.8M-7.2M lines/min end-to-end (conform + Store insert), 25M-27M lines/min conform-only, target 50k/min; corpus 200,122 lines; see `crates/core/examples/ingest_bench.rs` |
 | 4 | ML-DSA verify in Rust (crate choice vs `qryx verify-evidence` bridge) | TODO | — |
 | 5 | Both-shell headless smoke in CI (tauri-driver + xcodebuild/XCUITest) | TODO | — |
 | 6 | SSE client vs Cloud `/v1/stream` under reconnect / chunk splits | TODO | — |
@@ -44,6 +44,15 @@ evidence (bench numbers, a working signed ack, a passing smoke run) linked.
   Posture "schema conformance" check (08 §2). Kept as a regression fixture
   (`campaign-aws-176.ndjson`) with a test asserting it is caught. No stack change
   needed; it validates the console's value on real data.
+
+- **F-02 (2026-07-17).** `crates/core/examples/ingest_bench.rs`: conform-only
+  runs 25M-27M lines/min; end-to-end (conform + build `ConsoleEvent` + `Store::insert_batch`,
+  200,122-line corpus repeated from the 179-line demo output, 1000-line insert
+  batches) runs 6.8M-7.2M lines/min on this box (Apple M1 Pro). Both clear the
+  50k/min Phase-0 target by two to three orders of magnitude. SQLite insert is
+  the dominant cost relative to conform alone (roughly 3.5x-4x slower per
+  line), but still nowhere near the target boundary, so no schema or batching
+  change is needed at Phase-0 scale.
 
 ## Toolchain facts (verified 2026-07-16, box "factory")
 
