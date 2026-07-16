@@ -1,0 +1,42 @@
+# Genaryx desktop shell (Tauri 2, decision D2) - Rust side.
+#
+# Deliberately a STANDALONE Cargo project, not a member of the repo-root
+# workspace (`/Cargo.toml` only lists `crates/*`). The empty `[workspace]`
+# table below stops Cargo's upward workspace discovery at this directory, so
+# every `cargo` invocation here resolves and locks independently (its own
+# Cargo.lock, its own target/) and never touches the root workspace.
+#
+# All product logic still lives in `genaryx-core` (06 §0.9, "one core, two
+# shells"): this crate only wires core types to Tauri commands and stays thin.
+[workspace]
+resolver = "3"
+
+[package]
+name = "genaryx-desktop"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "LicenseRef-Genaryx-Proprietary"
+authors = ["IT-RAT / TAIPANBOX"]
+publish = false
+description = "Genaryx desktop shell (Tauri 2): cross-platform control-room UI over genaryx-core."
+
+[lib]
+name = "genaryx_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.11", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+# The frozen core (crates/core, HEAD 51ebbe3): StoredEvent + the future
+# IngestService::subscribe() wiring point (see src/events.rs).
+genaryx-core = { path = "../../../crates/core" }
+
+[profile.release]
+lto = "thin"
+strip = true
