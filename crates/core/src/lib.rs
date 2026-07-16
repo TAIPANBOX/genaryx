@@ -18,4 +18,5 @@ pub mod store;
 pub use conform::{ConformReport, Conformer};
 pub use error::{Error, Result};
 pub use event::{AgentEvent, ConsoleEvent, Provenance, SchemaVersion, Severity};
+pub use ingest::{EventSource, FileTail, IngestService, IngestStats, RawRecord};
 pub use store::StoredEvent;
