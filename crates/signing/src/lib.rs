@@ -8,6 +8,8 @@
 //!
 //! Spike #2 and #4 (06 §7) land here: Secure Enclave both paths, and ML-DSA verify.
 
+pub mod mldsa;
+
 /// Build the canonical string a device signs for a Cloud mutation (07 §4.2).
 /// `body_sha256_hex` is the lowercase hex SHA-256 of the request body ("" -> empty body).
 pub fn canonical_request(

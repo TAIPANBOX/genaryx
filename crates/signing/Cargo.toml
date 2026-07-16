@@ -10,3 +10,7 @@ description = "Genaryx signing ceremonies: canonical-string prep, ES256 device-p
 
 [dependencies]
 genaryx-core = { path = "../core" }
+# Phase-0 spike #4 (06 §7): FIPS-204-final, pure Rust, RustCrypto-maintained, and
+# its `pkcs8` feature (default-on) parses the SPKI DER Qryx embeds (07 §4.5)
+# directly. See crates/signing/src/mldsa.rs for the full rationale.
+ml-dsa = "0.1.1"

@@ -27,7 +27,7 @@ golden NDJSON fixtures + an ingest bench report are committed.
 | 1 | UniFFI boundary: Swift bindings, async event streams, XCFramework packaging | TODO | — |
 | 2 | Secure Enclave two ways (SwiftUI CryptoKit + Tauri security-framework), full pair → signed-ack vs local `tokenfuse-cloud` | TODO | — |
 | 3 | SQLite ingest bench ≥ 50k NDJSON lines/min on M-series | DONE | GO: measured 6.8M-7.2M lines/min end-to-end (conform + Store insert), 25M-27M lines/min conform-only, target 50k/min; corpus 200,122 lines; see `crates/core/examples/ingest_bench.rs` |
-| 4 | ML-DSA verify in Rust (crate choice vs `qryx verify-evidence` bridge) | TODO | — |
+| 4 | ML-DSA verify in Rust (crate choice vs `qryx verify-evidence` bridge) | DONE | GO: crate `ml-dsa` v0.1.1 (RustCrypto `signatures` monorepo, FIPS-204 final). Covers ML-DSA-44/65/87 via one generic `verify(param_set, public_key, message, signature) -> Result<bool, String>`; SPKI/PKCS8 parsing is built into the crate (matches Qryx's embedded-key format, 07 §4.5) with a raw-key fallback for bare offline-license keys. 10 tests green: round-trip KAT + tampered-message + tampered-signature + wrong-key + malformed-input for all three param sets, see `crates/signing/src/mldsa.rs`. `qryx` is not on this box's PATH so the qryx-signed-evidence bonus was skipped as instructed; ran an adjacent check instead since this box's OpenSSL 3.6.3 signs ML-DSA-65 natively: OpenSSL-signed message/SPKI verified `true` through our code, tampered message verified `false`, real cross-implementation evidence beyond a same-crate round trip. `fips204` (single-maintainer) was the other candidate; rejected for lacking any SPKI/PKCS8 support, which would have meant hand-rolling ASN.1 parsing ourselves. |
 | 5 | Both-shell headless smoke in CI (tauri-driver + xcodebuild/XCUITest) | TODO | — |
 | 6 | SSE client vs Cloud `/v1/stream` under reconnect / chunk splits | TODO | — |
 
@@ -53,6 +53,19 @@ evidence (bench numbers, a working signed ack, a passing smoke run) linked.
   the dominant cost relative to conform alone (roughly 3.5x-4x slower per
   line), but still nowhere near the target boundary, so no schema or batching
   change is needed at Phase-0 scale.
+
+- **F-03 (2026-07-17).** ML-DSA signature encoding is not "any bytes decode to
+  some signature": `ml-dsa`'s `Signature::decode` range-checks the packed hint
+  and `z` fields and returns a decode error for out-of-range bit patterns.
+  Flipping a byte in the tail of a real signature (the encoded hint) often
+  produces a decode `Err`, not a cryptographic `Ok(false)`; flipping a byte in
+  the leading `c_tilde` commitment hash always decodes fine and fails the
+  equality check, giving a clean `Ok(false)`. Both are fail-closed (06 §0.5:
+  never a panic, never a silent accept) and both are covered by
+  `crates/signing/src/mldsa.rs` tests, but a caller checking only for `Ok(false)`
+  on tamper would miss the decode-error case; the console's evidence/license
+  verification call sites should treat `Err` and `Ok(false)` identically (both
+  mean "reject"), never treat `Err` as "inconclusive, allow".
 
 ## Toolchain facts (verified 2026-07-16, box "factory")
 
