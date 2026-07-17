@@ -51,3 +51,9 @@ base64 = { workspace = true }
 # already uses, so this is a new direct edge to an already-resolved crate,
 # not a second copy in the tree.
 rusqlite = { workspace = true }
+# Phase-4 wave 4 (crates/connectors/src/wg.rs): the WireGuard console peer's
+# Curve25519 keypair (decision D11). x25519-dalek derives the public key from a
+# clamped random private; getrandom is the OS CSPRNG for that private (already
+# the workspace entropy source, same pin genaryx-signing uses).
+x25519-dalek = { workspace = true }
+getrandom = { workspace = true }

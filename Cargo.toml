@@ -43,6 +43,12 @@ futures-util = "0.3.32"
 # with; base64 and the two Apple-framework crates already resolve transitively
 # (reqwest's native-tls stack), so those add direct edges, not new families.
 p256 = "0.13.2"
+# Phase-4 wave 4 (crates/connectors/src/wg.rs): Curve25519 (X25519) keys for the
+# WireGuard console peer (decision D11). Pure Rust, no C/kernel dep, matching
+# the "small auditable attack surface" reason Genaryx is Rust in the first
+# place. Only the DH key derivation is used; the tunnel data path is
+# wireguard-go's, never ours.
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 sha2 = "0.10.9"
 # Phase-4 wave 3 (docs/PHASE4.md W3): the Evidence Center assembles the pack
 # into one zip (`genaryx_core::evidence`). No compression is needed for

@@ -75,6 +75,7 @@ mod ssh;
 mod tokenfuse;
 mod verdryx;
 mod wardryx;
+mod wg;
 
 pub use cloud_rest::{
     AckResponse, AgentAgg, Alert, AuditVerifyResponse, BudgetResponse, CloudClient, ConnectorError,
@@ -111,6 +112,7 @@ pub use wardryx::{
     Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, DecideRequest,
     DecideResponse, Policy, PolicyRecord, WardryxClient, WardryxError,
 };
+pub use wg::{WgConfig, WgError, WgInterfaceAddr, WgKeypair, WgPeer, WgTunnel};
 
 /// Marker for the connectors crate; real connectors land in F1+.
 pub const CRATE: &str = "genaryx-connectors";
