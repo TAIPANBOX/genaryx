@@ -94,3 +94,21 @@ pub use wardryx::{
 
 /// Marker for the connectors crate; real connectors land in F1+.
 pub const CRATE: &str = "genaryx-connectors";
+
+/// Deserialize a collection field a Go tool may emit as JSON `null` for an
+/// empty value. Go's `encoding/json` marshals a nil slice/map as `null`, not
+/// `[]`/`{}`, so a `--format`-emitting Go CLI (Qryx, Mockryx) sends `null` for
+/// an empty `findings`/`coverageBySource`/`results` that lacks an `omitempty`
+/// tag. A plain `Vec<T>`/`BTreeMap<K,V>` rejects that `null` even with
+/// `#[serde(default)]` (which only covers an ABSENT key, not a present `null`).
+/// Pair this with `#[serde(default)]` to map absent, `null`, and a real array
+/// all to `T::default()`. This is exactly the "type written against an
+/// assumption, not the real bytes" class the Engram live testing surfaced; the
+/// qryx/mockryx live-shape tests (`tests/live_shapes_test.rs`) guard it.
+pub(crate) fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + serde::Deserialize<'de>,
+{
+    Ok(<Option<T> as serde::Deserialize>::deserialize(d)?.unwrap_or_default())
+}

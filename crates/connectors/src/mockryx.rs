@@ -100,7 +100,7 @@ pub struct MockryxReport {
     /// `generated_at` (a `time.Time`), not `generated`.
     pub generated_at: String,
     /// One entry per scenario, in load order. Always present (may be empty).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub results: Vec<MockryxResult>,
 }
 
@@ -126,11 +126,11 @@ pub struct MockryxResult {
     pub status: String,
     /// The mismatches that count as gaps (present when `failed`, or when
     /// `--fail-on-skip` promoted skips into it).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub findings: Vec<MockryxFinding>,
     /// Mismatches discarded because the scenario's guardrail was never observed
     /// active (only on `skipped_not_configured`, absent unless present).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub skipped_findings: Vec<MockryxFinding>,
     pub metrics: MockryxMetrics,
 }
@@ -364,5 +364,19 @@ mod tests {
             Err(MockryxError::Read { .. }) => {}
             other => panic!("expected Read error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn go_nil_results_slice_as_null_parses_as_empty() {
+        // `results` has no `omitempty`, so a mockryx run with zero scenarios
+        // emits `"results": null` (Go nil slice), which must parse to an empty
+        // Vec via `null_default`, not fail. (Same Go-nil-slice class the qryx
+        // live shape test caught.)
+        let rep: MockryxReport = serde_json::from_slice(
+            br#"{"run_id":"r","gateway":"g","generated_at":"t","results":null}"#,
+        )
+        .expect("null results parses as empty");
+        assert!(rep.results.is_empty());
+        assert!(!rep.has_gaps());
     }
 }

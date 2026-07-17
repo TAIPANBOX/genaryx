@@ -104,14 +104,14 @@ pub struct NcscDiscovery {
     /// `ncsc.go:162-164`).
     pub verdict: String,
     /// Inventoried asset count per source bucket (e.g. `code`, `certs`, `tls`).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub coverage_by_source: BTreeMap<String, i64>,
     pub total_inventoried: i64,
     pub quantum_vulnerable_count: i64,
     pub migration_plan_exists: bool,
     #[serde(default)]
     pub migration_plan_note: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub quantum_vulnerable_findings: Vec<NcscFinding>,
 }
 
@@ -134,7 +134,7 @@ pub struct NcscPriority {
     pub remaining_count: i64,
     #[serde(default)]
     pub note: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub findings: Vec<NcscFinding>,
 }
 
@@ -143,7 +143,7 @@ pub struct NcscPriority {
 pub struct NcscFullMigration {
     pub verdict: String,
     pub count: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub findings: Vec<NcscFinding>,
 }
 
@@ -158,7 +158,7 @@ pub struct NcscFinding {
     pub asset_type: String,
     pub severity: String,
     pub occurrences: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub locations: Vec<String>,
     pub externally_facing: bool,
     pub long_lived_data: bool,
@@ -184,7 +184,7 @@ pub struct EvidenceReport {
     /// Per-asset CNSA rows (`cnsaAssetJSON`). Kept as raw JSON: it is a large,
     /// display-only shape the panel renders as a table, not something this
     /// connector reasons over.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub assets: Vec<serde_json::Value>,
     /// `"sha256:<hex>"` over the canonical report with `digest` blanked
     /// (`evidence.go:28`). The security-critical field, so it is typed, not
@@ -207,7 +207,7 @@ pub struct EvidenceSummary {
     pub total: i64,
     /// Compliance score as an integer percent (`scorePct`).
     pub score_pct: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::null_default")]
     pub by_severity: BTreeMap<String, i64>,
 }
 
@@ -439,5 +439,29 @@ mod tests {
             Err(QryxError::Spawn { .. }) => {}
             other => panic!("expected Spawn error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ncsc_go_nil_slices_as_null_parse_as_empty() {
+        // Go marshals an empty (nil) slice/map as JSON `null`, not `[]`/`{}`, so
+        // real qryx emits `null` for an empty coverageBySource / findings that
+        // lacks `omitempty`. The `null_default` deserializer must map that to an
+        // empty collection, not fail. (Regression for the bug the qryx live
+        // shape test caught: "invalid type: null, expected a sequence".)
+        let json = br#"{
+          "standard":"NCSC PQC migration timeline (2028/2031/2035)",
+          "generatedAt":"2026-07-17T10:00:00Z","root":"/repo",
+          "discovery2028":{"verdict":"on-track","coverageBySource":null,"totalInventoried":0,
+            "quantumVulnerableCount":0,"migrationPlanExists":true,"quantumVulnerableFindings":null},
+          "highestPriority2031":{"verdict":"on-track","criteria":"","count":0,"migratedCount":0,
+            "remainingCount":0,"note":"","findings":null},
+          "fullMigration2035":{"verdict":"on-track","count":0,"findings":null}
+        }"#;
+        let rep: NcscReport =
+            serde_json::from_slice(json).expect("null collections parse as empty");
+        assert!(rep.discovery_2028.coverage_by_source.is_empty());
+        assert!(rep.discovery_2028.quantum_vulnerable_findings.is_empty());
+        assert!(rep.highest_priority_2031.findings.is_empty());
+        assert!(rep.full_migration_2035.findings.is_empty());
     }
 }
