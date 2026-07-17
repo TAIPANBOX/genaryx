@@ -85,6 +85,20 @@ import SwiftUI
 /// event, not a new read through `QualityHandle` (see `QualityView.swift`'s
 /// own doc). `CryptoView` takes no bus feed at all: Qryx has no live signal
 /// of its own, every read is an explicit on-demand scan.
+///
+/// Phase-4 wave 2 (docs/PHASE4.md W2) adds `memoryModel` (`MemoryModel`, over
+/// `MemoryHandle`) and `drillsModel` (`DrillsModel`, over `DrillsHandle`),
+/// plus the `Memory` and `Drills` tabs - right after `Crypto`, continuing the
+/// same per-plane-panel sequence. Both are read-only in the mutation sense
+/// Money/Policy are (no journal, no Touch ID gate) - `MemoryView`'s one
+/// `forget` action is a plain guarded confirm, not a break-glass override -
+/// so neither needs wiring into `notifications`/`focusedApprovalId` either.
+/// `MemoryView` additionally takes `model.events` (the same `FleetModel` bus
+/// feed `QualityView`'s Drift Alerts and `PolicyView`'s Decision Stream
+/// already filter) for its live Timeline section - every `engram.*` event,
+/// not a new read through `MemoryHandle` (see `MemoryView.swift`'s own doc).
+/// `DrillsView` takes no bus feed at all: mockryx has no live signal of its
+/// own, every read is an explicit on-demand run.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
@@ -93,6 +107,8 @@ struct GenaryxApp: App {
     @State private var identityModel = IdentityModel()
     @State private var qualityModel = QualityModel()
     @State private var cryptoModel = CryptoModel()
+    @State private var memoryModel = MemoryModel()
+    @State private var drillsModel = DrillsModel()
     @State private var graphModel = GraphModel()
     @State private var replayModel = RunReplayModel()
     @State private var notifications = ApprovalNotificationModel()
@@ -128,6 +144,10 @@ struct GenaryxApp: App {
                         QualityView(model: qualityModel, busEvents: model.events)
                     case .crypto:
                         CryptoView(model: cryptoModel)
+                    case .memory:
+                        MemoryView(model: memoryModel, busEvents: model.events)
+                    case .drills:
+                        DrillsView(model: drillsModel)
                     case .graph:
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
@@ -234,15 +254,16 @@ private struct AgentFocus: Identifiable, Equatable {
     var id: String { agentId }
 }
 
-/// The ten top-level nav destinations - Overview, Money, Policy, Identity,
-/// Quality, Crypto, Graph, Replay, Posture, and the existing Bus Explorer -
-/// matching the Tauri shell's `ViewId`/`lib/views.ts` switcher (extended with
-/// Quality + Crypto in Phase-4 wave 1, mirroring wave 3's Graph tab
-/// addition), rendered as a native macOS tab strip instead of a web-styled
-/// nav bar (native macOS patterns over pixel parity, same rule `Theme.swift`
-/// already follows). Quality and Crypto sit right after Identity, continuing
-/// the per-plane-panel sequence (Money/Policy/Identity/Quality/Crypto) ahead
-/// of the cross-cutting views (Graph/Replay/Posture/Bus Explorer).
+/// The twelve top-level nav destinations - Overview, Money, Policy, Identity,
+/// Quality, Crypto, Memory, Drills, Graph, Replay, Posture, and the existing
+/// Bus Explorer - matching the Tauri shell's `ViewId`/`lib/views.ts`
+/// switcher (extended with Memory + Drills in Phase-4 wave 2, mirroring wave
+/// 1's Quality + Crypto addition), rendered as a native macOS tab strip
+/// instead of a web-styled nav bar (native macOS patterns over pixel parity,
+/// same rule `Theme.swift` already follows). Memory and Drills sit right
+/// after Crypto, continuing the per-plane-panel sequence
+/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills) ahead of the
+/// cross-cutting views (Graph/Replay/Posture/Bus Explorer).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
@@ -250,6 +271,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
     case identity = "Identity"
     case quality = "Quality"
     case crypto = "Crypto"
+    case memory = "Memory"
+    case drills = "Drills"
     case graph = "Graph"
     case replay = "Replay"
     case posture = "Posture"

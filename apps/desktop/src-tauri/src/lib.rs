@@ -48,12 +48,28 @@
 //! all - they read the SAME `AppState.events_dir` `recent_events` already
 //! reads, filtered client-side to `source == "verdryx"`, exactly like the
 //! Policy panel's Decision Stream filters to `source == "wardryx"`.
+//!
+//! The Memory panel's state (see `memory/`, docs/PHASE4.md Wave 2) is the
+//! first STATEFUL connector this app manages: `memory::bootstrap` spawns and
+//! keeps alive ONE long-lived `engram-mcp` process for the whole app
+//! lifetime (see `memory::state`'s module doc for why re-spawning per call
+//! is never acceptable). The Drills panel's state (see `drills/`,
+//! docs/PHASE4.md Wave 2) is managed the same non-blocking way once more,
+//! mirroring Crypto's on-demand-CLI shape exactly: a resolved `mockryx`
+//! binary plus the TokenFuse gateway to rehearse against, never a live
+//! connection. Memory's live timeline (`engram.*` bus events) and Drills'
+//! findings both need no extra managed state either - Memory's timeline
+//! reads the SAME `AppState.events_dir` `recent_events` filtered to
+//! `source == "engram"`, and Drills' findings are simply part of the
+//! `MockryxReport` `drills_run` already returns.
 
 mod crypto;
+mod drills;
 mod events;
 mod graph;
 mod identity;
 mod live;
+mod memory;
 mod money;
 mod policy;
 mod quality;
@@ -61,9 +77,11 @@ mod replay;
 mod tray;
 
 use crypto::CryptoState;
+use drills::DrillsState;
 use events::UiEvent;
 use identity::IdentityState;
 use live::AppState;
+use memory::MemoryState;
 use money::MoneyState;
 use policy::PolicyState;
 use quality::QualityState;
@@ -185,6 +203,34 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
+            // Memory panel (docs/PHASE4.md W2): same non-blocking
+            // manage-then-spawn-resolve shape once more, but `bootstrap`
+            // itself does real work here (spawns + handshakes the one
+            // long-lived `engram-mcp` process this panel keeps for the rest
+            // of the app's life) - see `memory::state`'s module doc for why
+            // that still belongs in a background task rather than blocking
+            // `setup`.
+            app.manage(MemoryState::pending());
+            let memory_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = memory::bootstrap().await;
+                let state = memory_handle.state::<MemoryState>();
+                *state.inner.lock().await = resolved;
+            });
+
+            // Drills panel (docs/PHASE4.md W2): same shape again, resolving
+            // the on-demand `mockryx` CLI binary plus the TokenFuse gateway
+            // to rehearse against - never a live connection, mirroring
+            // Crypto's `qryx` shape exactly (see `drills::state`'s module
+            // doc).
+            app.manage(DrillsState::pending());
+            let drills_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = drills::bootstrap().await;
+                let state = drills_handle.state::<DrillsState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
@@ -223,6 +269,13 @@ pub fn run() {
             crypto::commands::crypto_scan_cbom,
             crypto::commands::crypto_scan_evidence,
             crypto::commands::crypto_verify_evidence,
+            memory::commands::memory_status,
+            memory::commands::memory_stats,
+            memory::commands::memory_recall,
+            memory::commands::memory_why,
+            memory::commands::memory_forget,
+            drills::commands::drills_status,
+            drills::commands::drills_run,
             graph::agent_graph,
             graph::agent_slice,
             graph::agent_events,

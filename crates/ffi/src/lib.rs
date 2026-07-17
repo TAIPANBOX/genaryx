@@ -83,10 +83,29 @@
 //! `FleetHandle`'s existing bus feed by `source == "verdryx"`, exactly how
 //! `PolicyView`'s Decision Stream already filters that same feed by
 //! `source == "wardryx"`.
+//!
+//! Phase-4 wave 2 (docs/PHASE4.md W2) adds [`memory::MemoryHandle`] and
+//! [`drills::DrillsHandle`]: a seventh and eighth UniFFI Object, over
+//! `genaryx_connectors::{EngramClient, MockryxClient}`, for the SwiftUI
+//! Memory and Drills surfaces. `MockryxClient` is synchronous like `QryxClient`
+//! (`DrillsHandle` holds one directly, no runtime, no cache to go stale - see
+//! `drills/mod.rs`). `EngramClient` is the genuinely new shape: it owns ONE
+//! long-lived `engram-mcp` child process for its whole life (re-spawning per
+//! call would re-pay the embedding model's lazy load every time), so
+//! `MemoryHandle` spawns it once, AT CONSTRUCTION, and holds it behind a
+//! `Mutex` (its methods take `&mut self`, and the underlying
+//! `McpStdioClient` is `Send` but not `Sync` - a `Mutex` closes both gaps at
+//! once); see `memory/mod.rs` for the full design doc, including why this
+//! makes `MemoryHandle::discover`/`connect` able to fail immediately, unlike
+//! every other handle in this crate. Memory's live timeline is NOT a new read
+//! either: the Swift shell filters `FleetHandle`'s existing bus feed by
+//! `source == "engram"`, exactly like Quality/Policy's own bus filters.
 
 pub mod cloud;
 pub mod crypto;
+pub mod drills;
 pub mod idryx;
+pub mod memory;
 pub mod quality;
 pub mod wardryx;
 

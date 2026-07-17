@@ -18,3 +18,21 @@ export function formatTimestamp(iso: string): string {
   const ss = String(d.getSeconds()).padStart(2, "0");
   return `${datePart} ${hh}:${mm}:${ss}`;
 }
+
+/** A store's file size, or the Memory panel's honest "no real file" label.
+ * `null` covers both an in-memory store and a file that has not been
+ * created yet (`genaryx_connectors::EngramStats.db_size_bytes`'s doc
+ * comment) - both render the same "in-memory / n/a", never a fabricated
+ * `0`. */
+export function formatBytes(bytes: number | null): string {
+  if (bytes === null) return "in-memory / n/a";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value < 10 ? 2 : 1)} ${units[unitIndex]}`;
+}

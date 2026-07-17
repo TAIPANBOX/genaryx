@@ -8,7 +8,9 @@ import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
 import { CryptoView } from "./CryptoView";
 import { DelegationGraphView } from "./DelegationGraphView";
+import { DrillsView } from "./DrillsView";
 import { IdentityView } from "./IdentityView";
+import { MemoryView } from "./MemoryView";
 import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
@@ -192,6 +194,8 @@ export function AppShell() {
       {view === "identity" && <IdentityView onOpenAgent={onOpenAgent} />}
       {view === "quality" && <QualityView onOpenAgent={onOpenAgent} />}
       {view === "crypto" && <CryptoView />}
+      {view === "memory" && <MemoryView onOpenAgent={onOpenAgent} />}
+      {view === "drills" && <DrillsView />}
       {view === "graph" && (
         <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
           <DelegationGraphView onOpenAgent={onOpenAgent} fill />
