@@ -87,6 +87,18 @@ pub struct GraphView {
     pub edges: Vec<GraphEdge>,
 }
 
+/// One agent's immediate delegation neighborhood, for the Agent 360 card's
+/// delegation section (PHASE3 W3): the node itself (`None` if this agent has
+/// never been seen on the bus), its direct delegators (`parents`), and its
+/// direct delegatees (`children`). Serializable, so both shells render it from
+/// one core call rather than re-deriving edges client-side.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentSlice {
+    pub node: Option<GraphNode>,
+    pub parents: Vec<GraphNode>,
+    pub children: Vec<GraphNode>,
+}
+
 /// Natural key identifying one event, so a re-tail cannot double-count. The
 /// FULL set of defining fields, not a subset (the recurring stack bug class).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -238,6 +250,26 @@ impl DelegationGraph {
             .collect()
     }
 
+    /// This agent's immediate delegation neighborhood ([`AgentSlice`]) for its
+    /// Agent 360 card - the node plus its direct parents and children, all
+    /// cloned into an owned, serializable shape. An agent never seen on the bus
+    /// yields an all-empty slice (`node: None`), never an error.
+    pub fn agent_slice(&self, id: &str) -> AgentSlice {
+        AgentSlice {
+            node: self.nodes.get(id).cloned(),
+            parents: self
+                .parents(id)
+                .into_iter()
+                .filter_map(|p| self.nodes.get(p).cloned())
+                .collect(),
+            children: self
+                .children(id)
+                .into_iter()
+                .filter_map(|c| self.nodes.get(c).cloned())
+                .collect(),
+        }
+    }
+
     /// A serializable snapshot for the shells and the layout engine.
     pub fn view(&self) -> GraphView {
         GraphView {
@@ -375,5 +407,40 @@ mod tests {
         let json = serde_json::to_string(&view).unwrap();
         let back: GraphView = serde_json::from_str(&json).unwrap();
         assert_eq!(view, back);
+    }
+
+    #[test]
+    fn agent_slice_returns_the_neighborhood() {
+        let mut g = DelegationGraph::new();
+        // user -> orch -> worker, and orch -> worker2
+        g.add_event(&ev(
+            "agent://acme/worker",
+            "2026-01-02T00:00:01Z",
+            &["user://acme/a", "agent://acme/orch"],
+            None,
+        ));
+        g.add_event(&ev(
+            "agent://acme/worker2",
+            "2026-01-02T00:00:02Z",
+            &["agent://acme/orch"],
+            None,
+        ));
+
+        let orch = g.agent_slice("agent://acme/orch");
+        assert_eq!(orch.node.as_ref().unwrap().id, "agent://acme/orch");
+        assert_eq!(
+            orch.parents
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            ["user://acme/a"]
+        );
+        let mut kids: Vec<&str> = orch.children.iter().map(|n| n.id.as_str()).collect();
+        kids.sort_unstable();
+        assert_eq!(kids, ["agent://acme/worker", "agent://acme/worker2"]);
+
+        // an unknown agent yields an all-empty slice, never a panic
+        let empty = g.agent_slice("agent://acme/nobody");
+        assert!(empty.node.is_none() && empty.parents.is_empty() && empty.children.is_empty());
     }
 }

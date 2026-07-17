@@ -250,6 +250,27 @@ impl Store {
         Ok(out)
     }
 
+    /// This agent's most recent `limit` events, newest first by `id` - the
+    /// events slice of an Agent 360 card (PHASE3 W3). Uses the existing
+    /// `idx_events_agent_ts` index, so it stays cheap even over a large table.
+    pub fn events_for_agent(&self, agent_id: &str, limit: usize) -> Result<Vec<StoredEvent>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, env, ts, source, type, agent_id, run_id, severity, schema, \
+                 on_behalf_of, data, prev_hash, raw, file, off \
+                 FROM events WHERE agent_id = ?1 ORDER BY id DESC LIMIT ?2",
+            )
+            .map_err(store_err)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = stmt.query(params![agent_id, limit]).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            out.push(stored_event_from_row(row)?);
+        }
+        Ok(out)
+    }
+
     /// The delegation-relevant columns of every event, oldest-first (by `id`),
     /// for batch-building the core [`crate::graph::DelegationGraph`] (PHASE3
     /// W1). Only the columns the graph needs, so it stays cheap over a large

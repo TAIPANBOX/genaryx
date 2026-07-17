@@ -61,6 +61,42 @@ fn insert_batch_and_recent_events_round_trip() {
 }
 
 #[test]
+fn events_for_agent_filters_by_agent_id() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+    store
+        .insert_batch(&canonical_events())
+        .expect("insert_batch");
+
+    // Pick an agent_id that actually appears in the fixture, from a full read,
+    // rather than hard-coding one that could drift with the fixture.
+    let all = store.recent_events(100).expect("recent_events");
+    let target = all[0].agent_id.clone();
+    let expected = all.iter().filter(|e| e.agent_id == target).count();
+    assert!(expected >= 1);
+
+    let scoped = store
+        .events_for_agent(&target, 100)
+        .expect("events_for_agent");
+    assert_eq!(
+        scoped.len(),
+        expected,
+        "must return exactly this agent's events"
+    );
+    assert!(
+        scoped.iter().all(|e| e.agent_id == target),
+        "only the target agent's events"
+    );
+    // newest-first by id, like recent_events
+    assert!(scoped.windows(2).all(|w| w[0].id > w[1].id));
+
+    // an unknown agent is a clean empty vec, never an error
+    let none = store
+        .events_for_agent("agent://nobody.local/x", 100)
+        .expect("events_for_agent unknown");
+    assert!(none.is_empty());
+}
+
+#[test]
 fn on_behalf_of_and_data_round_trip() {
     let store = Store::open_in_memory().expect("open in-memory store");
     let events = canonical_events();

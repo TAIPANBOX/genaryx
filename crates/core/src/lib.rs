@@ -22,7 +22,7 @@ pub use command::{CommandRecord, console_command_line, record};
 pub use conform::{ConformReport, Conformer};
 pub use error::{Error, Result};
 pub use event::{AgentEvent, ConsoleEvent, Provenance, SchemaVersion, Severity};
-pub use graph::{DelegationGraph, GraphEdge, GraphNode, GraphView, NodeKind};
+pub use graph::{AgentSlice, DelegationGraph, GraphEdge, GraphNode, GraphView, NodeKind};
 pub use ingest::{EventSource, FileTail, IngestService, IngestStats, RawRecord};
 pub use layout::{LayoutConfig, LayoutView, PositionedNode, layout, layout_view};
 pub use store::{DelegationRow, StoredEvent};
