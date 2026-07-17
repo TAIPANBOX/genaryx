@@ -13,6 +13,7 @@ pub mod conform;
 pub mod demo;
 pub mod error;
 pub mod event;
+pub mod evidence;
 pub mod graph;
 pub mod ingest;
 pub mod layout;

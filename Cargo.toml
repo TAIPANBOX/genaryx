@@ -44,6 +44,11 @@ futures-util = "0.3.32"
 # (reqwest's native-tls stack), so those add direct edges, not new families.
 p256 = "0.13.2"
 sha2 = "0.10.9"
+# Phase-4 wave 3 (docs/PHASE4.md W3): the Evidence Center assembles the pack
+# into one zip (`genaryx_core::evidence`). No compression is needed for
+# integrity (the signed manifest + each artifact's sha256 provide it), so this
+# is used store/deflate only, no extra codec families.
+zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 base64 = "0.22.1"
 getrandom = "0.2.17"
 security-framework = "3.7.0"

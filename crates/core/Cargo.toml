@@ -16,3 +16,9 @@ jsonschema = { workspace = true }
 chrono = { workspace = true }
 rusqlite = { workspace = true }
 tokio = { workspace = true }
+# Phase-4 wave 3 (crates/core/src/evidence.rs): the Evidence Center hashes each
+# pack artifact (manifest integrity) and assembles the pack into one zip.
+# `sha2` is already the workspace hash (genaryx-signing uses the same pin), so
+# this is a new direct edge to an already-resolved crate.
+sha2 = { workspace = true }
+zip = { workspace = true }
