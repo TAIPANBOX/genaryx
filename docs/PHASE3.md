@@ -1,0 +1,69 @@
+# Phase 3 - identity + 360 (Ф3)
+
+Source: `itrat-console/09` Ф3 + `07 §4.4` + `08 §Identity/Agent 360/Run Replay/Posture` + the architecture positions in `itrat-console/10-deployment-execution-and-phase3.md §5`. Builds on Phase 1 (Cloud connector, CommandBroker, Money panels) and Phase 2 (Wardryx connector, Policy panel + Approvals Inbox, Posture-lite, break-glass). Branch `phase-3-identity`.
+
+**Exit gate (09 §Ф3).** A click on any agent, from anywhere, opens a full cross-plane **Agent 360** card. Proven live: `taipan up --with wardryx,idryx` + demo/mockryx traffic -> a detector fires (e.g. `attestation_missing` / `runaway_agent`) -> the **Identity** panel shows the alert -> clicking it opens Agent 360 (money + policy + identity + detectors joined on `agent_id`) -> **Run Replay** reconstructs the killer-demo run -> **Posture full** shows the projected findings -> conforming console events on the bus -> clean teardown. Codified as `crates/connectors/tests/identity_360_test.rs`, mirroring `exit_gate_test.rs`.
+
+## Grounded Idryx contract (read from the idryx Go source 2026-07-17)
+
+Authoritative wire shapes live in the connector's own doc comments (`crates/connectors/src/idryx.rs`, every DTO cites its idryx `file:line`). All routing/handlers/JSON live in `internal/server/server.go` (there is NO `internal/api` package - the old note's path was right, the package name was wrong). Summary the panels need:
+
+- **Auth: NONE.** Every `serve` route (bar `/healthz`) is unauthenticated; the handlers discard the `*http.Request` entirely (`server.go:78,207,242`). `SECURITY.md:121-123` states this explicitly ("read-only and has no authentication; run it behind your own auth/network controls"). The connector sends no bearer, no signer.
+- **Bind is NOT loopback by default.** `--addr` defaults to `:8080` (all interfaces), and the startup log's `localhost:8080` is cosmetic string-substitution only (`main.go:534-537`); the socket binds `0.0.0.0`. `taipan up` remaps it to `127.0.0.1:8081` (its own :8080 collides with Cloud). This is a real posture signal (see Posture full, zond `idryx_exposed`).
+- **serve is LOAD-ONCE, no reload of any kind.** `runServe` runs `buildGraph -> runDetectors -> server.New` exactly once at startup, then `ListenAndServe` blocks forever; `server.Server` is an immutable snapshot by its own doc comment (`server.go:16-17`). No file-watch, no SIGHUP, no reload endpoint, no polling, no TTL (grep-verified). **Polling `/api/*` returns byte-identical data for the process lifetime.** This is the load-bearing fact behind the whole-phase architecture below.
+- **`GET /api/identities`** -> a bare JSON array (pretty, `[]` never `null`) of `apiIdentity` (`server.go:119-134`): `{id, type, privileged, source, owner, created?, last_used?, runtime?, on_behalf_of?[], permissions?[], remediation?, rotation?, events, alerts}`. `type` is `human|service_account|key|agent|mcp_server` (empty -> defaulted to literal `"human"`, `server.go:163-166`). `permissions[]` = `apiPermission {name, admin, used}` (the underlying ARN is deliberately NOT exposed). `remediation`/`rotation` = `apiRemediation {kind, explanation, code, created_at?}` (`kind` = `"right_size"` / `"rotation"`). **`events` and `alerts` are integer COUNTS, not the objects.** `created`/`last_used` format is `"YYYY-MM-DD HH:MM:SS UTC"` (note: different from the alert `time` format).
+- **`GET /api/alerts`** -> a bare array of `apiAlert` (`server.go:50-56`): `{detector, identity, severity, time, summary}`, all strings; `severity` in `critical|high|medium|low|info|none`; `time` is `"YYYY-MM-DDTHH:MM:SSZ"` (UTC, no fractional). Sorted severity-desc then time-asc server-side.
+- **`GET /api/remediations`** -> a bare array of `apiRecommendation` (`server.go:111-117`): `{identity, kind, explanation, code, created_at?}`.
+- **`GET /healthz`** -> HTTP 200, body literal `ok` (NOT JSON, no Content-Type). Health check = 200 status, not a JSON parse.
+- **Attestation is NOT a structured field on the identity.** `model.Identity.Attestation` (`none|oidc|spiffe-svid|enclave-key|mtls-cert|""`) is used only internally by the `attestation_missing` detector, which embeds `attestation=<value>` as free text inside `apiAlert.Summary`. So the Identity panel surfaces attestation status via the `attestation_missing` / `bom_incomplete` alerts, and (optionally) via the passports the console itself loads - never as a clean identity field.
+
+### CLI batch path (Rescan) - `idryx detect`
+
+- `idryx detect --source <s> --load <source:path>... --format json --min-severity <low|medium|high|critical>` (`main.go:366-428`). `--load` is `source:path`, repeatable (`main.go:113-120`); sources for the stack bus: `tokenfuse|wardryx|mockryx|verdryx` (routed through `tokenfuse.Load`, `main.go:208-213`).
+- **`--format json` prints a bare array of `jsonAlert {detector, identity, severity, time, summary}` (`report.go:48-72`) - byte-identical shape to `/api/alerts`.** One `Alert` DTO covers both the serve snapshot and this CLI output.
+- **Exit code does NOT signal findings**: exit 1 only on error (bad flags/parse), exit 0 otherwise, regardless of alert count (`main.go:36-41`, `runDetect` never inspects `len(alerts)`). Rescan parses the JSON array length; it never reads the exit code as a findings signal.
+- `detect` builds a fresh in-memory graph per invocation (no state across runs), so re-running it against a grown bus file is safe - no cross-run double counting.
+- **Dedup, corrected from the stale `VALIDATION.md:16-17` note:** events ARE deduped now, on a full-record natural key, in both backends (`store.go:36-50` in-memory with `TestAddEventDedupesOnNaturalKey`; Postgres `ON CONFLICT DO NOTHING` on a unique index). The console does NOT need to dedup Idryx-sourced events. (The one real residual gap - `Store.AddIdentity` appends `Permissions` un-deduped - bites only a pathological double-`--load` of the same inventory file in one invocation, which Rescan never does.)
+
+### The 21 detectors (exact ids for the Identity panel filter, `main.go:314-336`)
+
+`impossible_travel`, `mfa_fatigue`, `new_device`, `behavior_anomaly`, `stale_nhi`, `over_privileged_nhi`, `orphaned_nhi`, `excessive_agency`, `shadow_ai`, `least_privilege`, `privilege_escalation`, `shared_credential`, `shadow_mcp`, `agent_shadow_tool`, `runaway_agent`, `attestation_missing`, `bom_incomplete`, `data_exfiltration`, `tainted_agent`, `mcp_drift`, `unmanaged_egress`. Severity is dynamic per detector (a base, escalated by `privileged`/admin/chain-length), so the UI filters on detector id AND on the emitted `severity`, never on a hard-coded per-detector severity.
+
+## Architecture positions (10 §5, decided; do not re-litigate)
+
+1. **The live delegation graph is genaryx-core's, built from the bus - NOT from Idryx.** Idryx `serve` is a load-once immutable snapshot (proven above); a live console cannot stand on it. genaryx-core already ingests the whole bus into SQLite; the `on_behalf_of` delegation graph is built incrementally in core from bus events (each event carries `agent_id` + optional `on_behalf_of[]`, root-first, max depth 32). This is D7 in action: the new live analytic is born in the console, not added to an open service. Core's bus-graph dedups its OWN events on a natural key (the bus is append-only; a re-tail must not double-count).
+2. **The Idryx connector is enrichment, two transports.** (a) REST to `serve` (loopback :8081): identities / alerts / remediations with snapshot semantics, labeled "as of load" in the UI. (b) CLI batch: an on-demand `idryx detect --load ...` (a **Rescan** button) for the 21 detectors, parsed from `--format json`. Dedup on the console side is NOT needed for events (Idryx dedups); the console keys alerts by `(detector, identity, time)` for its own display-merge.
+3. **Graph rendering: layout in core, dumb renderers in the shells.** The phase's main parity risk is WebGL (present in the Tauri webview, absent natively in SwiftUI). Resolution: a deterministic seeded force-layout runs in genaryx-core (incremental ticks, node positions delivered over the existing event/handle bridge); BOTH shells draw Canvas2D (SwiftUI `Canvas`, web `<canvas>`). Pilot scale (tens-to-hundreds of agents) is trivial for Canvas2D; WebGL only if a bench proves it necessary. This overrides the draft "(WebGL)" in 09.
+4. **Agent 360 = a core aggregate keyed by `agent_id`**: identity (Idryx `/api/identities` match) + money (Cloud `/v1/agents`, `/v1/runs`) + policy (bus `wardryx.*` + approvals) + alerts (the detectors, joined by `identity`) + events (the core Store) + actions (the existing CommandBroker; Phase-2 break-glass rules unchanged). A deep-link route registry lives in core; both shells implement one navigation contract (from any panel, the menu-bar, notifications).
+5. **Run Replay = a time-window query over the SQLite Store** + a playback clock in core (scrub/speed, the mental model of the site sims); Cloud `/v1/replay/{run}` is a second source, merged in core. No new storage.
+6. **Posture full = Posture-lite (Phase 2) + the identity-plane zonds:** idryx reachability + a bind audit (`idryx_exposed`: the discovered idryx URL is non-loopback, or unauthenticated off a tunnel - real, per the contract above), attestation coverage (derived from `attestation_missing`/`bom_incomplete` alerts, since attestation is not a field), identity-snapshot age ("as of load"), detector-feed freshness, keyless-admin Wardryx (07 §4.3), plus the existing devkey / fail-open / schema-mix / stale-bus zonds.
+
+## Waves (playbook: core-first by the orchestrator, then two parallel per-shell Sonnet tracks)
+
+1. **W1 (orchestrator-owned, shared crates):** `IdryxClient` (REST + `detect` CLI wrapper) in `crates/connectors/src/idryx.rs` + a `DelegationGraph` builder in `crates/core` (bus-fed, incremental, natural-key deduped) + a seeded deterministic force-layout in core. A live `idryx_test.rs` (serve snapshot + a `detect --format json` Rescan against a real `taipan up --with idryx`, skip-gracefully if absent). The connector doc comments carry the full grounded contract above.
+2. **W2 (two per-shell tracks):** the **Identity** panel in both shells: identities list with type filters (`/api/identities`), the 21-detector alert stream with severity filters (`/api/alerts` + Rescan), passport/attestation surfaced via the relevant alerts. Track A `apps/desktop/src-tauri/src/identity/` + React panel; Track B `crates/ffi/src/idryx/` (`IdryxHandle`) + SwiftUI panel. Empty state when no idryx (mirror `MoneyEmptyState` / `CloudError::NoEnvironment`).
+3. **W3 (two per-shell tracks):** the delegation graph (core layout engine + a Canvas2D renderer per shell) + **Agent 360** (the core aggregate) + the deep-link navigation contract (click an agent from any panel / menu-bar / notification -> its 360 card).
+4. **W4:** **Run Replay** (time-window + `/v1/replay/{run}` + playback clock) + **Posture full** (the §6/position-6 zonds) + the exit-gate e2e (`identity_360_test.rs`).
+
+## Parity checklist (per wave; a feature is done only when it is in BOTH shells)
+
+**W2 - Identity panel**
+- [ ] Identities list renders `/api/identities` with type filters (human/service_account/key/agent/mcp_server), both shells
+- [ ] The 21-detector alert stream renders `/api/alerts` with severity filters + a **Rescan** (`detect --format json`) action, both shells
+- [ ] Attestation status surfaces via `attestation_missing`/`bom_incomplete` alerts (honest: not a clean field), both shells
+- [ ] Snapshot data is labeled "as of load" (never implied live), both shells
+- [ ] No-idryx environment renders a clean empty state, not an error, both shells
+
+**W3 - graph + 360**
+- [ ] Delegation graph draws from the core layout (Canvas2D), the same node positions in both shells
+- [ ] Agent 360 joins money + policy + identity + detectors on `agent_id`, both shells
+- [ ] A click on an agent from any panel / menu-bar / notification opens its 360 card, both shells
+
+**W4 - replay + posture**
+- [ ] Run Replay reconstructs a run timeline (Store + `/v1/replay/{run}`) with a scrub/speed clock, both shells
+- [ ] Posture full adds the identity zonds (idryx_exposed, attestation coverage, snapshot age, detector-feed freshness, keyless-admin wardryx), both shells
+- [ ] `identity_360_test.rs` proves the exit gate live end to end
+
+## Review discipline (unchanged from Ф0-Ф2)
+
+Opus reviews the REAL diff (never an agent summary), re-runs ALL CI gates (`cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo test --workspace`, src-tauri build, `pnpm tsc --noEmit` + `pnpm build`, `apps/macos/build-ffi.sh` + `swift build`). Two recurring bug classes to watch: (1) a key/decision built from an INCOMPLETE set of defining fields (the delegation-graph dedup key must be the FULL event natural key, or a re-tail double-counts - exactly the class Idryx itself fixed); (2) no silent fail-open on empty/odd input in a privileged path - here specifically the "detector severity -> notification" path must not silently drop a `critical`. Security-critical core logic is hand-written by the orchestrator, never delegated. Fable 5 only by Yurii's explicit per-case permission.

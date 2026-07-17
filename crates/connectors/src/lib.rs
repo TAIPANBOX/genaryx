@@ -20,9 +20,17 @@
 //! (`/v1/policies[...]`) the console's policy panel renders from and acts
 //! through. Bearer-only auth (no device/signing, unlike `CloudClient`); see
 //! `crates/connectors/src/wardryx.rs`.
+//!
+//! Phase-3 wave 1 (07 §4.4): [`IdryxClient`] is the Idryx identity-plane
+//! connector the Identity panel and Agent 360 render from - a REST snapshot
+//! over `idryx serve` (`/api/identities`, `/api/alerts`, `/api/remediations`)
+//! plus an `idryx detect --format json` Rescan. Unauthenticated by design, and
+//! load-once, so the live delegation graph is genaryx-core's job (bus-fed), not
+//! this snapshot; see `crates/connectors/src/idryx.rs`.
 
 mod cloud_rest;
 mod cloud_sse;
+mod idryx;
 mod sse_decoder;
 mod wardryx;
 
@@ -31,6 +39,11 @@ pub use cloud_rest::{
     Incident, KillResponse, PairResponse, RunAgg, SavingsSummary, Severity, Summary,
 };
 pub use cloud_sse::{CloudSse, CloudSseConfig};
+pub use idryx::{
+    Alert as IdryxAlert, Identity as IdryxIdentity, IdryxClient, IdryxError,
+    Permission as IdryxPermission, Recommendation as IdryxRecommendation,
+    Remediation as IdryxRemediation,
+};
 pub use sse_decoder::{SseDecoder, SseEvent};
 pub use wardryx::{
     Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, DecideRequest,
