@@ -63,8 +63,8 @@ Two `taipan` gaps block the full-stack e2e (tracked as task #29, fixed in Wave
    SwiftUI panel + Touch ID grant.
 3. Actionable notifications (`approval_requested` Approve/Deny) + Posture-lite +
    break-glass ceremony + fail-closed privileged path.
-4. e2e acceptance (exit gate: mockryx + console approval cycle) + `taipan` gaps
-   (#29) + the token-boundary unit.
+4. **DONE**: e2e acceptance (exit gate: mockryx + console approval cycle) +
+   `taipan` gaps (#29) + the token-boundary unit. See "Wave 4" below.
 
 ## Wave 2 data contract + UX (08 §Policy; PARITY across both shells)
 
@@ -183,3 +183,89 @@ the fail-closed privileged-path precheck (a privileged mutation consults Wardryx
 `/v1/decide` first - `deny` blocks pending an explicit break-glass, `hold`
 requires an approval, a missing approval secret refuses rather than proceeds).
 Pairs with the `taipan` gateway->wardryx wiring in #29.
+
+## Wave 4 - exit gate (Ф2 acceptance, task #28, DONE)
+
+Task #29 first closed the two `taipan` gaps that had blocked this wave (the
+"Two `taipan` gaps" callout near the top of this doc): `taipan up --with
+wardryx` now mints a `WARDRYX_APPROVAL_SECRET`, seeds a demo policy scoped to
+`agent://mockryx.local/*` (`require_human_above_usd: 1.0` +
+`deny_tool: [shell_exec]`), and wires the gateway to wardryx as its PDP
+(`TOKENFUSE_WARDRYX_MODE=enforce/_URL/_KEY`) - all taipan-side config, nothing
+in `tokenfuse` or `wardryx` itself changed. `crates/connectors/tests/
+exit_gate_test.rs` then proves the full 09 §Ф2 cycle live, end to end, through
+the real binaries:
+
+1. **`taipan up --name p2exit --with wardryx`** - builds/spawns the real
+   gateway + cloud + wardryx, waits for all three `/healthz`, auto-discovers
+   the descriptor + keyfile (extending `killer_demo_test.rs`'s own
+   Cloud-only discovery mirror with the `wardryx` service entry and
+   `wardryx_admin_ref`).
+2. **Mockryx fire drills** - the two shipped scenarios
+   (`approval-required`, `wardryx-denied-tool`) run against the live gateway
+   via the real `mockryx` CLI (`go build -o bin/mockryx ./cmd/mockryx`,
+   `mockryx run --gateway ... --api-key ...`): both `passed`, zero findings,
+   exit 0. If `go`/the mockryx checkout is unavailable, the test instead
+   replicates the identical two HTTP calls directly and asserts the same
+   `403` + `x-fuse-wardryx: hold`/`deny` signals, logging which path ran.
+3. **Console-in-the-loop grant** - driven directly through `WardryxClient`
+   (the exact calls the Policy panel's Approvals Inbox makes, 07 §4.3): a
+   fresh high-cost call holds (`403`, `x-fuse-wardryx: hold`,
+   `x-fuse-approval-id` captured) -> `list_approvals()` finds it pending with
+   the expected context (agent, tools, `est_cost_usd`, reason) ->
+   `decide_approval(Grant)` mints a token -> `ApprovalTokenClaims::decode`
+   confirms agent/run/tools/cost-ceiling and a fresh (`>9min`, `<=10min`)
+   TTL -> the grant is journaled via `genaryx_core::command::record`
+   (`console.grant_approval`, `decision:"allow"`, `sig_alg/sig_fpr:
+   "bearer"/"local-auth"` - the SwiftUI Touch-ID-gated grant's own honest
+   labels, `crates/ffi/src/wardryx/mod.rs`) and read back conforming
+   (schema v0.2, `source:"console"`, `type:"console_command"`) -> the SAME
+   held request, resubmitted with the token, now returns `200`
+   (`x-fuse-wardryx: allow`).
+4. **Token-boundary units**, direct against `WardryxClient::decide`:
+   - **cost-bound**: the same agent/run/tools + the granted token, at a
+     cost above its minted ceiling, still denies
+     (`ErrTokenCostExceeded` - a presented-but-invalid token denies
+     outright rather than falling back to hold, `wardryx/internal/pdp`'s
+     rule 7).
+   - **TTL**: covered by the same decode in step 3 (a token minted moments
+     earlier reads `>9min` of its 10-minute TTL remaining, not expired).
+   - **single-use**: proven live against a SEPARATE, dedicated `wardryx
+     serve` (own build, own ephemeral port, `WARDRYX_APPROVAL_SECRET` +
+     `WARDRYX_APPROVAL_SINGLE_USE=1`, mirroring `wardryx_test.rs`'s own
+     spawn helper) - the taipan-managed instance the rest of the test
+     drives is never single-use itself (`taipan`'s
+     `services::wardryx::start` does not set that env var), so this
+     dimension needs an isolated instance. A token redeemed once (`allow`)
+     and presented again for the identical request falls back to `hold`
+     with reason `"...already redeemed..."` (`internal/api/api.go`'s
+     `TryRedeem` gate). If the dedicated spawn is unavailable on the box
+     (no `go`, no `~/Development/wardryx`), only this one assertion is
+     skipped, with a clear note; the cost-bound and TTL checks above still
+     run live regardless.
+5. **`taipan down --name p2exit`** - asserted clean: no `STILL ALIVE`,
+   descriptor/keyfile/pidfile all removed, every pid taipan tracked
+   confirmed dead, ports 4100/8080/8090 all free.
+
+Live-verified 2026-07-17 (`cargo test -p genaryx-connectors`, full suite):
+`taipan up` came up healthy in well under a second (binaries already cached),
+both mockryx scenarios passed with zero findings, the console cycle minted a
+token with `ceiling_usd:34.50` and a `~599s` TTL, the cost-bound and
+single-use boundaries both denied/held exactly as designed, and `taipan down`
+left no orphaned process and freed all three ports - the whole test completed
+in under 4 seconds.
+
+### Acceptance checklist
+- [x] `taipan up --with wardryx` actually enforces (gateway -> wardryx PDP
+      wired, demo policy seeded, `WARDRYX_APPROVAL_SECRET` set) - task #29
+- [x] mockryx `approval-required` + `wardryx-denied-tool` pass live (CLI
+      path proven; direct-HTTP replica fallback also implemented and exit
+      logic-verified)
+- [x] console-in-the-loop grant: hold -> list -> grant -> decode -> journal
+      (conforming `console_command`) -> resubmit -> allow
+- [x] token cost-bound denies above its granted ceiling, even with the
+      token attached
+- [x] token TTL reads close to the full 10 minutes at mint
+- [x] token single-use redemption boundary, asserted live against a
+      dedicated instance
+- [x] `taipan down` leaves no orphaned process and frees 4100/8080/8090
