@@ -109,6 +109,18 @@ import SwiftUI
 /// `cloudModel` - the Evidence Center builds through the SAME paired
 /// `CloudHandle` Money/Overview use (`CloudModel.cloudHandle`), never a
 /// second device pairing.
+///
+/// Phase-4 wave 4 (docs/PHASE4.md W4, decision D11) adds `remoteModel`
+/// (`RemoteModel`, over `RemoteHandle`) and the `Remote` tab, right after
+/// `Evidence` - continuing the same per-plane-panel sequence one more time
+/// before the cross-cutting views. `RemoteView` manages the TRANSPORT to a
+/// client-hosted stack (Hetzner read-only inventory, the WireGuard tunnel,
+/// host-key-pinned SSH ops), not the stack itself - no other tab re-points
+/// through it. Read-only in the mutation sense Money/Policy are (Hetzner
+/// never mutates; the tunnel Connect/Disconnect and SSH ops are local
+/// transport actions, not remote governance decisions), so like
+/// `identityModel`/`cryptoModel` it needs no wiring into
+/// `notifications`/`focusedApprovalId` either.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
@@ -120,6 +132,7 @@ struct GenaryxApp: App {
     @State private var memoryModel = MemoryModel()
     @State private var drillsModel = DrillsModel()
     @State private var evidenceModel = EvidenceModel()
+    @State private var remoteModel = RemoteModel()
     @State private var graphModel = GraphModel()
     @State private var replayModel = RunReplayModel()
     @State private var notifications = ApprovalNotificationModel()
@@ -161,6 +174,8 @@ struct GenaryxApp: App {
                         DrillsView(model: drillsModel)
                     case .evidence:
                         EvidenceView(model: evidenceModel, cloudModel: cloudModel)
+                    case .remote:
+                        RemoteView(model: remoteModel)
                     case .graph:
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
@@ -267,17 +282,18 @@ private struct AgentFocus: Identifiable, Equatable {
     var id: String { agentId }
 }
 
-/// The thirteen top-level nav destinations - Overview, Money, Policy,
-/// Identity, Quality, Crypto, Memory, Drills, Evidence, Graph, Replay,
-/// Posture, and the existing Bus Explorer - matching the Tauri shell's
-/// `ViewId`/`lib/views.ts` switcher (extended with Memory + Drills in
-/// Phase-4 wave 2, then Evidence in Phase-4 wave 3, mirroring wave 1's
-/// Quality + Crypto addition), rendered as a native macOS tab strip instead
-/// of a web-styled nav bar (native macOS patterns over pixel parity, same
-/// rule `Theme.swift` already follows). Memory, Drills, and Evidence sit
-/// right after Crypto, continuing the per-plane-panel sequence
-/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills/Evidence) ahead of
-/// the cross-cutting views (Graph/Replay/Posture/Bus Explorer).
+/// The fourteen top-level nav destinations - Overview, Money, Policy,
+/// Identity, Quality, Crypto, Memory, Drills, Evidence, Remote, Graph,
+/// Replay, Posture, and the existing Bus Explorer - matching the Tauri
+/// shell's `ViewId`/`lib/views.ts` switcher (extended with Memory + Drills in
+/// Phase-4 wave 2, then Evidence in Phase-4 wave 3, then Remote in Phase-4
+/// wave 4, mirroring wave 1's Quality + Crypto addition), rendered as a
+/// native macOS tab strip instead of a web-styled nav bar (native macOS
+/// patterns over pixel parity, same rule `Theme.swift` already follows).
+/// Memory, Drills, Evidence, and Remote sit right after Crypto, continuing
+/// the per-plane-panel sequence
+/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills/Evidence/Remote)
+/// ahead of the cross-cutting views (Graph/Replay/Posture/Bus Explorer).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
@@ -288,6 +304,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
     case memory = "Memory"
     case drills = "Drills"
     case evidence = "Evidence"
+    case remote = "Remote"
     case graph = "Graph"
     case replay = "Replay"
     case posture = "Posture"

@@ -33,6 +33,7 @@
   --src-verdryx: #ff7aa2;
   --src-mockryx: #ff8a5b;
   --src-qryx: #b48cff;
+  --src-remote: #4aa8ff;
 
   --accent: var(--sev-medium);
 
@@ -71,6 +72,7 @@
   --src-verdryx: #c23e73;
   --src-mockryx: #c14a1c;
   --src-qryx: #7a4cc4;
+  --src-remote: #1d5fb8;
 
   color-scheme: light;
 }
@@ -101,6 +103,7 @@
     --src-verdryx: #c23e73;
     --src-mockryx: #c14a1c;
     --src-qryx: #7a4cc4;
+    --src-remote: #1d5fb8;
 
     color-scheme: light;
   }

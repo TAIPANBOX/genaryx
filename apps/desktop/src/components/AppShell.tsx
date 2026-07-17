@@ -17,6 +17,7 @@ import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
 import { QualityView } from "./QualityView";
+import { RemoteView } from "./RemoteView";
 import { RunReplayView } from "./RunReplayView";
 
 /** How long a notification's deep-link target stays "focused" (drives
@@ -198,6 +199,7 @@ export function AppShell() {
       {view === "memory" && <MemoryView onOpenAgent={onOpenAgent} />}
       {view === "drills" && <DrillsView />}
       {view === "evidence" && <EvidenceView />}
+      {view === "remote" && <RemoteView />}
       {view === "graph" && (
         <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
           <DelegationGraphView onOpenAgent={onOpenAgent} fill />

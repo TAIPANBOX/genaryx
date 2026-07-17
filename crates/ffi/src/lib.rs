@@ -100,6 +100,24 @@
 //! every other handle in this crate. Memory's live timeline is NOT a new read
 //! either: the Swift shell filters `FleetHandle`'s existing bus feed by
 //! `source == "engram"`, exactly like Quality/Policy's own bus filters.
+//!
+//! Phase-4 wave 4 (docs/PHASE4.md W4, decision D11) adds
+//! [`remote::RemoteHandle`]: a ninth UniFFI Object, over
+//! `genaryx_connectors::{HetznerClient, WgTunnel, SshClient}`, for the
+//! SwiftUI Remote (Distance) surface - Hetzner read-only inventory, the
+//! WireGuard tunnel (D11's PRIMARY console<->Cloud channel), and host-key-
+//! pinned SSH ops. Unlike every prior handle, there is no single environment
+//! to discover (`RemoteHandle::new` starts only the small owned runtime
+//! Hetzner reads need - see `remote/mod.rs`); the WireGuard keypair is
+//! generated and held SERVER-SIDE (`Mutex<Option<WgKeypair>>`), so the
+//! private half never crosses the FFI boundary at all; and
+//! `connect_tunnel`/`tunnel_status` return a plain `WgStatusRecord` verdict,
+//! never a thrown error - a bring-up failure (the expected LOCAL outcome
+//! without root, since `wireguard-go` needs privilege to create a tun) is an
+//! honest `Failed { reason }`, never a fake `Connected`. See `remote/mod.rs`
+//! for the full design doc, including the one SSH lifecycle subtlety
+//! `ssh_tail_once` has to get right (`SshClient`'s pinned `known_hosts` temp
+//! file must outlive its own spawned tail child).
 
 pub mod cloud;
 pub mod crypto;
@@ -107,6 +125,7 @@ pub mod drills;
 pub mod idryx;
 pub mod memory;
 pub mod quality;
+pub mod remote;
 pub mod wardryx;
 
 use std::fs::OpenOptions;

@@ -202,6 +202,15 @@ impl SshClient {
     /// the local `FileTail` (`genaryx_core::ingest`) but over the pinned SSH
     /// channel. `-c +N` is 1-based (OpenSSH/coreutils `tail`), so this passes
     /// `from_offset + 1`.
+    ///
+    /// LIFETIME CONTRACT: this `SshClient` MUST outlive the returned [`Child`].
+    /// Unlike [`Self::run`]/[`Self::check_reachable`] (which block until `ssh`
+    /// exits), this returns immediately while `ssh` is still handshaking, and
+    /// the pinned known_hosts is removed on the client's [`Drop`]. Dropping the
+    /// client while the child runs would delete the pin file mid-handshake and
+    /// the child would then FAIL host-key verification - fail-closed, but not
+    /// what the caller wanted. Keep the client bound (e.g. in the panel's state)
+    /// for the child's whole lifetime.
     pub fn spawn_tail(&self, remote_path: &str, from_offset: u64) -> Result<Child, SshError> {
         let mut args = base_ssh_args(&self.target, &self.known_hosts);
         args.push(format!(
@@ -224,6 +233,10 @@ impl SshClient {
     /// loopback only (never `0.0.0.0`), so the forwarded port is not itself
     /// exposed. The caller kills the child to tear the forward down. (Secondary
     /// to WireGuard, which is the primary persistent channel per D11.)
+    ///
+    /// Same LIFETIME CONTRACT as [`Self::spawn_tail`]: this `SshClient` must
+    /// outlive the returned [`Child`] (the pinned known_hosts is removed on the
+    /// client's `Drop`).
     pub fn spawn_forward(&self, local_port: u16, remote_port: u16) -> Result<Child, SshError> {
         let mut args = base_ssh_args(&self.target, &self.known_hosts);
         args.push("-N".into());

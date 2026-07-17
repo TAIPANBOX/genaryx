@@ -72,6 +72,15 @@
 //! `MoneyState` (see `evidence::commands`'s module doc), so it needs no
 //! `events_dir` handle either - journaling reads `MoneyClient.bus` at build
 //! time, not a handle stored on `EvidenceState` itself.
+//!
+//! The Remote panel's state (see `remote/`, docs/PHASE4.md W4, "Distance")
+//! is managed the same non-blocking way once more, but resolves NOTHING
+//! auto-discovered beyond a best-effort `wireguard-go` default path: the WG
+//! peer, the SSH target, and even that binary path are 100%
+//! operator-defined (see `remote::state`'s module doc). It is the app's
+//! SECOND stateful-connector panel after Memory - it holds both a `WgTunnel`
+//! and an `SshClient` long-lived, each behind its own cell, for the app's
+//! whole life once the operator connects/pins them.
 
 mod crypto;
 mod drills;
@@ -84,6 +93,7 @@ mod memory;
 mod money;
 mod policy;
 mod quality;
+mod remote;
 mod replay;
 mod tray;
 
@@ -97,6 +107,7 @@ use memory::MemoryState;
 use money::MoneyState;
 use policy::PolicyState;
 use quality::QualityState;
+use remote::RemoteState;
 use tauri::Manager;
 
 /// Recent events for the Bus Explorer, newest first, capped at `limit`.
@@ -258,6 +269,19 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
+            // Remote panel (docs/PHASE4.md W4, "Distance"): same
+            // non-blocking shape once more, resolving only a best-effort
+            // `wireguard-go` default path - no environment, tunnel, or SSH
+            // client exists until the operator explicitly defines one (see
+            // `remote::state`'s module doc).
+            app.manage(RemoteState::pending());
+            let remote_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = remote::bootstrap().await;
+                let state = remote_handle.state::<RemoteState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
@@ -305,6 +329,15 @@ pub fn run() {
             drills::commands::drills_run,
             evidence::commands::evidence_status,
             evidence::commands::evidence_build,
+            remote::commands::remote_status,
+            remote::commands::remote_set_environment,
+            remote::commands::remote_hetzner_list,
+            remote::commands::remote_wg_connect,
+            remote::commands::remote_wg_disconnect,
+            remote::commands::remote_ssh_check_reachable,
+            remote::commands::remote_ssh_read_file,
+            remote::commands::remote_ssh_tail_start,
+            remote::commands::remote_ssh_tail_stop,
             graph::agent_graph,
             graph::agent_slice,
             graph::agent_events,
