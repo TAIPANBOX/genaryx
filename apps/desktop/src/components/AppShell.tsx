@@ -12,6 +12,7 @@ import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
+import { RunReplayView } from "./RunReplayView";
 
 /** How long a notification's deep-link target stays "focused" (drives
  * `ApprovalsInbox.tsx`'s scroll-to + `.approval-focused` highlight) before
@@ -76,6 +77,25 @@ export function AppShell() {
   // switch the active view AND dismiss the overlay in one operator gesture.
   const onNavigateFromAgent360 = useCallback((next: ViewId) => {
     setView(next);
+    setFocusedAgentId(null);
+  }, []);
+
+  // Phase-3 wave-4 addition (docs/PHASE3.md "W4 - replay + posture"): Run
+  // Replay is a real nav view (`views.ts`), not an overlay like Agent 360 -
+  // but it still needs a deep-link seed (which run to open straight into),
+  // so `replayRunId` plays the same role `focusApprovalId` does for Policy:
+  // state owned here, read by `RunReplayView` as its `presetRunId` prop.
+  // `key={replayRunId ?? "picker"}` at the render site below remounts the
+  // view fresh on every new entry-point call, so a stale preset from a
+  // PREVIOUS replay session can never leak into a new one.
+  const [replayRunId, setReplayRunId] = useState<string | null>(null);
+  const onOpenReplay = useCallback((runId: string) => {
+    setReplayRunId(runId);
+    setView("replay");
+    // Closes Agent 360 when the "Replay" affordance was clicked from inside
+    // its Money section - a harmless no-op when there was no overlay open
+    // (e.g. the affordance was clicked straight from the Money panel's own
+    // RunsTable), mirroring `onNavigateFromAgent360`'s identical double duty.
     setFocusedAgentId(null);
   }, []);
 
@@ -158,7 +178,7 @@ export function AppShell() {
         policyAlertCount={unseenAlerts.length}
       />
       {view === "overview" && <OverviewView />}
-      {view === "money" && <MoneyView onOpenAgent={onOpenAgent} />}
+      {view === "money" && <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} />}
       {view === "policy" && (
         <PolicyView
           focusApprovalId={focusApprovalId}
@@ -173,6 +193,9 @@ export function AppShell() {
           <DelegationGraphView onOpenAgent={onOpenAgent} fill />
         </div>
       )}
+      {view === "replay" && (
+        <RunReplayView key={replayRunId ?? "picker"} presetRunId={replayRunId} onOpenAgent={onOpenAgent} />
+      )}
       {view === "posture" && <PostureView />}
       {view === "bus" && <BusExplorer />}
 
@@ -183,6 +206,7 @@ export function AppShell() {
           onClose={onCloseAgent360}
           onOpenAgent={onOpenAgent}
           onNavigate={onNavigateFromAgent360}
+          onOpenReplay={onOpenReplay}
         />
       )}
     </div>

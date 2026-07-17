@@ -1,10 +1,18 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
+import type { IdentityStatus, IdryxAlert, IdryxIdentity } from "../identityTypes";
 import { cssVar } from "../lib/cssVars";
+import { fetchAlerts, fetchIdentities } from "../lib/identity";
 import { describePolicyError, fetchPolicies } from "../lib/policy";
-import { computePostureFindings, type FindingState, type PostureFinding } from "../lib/posture";
+import {
+  computeIdentityPostureFindings,
+  computeStackPostureFindings,
+  type FindingState,
+  type PostureFinding,
+} from "../lib/posture";
 import { fetchRecentEvents } from "../lib/recentEvents";
+import { useIdentityStatus } from "../lib/useIdentityStatus";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { usePolicyStatus } from "../lib/usePolicyStatus";
 import type { MoneyStatus } from "../moneyTypes";
@@ -72,6 +80,25 @@ function policyStatusLabel(status: PolicyStatus | null): string {
   }
 }
 
+/** Phase-3 W4 addition: a third plane chip, identity-flavored - mirrors
+ * `moneyStatusLabel`/`policyStatusLabel` exactly. Unlike those two,
+ * `IdentityStatus`'s `Ready.source` has only ever the one `"taipan"`
+ * variant (idryx has no bearer of its own to gate an env-var fallback on,
+ * see `identityTypes.ts`), so there is no second branch to label. */
+function identityStatusLabel(status: IdentityStatus | null): string {
+  if (!status) return "connecting...";
+  switch (status.state) {
+    case "bootstrapping":
+      return "connecting...";
+    case "no_environment":
+      return "no identity plane";
+    case "unreachable":
+      return "unreachable";
+    case "ready":
+      return `taipan up . ${status.source.name}`;
+  }
+}
+
 /** Small connectivity chip, one per plane Posture reads from - context for
  * WHY a given zond below might read "n/a" (that plane not ready yet)
  * without duplicating either panel's own full empty-state treatment
@@ -128,30 +155,49 @@ function FindingRow({ finding }: { finding: PostureFinding }) {
 }
 
 /**
- * Posture-lite (docs/PHASE2.md Wave 3): a new read-only sidebar view listing
- * the 4 v0 stack-sanity zonds (`lib/posture.ts`'s `computePostureFindings`),
- * computed entirely from signals this app already fetches elsewhere - the
- * resolved env sources (`usePolicyStatus`/`useMoneyStatus`, same hooks the
- * Policy/Money/Overview views already use), `policy_list_policies()` (same
- * command `PolicyView.tsx`'s own Policies section calls), and the live bus
+ * Posture-lite (docs/PHASE2.md Wave 3) + Posture full (docs/PHASE3.md W4,
+ * position 6): a read-only sidebar view listing the 4 v0 stack-sanity zonds
+ * plus the 5 identity-plane zonds (`lib/posture.ts`'s
+ * `computeStackPostureFindings`/`computeIdentityPostureFindings`), computed
+ * entirely from signals this app already fetches elsewhere - the resolved
+ * env sources (`usePolicyStatus`/`useMoneyStatus`/`useIdentityStatus`, same
+ * hooks the Policy/Money/Identity/Overview views already use),
+ * `policy_list_policies()` (same command `PolicyView.tsx`'s own Policies
+ * section calls), `identity_list_identities`/`identity_list_alerts` (same
+ * commands `IdentityView.tsx`/`Agent360.tsx` already call), and the live bus
  * (the same `fetchRecentEvents` + `bus:event` listener pattern
  * `DecisionStream.tsx`/`BusExplorer.tsx` already follow, unfiltered here
  * since "schema mix" and "bus stale" are properties of the WHOLE bus, not
- * just the wardryx slice). No new Tauri command, no new connector call.
+ * just the wardryx slice). No new Tauri command, no new connector call -
+ * `run_events` (this wave's other addition) has no bearing on Posture at
+ * all.
  *
  * Deliberately never gated behind a single-plane "ready" check the way
- * `PolicyView`/`OverviewView` are: Posture's whole point is reading across
- * multiple, independently-failing planes at once, so a down Wardryx must
- * never blank the whole panel - each zond just reports its own honest
- * `unknown` state until the signal it specifically needs is available (see
- * `posture.ts`'s doc comment).
+ * `PolicyView`/`OverviewView`/`IdentityView` are: Posture's whole point is
+ * reading across multiple, independently-failing planes at once, so a down
+ * Wardryx or a not-yet-connected idryx must never blank the whole panel -
+ * each zond just reports its own honest `unknown` state until the signal it
+ * specifically needs is available (see `posture.ts`'s doc comment).
  */
 export function PostureView() {
   const moneyStatus = useMoneyStatus();
   const policyStatus = usePolicyStatus();
+  const identityStatus = useIdentityStatus();
 
   const [policies, setPolicies] = useState<PolicyRecord[] | null>(null);
   const [policiesError, setPoliciesError] = useState<PolicyError | null>(null);
+
+  // Identity: fetched ONCE when the identity plane becomes ready (never on a
+  // periodic timer, unlike `policies` above) - mirrors `IdentityView.tsx`'s
+  // own no-auto-refresh rationale, doubly so here: idryx `serve` never
+  // changes on its own, so a periodic re-fetch would keep resetting
+  // `identitySnapshotAsOfMs` back to "just now", hiding exactly the aging
+  // the `identity_snapshot_age` zond exists to surface. A failed fetch
+  // deliberately leaves `identitySnapshotAsOfMs` at `null` rather than
+  // stamping a "successful" read that never happened.
+  const [identities, setIdentities] = useState<IdryxIdentity[] | null>(null);
+  const [identityAlerts, setIdentityAlerts] = useState<IdryxAlert[] | null>(null);
+  const [identitySnapshotAsOfMs, setIdentitySnapshotAsOfMs] = useState<number | null>(null);
 
   const [busLoaded, setBusLoaded] = useState(false);
   const [busEventCount, setBusEventCount] = useState(0);
@@ -159,6 +205,26 @@ export function PostureView() {
   const [schemasSeen, setSchemasSeen] = useState<ReadonlySet<string>>(new Set());
 
   const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (identityStatus?.state !== "ready") return;
+    let cancelled = false;
+    void Promise.all([fetchIdentities(), fetchAlerts()])
+      .then(([ids, alerts]) => {
+        if (cancelled) return;
+        setIdentities(ids);
+        setIdentityAlerts(alerts);
+        setIdentitySnapshotAsOfMs(Date.now());
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setIdentities([]);
+        setIdentityAlerts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [identityStatus?.state]);
 
   // Policies: only once Wardryx is actually ready (mirrors PolicyView.tsx's
   // own `ready` gate for the exact same read), then on the same 20s cadence.
@@ -244,7 +310,7 @@ export function PostureView() {
     return () => window.clearInterval(id);
   }, []);
 
-  const findings = computePostureFindings({
+  const postureInput = {
     moneyStatus,
     policyStatus,
     policies,
@@ -253,13 +319,20 @@ export function PostureView() {
     lastEventAtMs,
     schemasSeen,
     nowMs,
-  });
+    identityStatus,
+    identities,
+    identityAlerts,
+    identitySnapshotAsOfMs,
+  };
+  const stackFindings = computeStackPostureFindings(postureInput);
+  const identityFindings = computeIdentityPostureFindings(postureInput);
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-2">
         <PlaneChip label="money" ready={moneyStatus?.state === "ready"} text={moneyStatusLabel(moneyStatus)} />
         <PlaneChip label="policy" ready={policyStatus?.state === "ready"} text={policyStatusLabel(policyStatus)} />
+        <PlaneChip label="identity" ready={identityStatus?.state === "ready"} text={identityStatusLabel(identityStatus)} />
       </div>
 
       {policiesError && (
@@ -271,7 +344,16 @@ export function PostureView() {
       <section className="flex flex-col gap-2">
         <SectionHeader title="Stack posture" />
         <div className="flex flex-col gap-2">
-          {findings.map((f) => (
+          {stackFindings.map((f) => (
+            <FindingRow key={f.id} finding={f} />
+          ))}
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Identity + Wardryx admin" />
+        <div className="flex flex-col gap-2">
+          {identityFindings.map((f) => (
             <FindingRow key={f.id} finding={f} />
           ))}
         </div>

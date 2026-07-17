@@ -31,6 +31,12 @@
 //! all - they read the same `AppState.events_dir` `recent_events` already
 //! reads, straight off the shared `genaryx-core` `Store`, so there is
 //! nothing to bootstrap in `setup` for them.
+//!
+//! `replay::run_events` (docs/PHASE3.md Wave 4: Run Replay) is the same
+//! shape again - a fourth reader of `AppState.events_dir`'s Store, no managed
+//! state of its own. The playback clock itself (play/pause/scrub/speed) is
+//! pure frontend state over that one fetched list; see `replay.rs`'s module
+//! doc.
 
 mod events;
 mod graph;
@@ -38,6 +44,7 @@ mod identity;
 mod live;
 mod money;
 mod policy;
+mod replay;
 mod tray;
 
 use events::UiEvent;
@@ -171,6 +178,7 @@ pub fn run() {
             graph::agent_graph,
             graph::agent_slice,
             graph::agent_events,
+            replay::run_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

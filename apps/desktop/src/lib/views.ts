@@ -1,5 +1,5 @@
 /** The top-level views the app shell switches between. */
-export type ViewId = "overview" | "money" | "policy" | "identity" | "graph" | "posture" | "bus";
+export type ViewId = "overview" | "money" | "policy" | "identity" | "graph" | "replay" | "posture" | "bus";
 
 export const VIEWS: readonly { id: ViewId; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -7,6 +7,7 @@ export const VIEWS: readonly { id: ViewId; label: string }[] = [
   { id: "policy", label: "Policy" },
   { id: "identity", label: "Identity" },
   { id: "graph", label: "Graph" },
+  { id: "replay", label: "Replay" },
   { id: "posture", label: "Posture" },
   { id: "bus", label: "Bus Explorer" },
 ];

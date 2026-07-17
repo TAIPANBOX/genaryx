@@ -29,7 +29,15 @@ function Loading() {
   );
 }
 
-export function MoneyView({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {
+export function MoneyView({
+  onOpenAgent,
+  onOpenReplay,
+}: {
+  onOpenAgent: (agentId: string) => void;
+  /** Phase-3 wave-4 deep link (docs/PHASE3.md W4): opens Run Replay seeded
+   * with a run row's `run_id` - threaded straight through to `RunsTable`. */
+  onOpenReplay: (runId: string) => void;
+}) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
 
@@ -121,7 +129,13 @@ export function MoneyView({ onOpenAgent }: { onOpenAgent: (agentId: string) => v
         {runs === null ? (
           <Loading />
         ) : (
-          <RunsTable runs={runs} onKill={handleKill} onSetBudget={handleSetBudget} onOpenAgent={onOpenAgent} />
+          <RunsTable
+            runs={runs}
+            onKill={handleKill}
+            onSetBudget={handleSetBudget}
+            onOpenAgent={onOpenAgent}
+            onReplayRun={onOpenReplay}
+          />
         )}
       </section>
 

@@ -116,11 +116,15 @@ export function Agent360({
   onClose,
   onOpenAgent,
   onNavigate,
+  onOpenReplay,
 }: {
   agentId: string;
   onClose: () => void;
   onOpenAgent: (agentId: string) => void;
   onNavigate: (view: ViewId) => void;
+  /** Phase-3 wave-4 deep link (docs/PHASE3.md W4): opens Run Replay seeded
+   * with one of this agent's runs, from the Money section below. */
+  onOpenReplay: (runId: string) => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -430,7 +434,7 @@ export function Agent360({
                   <div
                     key={r.run_id}
                     className="grid items-center gap-3 px-3 py-1.5 bus-row"
-                    style={{ gridTemplateColumns: "1fr 90px 90px 64px" }}
+                    style={{ gridTemplateColumns: "1fr 90px 90px 64px 60px" }}
                   >
                     <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }} title={r.run_id}>
                       {r.run_id}
@@ -447,6 +451,17 @@ export function Agent360({
                           killed
                         </span>
                       )}
+                    </span>
+                    <span className="flex justify-end">
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        style={{ width: "auto", padding: "0 8px", fontSize: 10.5 }}
+                        title={`Replay run ${r.run_id}`}
+                        onClick={() => onOpenReplay(r.run_id)}
+                      >
+                        Replay
+                      </button>
                     </span>
                   </div>
                 ))}

@@ -4,13 +4,14 @@ import type { Run } from "../moneyTypes";
 import { BudgetEditor } from "./BudgetEditor";
 import { ConfirmButton } from "./ConfirmButton";
 
-const COLUMNS = "1fr 130px 90px 90px 60px 60px 150px 210px";
+const COLUMNS = "1fr 130px 90px 90px 60px 60px 150px 268px";
 
 export function RunsTable({
   runs,
   onKill,
   onSetBudget,
   onOpenAgent,
+  onReplayRun,
 }: {
   runs: Run[];
   /** Break-glass (Phase-2 wave 3B): `reason` is the operator's mandatory,
@@ -21,6 +22,10 @@ export function RunsTable({
   /** Phase-3 wave-3 deep link (docs/PHASE3.md W3): opens the Agent 360 card
    * for a row's `agent_id`. */
   onOpenAgent: (agentId: string) => void;
+  /** Phase-3 wave-4 deep link (docs/PHASE3.md W4): opens Run Replay seeded
+   * with this row's `run_id`. Offered regardless of `killed` - a killed
+   * run's history is exactly the kind of thing worth replaying. */
+  onReplayRun: (runId: string) => void;
 }) {
   if (runs.length === 0) {
     return (
@@ -82,6 +87,15 @@ export function RunsTable({
             {formatTimestamp(r.last_seen)}
           </span>
           <span className="flex items-center gap-1.5 justify-end">
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 8px", fontSize: 11 }}
+              title={`Replay run ${r.run_id}`}
+              onClick={() => onReplayRun(r.run_id)}
+            >
+              Replay
+            </button>
             {r.killed ? (
               <span className="badge" style={cssVar("tone", "var(--faint)")}>
                 killed
