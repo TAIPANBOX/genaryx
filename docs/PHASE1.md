@@ -11,10 +11,19 @@ kills the run with a hardware-signed (Secure Enclave) mutation the Cloud accepts
 
 ## Scope
 
-- [ ] Cloud REST connector (`crates/connectors`): typed client for
+- [x] Cloud REST connector (`crates/connectors`): typed client for
       summary/runs/agents/savings/series/incidents/alerts/audit(+verify); reuse
       the Phase-0 `CloudSse` for the live ticker; ES256-signed mutations
       (kill/budget/ack) via `es256`+`enclave` (spike #2), device-pairing.
+      **Status:** `CloudClient` (`crates/connectors/src/cloud_rest.rs`) reads
+      summary/runs/agents/savings/incidents/alerts/audit-verify and signs
+      kill/budget/ack via `genaryx-signing::es256` - works with any
+      `Es256Signer`, `enclave::SecKeySigner` included, unchanged; pairing
+      (`pair/new` + `pair`) implemented. `series` deferred - a chart-panel
+      concern, not part of the wave-1 data spine. Live-proven against a real
+      `tokenfuse-cloud`: pair, reads, a signed kill, a signed budget change,
+      and a tampered signature rejected `403` - see
+      `crates/connectors/tests/cloud_rest_test.rs`.
 - [ ] CommandBroker (`crates/core`): draft -> precheck -> (Wardryx decide, ENT)
       -> sign -> execute -> journal + emit `console_command`; fail-closed,
       break-glass ceremony.

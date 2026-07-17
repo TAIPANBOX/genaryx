@@ -767,7 +767,11 @@ version = "0.0.0"
 dependencies = [
  "futures-util",
  "genaryx-core",
+ "genaryx-signing",
  "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
  "tokio",
 ]
 

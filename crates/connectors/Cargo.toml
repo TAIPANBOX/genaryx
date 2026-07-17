@@ -10,14 +10,30 @@ description = "Genaryx environment/service connectors (FS, SSH, Cloud SSE, cloud
 
 [dependencies]
 genaryx-core = { path = "../core" }
+# Phase-1 wave 1 (docs/PHASE1.md): CloudClient's ES256 mutation signing
+# (`es256::sign_mutation`, `Es256Signer`) - reused, never reimplemented. See
+# crates/connectors/src/cloud_rest.rs module docs.
+genaryx-signing = { path = "../signing" }
 # Phase-0 spike #6 (06 §7): CloudSse's HTTP transport; `stream` unlocks
 # `Response::bytes_stream()`, the raw byte source our own SseDecoder parses.
 # See crates/connectors/src/cloud_sse.rs module docs for the transport
-# choice rationale.
+# choice rationale. Phase-1 wave 1 reuses the same client type for CloudClient
+# (plain async request/response, no new reqwest feature needed - responses
+# are parsed via serde_json rather than reqwest's own `json` feature).
 reqwest = { workspace = true }
 # Only for `StreamExt::next()` on `bytes_stream()`.
 futures-util = { workspace = true }
 # The background connect/decode/reconnect loop's own small current-thread
 # runtime (see cloud_sse.rs module docs for why it is not driven from
-# `EventSource::poll()` directly).
+# `EventSource::poll()` directly). Phase-1's CloudClient also uses it for
+# `#[tokio::test]` in its own unit tests and is awaited directly by whatever
+# async context (Tauri command, FFI bridge) calls it in the real shells.
 tokio = { workspace = true }
+# Phase-1 wave 1: CloudClient's typed DTOs (store.rs/http.rs response shapes)
+# and mutation request bodies.
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Phase-1 wave 1: ConnectorError's non-2xx/plan-required/signature-rejected
+# variants (thiserror::Error derive), matching the pattern genaryx-core's
+# error.rs and genaryx-signing's es256::SigningError already use.
+thiserror = { workspace = true }
