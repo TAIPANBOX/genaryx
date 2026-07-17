@@ -3,12 +3,18 @@
 //! the demo fixtures and starts the live feeder (see `live.rs`);
 //! `recent_events` reads that same Store. `events::mock_events` is now only
 //! the fail-closed fallback for when startup seeding or a Store read fails.
+//!
+//! `setup` also manages the Money panel's state (see `money/`): a paired
+//! `CloudClient` over TokenFuse Cloud, resolved in the background so a slow
+//! or absent Cloud never delays the window opening.
 
 mod events;
 mod live;
+mod money;
 
 use events::UiEvent;
 use live::AppState;
+use money::MoneyState;
 use tauri::Manager;
 
 /// Recent events for the Bus Explorer, newest first, capped at `limit`.
@@ -52,10 +58,35 @@ pub fn run() {
                     None
                 }
             };
+
+            // Money panel: manage the `Bootstrapping` placeholder immediately
+            // (so every money_* command has state to read from the instant
+            // the app starts), then resolve the real connection in the
+            // background - see `money/state.rs`'s module docs for why this is
+            // a `spawn`, never a `block_on`, inside `setup`.
+            app.manage(MoneyState::pending());
+            let money_handle = app.handle().clone();
+            let money_events_dir = events_dir.clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = money::bootstrap(money_events_dir).await;
+                let state = money_handle.state::<MoneyState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![recent_events])
+        .invoke_handler(tauri::generate_handler![
+            recent_events,
+            money::commands::money_status,
+            money::commands::money_overview,
+            money::commands::money_runs,
+            money::commands::money_incidents,
+            money::commands::money_savings,
+            money::commands::money_kill_run,
+            money::commands::money_set_budget,
+            money::commands::money_ack_incident,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");
 }

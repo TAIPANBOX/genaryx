@@ -1,5 +1,5 @@
-import { BusExplorer } from "./components/BusExplorer";
+import { AppShell } from "./components/AppShell";
 
 export default function App() {
-  return <BusExplorer />;
+  return <AppShell />;
 }

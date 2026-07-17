@@ -44,6 +44,23 @@ tokio = { version = "1.52", features = ["sync"] }
 # The frozen core (crates/core, HEAD 51ebbe3): Store + IngestService, see
 # src/live.rs for the wiring.
 genaryx-core = { path = "../../../crates/core" }
+# Phase-1 wave 3 (docs/PHASE1.md): the Money + Overview panel's data spine -
+# typed reads plus ES256-signed mutations against TokenFuse Cloud. See
+# src/money/ for the wiring (env discovery, pairing, Tauri commands).
+genaryx-connectors = { path = "../../../crates/connectors" }
+# Phase-1 wave 3: `SoftwareSigner` (portable ES256 device signing) for the
+# Money panel's dev-pairing flow. `enclave::SecKeySigner` (Secure Enclave) is
+# a later hardware wave, not wired here yet.
+genaryx-signing = { path = "../../../crates/signing" }
+
+# Only for `src/money/state.rs`'s gated live-e2e test (spawns a real
+# `tokenfuse-cloud` and polls its `/healthz`, mirroring
+# `crates/connectors/tests/cloud_rest_test.rs`): `reqwest` already reaches
+# this build transitively through `genaryx-connectors`, but a transitive
+# dependency is not directly nameable from this crate's own code without
+# being listed here too.
+[dev-dependencies]
+reqwest = "0.13"
 
 [profile.release]
 lto = "thin"

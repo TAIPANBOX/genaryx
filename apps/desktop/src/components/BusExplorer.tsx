@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchRecentEvents, type EventsSource } from "../lib/recentEvents";
 import type { UiEvent } from "../types";
 import { EventRow } from "./EventRow";
-import { Header } from "./Header";
+import { BusStatusBar } from "./Header";
 
 /** Comfortably above the ~40-event mock timeline; also the cap applied to
  * the live feed below so the list never grows unbounded. */
@@ -21,20 +21,17 @@ const COLUMNS = "84px 108px 190px 1fr 108px 24px";
  * The Bus Explorer: a dense, virtualized live-event list. Rows are windowed
  * with `@tanstack/react-virtual` (only what is on screen, plus overscan,
  * ever mounts) so the list stays smooth however many events the bus has
- * carried. This component owns the whole page: the app header (name + live
- * counter + theme toggle), the column header, and the scrolling list.
+ * carried. One of three views under `AppShell` (alongside Overview and
+ * Money); owns its own status strip (`BusStatusBar`), column header, and
+ * the scrolling list, but not the app-wide brand/nav/theme chrome, which
+ * `AppShell`/`AppHeader` render once above whichever view is active.
  */
 export function BusExplorer() {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [events, setEvents] = useState<UiEvent[]>([]);
   const [source, setSource] = useState<EventsSource>("mock");
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const parentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,13 +100,8 @@ export function BusExplorer() {
   };
 
   return (
-    <div className="app">
-      <Header
-        count={events.length}
-        source={source}
-        theme={theme}
-        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-      />
+    <div className="flex-1 min-h-0 flex flex-col">
+      <BusStatusBar count={events.length} source={source} />
 
       <div
         className="grid gap-3 px-4 py-2 shrink-0"

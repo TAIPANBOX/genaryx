@@ -1,0 +1,97 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import type {
+  Incident,
+  MoneyError,
+  MoneyStatus,
+  MutationOutcome,
+  Overview,
+  Run,
+  Savings,
+} from "../moneyTypes";
+
+/** Thrown by every fetcher/mutator below when there is no Tauri runtime to
+ * talk to (a plain `vite build`/browser preview) - mirrors
+ * `lib/recentEvents.ts`'s `isTauri()` guard, except the Money panel has no
+ * sensible mock data to fall back to (there is no mock Cloud), so it
+ * surfaces the same "no environment" state a real no-descriptor box would
+ * show rather than inventing fake numbers. */
+const NO_ENVIRONMENT_ERROR: MoneyError = { kind: "no_environment" };
+
+/** Normalize whatever `invoke()` rejected with into a `MoneyError`. Tauri
+ * passes a command's `Err` value through as the structured object it was
+ * serialized from, so this is normally already a `MoneyError` in disguise;
+ * the fallback branch only matters for a transport-level IPC failure (e.g.
+ * "command not found"), which is not a shape `money::commands::MoneyError`
+ * itself ever produces. */
+function toMoneyError(err: unknown): MoneyError {
+  if (err && typeof err === "object" && "kind" in err) {
+    return err as MoneyError;
+  }
+  return { kind: "cloud", status: null, message: err instanceof Error ? err.message : String(err) };
+}
+
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauri()) throw NO_ENVIRONMENT_ERROR;
+  try {
+    return await invoke<T>(command, args);
+  } catch (err) {
+    throw toMoneyError(err);
+  }
+}
+
+/** Whole-panel connection state. Never throws: outside Tauri (or on any IPC
+ * failure) it resolves to a renderable status instead, matching every other
+ * money_* fetcher's fail-closed contract but without a `MoneyError` to
+ * unwrap since this is the command the UI uses to decide whether to call
+ * the others at all. */
+export async function fetchMoneyStatus(): Promise<MoneyStatus> {
+  if (!isTauri()) return { state: "no_environment" };
+  try {
+    return await invoke<MoneyStatus>("money_status");
+  } catch (err) {
+    return {
+      state: "pairing_failed",
+      source: { source: "env_fallback" },
+      cloud_url: "",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export const fetchOverview = (): Promise<Overview> => call<Overview>("money_overview");
+export const fetchRuns = (): Promise<Run[]> => call<Run[]>("money_runs");
+export const fetchIncidents = (): Promise<Incident[]> => call<Incident[]>("money_incidents");
+export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings");
+
+// Argument keys are snake_case on purpose: the Rust side pins
+// `#[tauri::command(rename_all = "snake_case")]` on every mutation so the
+// whole IPC surface (args AND return values) stays one convention, matching
+// `UiEvent`'s existing snake_case wire shape rather than Tauri's camelCase
+// default.
+
+export const killRun = (runId: string): Promise<MutationOutcome> =>
+  call<MutationOutcome>("money_kill_run", { run_id: runId });
+
+export const setBudget = (runId: string, budgetUsd: number): Promise<MutationOutcome> =>
+  call<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd });
+
+export const ackIncident = (id: string): Promise<MutationOutcome> =>
+  call<MutationOutcome>("money_ack_incident", { id });
+
+/** Human-readable text for any `MoneyError` - used for the plain error
+ * banner. `plan_required` is deliberately NOT routed through this: the UI
+ * renders that one as an upsell tile instead of an error message (spec). */
+export function describeMoneyError(err: MoneyError): string {
+  switch (err.kind) {
+    case "bootstrapping":
+      return "Still connecting to the Cloud environment.";
+    case "no_environment":
+      return "No TokenFuse Cloud environment found.";
+    case "pairing_failed":
+      return `Pairing failed: ${err.reason}`;
+    case "plan_required":
+      return `Upgrade required: ${err.feature} is not on the ${err.org} plan.`;
+    case "cloud":
+      return err.status !== null ? `Cloud error ${err.status}: ${err.message}` : err.message;
+  }
+}
