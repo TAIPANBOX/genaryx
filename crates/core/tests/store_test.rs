@@ -97,6 +97,42 @@ fn events_for_agent_filters_by_agent_id() {
 }
 
 #[test]
+fn events_for_run_is_chronological_and_scoped() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+    store
+        .insert_batch(&canonical_events())
+        .expect("insert_batch");
+
+    let all = store.recent_events(100).expect("recent_events");
+    let target = all
+        .iter()
+        .find_map(|e| e.run_id.clone())
+        .expect("at least one fixture event carries a run_id");
+    let expected = all
+        .iter()
+        .filter(|e| e.run_id.as_deref() == Some(target.as_str()))
+        .count();
+
+    let run = store.events_for_run(&target, 100).expect("events_for_run");
+    assert_eq!(run.len(), expected, "must return exactly this run's events");
+    assert!(
+        run.iter()
+            .all(|e| e.run_id.as_deref() == Some(target.as_str())),
+        "only the target run's events"
+    );
+    // OLDEST-first (the reverse of recent_events), so replay plays forward.
+    assert!(run.windows(2).all(|w| w[0].id < w[1].id));
+
+    // an unknown run is a clean empty vec, never an error
+    assert!(
+        store
+            .events_for_run("run-does-not-exist", 100)
+            .expect("events_for_run unknown")
+            .is_empty()
+    );
+}
+
+#[test]
 fn on_behalf_of_and_data_round_trip() {
     let store = Store::open_in_memory().expect("open in-memory store");
     let events = canonical_events();

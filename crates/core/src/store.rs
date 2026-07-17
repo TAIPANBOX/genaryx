@@ -271,6 +271,29 @@ impl Store {
         Ok(out)
     }
 
+    /// Every event of one run, OLDEST-first (by `id`) - the chronological
+    /// timeline a Run Replay scrubs through (PHASE3 W4). Uses the existing
+    /// `idx_events_run_id` index; `limit` caps a pathologically long run. Note
+    /// this is oldest-first, the reverse of [`Store::recent_events`] /
+    /// [`Store::events_for_agent`], because replay plays forward in time.
+    pub fn events_for_run(&self, run_id: &str, limit: usize) -> Result<Vec<StoredEvent>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, env, ts, source, type, agent_id, run_id, severity, schema, \
+                 on_behalf_of, data, prev_hash, raw, file, off \
+                 FROM events WHERE run_id = ?1 ORDER BY id ASC LIMIT ?2",
+            )
+            .map_err(store_err)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = stmt.query(params![run_id, limit]).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            out.push(stored_event_from_row(row)?);
+        }
+        Ok(out)
+    }
+
     /// The delegation-relevant columns of every event, oldest-first (by `id`),
     /// for batch-building the core [`crate::graph::DelegationGraph`] (PHASE3
     /// W1). Only the columns the graph needs, so it stays cheap over a large
