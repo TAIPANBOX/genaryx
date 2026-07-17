@@ -125,7 +125,11 @@ pub fn agent_slice(agent_id: String, state: tauri::State<'_, AppState>) -> Agent
 /// client-side to `source == "wardryx"`) its Policy section. Mirrors
 /// `recent_events`'s exact Store-open + fail-closed-to-empty contract.
 #[tauri::command(rename_all = "snake_case")]
-pub fn agent_events(agent_id: String, limit: usize, state: tauri::State<'_, AppState>) -> Vec<UiEvent> {
+pub fn agent_events(
+    agent_id: String,
+    limit: usize,
+    state: tauri::State<'_, AppState>,
+) -> Vec<UiEvent> {
     build_agent_events(state.events_dir.as_deref(), &agent_id, limit)
 }
 
@@ -218,7 +222,10 @@ mod tests {
             .collect();
         files.sort();
         for path in &files {
-            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+            let id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
             ingest
                 .add_file_source(format!("filetail:{id}"), path)
                 .expect("add_file_source");
@@ -242,10 +249,20 @@ mod tests {
         let dir = seed_demo_dir();
         let lv = build_agent_graph(Some(&dir));
 
-        assert!(!lv.nodes.is_empty(), "demo data must produce a non-empty graph");
-        assert!(!lv.edges.is_empty(), "the demo delegation chain must produce edges");
+        assert!(
+            !lv.nodes.is_empty(),
+            "demo data must produce a non-empty graph"
+        );
+        assert!(
+            !lv.edges.is_empty(),
+            "the demo delegation chain must produce edges"
+        );
         for n in &lv.nodes {
-            assert!(n.x.is_finite() && n.y.is_finite(), "{} has a non-finite position", n.id);
+            assert!(
+                n.x.is_finite() && n.y.is_finite(),
+                "{} has a non-finite position",
+                n.id
+            );
             assert!((0.0..=lv.width).contains(&n.x), "{} x out of bounds", n.id);
             assert!((0.0..=lv.height).contains(&n.y), "{} y out of bounds", n.id);
         }
@@ -264,22 +281,33 @@ mod tests {
 
         // The orchestrator itself acts directly in its own (non-delegated)
         // runs, so it must be a real, acted-on node, not just a chain link.
-        let node = slice.node.expect("orchestrator must be a node in the demo graph");
+        let node = slice
+            .node
+            .expect("orchestrator must be a node in the demo graph");
         assert_eq!(node.id, DEMO_ORCHESTRATOR);
         assert!(node.event_count > 0);
 
         // Exactly one parent: the fixed 2-element chain's root user.
         assert_eq!(
-            slice.parents.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            slice
+                .parents
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
             [DEMO_USER]
         );
         // At least one delegatee: every 4th non-orchestrator run routes
         // through the orchestrator on its way to the acting agent.
-        assert!(!slice.children.is_empty(), "orchestrator must have delegatees in demo data");
+        assert!(
+            !slice.children.is_empty(),
+            "orchestrator must have delegatees in demo data"
+        );
 
         // An agent never seen on the bus still yields an honest empty slice.
         let unknown = build_agent_slice(Some(&dir), "agent://taipanbox.dev/demo/nobody-at-all");
-        assert!(unknown.node.is_none() && unknown.parents.is_empty() && unknown.children.is_empty());
+        assert!(
+            unknown.node.is_none() && unknown.parents.is_empty() && unknown.children.is_empty()
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -289,13 +317,22 @@ mod tests {
         let dir = seed_demo_dir();
         let events = build_agent_events(Some(&dir), DEMO_ORCHESTRATOR, 100);
 
-        assert!(!events.is_empty(), "the orchestrator must have its own events in demo data");
+        assert!(
+            !events.is_empty(),
+            "the orchestrator must have its own events in demo data"
+        );
         for e in &events {
-            assert_eq!(e.agent_id, DEMO_ORCHESTRATOR, "agent_events must not leak other agents' rows");
+            assert_eq!(
+                e.agent_id, DEMO_ORCHESTRATOR,
+                "agent_events must not leak other agents' rows"
+            );
         }
         // Newest-first, matching `Store::events_for_agent`'s own contract.
         for pair in events.windows(2) {
-            assert!(pair[0].id >= pair[1].id, "events must be newest-first by id");
+            assert!(
+                pair[0].id >= pair[1].id,
+                "events must be newest-first by id"
+            );
         }
 
         // A `limit` of 0 must not error, an empty result must not error.

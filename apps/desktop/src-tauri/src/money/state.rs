@@ -208,7 +208,8 @@ async fn connect(resolved: &ResolvedEnv) -> Result<(CloudClient, String, &'stati
     let mut client = CloudClient::new(resolved.cloud_url.clone(), resolved.admin_bearer.clone())
         .map_err(|e| e.to_string())?;
 
-    let signer = SoftwareSigner::generate().map_err(|e| format!("could not generate a device key: {e}"))?;
+    let signer =
+        SoftwareSigner::generate().map_err(|e| format!("could not generate a device key: {e}"))?;
     let sig_fpr = signer.assurance().label();
 
     let paired = client
@@ -217,7 +218,11 @@ async fn connect(resolved: &ResolvedEnv) -> Result<(CloudClient, String, &'stati
         .map_err(|e| format!("device pairing failed: {e}"))?;
     let org_domain = sanitize_domain(&paired.org);
 
-    client.attach_device(paired.device_id.clone(), paired.device_token.clone(), Box::new(signer));
+    client.attach_device(
+        paired.device_id.clone(),
+        paired.device_token.clone(),
+        Box::new(signer),
+    );
     Ok((client, org_domain, sig_fpr))
 }
 
@@ -317,7 +322,10 @@ mod tests {
     #[test]
     fn pending_starts_in_the_bootstrapping_state() {
         let state = MoneyState::pending();
-        let guard = state.inner.try_lock().expect("uncontended right after construction");
+        let guard = state
+            .inner
+            .try_lock()
+            .expect("uncontended right after construction");
         assert!(matches!(&*guard, MoneyInner::Bootstrapping));
     }
 
@@ -331,8 +339,11 @@ mod tests {
         // one of the resulting variants is a valid, renderable outcome.
         let inner = bootstrap(None).await;
         match inner {
-            MoneyInner::Bootstrapping => panic!("bootstrap must resolve past its own pending state"),
-            MoneyInner::NoEnvironment | MoneyInner::PairingFailed { .. } | MoneyInner::Ready(_) => {}
+            MoneyInner::Bootstrapping => {
+                panic!("bootstrap must resolve past its own pending state")
+            }
+            MoneyInner::NoEnvironment | MoneyInner::PairingFailed { .. } | MoneyInner::Ready(_) => {
+            }
         }
     }
 
@@ -392,7 +403,10 @@ mod tests {
         }
         let binary = repo.join("target/debug/tokenfuse-cloud");
         if !binary.is_file() {
-            eprintln!("money::state live_e2e: SKIPPING: {} is missing", binary.display());
+            eprintln!(
+                "money::state live_e2e: SKIPPING: {} is missing",
+                binary.display()
+            );
             return None;
         }
         Command::new(&binary)
@@ -420,7 +434,9 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if let Ok(Some(status)) = child.try_wait() {
-                eprintln!("money::state live_e2e: SKIPPING: tokenfuse-cloud exited early ({status})");
+                eprintln!(
+                    "money::state live_e2e: SKIPPING: tokenfuse-cloud exited early ({status})"
+                );
                 return None;
             }
             if let Ok(resp) = http.get(format!("{base}/healthz")).send().await
@@ -431,7 +447,9 @@ mod tests {
             if Instant::now() >= deadline {
                 let _ = child.kill();
                 let _ = child.wait();
-                eprintln!("money::state live_e2e: SKIPPING: tokenfuse-cloud never answered /healthz");
+                eprintln!(
+                    "money::state live_e2e: SKIPPING: tokenfuse-cloud never answered /healthz"
+                );
                 return None;
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -452,19 +470,29 @@ mod tests {
             cloud_url: base.clone(),
             admin_bearer: "devkey".to_string(),
         };
-        let (client, org_domain, sig_fpr) =
-            connect(&resolved).await.expect("connect() must pair against a live Cloud");
-        assert_eq!(org_domain, "default", "devkey fallback resolves org=default (unsanitized already-safe)");
+        let (client, org_domain, sig_fpr) = connect(&resolved)
+            .await
+            .expect("connect() must pair against a live Cloud");
+        assert_eq!(
+            org_domain, "default",
+            "devkey fallback resolves org=default (unsanitized already-safe)"
+        );
         assert_eq!(sig_fpr, "software-signed");
         assert!(client.has_device());
 
         // ---- a real read ----
         let summary = client.summary().await.expect("GET /v1/summary");
-        assert_eq!(summary.runs, 0, "a freshly spawned process has an empty org view");
+        assert_eq!(
+            summary.runs, 0,
+            "a freshly spawned process has an empty org view"
+        );
 
         // ---- a real signed mutation ----
         let run_id = format!("money-state-live-e2e-{}", std::process::id());
-        let killed = client.kill_run(&run_id).await.expect("signed kill_run must be accepted (200)");
+        let killed = client
+            .kill_run(&run_id)
+            .await
+            .expect("signed kill_run must be accepted (200)");
         assert_eq!(killed.killed, run_id);
 
         // ---- the exact CommandRecord shape commands.rs::finish_mutation
@@ -504,19 +532,34 @@ mod tests {
         genaryx_core::command::record(&store, &events_path, &org_domain, "live-e2e-host", &rec)
             .expect("command::record must journal + append the console_command line");
 
-        let body = std::fs::read_to_string(&events_path).expect("read the console events file back");
+        let body =
+            std::fs::read_to_string(&events_path).expect("read the console events file back");
         let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(lines.len(), 1, "exactly one console_command line appended");
 
         let conformer = genaryx_core::Conformer::new().expect("embedded schemas must compile");
         let report = conformer.check_line(lines[0]);
-        assert!(report.valid, "appended console_command must conform: {:?}\n  line: {}", report.errors, lines[0]);
+        assert!(
+            report.valid,
+            "appended console_command must conform: {:?}\n  line: {}",
+            report.errors, lines[0]
+        );
 
-        let value: serde_json::Value = serde_json::from_str(lines[0]).expect("parse the appended line");
-        assert_eq!(value.get("source").and_then(|v| v.as_str()), Some("console"));
-        assert_eq!(value.get("type").and_then(|v| v.as_str()), Some("console_command"));
+        let value: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("parse the appended line");
         assert_eq!(
-            value.get("data").and_then(|d| d.get("verify_result")).and_then(|v| v.as_str()),
+            value.get("source").and_then(|v| v.as_str()),
+            Some("console")
+        );
+        assert_eq!(
+            value.get("type").and_then(|v| v.as_str()),
+            Some("console_command")
+        );
+        assert_eq!(
+            value
+                .get("data")
+                .and_then(|d| d.get("verify_result"))
+                .and_then(|v| v.as_str()),
             Some("killed:true")
         );
 

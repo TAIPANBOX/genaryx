@@ -153,7 +153,10 @@ mod tests {
             .collect();
         files.sort();
         for path in &files {
-            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+            let id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
             ingest
                 .add_file_source(format!("filetail:{id}"), path)
                 .expect("add_file_source");
@@ -187,13 +190,23 @@ mod tests {
             "demo-run-000 is a fixed 3-call block run (policy_allow + budget_exhausted + memory_written)"
         );
         for e in &events {
-            assert_eq!(e.run_id.as_deref(), Some(DEMO_RUN), "run_events must not leak other runs' rows");
-            assert_eq!(e.agent_id, DEMO_RUN_AGENT, "every event of one run shares that run's acting agent");
+            assert_eq!(
+                e.run_id.as_deref(),
+                Some(DEMO_RUN),
+                "run_events must not leak other runs' rows"
+            );
+            assert_eq!(
+                e.agent_id, DEMO_RUN_AGENT,
+                "every event of one run shares that run's acting agent"
+            );
         }
         // Oldest-first, the reverse of `agent_events`/`recent_events` - see
         // `Store::events_for_run`'s own doc comment.
         for pair in events.windows(2) {
-            assert!(pair[0].id <= pair[1].id, "events must be oldest-first by id");
+            assert!(
+                pair[0].id <= pair[1].id,
+                "events must be oldest-first by id"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&dir);

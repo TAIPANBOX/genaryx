@@ -98,8 +98,20 @@ struct TrayRuntime {
 /// `money::commands` functions the window's own IPC commands call, which
 /// this module renders the same honest way the frontend does.
 pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    let burn_item = MenuItem::with_id(app, "burn_readout", "Genaryx: connecting…", false, None::<&str>)?;
-    let kill_item = MenuItem::with_id(app, KILL_ITEM_ID, "Kill last runaway (no data)", false, None::<&str>)?;
+    let burn_item = MenuItem::with_id(
+        app,
+        "burn_readout",
+        "Genaryx: connecting…",
+        false,
+        None::<&str>,
+    )?;
+    let kill_item = MenuItem::with_id(
+        app,
+        KILL_ITEM_ID,
+        "Kill last runaway (no data)",
+        false,
+        None::<&str>,
+    )?;
     let show_item = MenuItem::with_id(app, SHOW_ITEM_ID, "Show Genaryx", true, None::<&str>)?;
     let separator_a = PredefinedMenuItem::separator(app)?;
     let separator_b = PredefinedMenuItem::separator(app)?;
@@ -107,7 +119,14 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&burn_item, &kill_item, &separator_a, &show_item, &separator_b, &quit_item],
+        &[
+            &burn_item,
+            &kill_item,
+            &separator_a,
+            &show_item,
+            &separator_b,
+            &quit_item,
+        ],
     )?;
 
     let runtime = Arc::new(TrayRuntime {
@@ -126,7 +145,12 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
         .tooltip("Genaryx")
         .on_menu_event(move |app, event| handle_menu_event(app, event, &menu_runtime))
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 show_main_window(tray.app_handle());
             }
         })
@@ -190,13 +214,20 @@ async fn on_kill_clicked(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
     let already_armed_for_target = {
         let mut armed = runtime.armed.lock().unwrap();
         let matched = armed.as_deref() == Some(target.run_id.as_str());
-        *armed = if matched { None } else { Some(target.run_id.clone()) };
+        *armed = if matched {
+            None
+        } else {
+            Some(target.run_id.clone())
+        };
         matched
     };
 
     if !already_armed_for_target {
-        let label =
-            format!("Confirm: kill {} ({})? Click again", short_run_id(&target.run_id), format_usd(target.spent_usd));
+        let label = format!(
+            "Confirm: kill {} ({})? Click again",
+            short_run_id(&target.run_id),
+            format_usd(target.spent_usd)
+        );
         log_menu_result("arm kill_last_runaway", runtime.kill_item.set_text(label));
 
         let app = app.clone();
@@ -246,7 +277,9 @@ async fn refresh(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
         Ok(o) => format_burn_line(runtime, o),
         Err(money::commands::MoneyError::Bootstrapping) => "Genaryx: connecting…".to_string(),
         Err(money::commands::MoneyError::NoEnvironment) => "Genaryx: no environment".to_string(),
-        Err(money::commands::MoneyError::PairingFailed { .. }) => "Genaryx: pairing failed".to_string(),
+        Err(money::commands::MoneyError::PairingFailed { .. }) => {
+            "Genaryx: pairing failed".to_string()
+        }
         Err(_) => "Genaryx: no data".to_string(),
     };
     log_menu_result("update burn_readout", runtime.burn_item.set_text(burn_text));
@@ -258,30 +291,55 @@ async fn refresh(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
     let runs = money::commands::money_runs(app.state::<MoneyState>()).await;
     match runs {
         Ok(list) => {
-            let top = list.iter().filter(|r| !r.killed).reduce(|a, b| if b.spent_usd > a.spent_usd { b } else { a });
+            let top = list
+                .iter()
+                .filter(|r| !r.killed)
+                .reduce(|a, b| if b.spent_usd > a.spent_usd { b } else { a });
             match top {
                 Some(run) => {
-                    *runtime.target.lock().unwrap() =
-                        Some(RunawayTarget { run_id: run.run_id.clone(), spent_usd: run.spent_usd });
-                    let label =
-                        format!("Kill last runaway - {} ({})", short_run_id(&run.run_id), format_usd(run.spent_usd));
-                    log_menu_result("update kill_last_runaway text", runtime.kill_item.set_text(label));
-                    log_menu_result("enable kill_last_runaway", runtime.kill_item.set_enabled(true));
+                    *runtime.target.lock().unwrap() = Some(RunawayTarget {
+                        run_id: run.run_id.clone(),
+                        spent_usd: run.spent_usd,
+                    });
+                    let label = format!(
+                        "Kill last runaway - {} ({})",
+                        short_run_id(&run.run_id),
+                        format_usd(run.spent_usd)
+                    );
+                    log_menu_result(
+                        "update kill_last_runaway text",
+                        runtime.kill_item.set_text(label),
+                    );
+                    log_menu_result(
+                        "enable kill_last_runaway",
+                        runtime.kill_item.set_enabled(true),
+                    );
                 }
                 None => {
                     *runtime.target.lock().unwrap() = None;
                     log_menu_result(
                         "update kill_last_runaway text",
-                        runtime.kill_item.set_text("Kill last runaway (no active runs)"),
+                        runtime
+                            .kill_item
+                            .set_text("Kill last runaway (no active runs)"),
                     );
-                    log_menu_result("disable kill_last_runaway", runtime.kill_item.set_enabled(false));
+                    log_menu_result(
+                        "disable kill_last_runaway",
+                        runtime.kill_item.set_enabled(false),
+                    );
                 }
             }
         }
         Err(_) => {
             *runtime.target.lock().unwrap() = None;
-            log_menu_result("update kill_last_runaway text", runtime.kill_item.set_text("Kill last runaway (no data)"));
-            log_menu_result("disable kill_last_runaway", runtime.kill_item.set_enabled(false));
+            log_menu_result(
+                "update kill_last_runaway text",
+                runtime.kill_item.set_text("Kill last runaway (no data)"),
+            );
+            log_menu_result(
+                "disable kill_last_runaway",
+                runtime.kill_item.set_enabled(false),
+            );
         }
     }
 }
@@ -295,12 +353,17 @@ fn format_burn_line(runtime: &TrayRuntime, overview: &money::commands::OverviewD
     let mut last = runtime.last_sample.lock().unwrap();
     let rate_per_hour = last.and_then(|(prev_at, prev_spent)| {
         let elapsed_secs = now.duration_since(prev_at).as_secs_f64();
-        (elapsed_secs >= 1.0).then(|| (overview.total_spent_usd - prev_spent) / elapsed_secs * 3600.0)
+        (elapsed_secs >= 1.0)
+            .then(|| (overview.total_spent_usd - prev_spent) / elapsed_secs * 3600.0)
     });
     *last = Some((now, overview.total_spent_usd));
     drop(last);
 
-    let runs_word = if overview.active_runs == 1 { "run" } else { "runs" };
+    let runs_word = if overview.active_runs == 1 {
+        "run"
+    } else {
+        "runs"
+    };
     match rate_per_hour {
         Some(rate) if rate.is_finite() => {
             let sign = if rate < 0.0 { "-" } else { "+" };
@@ -311,7 +374,11 @@ fn format_burn_line(runtime: &TrayRuntime, overview: &money::commands::OverviewD
                 overview.active_runs
             )
         }
-        _ => format!("Spent {} - {} active {runs_word}", format_usd(overview.total_spent_usd), overview.active_runs),
+        _ => format!(
+            "Spent {} - {} active {runs_word}",
+            format_usd(overview.total_spent_usd),
+            overview.active_runs
+        ),
     }
 }
 
@@ -319,7 +386,11 @@ fn format_burn_line(runtime: &TrayRuntime, overview: &money::commands::OverviewD
 /// `MoneyFormat.usd` (SwiftUI) / `formatUsd` (`lib/format.ts`) exactly, so
 /// all three surfaces render the same figure identically.
 fn format_usd(value: f64) -> String {
-    let decimals = if value != 0.0 && value.abs() < 1.0 { 4 } else { 2 };
+    let decimals = if value != 0.0 && value.abs() < 1.0 {
+        4
+    } else {
+        2
+    };
     format!("${value:.decimals$}")
 }
 

@@ -272,7 +272,11 @@ mod tests {
         let mut ingest = IngestService::new(store, "local").expect("IngestService::new");
 
         let files = collect_ndjson_files(&dir).expect("collect_ndjson_files");
-        assert_eq!(files.len(), 6, "expected one ndjson file per emitting source");
+        assert_eq!(
+            files.len(),
+            6,
+            "expected one ndjson file per emitting source"
+        );
         for path in &files {
             let id = path
                 .file_stem()
@@ -292,7 +296,10 @@ mod tests {
         );
 
         assert_eq!(stats.quarantined, 0, "every demo line must conform");
-        assert_eq!(stats.inserted, generated, "every generated line should have been inserted");
+        assert_eq!(
+            stats.inserted, generated,
+            "every generated line should have been inserted"
+        );
         assert_eq!(
             ingest.store().event_count().expect("event_count"),
             generated as u64,

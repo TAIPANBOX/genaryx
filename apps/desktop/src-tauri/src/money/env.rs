@@ -168,7 +168,9 @@ fn try_load_descriptor(path: &Path) -> Option<ResolvedEnv> {
     let admin_bearer = keyfile.secrets.get(label)?.clone();
 
     Some(ResolvedEnv {
-        source: EnvSource::Taipan { name: descriptor.name },
+        source: EnvSource::Taipan {
+            name: descriptor.name,
+        },
         cloud_url,
         admin_bearer,
     })
@@ -264,7 +266,12 @@ mod tests {
         );
 
         let resolved = discover_taipan_in(&dir).expect("must resolve the fixture descriptor");
-        assert_eq!(resolved.source, EnvSource::Taipan { name: "p1full".to_string() });
+        assert_eq!(
+            resolved.source,
+            EnvSource::Taipan {
+                name: "p1full".to_string()
+            }
+        );
         assert_eq!(resolved.cloud_url, "http://127.0.0.1:41001");
         assert_eq!(resolved.admin_bearer, "tp_deadbeef:taipan-p1full:admin");
 
@@ -276,8 +283,14 @@ mod tests {
         let dir = unique_dir("siblings");
         // No `<name>.json` at all - only the sibling files a real environment
         // also leaves behind. These must never be mistaken for descriptors.
-        write(&dir.join("p1full.keys.json"), r#"{"name":"p1full","secrets":{}}"#);
-        write(&dir.join("p1full.pid.json"), r#"{"name":"p1full","processes":[]}"#);
+        write(
+            &dir.join("p1full.keys.json"),
+            r#"{"name":"p1full","secrets":{}}"#,
+        );
+        write(
+            &dir.join("p1full.pid.json"),
+            r#"{"name":"p1full","processes":[]}"#,
+        );
         assert!(discover_taipan_in(&dir).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -332,7 +345,12 @@ mod tests {
         );
 
         let resolved = discover_taipan_in(&dir).expect("must resolve one of the two");
-        assert_eq!(resolved.source, EnvSource::Taipan { name: "newer".to_string() });
+        assert_eq!(
+            resolved.source,
+            EnvSource::Taipan {
+                name: "newer".to_string()
+            }
+        );
         assert_eq!(resolved.cloud_url, "http://127.0.0.1:2");
 
         let _ = std::fs::remove_dir_all(&dir);

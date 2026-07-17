@@ -38,8 +38,8 @@
 
 use super::env::EnvSource;
 use super::state::{MoneyClient, MoneyInner, MoneyState};
-use genaryx_core::{CommandRecord, command};
 use genaryx_connectors::{ConnectorError, Incident, RunAgg, SavingsSummary, Severity, Summary};
+use genaryx_core::{CommandRecord, command};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -72,7 +72,12 @@ pub struct OverviewDto {
 }
 
 impl OverviewDto {
-    fn build(summary: &Summary, runs: &[RunAgg], incidents: &[Incident], savings: &SavingsSummary) -> Self {
+    fn build(
+        summary: &Summary,
+        runs: &[RunAgg],
+        incidents: &[Incident],
+        savings: &SavingsSummary,
+    ) -> Self {
         let killed_runs = runs.iter().filter(|r| r.killed).count() as u64;
         let open_incidents = incidents.iter().filter(|i| !i.acknowledged).count() as u64;
         Self {
@@ -172,8 +177,16 @@ pub enum MoneyStatusDto {
     /// startup, never a stuck state on its own.
     Bootstrapping,
     NoEnvironment,
-    PairingFailed { source: EnvSource, cloud_url: String, reason: String },
-    Ready { source: EnvSource, cloud_url: String, org_domain: String },
+    PairingFailed {
+        source: EnvSource,
+        cloud_url: String,
+        reason: String,
+    },
+    Ready {
+        source: EnvSource,
+        cloud_url: String,
+        org_domain: String,
+    },
 }
 
 /// Every error a money command can return. `PlanRequired` is kept
@@ -188,8 +201,14 @@ pub enum MoneyError {
     /// "not configured" in the first moment after startup.
     Bootstrapping,
     NoEnvironment,
-    PairingFailed { reason: String },
-    PlanRequired { feature: String, org: String, upgrade_url: String },
+    PairingFailed {
+        reason: String,
+    },
+    PlanRequired {
+        feature: String,
+        org: String,
+        upgrade_url: String,
+    },
     /// `money_kill_run`/`money_set_budget` was called with an empty or
     /// whitespace-only `reason` (Phase-2 wave 3B). Kept structurally
     /// distinct from `Cloud` rather than folded into its free-text
@@ -204,30 +223,44 @@ pub enum MoneyError {
     /// plain non-2xx, or a response that failed to parse. `status` is
     /// `None` when the request never got far enough to have one (couldn't
     /// sign, couldn't connect, couldn't parse a body).
-    Cloud { status: Option<u16>, message: String },
+    Cloud {
+        status: Option<u16>,
+        message: String,
+    },
 }
 
 impl From<ConnectorError> for MoneyError {
     fn from(e: ConnectorError) -> Self {
         match e {
-            ConnectorError::PlanRequired { feature, org, upgrade_url } => {
-                MoneyError::PlanRequired { feature, org, upgrade_url }
-            }
+            ConnectorError::PlanRequired {
+                feature,
+                org,
+                upgrade_url,
+            } => MoneyError::PlanRequired {
+                feature,
+                org,
+                upgrade_url,
+            },
             ConnectorError::SignatureRejected => MoneyError::Cloud {
                 status: Some(403),
                 message: "device signature rejected by the Cloud (signature_invalid)".to_string(),
             },
-            ConnectorError::Api { status, body } => MoneyError::Cloud { status: Some(status), message: body },
+            ConnectorError::Api { status, body } => MoneyError::Cloud {
+                status: Some(status),
+                message: body,
+            },
             ConnectorError::NoDeviceSigner => MoneyError::Cloud {
                 status: None,
                 message: "no paired device signer attached (internal state error)".to_string(),
             },
-            ConnectorError::Signing(err) => {
-                MoneyError::Cloud { status: None, message: format!("signing failed: {err}") }
-            }
-            ConnectorError::Transport(err) => {
-                MoneyError::Cloud { status: None, message: format!("could not reach the Cloud: {err}") }
-            }
+            ConnectorError::Signing(err) => MoneyError::Cloud {
+                status: None,
+                message: format!("signing failed: {err}"),
+            },
+            ConnectorError::Transport(err) => MoneyError::Cloud {
+                status: None,
+                message: format!("could not reach the Cloud: {err}"),
+            },
             ConnectorError::Json(err) => MoneyError::Cloud {
                 status: None,
                 message: format!("unexpected response shape from the Cloud: {err}"),
@@ -318,9 +351,9 @@ async fn ready_client(state: &tauri::State<'_, MoneyState>) -> Result<MoneyClien
         MoneyInner::Ready(client) => Ok(client.clone()),
         MoneyInner::Bootstrapping => Err(MoneyError::Bootstrapping),
         MoneyInner::NoEnvironment => Err(MoneyError::NoEnvironment),
-        MoneyInner::PairingFailed { reason, .. } => {
-            Err(MoneyError::PairingFailed { reason: reason.clone() })
-        }
+        MoneyInner::PairingFailed { reason, .. } => Err(MoneyError::PairingFailed {
+            reason: reason.clone(),
+        }),
     }
 }
 
@@ -337,7 +370,13 @@ fn journal(client: &MoneyClient, rec: &CommandRecord) -> (bool, Option<String>) 
     };
     match genaryx_core::store::Store::open(&bus.store_db_path) {
         Ok(store) => {
-            match command::record(&store, &bus.console_events_path, &client.org_domain, &client.host, rec) {
+            match command::record(
+                &store,
+                &bus.console_events_path,
+                &client.org_domain,
+                &client.host,
+                rec,
+            ) {
                 Ok(()) => (true, None),
                 Err(e) => (false, Some(e.to_string())),
             }
@@ -417,7 +456,11 @@ pub async fn money_status(state: tauri::State<'_, MoneyState>) -> Result<MoneySt
     Ok(match &*guard {
         MoneyInner::Bootstrapping => MoneyStatusDto::Bootstrapping,
         MoneyInner::NoEnvironment => MoneyStatusDto::NoEnvironment,
-        MoneyInner::PairingFailed { source, cloud_url, reason } => MoneyStatusDto::PairingFailed {
+        MoneyInner::PairingFailed {
+            source,
+            cloud_url,
+            reason,
+        } => MoneyStatusDto::PairingFailed {
             source: source.clone(),
             cloud_url: cloud_url.clone(),
             reason: reason.clone(),
@@ -434,7 +477,9 @@ pub async fn money_status(state: tauri::State<'_, MoneyState>) -> Result<MoneySt
 /// saved) - one round trip from the frontend's perspective, four concurrent
 /// Cloud reads underneath.
 #[tauri::command]
-pub async fn money_overview(state: tauri::State<'_, MoneyState>) -> Result<OverviewDto, MoneyError> {
+pub async fn money_overview(
+    state: tauri::State<'_, MoneyState>,
+) -> Result<OverviewDto, MoneyError> {
     let client = ready_client(&state).await?;
     let (summary, runs, incidents, savings) = tokio::try_join!(
         client.client.summary(),
@@ -453,11 +498,13 @@ pub async fn money_overview(state: tauri::State<'_, MoneyState>) -> Result<Overv
 #[tauri::command]
 pub async fn money_runs(state: tauri::State<'_, MoneyState>) -> Result<Vec<RunDto>, MoneyError> {
     let client = ready_client(&state).await?;
-    let (runs, alerts) = tokio::try_join!(client.client.runs(), client.client.alerts())
-        .map_err(MoneyError::from)?;
+    let (runs, alerts) =
+        tokio::try_join!(client.client.runs(), client.client.alerts()).map_err(MoneyError::from)?;
 
-    let alert_budgets: HashMap<&str, i64> =
-        alerts.iter().map(|a| (a.run_id.as_str(), a.budget_micros)).collect();
+    let alert_budgets: HashMap<&str, i64> = alerts
+        .iter()
+        .map(|a| (a.run_id.as_str(), a.budget_micros))
+        .collect();
     let overrides = state.budget_overrides.lock().await;
 
     Ok(runs
@@ -484,7 +531,9 @@ pub async fn money_runs(state: tauri::State<'_, MoneyState>) -> Result<Vec<RunDt
 }
 
 #[tauri::command]
-pub async fn money_incidents(state: tauri::State<'_, MoneyState>) -> Result<Vec<IncidentDto>, MoneyError> {
+pub async fn money_incidents(
+    state: tauri::State<'_, MoneyState>,
+) -> Result<Vec<IncidentDto>, MoneyError> {
     let client = ready_client(&state).await?;
     let incidents = client.client.incidents().await.map_err(MoneyError::from)?;
     Ok(incidents.iter().map(IncidentDto::from).collect())

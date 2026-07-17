@@ -85,9 +85,9 @@ fn recent_events(limit: usize, state: tauri::State<'_, AppState>) -> Vec<UiEvent
         match genaryx_core::store::Store::open(&db_path) {
             Ok(store) => match store.recent_events(limit) {
                 Ok(rows) => return rows.into_iter().map(UiEvent::from).collect(),
-                Err(e) => eprintln!(
-                    "genaryx: recent_events query failed, falling back to mock data: {e}"
-                ),
+                Err(e) => {
+                    eprintln!("genaryx: recent_events query failed, falling back to mock data: {e}")
+                }
             },
             Err(e) => eprintln!(
                 "genaryx: could not open store for recent_events, falling back to mock data: {e}"
