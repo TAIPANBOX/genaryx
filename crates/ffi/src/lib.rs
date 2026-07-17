@@ -25,8 +25,16 @@
 //! Money + Overview surface. See `cloud/mod.rs` for its own design docs
 //! (the async-to-sync bridge differs from `FleetHandle`'s: one owned
 //! `tokio::runtime::Runtime`, `block_on` per call, no background threads).
+//!
+//! Phase-2 wave 2 (docs/PHASE2.md) adds [`wardryx::WardryxHandle`]: a third
+//! UniFFI Object, over `genaryx_connectors::WardryxClient`, for the SwiftUI
+//! Policy surface (decision stream, approvals inbox, policy view). Same
+//! owned-runtime async-to-sync bridge as `CloudHandle`, simpler in one
+//! respect (bearer-only auth, no pairing/device/signer) - see
+//! `wardryx/mod.rs` for its own design docs.
 
 pub mod cloud;
+pub mod wardryx;
 
 use std::fs::OpenOptions;
 use std::io::Write;

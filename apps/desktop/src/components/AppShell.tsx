@@ -4,6 +4,7 @@ import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
 import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
+import { PolicyView } from "./PolicyView";
 
 /**
  * App root: owns the theme (persisted to `document.documentElement.dataset`
@@ -31,6 +32,7 @@ export function AppShell() {
       />
       {view === "overview" && <OverviewView />}
       {view === "money" && <MoneyView />}
+      {view === "policy" && <PolicyView />}
       {view === "bus" && <BusExplorer />}
     </div>
   );

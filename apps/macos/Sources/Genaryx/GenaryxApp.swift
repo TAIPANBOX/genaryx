@@ -14,10 +14,19 @@ import SwiftUI
 /// instead of `FleetHandle`, feeding the new Overview and Money panels
 /// alongside the existing Bus Explorer via `TabBar` below - at parity with
 /// the Tauri shell's three-view `AppHeader.tsx`/`AppShell.tsx` switcher.
+///
+/// Phase-2 wave 2 (docs/PHASE2.md) adds `PolicyModel`, the same kind of
+/// UniFFI-backed live model but over `WardryxHandle`
+/// (`crates/ffi/src/wardryx`), feeding the new Policy panel (Decision
+/// Stream, Approvals Inbox, Policy view). Its Decision Stream section reads
+/// `model.events` (the existing `FleetModel` bus feed) directly, filtered to
+/// `source == "wardryx"` - PHASE2.md: "NOT a new REST read" - so `PolicyView`
+/// is handed `model.events` alongside its own `policyModel`.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
     @State private var cloudModel = CloudModel()
+    @State private var policyModel = PolicyModel()
     @State private var tab: AppTab = .overview
 
     var body: some Scene {
@@ -31,6 +40,8 @@ struct GenaryxApp: App {
                         OverviewView(model: cloudModel)
                     case .money:
                         MoneyView(model: cloudModel)
+                    case .policy:
+                        PolicyView(model: policyModel, busEvents: model.events)
                     case .bus:
                         VStack(spacing: 0) {
                             if let message = model.unavailableMessage {
@@ -53,14 +64,15 @@ struct GenaryxApp: App {
     }
 }
 
-/// The three top-level nav destinations - Overview, Money, and the existing
-/// Bus Explorer - matching the Tauri shell's `ViewId`/`lib/views.ts` three-
-/// tab switcher, rendered as a native macOS tab strip instead of a
-/// web-styled nav bar (native macOS patterns over pixel parity, same rule
-/// `Theme.swift` already follows).
+/// The four top-level nav destinations - Overview, Money, Policy, and the
+/// existing Bus Explorer - matching the Tauri shell's `ViewId`/`lib/views.ts`
+/// switcher (now four-way as of Phase-2 wave 2's Policy panel), rendered as
+/// a native macOS tab strip instead of a web-styled nav bar (native macOS
+/// patterns over pixel parity, same rule `Theme.swift` already follows).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
+    case policy = "Policy"
     case bus = "Bus Explorer"
 
     var id: String { rawValue }

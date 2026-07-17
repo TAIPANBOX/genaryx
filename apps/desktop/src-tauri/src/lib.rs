@@ -6,7 +6,10 @@
 //!
 //! `setup` also manages the Money panel's state (see `money/`): a paired
 //! `CloudClient` over TokenFuse Cloud, resolved in the background so a slow
-//! or absent Cloud never delays the window opening.
+//! or absent Cloud never delays the window opening. The Policy panel's
+//! state (see `policy/`, docs/PHASE2.md Wave 2) is managed the same way,
+//! independently: a `WardryxClient` over Wardryx, with its own "no policy
+//! plane" clean-empty-state contract.
 //!
 //! Finally, `setup` builds the menu-bar/tray "mini" (see `tray.rs`): a system
 //! tray icon whose menu shows a live burn readout plus a "kill last runaway"
@@ -16,11 +19,13 @@
 mod events;
 mod live;
 mod money;
+mod policy;
 mod tray;
 
 use events::UiEvent;
 use live::AppState;
 use money::MoneyState;
+use policy::PolicyState;
 use tauri::Manager;
 
 /// Recent events for the Bus Explorer, newest first, capped at `limit`.
@@ -79,6 +84,18 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
+            // Policy panel (docs/PHASE2.md wave 2): same non-blocking
+            // manage-then-spawn-resolve shape as the Money panel just above,
+            // independent state, independent background task.
+            app.manage(PolicyState::pending());
+            let policy_handle = app.handle().clone();
+            let policy_events_dir = events_dir.clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = policy::bootstrap(policy_events_dir).await;
+                let state = policy_handle.state::<PolicyState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
@@ -99,6 +116,10 @@ pub fn run() {
             money::commands::money_kill_run,
             money::commands::money_set_budget,
             money::commands::money_ack_incident,
+            policy::commands::policy_status,
+            policy::commands::policy_list_approvals,
+            policy::commands::policy_list_policies,
+            policy::commands::policy_decide_approval,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

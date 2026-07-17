@@ -1298,6 +1298,7 @@ dependencies = [
 name = "genaryx-connectors"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "genaryx-core",
  "genaryx-signing",
