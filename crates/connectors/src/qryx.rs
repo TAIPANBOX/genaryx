@@ -266,6 +266,16 @@ impl QryxClient {
     /// Run a read subcommand and parse its `--format <json>` stdout as `T`. A
     /// nonzero exit (no gate flags are passed) is a genuine error.
     fn run_json<T: serde::de::DeserializeOwned>(&self, args: &[&str]) -> Result<T, QryxError> {
+        Ok(serde_json::from_slice(&self.run_bytes(args)?)?)
+    }
+
+    /// Run a read subcommand and return its raw stdout bytes VERBATIM (a nonzero
+    /// exit is a genuine error). The Evidence Center (docs/PHASE4.md W3) uses
+    /// this rather than [`Self::run_json`] so a self-verifying artifact keeps
+    /// the exact bytes its embedded digest/signature was computed over -
+    /// re-serializing a parsed DTO would change the byte stream and break
+    /// `qryx verify-evidence`.
+    fn run_bytes(&self, args: &[&str]) -> Result<Vec<u8>, QryxError> {
         let out = self.run_raw(args)?;
         if !out.status.success() {
             return Err(QryxError::Cli {
@@ -273,7 +283,7 @@ impl QryxClient {
                 stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
             });
         }
-        Ok(serde_json::from_slice(&out.stdout)?)
+        Ok(out.stdout)
     }
 
     /// `qryx scan --format ncsc <path>` -> the [`NcscReport`] PQC timeline.
@@ -288,6 +298,36 @@ impl QryxClient {
     pub fn scan_cbom(&self, path: &Path) -> Result<serde_json::Value, QryxError> {
         let p = path.to_string_lossy();
         self.run_json(&["scan", "--format", "cbom", &p])
+    }
+
+    /// `qryx scan --format cbom <path>` -> the CBOM's raw JSON bytes, for the
+    /// Evidence Center to capture verbatim.
+    pub fn scan_cbom_raw(&self, path: &Path) -> Result<Vec<u8>, QryxError> {
+        let p = path.to_string_lossy();
+        self.run_bytes(&["scan", "--format", "cbom", &p])
+    }
+
+    /// `qryx scan --format evidence [--sign-key <pem>] <path>` -> the CNSA
+    /// attestation's raw JSON bytes VERBATIM, for the Evidence Center. Unlike
+    /// [`Self::scan_evidence`] (typed), this preserves qryx's exact output so
+    /// the bundle's embedded digest (and ML-DSA signature, if `--sign-key`)
+    /// still self-verify when the pack is extracted and `qryx verify-evidence`
+    /// is run on the file.
+    pub fn scan_evidence_raw(
+        &self,
+        path: &Path,
+        sign_key: Option<&Path>,
+    ) -> Result<Vec<u8>, QryxError> {
+        let p = path.to_string_lossy();
+        let key;
+        let args: Vec<&str> = match sign_key {
+            Some(k) => {
+                key = k.to_string_lossy();
+                vec!["scan", "--format", "evidence", "--sign-key", &key, &p]
+            }
+            None => vec!["scan", "--format", "evidence", &p],
+        };
+        self.run_bytes(&args)
     }
 
     /// `qryx scan --format evidence [--sign-key <pem>] <path>` -> the

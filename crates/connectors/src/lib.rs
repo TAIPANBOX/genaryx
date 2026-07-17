@@ -48,15 +48,29 @@
 //! (`mockryx run --format json`, exit `0|1` both yield a report, `2` is a real
 //! error) the Drills panel runs and renders. See
 //! `crates/connectors/src/{mcp_stdio,engram,mockryx}.rs`.
+//!
+//! Phase-4 wave 3 (docs/PHASE4.md W3): the Evidence Center. [`build_evidence_pack`]
+//! is the ONE function both shells call to assemble a signed evidence zip - it
+//! gathers Cloud compliance evidence + the audit verdict
+//! ([`CloudClient::compliance_evidence`]/`audit_verify`), Qryx crypto evidence +
+//! CBOM captured VERBATIM ([`QryxClient::scan_evidence_raw`]/`scan_cbom_raw`, so
+//! their embedded self-verify survives), the idryx Agent-BOM
+//! ([`IdryxClient::agent_bom`]), and the TokenFuse FOCUS cost CSV (the new
+//! [`TokenfuseClient`]), then signs the manifest ES256
+//! ([`CloudClient::sign_evidence_manifest`]) and hands the whole set to
+//! `genaryx_core::evidence::assemble_zip`. Missing sources are recorded, not
+//! dropped; signing is fail-closed. See `crates/connectors/src/evidence.rs`.
 
 mod cloud_rest;
 mod cloud_sse;
 mod engram;
+mod evidence;
 mod idryx;
 mod mcp_stdio;
 mod mockryx;
 mod qryx;
 mod sse_decoder;
+mod tokenfuse;
 mod verdryx;
 mod wardryx;
 
@@ -69,6 +83,7 @@ pub use engram::{
     EngramClient, EngramCounts, EngramMemory, EngramProvenance, EngramStats,
     ForgetResult as EngramForgetResult,
 };
+pub use evidence::{EvidenceBuildError, EvidenceInputs, EvidencePack, build_evidence_pack};
 pub use idryx::{
     Alert as IdryxAlert, Identity as IdryxIdentity, IdryxClient, IdryxError,
     Permission as IdryxPermission, Recommendation as IdryxRecommendation,
@@ -83,6 +98,7 @@ pub use qryx::{
     NcscReport, QryxClient, QryxError, Signature as QryxSignature, VerifyOutcome,
 };
 pub use sse_decoder::{SseDecoder, SseEvent};
+pub use tokenfuse::{TokenfuseClient, TokenfuseError};
 pub use verdryx::{
     Baseline as VerdryxBaseline, EvalRun as VerdryxEvalRun, RunSummary as VerdryxRunSummary,
     Score as VerdryxScore, VerdryxClient, VerdryxError,

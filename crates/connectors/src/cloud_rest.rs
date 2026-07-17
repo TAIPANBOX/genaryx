@@ -67,6 +67,8 @@
 //! # }
 //! ```
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
 use genaryx_signing::{Es256Signer, SigningError, sign_mutation};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -271,6 +273,38 @@ impl CloudClient {
     /// chain verifies end-to-end right now (`http.rs::audit_verify`).
     pub async fn audit_verify(&self) -> Result<AuditVerifyResponse, ConnectorError> {
         self.get_json("/v1/audit/verify").await
+    }
+
+    /// `GET /v1/compliance/evidence` - the org's EU AI Act / SR 11-7 / SOC 2
+    /// control-coverage report (`compliance.rs::ComplianceReport`), for the
+    /// Evidence Center (docs/PHASE4.md W3). Kept as raw JSON: the pack captures
+    /// the bytes verbatim and the panel renders a summary; the console does not
+    /// re-model the full control catalog here.
+    pub async fn compliance_evidence(&self) -> Result<serde_json::Value, ConnectorError> {
+        self.get_json("/v1/compliance/evidence").await
+    }
+
+    /// Sign an Evidence-Center manifest with the attached device's ES256 key,
+    /// producing a self-describing [`genaryx_core::evidence::SignatureBlock`]
+    /// the pack embeds as `manifest.sig.json` (docs/PHASE4.md W3). This is the
+    /// SAME console device key the money mutations sign with - the operator's
+    /// identity attesting "I assembled this pack". Fails closed with
+    /// [`ConnectorError::NoDeviceSigner`] when no device is attached, so the
+    /// caller builds an honestly-UNSIGNED pack rather than one that claims to be
+    /// signed. A genuine signing failure (not "no device") propagates as
+    /// [`ConnectorError::Signing`], never a silent unsigned pack.
+    pub fn sign_evidence_manifest(
+        &self,
+        manifest_bytes: &[u8],
+    ) -> Result<genaryx_core::evidence::SignatureBlock, ConnectorError> {
+        let device = self.device.as_ref().ok_or(ConnectorError::NoDeviceSigner)?;
+        let signature = device.signer.sign_raw(manifest_bytes)?;
+        Ok(genaryx_core::evidence::SignatureBlock {
+            alg: "ES256".to_string(),
+            signature_b64: B64.encode(signature),
+            public_key_b64: device.signer.public_key_b64()?,
+            over: "manifest.json".to_string(),
+        })
     }
 
     // ---- pairing (devices.rs) ----------------------------------------------
@@ -530,7 +564,7 @@ pub struct Incident {
 /// `break_index` needs `#[serde(default)]`: the server's own
 /// `#[serde(skip_serializing_if = "Option::is_none")]` OMITS the key entirely
 /// when `ok` is `true`, rather than sending `null`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditVerifyResponse {
     pub ok: bool,
     #[serde(default)]
