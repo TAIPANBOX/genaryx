@@ -7,6 +7,7 @@
 //! lines never silently vanish, they land in `event_quarantine` with a
 //! file+offset reference and a reason (06 §0.5 fail-closed, 06 §2 quarantine).
 
+use crate::command::CommandRecord;
 use crate::error::{Error, Result};
 use crate::event::ConsoleEvent;
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -16,7 +17,7 @@ use std::path::Path;
 /// version-gated step in [`migrate`] whenever a table shape changes; the
 /// `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
 /// themselves stay safe to rerun regardless.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// Phase-0 schema (06 §2 subset): events, the per-file read-offset journal,
 /// the quarantine table for malformed/non-conforming lines, and the spend
@@ -70,6 +71,30 @@ CREATE TABLE IF NOT EXISTS rollup_spend_1m (
     saved_microusd INTEGER,
     PRIMARY KEY(env, minute, agent_id)
 );
+";
+
+/// Phase-1 schema addition (06 §2 `commands_journal`, `command::record`):
+/// the durable audit row for one privileged console mutation (kill / budget
+/// change / incident ack). `params` is stored as JSON text, the same
+/// text-column convention [`Store::insert_batch`] uses for `data`/
+/// `on_behalf_of`.
+const MIGRATION_V2: &str = "
+CREATE TABLE IF NOT EXISTS commands_journal (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    operator TEXT NOT NULL,
+    env TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT NOT NULL,
+    params TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    sig_alg TEXT NOT NULL,
+    sig_fpr TEXT NOT NULL,
+    http_status INTEGER NOT NULL,
+    verify_result TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_commands_journal_env_ts ON commands_journal(env, ts);
+CREATE INDEX IF NOT EXISTS idx_commands_journal_target ON commands_journal(target);
 ";
 
 /// A row read back from `events`, shaped for the shells: envelope fields plus
@@ -281,6 +306,50 @@ impl Store {
             .map_err(store_err)?;
         Ok(())
     }
+
+    /// Journal one privileged console mutation outcome (`commands_journal`,
+    /// migration v2, 06 §2 / [`crate::command::record`]). `ts` is supplied by
+    /// the caller so the journaled row and the emitted `console_command` bus
+    /// event agree on when the command happened; `params` serializes to JSON
+    /// text, the same text-column convention [`Store::insert_batch`] uses for
+    /// `data`/`on_behalf_of`.
+    pub fn insert_command(&self, rec: &CommandRecord, ts: &str) -> Result<()> {
+        let params_json = serde_json::to_string(&rec.params).map_err(store_err)?;
+        let http_status = i64::from(rec.http_status);
+        self.conn
+            .execute(
+                "INSERT INTO commands_journal \
+                 (ts, operator, env, action, target, params, decision, sig_alg, sig_fpr, \
+                  http_status, verify_result) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    ts,
+                    rec.operator,
+                    rec.env,
+                    rec.action,
+                    rec.target,
+                    params_json,
+                    rec.decision,
+                    rec.sig_alg,
+                    rec.sig_fpr,
+                    http_status,
+                    rec.verify_result,
+                ],
+            )
+            .map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Total number of journaled commands.
+    pub fn commands_journal_count(&self) -> Result<u64> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM commands_journal", [], |row| {
+                row.get(0)
+            })
+            .map_err(store_err)?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
 }
 
 /// Set the WAL and fail-closed pragmas (spec): `journal_mode=WAL` for readers
@@ -309,6 +378,9 @@ fn migrate(conn: &Connection) -> Result<()> {
 
     if current < 1 {
         conn.execute_batch(MIGRATION_V1).map_err(store_err)?;
+    }
+    if current < 2 {
+        conn.execute_batch(MIGRATION_V2).map_err(store_err)?;
     }
     // Future migrations gate on `current < N` here, in order, before the final
     // `PRAGMA user_version` write below.
