@@ -37,10 +37,24 @@
 //! parses the JSON (`ncsc`/`cbom`/`evidence`), including the ML-DSA-signed
 //! evidence bundles the Evidence Center reuses. See
 //! `crates/connectors/src/{verdryx,qryx}.rs`.
+//!
+//! Phase-4 wave 2 (docs/PHASE4.md): the memory- and drills-plane connectors.
+//! [`EngramClient`] is the console's FIRST MCP-client connector: it speaks the
+//! Model Context Protocol over a stdio child (`engram-mcp`) via the generic,
+//! reusable [`McpStdioClient`] transport (newline-delimited JSON-RPC 2.0, the
+//! `initialize` handshake, fail-closed with a deadline), and types engram's
+//! `stats`/`recall`/`why`/`forget` tools for the Memory panel.
+//! [`MockryxClient`] is a `ToolRunner` over the mockryx fire-drill CLI
+//! (`mockryx run --format json`, exit `0|1` both yield a report, `2` is a real
+//! error) the Drills panel runs and renders. See
+//! `crates/connectors/src/{mcp_stdio,engram,mockryx}.rs`.
 
 mod cloud_rest;
 mod cloud_sse;
+mod engram;
 mod idryx;
+mod mcp_stdio;
+mod mockryx;
 mod qryx;
 mod sse_decoder;
 mod verdryx;
@@ -51,10 +65,18 @@ pub use cloud_rest::{
     Incident, KillResponse, PairResponse, RunAgg, SavingsSummary, Severity, Summary,
 };
 pub use cloud_sse::{CloudSse, CloudSseConfig};
+pub use engram::{
+    EngramClient, EngramCounts, EngramMemory, EngramProvenance, EngramStats,
+    ForgetResult as EngramForgetResult,
+};
 pub use idryx::{
     Alert as IdryxAlert, Identity as IdryxIdentity, IdryxClient, IdryxError,
     Permission as IdryxPermission, Recommendation as IdryxRecommendation,
     Remediation as IdryxRemediation,
+};
+pub use mcp_stdio::{McpError, McpStdioClient, ToolDef as McpToolDef};
+pub use mockryx::{
+    MockryxClient, MockryxError, MockryxFinding, MockryxMetrics, MockryxReport, MockryxResult,
 };
 pub use qryx::{
     EvidenceReport, EvidenceSummary, NcscDiscovery, NcscFinding, NcscFullMigration, NcscPriority,
