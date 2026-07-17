@@ -65,6 +65,7 @@ mod cloud_rest;
 mod cloud_sse;
 mod engram;
 mod evidence;
+mod hetzner;
 mod idryx;
 mod mcp_stdio;
 mod mockryx;
@@ -84,6 +85,7 @@ pub use engram::{
     ForgetResult as EngramForgetResult,
 };
 pub use evidence::{EvidenceBuildError, EvidenceInputs, EvidencePack, build_evidence_pack};
+pub use hetzner::{HetznerClient, HetznerError, HetznerServer};
 pub use idryx::{
     Alert as IdryxAlert, Identity as IdryxIdentity, IdryxClient, IdryxError,
     Permission as IdryxPermission, Recommendation as IdryxRecommendation,
