@@ -47,7 +47,9 @@ fn budget_record(operator: &str) -> CommandRecord {
         env: "test".to_string(),
         action: "console.set_budget".to_string(),
         target: "run-42".to_string(),
-        params: json!({"budget_usd": 12.5}),
+        // A break-glass override must carry a reason (Phase-2 wave 3B: the
+        // broker's `require_break_glass_reason` refuses one without it).
+        params: json!({"budget_usd": 12.5, "reason": "test operator override"}),
         decision: "break_glass".to_string(),
         sig_alg: "es256".to_string(),
         sig_fpr: "software-signed".to_string(),

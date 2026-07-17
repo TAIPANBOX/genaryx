@@ -87,6 +87,8 @@ pub fn record(
     host: &str,
     rec: &CommandRecord,
 ) -> Result<()> {
+    require_break_glass_reason(rec)?;
+
     let ts = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
     store.insert_command(rec, &ts)?;
@@ -199,4 +201,79 @@ fn append_line(path: &Path, line: &str) -> Result<()> {
     file.write_all(line.as_bytes())?;
     file.write_all(b"\n")?;
     Ok(())
+}
+
+/// Fail-closed guard for the break-glass path (06 §0.5; Phase-2 wave 3B).
+/// A `decision == "break_glass"` record is an operator OVERRIDE of governance
+/// and MUST carry a non-empty, non-whitespace justification in
+/// `params["reason"]`; [`record`] calls this first and refuses
+/// ([`crate::error::Error::BreakGlassMissingReason`]) before journaling or
+/// emitting anything, so an unjustified override is never recorded at all.
+/// The reason rides in `params` (which [`crate::store::Store::insert_command`]
+/// persists to the audit trail) but is deliberately NOT copied into the
+/// fixed-shape `console_command` bus event (see [`console_command_line`]): the
+/// bus shows THAT an override happened, the queryable journal holds WHY. Any
+/// other decision (`"allow"` - the Wardryx-approved or non-privileged path)
+/// needs no reason and passes straight through.
+fn require_break_glass_reason(rec: &CommandRecord) -> Result<()> {
+    if rec.decision == "break_glass" {
+        let reason = rec
+            .params
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if reason.trim().is_empty() {
+            return Err(crate::error::Error::BreakGlassMissingReason);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rec(decision: &str, params: Value) -> CommandRecord {
+        CommandRecord {
+            operator: "user://acme/alice".to_string(),
+            env: "local".to_string(),
+            action: "console.kill_run".to_string(),
+            target: "run-1".to_string(),
+            params,
+            decision: decision.to_string(),
+            sig_alg: "none".to_string(),
+            sig_fpr: "test".to_string(),
+            http_status: 200,
+            verify_result: "killed:true".to_string(),
+        }
+    }
+
+    #[test]
+    fn break_glass_without_a_reason_is_refused() {
+        assert!(matches!(
+            require_break_glass_reason(&rec("break_glass", json!({}))),
+            Err(crate::error::Error::BreakGlassMissingReason)
+        ));
+        assert!(matches!(
+            require_break_glass_reason(&rec("break_glass", json!({ "reason": "   " }))),
+            Err(crate::error::Error::BreakGlassMissingReason)
+        ));
+        assert!(matches!(
+            require_break_glass_reason(&rec("break_glass", json!({ "reason": 42 }))),
+            Err(crate::error::Error::BreakGlassMissingReason)
+        ));
+    }
+
+    #[test]
+    fn break_glass_with_a_reason_passes() {
+        assert!(
+            require_break_glass_reason(&rec("break_glass", json!({ "reason": "runaway spend" })))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_non_break_glass_decision_needs_no_reason() {
+        assert!(require_break_glass_reason(&rec("allow", json!({}))).is_ok());
+    }
 }

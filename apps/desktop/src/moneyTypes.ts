@@ -17,12 +17,18 @@ export type MoneyStatus =
   | { state: "pairing_failed"; source: EnvSource; cloud_url: string; reason: string }
   | { state: "ready"; source: EnvSource; cloud_url: string; org_domain: string };
 
-/** Mirrors `money::commands::MoneyError` (`#[serde(tag = "kind", rename_all = "snake_case")]`). */
+/** Mirrors `money::commands::MoneyError` (`#[serde(tag = "kind", rename_all = "snake_case")]`).
+ * `break_glass_missing_reason` (Phase-2 wave 3B) is the shell's own fail-closed
+ * backstop for `money_kill_run`/`money_set_budget`: in normal use the break-glass
+ * ceremony's confirm button is disabled until a reason is typed, so the frontend
+ * should never actually see this - it exists so an empty reason can never reach
+ * the Cloud, not as an expected UI state. */
 export type MoneyError =
   | { kind: "bootstrapping" }
   | { kind: "no_environment" }
   | { kind: "pairing_failed"; reason: string }
   | { kind: "plan_required"; feature: string; org: string; upgrade_url: string }
+  | { kind: "break_glass_missing_reason" }
   | { kind: "cloud"; status: number | null; message: string };
 
 /** Mirrors `money::commands::OverviewDto`. */

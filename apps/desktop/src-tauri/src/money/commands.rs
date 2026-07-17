@@ -19,6 +19,22 @@
 //! separately and honestly: the Cloud's verdict decides `Ok`/`Err` for the
 //! frontend, while `MutationOutcome::bus_recorded`/`bus_error` says whether
 //! the local journal write succeeded, never conflating the two.
+//!
+//! Break-glass ceremony (Phase-2 wave 3B): `money_kill_run` and
+//! `money_set_budget` are the two genuinely-privileged mutations - they
+//! change what the Cloud is doing (stopping a run, moving a spend ceiling)
+//! with no Wardryx precheck in front of them yet, so each now takes a
+//! mandatory `reason: String` argument, journals `decision: "break_glass"`,
+//! and carries the reason in `params["reason"]` (never in the emitted bus
+//! event's fixed-shape `data`, see [`console_command_line`]'s doc). A blank
+//! reason is refused by [`require_break_glass_reason`] before the Cloud is
+//! ever called - a front-line copy of the same rule
+//! `genaryx_core::command::record` itself enforces
+//! (`Error::BreakGlassMissingReason`), so an unjustified override cannot
+//! reach the Cloud even if a caller bypassed the frontend's own disabled-
+//! until-non-empty confirm button. `money_ack_incident` carries no reason
+//! and journals `decision: "allow"`: acknowledging an incident someone else
+//! already raised is not itself an operator override of governance.
 
 use super::env::EnvSource;
 use super::state::{MoneyClient, MoneyInner, MoneyState};
@@ -174,6 +190,16 @@ pub enum MoneyError {
     NoEnvironment,
     PairingFailed { reason: String },
     PlanRequired { feature: String, org: String, upgrade_url: String },
+    /// `money_kill_run`/`money_set_budget` was called with an empty or
+    /// whitespace-only `reason` (Phase-2 wave 3B). Kept structurally
+    /// distinct from `Cloud` rather than folded into its free-text
+    /// `message`, same reasoning as `PlanRequired`: this never reached the
+    /// Cloud at all, so reporting it as a "Cloud-side failure" would be
+    /// dishonest about where the refusal actually happened. In normal use
+    /// the frontend's own confirm ceremony disables the button until a
+    /// reason is typed, so this is a fail-closed backstop, not the expected
+    /// path.
+    BreakGlassMissingReason,
     /// Any other Cloud-side failure: transport, signature rejection, a
     /// plain non-2xx, or a response that failed to parse. `status` is
     /// `None` when the request never got far enough to have one (couldn't
@@ -266,6 +292,21 @@ fn status_of(e: &ConnectorError) -> u16 {
     }
 }
 
+/// Fail-closed front-line guard for the two break-glass mutations (06 §0.5;
+/// Phase-2 wave 3B): refuse before the Cloud is ever called if `reason` is
+/// empty or whitespace-only. `genaryx_core::command::record` enforces the
+/// same rule again just before journaling (`require_break_glass_reason` in
+/// `crates/core/src/command.rs`, not `pub`, so this is a deliberate,
+/// independent copy rather than a shared call) - that is the authority this
+/// shell must never bypass, this is the shell's own earlier refusal so an
+/// unjustified override does not even reach the network.
+fn require_break_glass_reason(reason: &str) -> Result<(), MoneyError> {
+    if reason.trim().is_empty() {
+        return Err(MoneyError::BreakGlassMissingReason);
+    }
+    Ok(())
+}
+
 /// Resolve the current [`MoneyClient`] out of managed state, or the
 /// appropriate [`MoneyError`] when the panel is not ready. Only holds the
 /// state lock long enough to clone the (cheap, `Arc`-backed) client out -
@@ -309,11 +350,22 @@ fn journal(client: &MoneyClient, rec: &CommandRecord) -> (bool, Option<String>) 
 /// the already-resolved Cloud outcome, always attempt to journal it
 /// (regardless of that outcome), then fold everything into either a
 /// [`MutationOutcome`] or a [`MoneyError`] for the frontend.
+///
+/// `decision` is caller-supplied rather than hardcoded (Phase-2 wave 3B):
+/// no Wardryx precheck exists yet in this build (CommandBroker's
+/// policy-decide step, docs/PHASE1.md wave 2, is separate/unbuilt), but that
+/// does not make every mutation this panel issues an operator override.
+/// `money_kill_run`/`money_set_budget` genuinely are - they change Cloud
+/// state with nothing else gating them - so they pass `"break_glass"` (and
+/// must have already put a justification in `params["reason"]`, see
+/// `require_break_glass_reason`). `money_ack_incident` passes `"allow"`:
+/// acknowledging an already-raised incident overrides nothing.
 fn finish_mutation<T>(
     client: &MoneyClient,
     action: &'static str,
     target: &str,
     params: Value,
+    decision: &'static str,
     cloud_result: Result<T, ConnectorError>,
     on_ok: impl FnOnce(&T) -> (String, String),
 ) -> Result<MutationOutcome, MoneyError> {
@@ -331,11 +383,7 @@ fn finish_mutation<T>(
         action: action.to_string(),
         target: target.to_string(),
         params,
-        // No Wardryx precheck exists yet in this build (CommandBroker's
-        // policy-decide step, docs/PHASE1.md wave 2, is separate/unbuilt):
-        // every mutation this panel issues is honestly an operator
-        // override, never an automated policy "allow".
-        decision: "break_glass".to_string(),
+        decision: decision.to_string(),
         sig_alg: "es256".to_string(),
         sig_fpr: client.sig_fpr.to_string(),
         http_status,
@@ -459,24 +507,46 @@ pub async fn money_savings(state: tauri::State<'_, MoneyState>) -> Result<Saving
 // keeps the whole IPC surface consistently snake_case instead of mixing
 // conventions between args and return values.
 
+/// Kill a run: a break-glass operator override (Phase-2 wave 3B) - `reason`
+/// is mandatory (checked before the Cloud is ever called, see
+/// [`require_break_glass_reason`]) and rides in the journaled
+/// `CommandRecord`'s `params["reason"]`, never in the emitted bus event.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn money_kill_run(
     run_id: String,
+    reason: String,
     state: tauri::State<'_, MoneyState>,
 ) -> Result<MutationOutcome, MoneyError> {
+    require_break_glass_reason(&reason)?;
     let client = ready_client(&state).await?;
     let result = client.client.kill_run(&run_id).await;
-    finish_mutation(&client, "console.kill_run", &run_id, json!({}), result, |resp| {
-        (format!("run {run_id} killed"), format!("killed:{}", resp.killed == run_id))
-    })
+    finish_mutation(
+        &client,
+        "console.kill_run",
+        &run_id,
+        json!({ "reason": reason }),
+        "break_glass",
+        result,
+        |resp| {
+            (
+                format!("run {run_id} killed"),
+                format!("killed:{}", resp.killed == run_id),
+            )
+        },
+    )
 }
 
+/// Set a run's budget: a break-glass operator override (Phase-2 wave 3B) -
+/// same mandatory-`reason` contract as [`money_kill_run`], with the amount
+/// alongside it in `params` (`{"reason": ..., "budget_usd": ...}`).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn money_set_budget(
     run_id: String,
     budget_usd: f64,
+    reason: String,
     state: tauri::State<'_, MoneyState>,
 ) -> Result<MutationOutcome, MoneyError> {
+    require_break_glass_reason(&reason)?;
     let client = ready_client(&state).await?;
     let result = client.client.set_budget(&run_id, budget_usd).await;
 
@@ -489,7 +559,8 @@ pub async fn money_set_budget(
         &client,
         "console.set_budget",
         &run_id,
-        json!({ "budget_usd": budget_usd }),
+        json!({ "reason": reason, "budget_usd": budget_usd }),
+        "break_glass",
         result,
         |resp| {
             (
@@ -500,6 +571,10 @@ pub async fn money_set_budget(
     )
 }
 
+/// Acknowledge an incident: NOT a break-glass override (Phase-2 wave 3B) -
+/// no reason is collected or required, and the journaled `decision` is
+/// `"allow"` rather than `"break_glass"`, since marking an already-raised
+/// incident seen overrides no governance decision.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn money_ack_incident(
     id: String,
@@ -507,7 +582,49 @@ pub async fn money_ack_incident(
 ) -> Result<MutationOutcome, MoneyError> {
     let client = ready_client(&state).await?;
     let result = client.client.ack_incident(&id).await;
-    finish_mutation(&client, "console.ack_incident", &id, json!({}), result, |resp| {
-        (format!("incident {id} acknowledged"), format!("acknowledged:{}", resp.acknowledged == id))
-    })
+    finish_mutation(
+        &client,
+        "console.ack_incident",
+        &id,
+        json!({}),
+        "allow",
+        result,
+        |resp| {
+            (
+                format!("incident {id} acknowledged"),
+                format!("acknowledged:{}", resp.acknowledged == id),
+            )
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `require_break_glass_reason` is `money_kill_run`/`money_set_budget`'s
+    // own front-line copy of `genaryx_core::command::require_break_glass_reason`
+    // (crates/core, not `pub`, so it cannot be called directly from here) -
+    // same three cases that module's own test covers, kept in sync by hand.
+
+    #[test]
+    fn empty_reason_is_refused() {
+        assert!(matches!(
+            require_break_glass_reason(""),
+            Err(MoneyError::BreakGlassMissingReason)
+        ));
+    }
+
+    #[test]
+    fn whitespace_only_reason_is_refused() {
+        assert!(matches!(
+            require_break_glass_reason("   \n\t"),
+            Err(MoneyError::BreakGlassMissingReason)
+        ));
+    }
+
+    #[test]
+    fn a_real_reason_passes() {
+        assert!(require_break_glass_reason("runaway spend, operator override").is_ok());
+    }
 }

@@ -348,8 +348,13 @@ private struct MenuBarBusView: View {
 }
 
 /// The popover's Money section: a compact burn readout (total spent, active
-/// runs) plus a "Kill last runaway" action, both fed by the same
-/// `CloudModel` the Overview/Money tabs read and mutate through.
+/// runs) plus a "Kill last runaway" break-glass action, both fed by the same
+/// `CloudModel` the Overview/Money tabs read and mutate through. Kill is a
+/// break-glass override exactly like the Money panel's own `RunsTable`
+/// (Phase-2 wave 3B): arming it reveals the same shared `BreakGlassPanel`
+/// ceremony (mandatory typed reason; Touch ID is challenged inside
+/// `CloudModel.killRun` itself, so the mini never bypasses it) rather than
+/// issuing its own Cloud call.
 ///
 /// Fail-closed: any state short of `CloudConnection.ready`, or an empty/
 /// not-yet-loaded runs list, shows an honest status line instead of a
@@ -359,10 +364,22 @@ private struct MenuBarBusView: View {
 private struct MenuBarMoneySection: View {
     let cloudModel: CloudModel
 
+    @State private var killArmed = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             statusLine
             killRow
+            if killArmed, let target = lastRunaway {
+                BreakGlassPanel(
+                    summary: "Kill run \(target.runId) immediately.",
+                    onConfirm: { reason in
+                        _ = await cloudModel.killRun(target.runId, reason: reason)
+                        killArmed = false
+                    },
+                    onCancel: { killArmed = false }
+                )
+            }
         }
     }
 
@@ -424,12 +441,20 @@ private struct MenuBarMoneySection: View {
                         .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
                 }
-                ConfirmButton(
-                    label: "Kill last runaway",
-                    confirmLabel: "Confirm kill",
-                    tone: Theme.ember,
-                    onConfirm: { _ = await cloudModel.killRun(target.runId) }
-                )
+                if !killArmed {
+                    Button {
+                        killArmed = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("Kill last runaway")
+                        }
+                        .font(Theme.mono(11, weight: .semibold))
+                        .foregroundStyle(Theme.ember)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         } else {
             Text(cloudModel.connection.isReady ? "no active runs" : "kill unavailable")

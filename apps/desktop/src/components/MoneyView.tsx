@@ -71,15 +71,15 @@ export function MoneyView() {
   );
 
   const handleKill = useCallback(
-    async (runId: string) => {
-      afterMutation(await killRun(runId));
+    async (runId: string, reason: string) => {
+      afterMutation(await killRun(runId, reason));
     },
     [afterMutation],
   );
 
   const handleSetBudget = useCallback(
-    async (runId: string, budgetUsd: number) => {
-      afterMutation(await setBudget(runId, budgetUsd));
+    async (runId: string, budgetUsd: number, reason: string) => {
+      afterMutation(await setBudget(runId, budgetUsd, reason));
     },
     [afterMutation],
   );

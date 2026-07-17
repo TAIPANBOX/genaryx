@@ -36,6 +36,22 @@
 //! Bus Explorer's, which is an accepted trade-off for this wave (see the
 //! task report's "anything the lead should double-check").
 //!
+//! ## Break-glass (Phase-2 wave 3B)
+//!
+//! [`CloudHandle::kill_run`] and [`CloudHandle::set_budget`] are the two
+//! genuinely-privileged mutations here: with no Wardryx precheck wired in
+//! yet, each is honestly journaled as `decision: "break_glass"` (an
+//! operator override of governance, not an automated `"allow"`) and each
+//! REQUIRES a non-empty, operator-typed `reason` - rejected client-side,
+//! before the Cloud is ever called (see [`require_break_glass_reason`]),
+//! and rejected again, independently, at journal time by
+//! `genaryx_core::command::require_break_glass_reason` if it somehow got
+//! this far anyway. [`CloudHandle::ack_incident`] is a low-stakes
+//! acknowledgment rather than an override, so it journals
+//! `decision: "allow"` and takes no `reason` at all. See
+//! [`CloudHandle::finish_mutation`] for where `decision` is threaded
+//! through.
+//!
 //! Fail-closed at the boundary (06 §0.5): nothing here panics across FFI.
 
 pub mod dto;
@@ -62,6 +78,22 @@ use std::sync::{Mutex, PoisonError};
 /// only ever guards [`CloudHandle`]'s `budget_overrides` map).
 fn relock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Fail-closed guard for the two break-glass mutations, `kill_run` and
+/// `set_budget` (Phase-2 wave 3B): reject an empty/whitespace `reason`
+/// BEFORE `kill_run`/`set_budget` ever call the Cloud, so an unjustified
+/// override never mutates anything Cloud-side, let alone reaches
+/// `genaryx_core::command::require_break_glass_reason`'s own, later,
+/// journal-time refusal (`crates/core/src/command.rs`). That core guard
+/// stays the authoritative one (it is what actually decides whether a
+/// `commands_journal` row gets written); this is defense in depth at the
+/// ffi boundary, not a replacement for it.
+fn require_break_glass_reason(reason: &str) -> Result<(), CloudError> {
+    if reason.trim().is_empty() {
+        return Err(CloudError::BreakGlassReasonRequired);
+    }
+    Ok(())
 }
 
 /// The Money + Overview UniFFI Object: a paired [`CloudClient`] plus
@@ -199,22 +231,46 @@ impl CloudHandle {
     // Every mutation below ALWAYS attempts to journal a `console_command`,
     // even when the Cloud call itself failed or was rejected - see
     // `finish_mutation`'s doc.
+    //
+    // `kill_run`/`set_budget` are the two genuinely-privileged mutations:
+    // there is no Wardryx precheck yet (no automated `allow`/`deny`
+    // decision precedes them), so both are honestly journaled as
+    // `decision: "break_glass"` - an operator override of governance - and
+    // Phase-2 wave 3B requires each to carry a non-empty, operator-typed
+    // `reason` in `params` before `genaryx_core::command::record` will
+    // journal anything at all
+    // (`crates/core/src/command.rs::require_break_glass_reason`). Both fail
+    // closed on an empty/whitespace `reason` BEFORE ever calling the Cloud
+    // (see [`require_break_glass_reason`] below) - defense in depth on top
+    // of that core guard, not a replacement for it. `ack_incident` is a
+    // low-stakes acknowledgment, not an operator override, so it journals
+    // `decision: "allow"` and takes no `reason`.
 
-    pub fn kill_run(&self, run_id: String) -> Result<MutationOutcome, CloudError> {
+    pub fn kill_run(&self, run_id: String, reason: String) -> Result<MutationOutcome, CloudError> {
+        require_break_glass_reason(&reason)?;
         let result = self.runtime.block_on(self.client.kill_run(&run_id));
-        self.finish_mutation("console.kill_run", &run_id, json!({}), result, |resp| {
-            (
-                format!("run {run_id} killed"),
-                format!("killed:{}", resp.killed == run_id),
-            )
-        })
+        self.finish_mutation(
+            "console.kill_run",
+            &run_id,
+            "break_glass",
+            json!({ "reason": reason }),
+            result,
+            |resp| {
+                (
+                    format!("run {run_id} killed"),
+                    format!("killed:{}", resp.killed == run_id),
+                )
+            },
+        )
     }
 
     pub fn set_budget(
         &self,
         run_id: String,
         budget_usd: f64,
+        reason: String,
     ) -> Result<MutationOutcome, CloudError> {
+        require_break_glass_reason(&reason)?;
         let result = self
             .runtime
             .block_on(self.client.set_budget(&run_id, budget_usd));
@@ -226,7 +282,8 @@ impl CloudHandle {
         self.finish_mutation(
             "console.set_budget",
             &run_id,
-            json!({ "budget_usd": budget_usd }),
+            "break_glass",
+            json!({ "reason": reason, "budget_usd": budget_usd }),
             result,
             |resp| {
                 (
@@ -239,12 +296,19 @@ impl CloudHandle {
 
     pub fn ack_incident(&self, id: String) -> Result<MutationOutcome, CloudError> {
         let result = self.runtime.block_on(self.client.ack_incident(&id));
-        self.finish_mutation("console.ack_incident", &id, json!({}), result, |resp| {
-            (
-                format!("incident {id} acknowledged"),
-                format!("acknowledged:{}", resp.acknowledged == id),
-            )
-        })
+        self.finish_mutation(
+            "console.ack_incident",
+            &id,
+            "allow",
+            json!({}),
+            result,
+            |resp| {
+                (
+                    format!("incident {id} acknowledged"),
+                    format!("acknowledged:{}", resp.acknowledged == id),
+                )
+            },
+        )
     }
 }
 
@@ -326,11 +390,16 @@ impl CloudHandle {
     /// (regardless of that outcome - a rejected privileged attempt is
     /// itself part of the audit trail), then fold everything into either a
     /// [`MutationOutcome`] or a [`CloudError`] for the caller. Mirrors
-    /// `money::commands::finish_mutation` exactly.
+    /// `money::commands::finish_mutation`, plus `decision` (Phase-2 wave
+    /// 3B): `kill_run`/`set_budget` pass `"break_glass"` (no Wardryx
+    /// precheck exists yet, so both are honestly an operator override,
+    /// never an automated "allow"); `ack_incident` passes `"allow"` (a
+    /// low-stakes acknowledgment, not a governance override).
     fn finish_mutation<T>(
         &self,
         action: &'static str,
         target: &str,
+        decision: &'static str,
         params: Value,
         cloud_result: Result<T, ConnectorError>,
         on_ok: impl FnOnce(&T) -> (String, String),
@@ -349,10 +418,7 @@ impl CloudHandle {
             action: action.to_string(),
             target: target.to_string(),
             params,
-            // No Wardryx precheck exists yet (CommandBroker's policy-decide
-            // step is separate/unbuilt): every mutation this handle issues
-            // is honestly an operator override, never an automated "allow".
-            decision: "break_glass".to_string(),
+            decision: decision.to_string(),
             sig_alg: "es256".to_string(),
             sig_fpr: self.sig_fpr.to_string(),
             http_status,
@@ -653,9 +719,17 @@ mod tests {
         );
 
         // ---- a real signed mutation ----
+        // `kill_run` is a break-glass override (Phase-2 wave 3B): a
+        // non-empty `reason` is required, both by `CloudHandle` itself
+        // (`require_break_glass_reason`, checked before this call ever
+        // reaches the Cloud) and, again, by
+        // `genaryx_core::command::require_break_glass_reason` at journal
+        // time - an empty reason here would make this call fail before any
+        // network traffic at all.
         let run_id = format!("genaryx-ffi-cloud-live-e2e-{}", std::process::id());
+        let reason = "genaryx-ffi live_e2e: proving the break-glass kill path end to end";
         let outcome = handle
-            .kill_run(run_id.clone())
+            .kill_run(run_id.clone(), reason.to_string())
             .expect("signed kill_run must be accepted (200)");
         assert_eq!(outcome.http_status, 200);
         assert_eq!(outcome.verify_result, "killed:true");

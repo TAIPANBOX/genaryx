@@ -22,6 +22,15 @@
 //! the kill; anything else (a different target, a timeout, a stale click)
 //! just re-arms rather than ever killing a run the operator did not just see
 //! named on the menu.
+//!
+//! Break-glass reason (Phase-2 wave 3B): `money_kill_run` now requires a
+//! non-empty justification (`crates/core`'s `require_break_glass_reason`,
+//! and the shell's own front-line copy of it). A native menu item has no
+//! text field either, so the tray's kill always journals the fixed
+//! [`TRAY_KILL_REASON`] string rather than an operator-typed one - honest
+//! about being a menu-bar action, and distinct enough from the Money panel's
+//! own free-text reasons that the two are never confused in the audit
+//! trail.
 
 use crate::money::{self, MoneyState};
 use std::sync::{Arc, Mutex};
@@ -42,6 +51,15 @@ const ARM_TIMEOUT: Duration = Duration::from_secs(5);
 const KILL_ITEM_ID: &str = "kill_last_runaway";
 const SHOW_ITEM_ID: &str = "show_window";
 const MAIN_WINDOW_LABEL: &str = "main";
+
+/// The break-glass justification `money::commands::money_kill_run` now
+/// requires (Phase-2 wave 3B, `require_break_glass_reason`). A native tray
+/// menu item has no room for a free-text field (this module's own doc
+/// explains why the arm/confirm two-click dance stands in for
+/// `ConfirmButton`'s inline confirm step); this fixed, honest string is the
+/// tray's whole justification, distinct enough from a real operator-typed
+/// reason that anyone reading the journal can tell the two apart.
+const TRAY_KILL_REASON: &str = "menu-bar tray: kill last runaway (armed + confirmed via tray menu, no free-text reason field available)";
 
 /// The highest-`spent_usd` non-killed run as of the last successful refresh -
 /// the same run the Money panel's own runs table would rank highest by
@@ -201,7 +219,12 @@ async fn on_kill_clicked(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
         return;
     }
 
-    let result = money::commands::money_kill_run(target.run_id.clone(), app.state::<MoneyState>()).await;
+    let result = money::commands::money_kill_run(
+        target.run_id.clone(),
+        TRAY_KILL_REASON.to_string(),
+        app.state::<MoneyState>(),
+    )
+    .await;
     match result {
         Ok(outcome) => eprintln!(
             "genaryx: tray killed run {} via console_command (bus_recorded={})",

@@ -1,5 +1,6 @@
 import Foundation
 import GenaryxCoreFFI
+import LocalAuthentication
 import Observation
 
 /// Whole-panel connection state for the Money + Overview surface - honest,
@@ -110,6 +111,12 @@ final class CloudModel {
             // Not expected during connect (no read/mutation has happened
             // yet), but handled honestly rather than assumed impossible.
             return .pairingFailed(reason: "plan required: \(feature) on \(org) (upgrade: \(upgradeUrl))")
+        case .BreakGlassReasonRequired:
+            // Not expected during connect either (only `killRun`/`setBudget`
+            // throw this, and both require a live `handle` `connect()` has
+            // already produced), but handled honestly rather than assumed
+            // impossible.
+            return .pairingFailed(reason: "break-glass override requires a non-empty reason")
         case .Cloud(let status, let message):
             return .pairingFailed(reason: status.map { "cloud error \($0): \(message)" } ?? message)
         }
@@ -150,12 +157,39 @@ final class CloudModel {
     // (`CloudHandle::finish_mutation`, even on a Cloud rejection), then
     // triggers a refresh so the runs/incidents/savings tables reflect the
     // new state immediately.
+    //
+    // `killRun`/`setBudget` are BREAK-GLASS overrides (Phase-2 wave 3B,
+    // docs/PHASE2.md: "heightened ceremony - mandatory typed reason +
+    // hardware confirm"): genuinely-privileged mutations with no Wardryx
+    // precheck yet, so both ALWAYS challenge Touch ID here, BEFORE ever
+    // calling into `CloudHandle` - regardless of which UI entry point calls
+    // them (the Money panel's `RunsTable` and the menu-bar mini's "Kill
+    // last runaway" both go through this same gate), mirroring
+    // `PolicyModel.decide`'s own hardware gate (see `PolicyView.swift`'s
+    // `ApprovalRow` doc comment: "ALWAYS challenges Touch ID... regardless
+    // of which UI entry point reaches it"). Both also require a non-empty
+    // `reason`: checked here first (so a blank reason never even prompts
+    // Touch ID), checked again by `CloudHandle` before it calls the Cloud
+    // (`crates/ffi/src/cloud/mod.rs::require_break_glass_reason`), and
+    // checked a third time, authoritatively, at journal time by
+    // `genaryx_core::command::require_break_glass_reason` - three
+    // independent fail-closed layers. `ackIncident` is deliberately NOT a
+    // break-glass action (an acknowledgment, not an operator override of
+    // governance): no reason, no Touch ID.
 
     @discardableResult
-    func killRun(_ runId: String) async -> Bool {
+    func killRun(_ runId: String, reason: String) async -> Bool {
         guard let handle else { return false }
+        guard !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            bannerMessage = "Break-glass override requires a non-empty reason."
+            return false
+        }
+        guard await Self.confirmLocalAuthentication(reason: "Confirm break-glass kill of \(runId)") else {
+            bannerMessage = "Touch ID confirmation was not completed; kill cancelled."
+            return false
+        }
         do {
-            let outcome = try await Task.detached { try handle.killRun(runId: runId) }.value
+            let outcome = try await Task.detached { try handle.killRun(runId: runId, reason: reason) }.value
             applyMutationOutcome(outcome)
             return true
         } catch {
@@ -165,10 +199,18 @@ final class CloudModel {
     }
 
     @discardableResult
-    func setBudget(runId: String, usd: Double) async -> Bool {
+    func setBudget(runId: String, usd: Double, reason: String) async -> Bool {
         guard let handle else { return false }
+        guard !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            bannerMessage = "Break-glass override requires a non-empty reason."
+            return false
+        }
+        guard await Self.confirmLocalAuthentication(reason: "Confirm break-glass budget override for \(runId)") else {
+            bannerMessage = "Touch ID confirmation was not completed; budget override cancelled."
+            return false
+        }
         do {
-            let outcome = try await Task.detached { try handle.setBudget(runId: runId, budgetUsd: usd) }.value
+            let outcome = try await Task.detached { try handle.setBudget(runId: runId, budgetUsd: usd, reason: reason) }.value
             applyMutationOutcome(outcome)
             return true
         } catch {
@@ -187,6 +229,35 @@ final class CloudModel {
         } catch {
             present(error)
             return false
+        }
+    }
+
+    // MARK: - local hardware confirmation (Touch ID)
+
+    /// Challenge `LAContext` for a device-owner confirmation before a
+    /// break-glass override proceeds: Touch ID when the device can evaluate
+    /// biometrics, falling back to `.deviceOwnerAuthentication` (Touch ID OR
+    /// the account password/passcode) otherwise. `false` on any refusal: no
+    /// biometrics/passcode enrolled at all, the system sheet was cancelled,
+    /// or the challenge failed - `killRun`/`setBudget` never proceed to the
+    /// privileged call in that case. A separate, small copy of
+    /// `PolicyModel.confirmLocalAuthentication` (identical body) rather than
+    /// a shared import, so `PolicyModel.swift` stays completely untouched -
+    /// the same reasoning `MoneyComponents.swift`'s `SeverityPill` doc gives
+    /// for its own copy of `BusExplorerView.swift`'s `SeverityBadge`.
+    private static func confirmLocalAuthentication(reason: String) async -> Bool {
+        let context = LAContext()
+        let policy: LAPolicy =
+            context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+            ? .deviceOwnerAuthenticationWithBiometrics
+            : .deviceOwnerAuthentication
+        guard context.canEvaluatePolicy(policy, error: nil) else {
+            return false
+        }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            context.evaluatePolicy(policy, localizedReason: reason) { success, _ in
+                continuation.resume(returning: success)
+            }
         }
     }
 
@@ -219,6 +290,8 @@ final class CloudModel {
             bannerMessage = "Pairing failed: \(reason)"
         case .PlanRequired(let feature, let org, let upgradeUrl):
             planRequired = PlanRequiredNotice(feature: feature, org: org, upgradeUrl: upgradeUrl)
+        case .BreakGlassReasonRequired:
+            bannerMessage = "Break-glass override requires a non-empty reason."
         case .Cloud(let status, let message):
             bannerMessage = status.map { "Cloud error \($0): \(message)" } ?? message
         }

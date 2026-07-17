@@ -470,13 +470,17 @@ mod tests {
         // ---- the exact CommandRecord shape commands.rs::finish_mutation
         // builds for a successful kill, journaled through the same public
         // genaryx_core::command::record entry point the Money panel's
-        // mutation commands call. ----
+        // mutation commands call. A kill is break-glass (Phase-2 wave 3B), so
+        // `params` must carry the same non-empty "reason" money_kill_run
+        // itself now requires before it ever calls the Cloud - the core's own
+        // `require_break_glass_reason` refuses to journal a break_glass
+        // record without one. ----
         let rec = genaryx_core::CommandRecord {
             operator: operator_principal(&org_domain),
             env: "local".to_string(),
             action: "console.kill_run".to_string(),
             target: run_id.clone(),
-            params: serde_json::json!({}),
+            params: serde_json::json!({ "reason": "live-e2e test kill" }),
             decision: "break_glass".to_string(),
             sig_alg: "es256".to_string(),
             sig_fpr: sig_fpr.to_string(),

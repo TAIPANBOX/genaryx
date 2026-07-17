@@ -452,7 +452,9 @@ async fn killer_demo_minted_autodiscover_pair_kill_and_console_command_e2e() {
         env: env.name.clone(),
         action: "console.kill_run".to_string(),
         target: run_id.clone(),
-        params: serde_json::json!({}),
+        // A break-glass override must carry a justification reason (Phase-2
+        // wave 3B: `genaryx_core::command::record` refuses one without it).
+        params: serde_json::json!({ "reason": "killer-demo: kill runaway agent" }),
         decision: "break_glass".to_string(),
         sig_alg: "es256".to_string(),
         sig_fpr: "software-signed".to_string(),

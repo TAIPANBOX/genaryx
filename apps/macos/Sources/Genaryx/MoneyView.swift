@@ -44,7 +44,11 @@ struct MoneyView: View {
                 }
 
                 section(title: "Runs") {
-                    RunsTable(runs: model.runs, onKill: { await model.killRun($0) }, onSetBudget: { await model.setBudget(runId: $0, usd: $1) })
+                    RunsTable(
+                        runs: model.runs,
+                        onKill: { runId, reason in await model.killRun(runId, reason: reason) },
+                        onSetBudget: { runId, usd, reason in await model.setBudget(runId: runId, usd: usd, reason: reason) }
+                    )
                 }
                 section(title: "Incidents") {
                     IncidentsList(incidents: model.incidents, onAck: { await model.ackIncident($0) })
@@ -93,8 +97,8 @@ struct MoneyView: View {
 @MainActor
 private struct RunsTable: View {
     let runs: [Run]
-    let onKill: (String) async -> Bool
-    let onSetBudget: (String, Double) async -> Bool
+    let onKill: (String, String) async -> Bool
+    let onSetBudget: (String, Double, String) async -> Bool
 
     private enum Column {
         static let agent: CGFloat = 130
@@ -155,12 +159,49 @@ private struct RunsTable: View {
             .foregroundStyle(Theme.textTertiary)
     }
 
+    /// One run row, PLUS (Phase-2 wave 3B) the shared break-glass ceremony
+    /// for whichever privileged action - Kill or Set-budget - the operator
+    /// just armed. Both actions arm the SAME `armed` state rather than each
+    /// running its own confirm flow, so at most one `BreakGlassPanel` shows
+    /// per row and "Kill" / `BudgetEditor`'s "Set" read as two doors into
+    /// one ceremony, not two different ones.
     private struct RunRow: View {
         let run: Run
-        let onKill: (String) async -> Bool
-        let onSetBudget: (String, Double) async -> Bool
+        let onKill: (String, String) async -> Bool
+        let onSetBudget: (String, Double, String) async -> Bool
+
+        private enum BreakGlassAction {
+            case kill
+            case budget(usd: Double)
+        }
+
+        @State private var armed: BreakGlassAction?
 
         var body: some View {
+            VStack(alignment: .leading, spacing: 0) {
+                row
+                if let armed {
+                    BreakGlassPanel(
+                        summary: summary(for: armed),
+                        onConfirm: { reason in
+                            switch armed {
+                            case .kill:
+                                _ = await onKill(run.runId, reason)
+                            case .budget(let usd):
+                                _ = await onSetBudget(run.runId, usd, reason)
+                            }
+                            self.armed = nil
+                        },
+                        onCancel: { self.armed = nil }
+                    )
+                    .padding(.top, 8)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+        }
+
+        private var row: some View {
             HStack(spacing: 12) {
                 Text(run.runId)
                     .font(Theme.mono(12))
@@ -196,8 +237,8 @@ private struct RunsTable: View {
                                 .font(Theme.mono(11.5))
                                 .monospacedDigit()
                                 .foregroundStyle(Theme.textSecondary)
-                            BudgetEditor(runId: run.runId, currentUsd: run.budgetUsd, onSubmit: { runId, usd in
-                                _ = await onSetBudget(runId, usd)
+                            BudgetEditor(runId: run.runId, currentUsd: run.budgetUsd, onArm: { usd in
+                                armed = .budget(usd: usd)
                             })
                         }
                         .frame(width: Column.budget, alignment: .trailing)
@@ -231,18 +272,31 @@ private struct RunsTable: View {
                             .padding(.vertical, 3)
                             .background(Capsule().fill(Theme.textTertiary.opacity(0.12)))
                     } else {
-                        ConfirmButton(
-                            label: "Kill",
-                            confirmLabel: "Confirm kill",
-                            tone: Theme.ember,
-                            onConfirm: { _ = await onKill(run.runId) }
-                        )
+                        Button {
+                            armed = .kill
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("Kill")
+                            }
+                            .font(Theme.mono(11, weight: .semibold))
+                            .foregroundStyle(Theme.ember)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .frame(width: Column.actions, alignment: .trailing)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+        }
+
+        private func summary(for action: BreakGlassAction) -> String {
+            switch action {
+            case .kill:
+                return "Kill run \(run.runId) immediately."
+            case .budget(let usd):
+                return "Set run \(run.runId)'s budget to \(MoneyFormat.usd(usd))."
+            }
         }
     }
 }

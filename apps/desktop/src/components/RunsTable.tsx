@@ -12,8 +12,11 @@ export function RunsTable({
   onSetBudget,
 }: {
   runs: Run[];
-  onKill: (runId: string) => Promise<void>;
-  onSetBudget: (runId: string, budgetUsd: number) => Promise<void>;
+  /** Break-glass (Phase-2 wave 3B): `reason` is the operator's mandatory,
+   * non-empty justification collected by `ConfirmButton`'s `BreakGlassDialog`
+   * ceremony below, never a plain confirm. */
+  onKill: (runId: string, reason: string) => Promise<void>;
+  onSetBudget: (runId: string, budgetUsd: number, reason: string) => Promise<void>;
 }) {
   if (runs.length === 0) {
     return (
@@ -74,7 +77,9 @@ export function RunsTable({
                   label="Kill"
                   confirmLabel="Confirm kill"
                   tone="var(--sev-critical)"
-                  onConfirm={() => onKill(r.run_id)}
+                  breakGlass
+                  breakGlassDetail={`run ${r.run_id} · spent ${formatUsd(r.spent_usd)}`}
+                  onConfirm={(reason) => onKill(r.run_id, reason)}
                 />
               </>
             )}

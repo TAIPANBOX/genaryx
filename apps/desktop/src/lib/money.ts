@@ -69,12 +69,23 @@ export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings
 // `UiEvent`'s existing snake_case wire shape rather than Tauri's camelCase
 // default.
 
-export const killRun = (runId: string): Promise<MutationOutcome> =>
-  call<MutationOutcome>("money_kill_run", { run_id: runId });
+// `killRun`/`setBudget` are break-glass overrides (Phase-2 wave 3B): both take
+// a mandatory `reason`, threaded straight into the Rust side's
+// `require_break_glass_reason` guard (`money::commands`) and, once past that,
+// into the journaled `CommandRecord`'s `params`. `ConfirmButton`'s break-glass
+// ceremony is what actually collects `reason` from the operator - it never
+// reaches this module empty in normal use, but the Rust side still refuses a
+// blank one rather than trusting the frontend alone (fail-closed, 06 §0.5).
 
-export const setBudget = (runId: string, budgetUsd: number): Promise<MutationOutcome> =>
-  call<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd });
+export const killRun = (runId: string, reason: string): Promise<MutationOutcome> =>
+  call<MutationOutcome>("money_kill_run", { run_id: runId, reason });
 
+export const setBudget = (runId: string, budgetUsd: number, reason: string): Promise<MutationOutcome> =>
+  call<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd, reason });
+
+/** NOT break-glass: acknowledging an incident overrides no governance
+ * decision, so this carries no reason and the Rust side journals it as
+ * `decision: "allow"` rather than `"break_glass"`. */
 export const ackIncident = (id: string): Promise<MutationOutcome> =>
   call<MutationOutcome>("money_ack_incident", { id });
 
@@ -91,6 +102,8 @@ export function describeMoneyError(err: MoneyError): string {
       return `Pairing failed: ${err.reason}`;
     case "plan_required":
       return `Upgrade required: ${err.feature} is not on the ${err.org} plan.`;
+    case "break_glass_missing_reason":
+      return "Break-glass override requires a non-empty reason.";
     case "cloud":
       return err.status !== null ? `Cloud error ${err.status}: ${err.message}` : err.message;
   }

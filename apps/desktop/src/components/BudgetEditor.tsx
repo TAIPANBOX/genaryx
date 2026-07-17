@@ -1,10 +1,13 @@
 import { useState } from "react";
-import { cssVar } from "../lib/cssVars";
+import { formatUsd } from "../lib/format";
+import { BreakGlassDialog } from "./BreakGlassDialog";
 
 /**
- * Inline per-row budget editor: `Edit` reveals a number input, `Set` moves
- * to an explicit confirm step (same "always confirm a privileged mutation"
- * rule as `ConfirmButton`), and only then calls `onSubmit`.
+ * Inline per-row budget editor: `Edit` reveals a number input, `Set` opens
+ * the BREAK-GLASS OVERRIDE modal (Phase-2 wave 3B - `money_set_budget` is a
+ * genuinely-privileged Cloud-state override, same ceremony `ConfirmButton`'s
+ * `breakGlass` mode uses for Kill, see `BreakGlassDialog`'s doc), and only a
+ * confirm there (with a non-empty operator reason) calls `onSubmit`.
  */
 export function BudgetEditor({
   runId,
@@ -13,12 +16,18 @@ export function BudgetEditor({
 }: {
   runId: string;
   currentUsd: number | null;
-  onSubmit: (runId: string, budgetUsd: number) => Promise<void>;
+  /** `reason` is the operator's mandatory break-glass justification,
+   * collected by the modal below - never empty by the time this is called. */
+  onSubmit: (runId: string, budgetUsd: number, reason: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(currentUsd !== null ? String(currentUsd) : "");
+  // `confirming` also stands in for "pending": `BreakGlassDialog` covers the
+  // whole viewport and owns its own internal pending/disabled state while
+  // `onSubmit` is in flight, so this only needs one flag for "the modal is
+  // open" - not a second one for "and the mutation call inside it hasn't
+  // settled yet".
   const [confirming, setConfirming] = useState(false);
-  const [pending, setPending] = useState(false);
 
   if (!editing) {
     return (
@@ -47,11 +56,8 @@ export function BudgetEditor({
         min={0}
         step="0.01"
         value={value}
-        disabled={pending}
-        onChange={(e) => {
-          setValue(e.target.value);
-          setConfirming(false);
-        }}
+        disabled={confirming}
+        onChange={(e) => setValue(e.target.value)}
         className="mono tabular"
         style={{
           width: 78,
@@ -63,60 +69,46 @@ export function BudgetEditor({
           color: "var(--fg)",
         }}
       />
-      {confirming ? (
-        <>
-          <button
-            type="button"
-            className="badge"
-            style={cssVar("tone", "var(--sev-medium)")}
-            disabled={pending}
-            onClick={() => {
-              setPending(true);
-              void onSubmit(runId, parsed).then(
-                () => {
-                  setPending(false);
-                  setConfirming(false);
-                  setEditing(false);
-                },
-                () => {
-                  setPending(false);
-                },
-              );
-            }}
-          >
-            {pending ? "Setting..." : `Confirm $${parsed.toFixed(2)}`}
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            style={{ width: "auto", padding: "0 8px", fontSize: 11 }}
-            disabled={pending}
-            onClick={() => setConfirming(false)}
-          >
-            Cancel
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            className="icon-btn"
-            disabled={!validAmount}
-            style={{ width: "auto", padding: "0 8px", fontSize: 11 }}
-            onClick={() => setConfirming(true)}
-          >
-            Set
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            style={{ width: "auto", padding: "0 8px", fontSize: 11 }}
-            onClick={() => setEditing(false)}
-          >
-            Close
-          </button>
-        </>
-      )}
+      <button
+        type="button"
+        className="icon-btn"
+        disabled={!validAmount || confirming}
+        style={{ width: "auto", padding: "0 8px", fontSize: 11 }}
+        onClick={() => setConfirming(true)}
+      >
+        Set
+      </button>
+      <button
+        type="button"
+        className="icon-btn"
+        style={{ width: "auto", padding: "0 8px", fontSize: 11 }}
+        disabled={confirming}
+        onClick={() => setEditing(false)}
+      >
+        Close
+      </button>
+      <BreakGlassDialog
+        open={confirming}
+        title="Set budget"
+        detail={`run ${runId} -> ${formatUsd(parsed)}`}
+        confirmLabel={`Confirm ${formatUsd(parsed)}`}
+        tone="var(--sev-medium)"
+        onCancel={() => setConfirming(false)}
+        onConfirm={(reason) =>
+          onSubmit(runId, parsed, reason).then(
+            () => {
+              setConfirming(false);
+              setEditing(false);
+            },
+            () => {
+              // Left open on failure (matches every other mutation's
+              // fail-closed contract): the operator can see the error
+              // banner `MoneyView` renders and retry without re-entering
+              // the amount or the reason from scratch.
+            },
+          )
+        }
+      />
     </span>
   );
 }

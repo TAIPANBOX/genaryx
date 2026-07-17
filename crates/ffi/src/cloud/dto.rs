@@ -175,6 +175,15 @@ pub enum CloudError {
         org: String,
         upgrade_url: String,
     },
+    /// `kill_run`/`set_budget` (the break-glass overrides, Phase-2 wave 3B)
+    /// were called with an empty/whitespace `reason`. Rejected here,
+    /// client-side in [`super::CloudHandle`], BEFORE the Cloud is ever
+    /// called - defense in depth on top of
+    /// `genaryx_core::command::require_break_glass_reason`'s own, later,
+    /// journal-time refusal (`crates/core/src/command.rs`), not a
+    /// replacement for it.
+    #[error("break-glass override requires a non-empty reason")]
+    BreakGlassReasonRequired,
     /// Any other Cloud-side failure: transport, signature rejection, a
     /// plain non-2xx, or a response that failed to parse. `status` is
     /// `None` when the request never got far enough to have one.
