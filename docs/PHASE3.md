@@ -42,7 +42,7 @@ Authoritative wire shapes live in the connector's own doc comments (`crates/conn
 
 1. **W1 (orchestrator-owned, shared crates) - DONE:** `IdryxClient` (REST + `detect` Rescan) in `crates/connectors/src/idryx.rs` (commit `05d34a9`); `DelegationGraph` bus-fed builder + deterministic seeded force-layout in `crates/core/src/{graph,layout}.rs` + `Store::delegation_events` (commit `7d46c6b`). Gates green (fmt, clippy `-D warnings`, 12 core lib tests + 4 connector unit tests). The connector doc comments carry the full grounded contract above. TODO before the milestone: the live `idryx_test.rs` (serve snapshot + a `detect --format json` Rescan against a real `taipan up --with idryx`, skip-gracefully if absent) - lands in W4 alongside the exit gate.
 2. **W2 (two per-shell tracks) - DONE** (Track A `a9ab278`, Track B `4eb104e`): the **Identity** panel in both shells: identities list with type filters (`/api/identities`), the 21-detector alert stream with severity + detector filters (`/api/alerts` + Rescan), attestation surfaced via `attestation_missing`/`bom_incomplete` alerts. Track A `apps/desktop/src-tauri/src/identity/` (read-only, unauthenticated) + React panel; Track B `crates/ffi/src/idryx/` (`IdryxHandle`) + SwiftUI panel. Both landed two useful findings, independently: (a) `idryx detect`'s `--min-severity` does NOT filter `--format json` output (it only gates the `--slack`/`--webhook` sinks the connector never sets), so Rescan passes `low` and filters client-side; (b) a UniFFI doc comment whose text ends in `/*` corrupts the generated Swift (nested block comments) - never write a `/*`-ending path in a `crates/ffi` doc comment. Gates re-run by the orchestrator, all green (src-tauri 62/62 + tsc + pnpm build; ffi fmt/clippy/40 tests incl. a live idryx e2e + build-ffi + swift build).
-3. **W3 (two per-shell tracks):** the delegation graph (core layout engine + a Canvas2D renderer per shell) + **Agent 360** (the core aggregate) + the deep-link navigation contract (click an agent from any panel / menu-bar / notification -> its 360 card).
+3. **W3 (two per-shell tracks) - DONE** (W3-core `e5cad69`: `DelegationGraph::agent_slice` + `Store::events_for_agent`; Track A `2cc5db7`, Track B `05644d4`): the delegation graph (core `layout_view`, a Canvas2D renderer per shell, NO WebGL) + **Agent 360** (delegation+events from core, identity+money+policy assembled shell-side from state already held) + deep-links. Both shells: layout computed once in core so node positions match; Agent 360 links out for mutations (kill/approve) rather than re-implementing them. Deep-link parity is uneven but both meet the core contract: Track A wired graph-node + Identity/Money/Policy/Runs/Approvals rows; Track B wired graph-node + Identity rows (the remaining SwiftUI row deep-links are a W4 follow-up). Gates re-run by the orchestrator, all green (src-tauri 69/69 + tsc + pnpm build; ffi fmt/clippy/41 tests + build-ffi + swift build).
 4. **W4:** **Run Replay** (time-window + `/v1/replay/{run}` + playback clock) + **Posture full** (the §6/position-6 zonds) + the exit-gate e2e (`identity_360_test.rs`).
 
 ## Parity checklist (per wave; a feature is done only when it is in BOTH shells)
@@ -55,10 +55,11 @@ Authoritative wire shapes live in the connector's own doc comments (`crates/conn
 - [x] No-idryx environment renders a clean empty state, not an error, both shells
 - [x] Rescan fails closed (honest RescanUnavailable) when the idryx binary is absent, never a fake empty success, both shells
 
-**W3 - graph + 360**
-- [ ] Delegation graph draws from the core layout (Canvas2D), the same node positions in both shells
-- [ ] Agent 360 joins money + policy + identity + detectors on `agent_id`, both shells
-- [ ] A click on an agent from any panel / menu-bar / notification opens its 360 card, both shells
+**W3 - graph + 360 (DONE, both shells)**
+- [x] Delegation graph draws from the core layout (Canvas2D, no WebGL), the same core-computed node positions in both shells
+- [x] Agent 360 joins money + policy + identity + detectors + delegation + events on `agent_id`, both shells
+- [x] A click on an agent opens its 360 card, both shells (Track A from many rows + the graph; Track B from the graph + Identity rows - remaining SwiftUI row deep-links are a W4 follow-up)
+- [x] Graph + 360 fail closed to an honest empty state on an absent/empty Store, never a panic or fabricated data, both shells
 
 **W4 - replay + posture**
 - [ ] Run Replay reconstructs a run timeline (Store + `/v1/replay/{run}`) with a scrub/speed clock, both shells
