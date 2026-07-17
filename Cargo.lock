@@ -793,7 +793,10 @@ name = "genaryx-ffi"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "genaryx-connectors",
  "genaryx-core",
+ "genaryx-signing",
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",

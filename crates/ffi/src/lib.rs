@@ -19,6 +19,14 @@
 //! Every exported call returns `Result<_, FfiError>` or is infallible by
 //! construction; the background threads log-and-continue on per-cycle errors
 //! rather than dying silently.
+//!
+//! Phase-1 wave 3 (docs/PHASE1.md) adds [`cloud::CloudHandle`]: a second
+//! UniFFI Object over `genaryx_connectors::CloudClient`, for the SwiftUI
+//! Money + Overview surface. See `cloud/mod.rs` for its own design docs
+//! (the async-to-sync bridge differs from `FleetHandle`'s: one owned
+//! `tokio::runtime::Runtime`, `block_on` per call, no background threads).
+
+pub mod cloud;
 
 use std::fs::OpenOptions;
 use std::io::Write;

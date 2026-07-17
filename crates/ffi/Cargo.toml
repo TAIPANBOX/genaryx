@@ -30,10 +30,25 @@ path = "src/bin/uniffi_bindgen.rs"
 
 [dependencies]
 genaryx-core = { path = "../core" }
+# Phase-1 wave 3 (docs/PHASE1.md): CloudHandle wraps CloudClient (typed reads
+# plus ES256-signed mutations) for the SwiftUI Money + Overview surface, the
+# same connector the Tauri shell's `money` module already drives.
+genaryx-connectors = { path = "../connectors" }
+# CloudHandle pairs a fresh SoftwareSigner at connect time (portable, no
+# hardware requirement), mirroring `apps/desktop/src-tauri/src/money/state.rs`.
+genaryx-signing = { path = "../signing" }
 uniffi = { version = "0.32", features = ["cli"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }
+# `cloud::env` mirrors the Tauri shell's `money/env.rs` descriptor/keyfile
+# discovery, which is `#[derive(Deserialize)]`-typed rather than raw
+# `serde_json::Value` navigation, for the same readability/fidelity reasons
+# the Tauri original chose it.
+serde = { workspace = true }
 thiserror = { workspace = true }
 # Only to name tokio::sync::broadcast types on the receiver we get from
 # genaryx-core's IngestService::subscribe(); no runtime is ever started here.
+# CloudHandle additionally owns a real `tokio::runtime::Runtime` (built once
+# in its constructor) to bridge genaryx-connectors' async CloudClient to
+# UniFFI's synchronous export surface - see `cloud/mod.rs`.
 tokio = { workspace = true }

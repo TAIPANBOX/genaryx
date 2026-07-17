@@ -14,7 +14,16 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Genaryx",
-            dependencies: ["GenaryxCoreFFI"]
+            dependencies: ["GenaryxCoreFFI"],
+            // `CloudHandle` (Phase-1 wave 3) pulls `reqwest`/`hyper-util`
+            // into `libgenaryx_ffi.a`'s live call graph for the first time
+            // (`FleetHandle` never made a network call, so the linker could
+            // previously dead-strip these); their macOS system-proxy
+            // detection binds directly to SystemConfiguration.framework's C
+            // API, which SwiftPM does not link by default.
+            linkerSettings: [
+                .linkedFramework("SystemConfiguration")
+            ]
         ),
         // The generated bindings, shaped exactly as crates/ffi/swift-smoke
         // proved out: one Swift target over one binary target. Regenerated
