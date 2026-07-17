@@ -6,6 +6,16 @@ Source: `itrat-console/09-roadmap-and-process.md` (Ф0). Estimate: 2 sessions.
 core; all six spikes have written verdicts; parity checklist v0 is enforced in CI;
 golden NDJSON fixtures + an ingest bench report are committed.
 
+**REACHED 2026-07-17.** Both shells render the live core: Tauri (af81183) seeds a
+real Store from `demo` + a feeder and emits `bus:event`; SwiftUI (d471747) drives
+`FleetHandle` over UniFFI, seeding from `recentEvents` and appending
+`EventListener` pushes. All six spikes DONE with written verdicts (5 GO, one GO
+with change). Parity v0 + both-shell build smoke in CI. 14 commits, workspace
+green (61 tests, fmt + clippy `-D warnings` clean); both shells build against the
+live core. Findings F-01..F-06 recorded below. Next: Phase 1 (money + `taipan up`
++ killer demo, see `itrat-console/09` Ф1). Residual: task #10 (FileTail offset
+byte-exactness) in the backlog; full UI-driver smoke deferred to F1 (spike #5).
+
 ## Scope
 
 - [x] Monorepo skeleton: Rust workspace (`genaryx-core`, `connectors`, `signing`).
@@ -13,11 +23,11 @@ golden NDJSON fixtures + an ingest bench report are committed.
 - [x] `genaryx-core` heart: agent-event envelope types + conform validation
       (draft 2020-12, embedded byte-exact v0.1/v0.2 schemas) + golden tests.
       *(done this session: 12 tests green, fmt clean, clippy `-D warnings` clean.)*
-- [ ] Store (SQLite WAL) + batched writer. → Sonnet
-- [ ] IngestService: FileTail → conform → Store → live broadcast. → Sonnet
-- [ ] `taipan demo` generator (real campaign shapes). → Sonnet
-- [ ] Tauri shell: virtualized Bus Explorer live list. → Sonnet (Web track)
-- [ ] SwiftUI shell: UniFFI bridge + live list + menu-bar stub. → Sonnet (SwiftUI track)
+- [x] Store (SQLite WAL) + batched writer. (916dd51)
+- [x] IngestService: FileTail -> conform -> Store -> live broadcast. (51ebbe3)
+- [x] `taipan demo` generator (real campaign shapes). (62ba397)
+- [x] Tauri shell: virtualized Bus Explorer + live core wire. (f731fc2, af81183)
+- [x] SwiftUI shell: UniFFI bridge + live list + menu-bar. (8238cce, d471747)
 - [x] CI: fmt/clippy/test (core, ubuntu) + both-shell build smoke (swiftui macos,
       tauri linux) + parity checklist v0. Full UI-driver smoke deferred to F1.
 
