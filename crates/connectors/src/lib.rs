@@ -71,6 +71,7 @@ mod mcp_stdio;
 mod mockryx;
 mod qryx;
 mod sse_decoder;
+mod ssh;
 mod tokenfuse;
 mod verdryx;
 mod wardryx;
@@ -100,6 +101,7 @@ pub use qryx::{
     NcscReport, QryxClient, QryxError, Signature as QryxSignature, VerifyOutcome,
 };
 pub use sse_decoder::{SseDecoder, SseEvent};
+pub use ssh::{SshClient, SshError, SshTarget};
 pub use tokenfuse::{TokenfuseClient, TokenfuseError};
 pub use verdryx::{
     Baseline as VerdryxBaseline, EvalRun as VerdryxEvalRun, RunSummary as VerdryxRunSummary,
