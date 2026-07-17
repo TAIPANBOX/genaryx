@@ -40,6 +40,23 @@
 //! `WardryxHandle`: no auth at all (not even a bearer), and no
 //! `command::record` journal (Identity is read-only this wave) - see
 //! `idryx/mod.rs` for its own design docs.
+//!
+//! Phase-3 wave 3 (docs/PHASE3.md) adds three more [`FleetHandle`] reads for
+//! the delegation graph + Agent 360 + deep-links: [`FleetHandle::agent_graph`]
+//! (the whole delegation graph, laid out for a Canvas2D renderer),
+//! [`FleetHandle::agent_slice`] (one agent's immediate delegation
+//! neighborhood), and [`FleetHandle::events_for_agent`] (one agent's own
+//! event history, reusing [`UiEvent`]). No new Object: this is core's own
+//! bus-fed graph (`genaryx_core::DelegationGraph`, built from the bus, NOT
+//! from Idryx - PHASE3.md architecture position 1), so it belongs on the
+//! same handle that already owns the bus-backed `reader: Mutex<Store>`, not
+//! on `IdryxHandle`. [`LayoutViewRecord`], [`PositionedNodeRecord`],
+//! [`GraphEdgeRecord`], [`AgentSliceRecord`], [`GraphNodeRecord`], and
+//! [`NodeKind`] are hand-written UniFFI mirrors of `genaryx_core`'s
+//! same-named (or, for `NodeKind`'s mirror, same-shaped) graph/layout types -
+//! those derive `Serialize`/`Deserialize` for the Tauri shell's IPC but are
+//! not themselves `uniffi::Record`/`uniffi::Enum`, exactly the reason
+//! [`UiEvent`] already mirrors `StoredEvent` by hand.
 
 pub mod cloud;
 pub mod idryx;
@@ -55,7 +72,10 @@ use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
 use genaryx_core::store::{Store, StoredEvent};
-use genaryx_core::{ConsoleEvent, IngestService, demo};
+use genaryx_core::{
+    AgentSlice, ConsoleEvent, DelegationGraph, GraphEdge, GraphNode, IngestService, LayoutConfig,
+    LayoutView, PositionedNode, demo, layout_view,
+};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -166,6 +186,152 @@ impl From<&ConsoleEvent> for UiEvent {
     }
 }
 
+// ============================================================================
+// Delegation graph + layout mirrors (PHASE3 W3). `genaryx_core::{NodeKind,
+// GraphNode, GraphEdge, AgentSlice}` (`graph.rs`) and
+// `genaryx_core::{PositionedNode, LayoutView}` (`layout.rs`) derive
+// `Serialize`/`Deserialize` for the Tauri shell's IPC but are not themselves
+// UniFFI types, so - exactly like `UiEvent` above - this crate defines its
+// own mirrors and converts at the boundary. All conversions consume their
+// input (never clone): every call site below already owns a freshly built
+// `AgentSlice`/`LayoutView`, not a borrow.
+// ============================================================================
+
+/// Mirror of `genaryx_core::NodeKind`: what kind of principal a delegation
+/// node is, inferred from its URI scheme. Swift sees `.user` / `.agent` /
+/// `.other`. Left unsuffixed (unlike the `*Record` structs below), matching
+/// this crate's existing enum convention (`wardryx::ApprovalVerdict`,
+/// `idryx::IdryxEnvSource`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum NodeKind {
+    /// `user://…` - a human principal (only ever a root, never an actor).
+    User,
+    /// `agent://…` - an agent principal.
+    Agent,
+    /// Anything else (kept, not dropped, so an unexpected scheme still renders).
+    Other,
+}
+
+impl From<genaryx_core::NodeKind> for NodeKind {
+    fn from(k: genaryx_core::NodeKind) -> Self {
+        match k {
+            genaryx_core::NodeKind::User => Self::User,
+            genaryx_core::NodeKind::Agent => Self::Agent,
+            genaryx_core::NodeKind::Other => Self::Other,
+        }
+    }
+}
+
+/// One delegation-graph node: mirrors [`GraphNode`], flattened for UniFFI.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct GraphNodeRecord {
+    pub id: String,
+    pub kind: NodeKind,
+    /// Events where this node was the acting `agent_id`, deduped on the
+    /// natural key. A pure delegator that never itself acted stays at 0.
+    pub event_count: u64,
+    /// The most recent `ts` this node was seen acting; `""` for a node only
+    /// ever seen inside another's delegation chain.
+    pub last_ts: String,
+}
+
+impl From<GraphNode> for GraphNodeRecord {
+    fn from(n: GraphNode) -> Self {
+        Self {
+            id: n.id,
+            kind: n.kind.into(),
+            event_count: n.event_count,
+            last_ts: n.last_ts,
+        }
+    }
+}
+
+/// One directed "delegates_to" edge: mirrors [`GraphEdge`].
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct GraphEdgeRecord {
+    pub from: String,
+    pub to: String,
+}
+
+impl From<GraphEdge> for GraphEdgeRecord {
+    fn from(e: GraphEdge) -> Self {
+        Self {
+            from: e.from,
+            to: e.to,
+        }
+    }
+}
+
+/// One node with a computed layout position: mirrors [`PositionedNode`].
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PositionedNodeRecord {
+    pub id: String,
+    pub kind: NodeKind,
+    pub event_count: u64,
+    pub x: f64,
+    pub y: f64,
+}
+
+impl From<PositionedNode> for PositionedNodeRecord {
+    fn from(n: PositionedNode) -> Self {
+        Self {
+            id: n.id,
+            kind: n.kind.into(),
+            event_count: n.event_count,
+            x: n.x,
+            y: n.y,
+        }
+    }
+}
+
+/// The full laid-out delegation graph a shell's Canvas2D renderer consumes:
+/// mirrors [`LayoutView`]. `width`/`height` are the canvas bounds every
+/// `PositionedNodeRecord.x`/`.y` is clamped into (`LayoutConfig::default()`'s
+/// 1000x1000 - see [`FleetHandle::agent_graph`]).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct LayoutViewRecord {
+    pub nodes: Vec<PositionedNodeRecord>,
+    pub edges: Vec<GraphEdgeRecord>,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl From<LayoutView> for LayoutViewRecord {
+    fn from(v: LayoutView) -> Self {
+        Self {
+            nodes: v
+                .nodes
+                .into_iter()
+                .map(PositionedNodeRecord::from)
+                .collect(),
+            edges: v.edges.into_iter().map(GraphEdgeRecord::from).collect(),
+            width: v.width,
+            height: v.height,
+        }
+    }
+}
+
+/// One agent's immediate delegation neighborhood for its Agent 360 card's
+/// Delegation section: mirrors [`AgentSlice`]. `node` is `None` for an agent
+/// never seen on the bus - a normal, renderable "no delegation activity"
+/// outcome, never an error (see [`FleetHandle::agent_slice`]).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AgentSliceRecord {
+    pub node: Option<GraphNodeRecord>,
+    pub parents: Vec<GraphNodeRecord>,
+    pub children: Vec<GraphNodeRecord>,
+}
+
+impl From<AgentSlice> for AgentSliceRecord {
+    fn from(s: AgentSlice) -> Self {
+        Self {
+            node: s.node.map(GraphNodeRecord::from),
+            parents: s.parents.into_iter().map(GraphNodeRecord::from).collect(),
+            children: s.children.into_iter().map(GraphNodeRecord::from).collect(),
+        }
+    }
+}
+
 /// Live-push callback the shell implements (a Swift class conforming to the
 /// generated `EventListener` protocol). Called from the Rust ingest thread,
 /// never the main thread: the Swift side hops to `@MainActor` itself before
@@ -256,6 +422,57 @@ impl FleetHandle {
     /// feeder has appended and ingest has committed).
     pub fn event_count(&self) -> Result<u64, FfiError> {
         Ok(relock(&self.reader).event_count()?)
+    }
+
+    // ---- delegation graph + Agent 360 (PHASE3 W3) --------------------------
+    // The live delegation graph is core's, built from the bus - NOT Idryx's
+    // (PHASE3.md architecture position 1), so these read through the SAME
+    // `reader` connection as `recent_events`/`event_count` above, never a
+    // second handle. Each call rebuilds the graph fresh from the Store
+    // (`DelegationGraph::from_store`): the demo/pilot event volume makes this
+    // cheap, and it keeps these three reads trivially consistent with each
+    // other and with whatever `recent_events` most recently showed, with no
+    // separate live-updated graph state to keep in sync. Fail-closed
+    // throughout: an absent/empty Store yields an empty result (0 nodes, a
+    // `None` slice node), never a panic - `DelegationGraph::from_store` and
+    // `agent_slice` are panic-free by construction (see `crates/core/src/
+    // graph.rs`'s own module doc).
+
+    /// The whole delegation graph, laid out for a Canvas2D renderer
+    /// (PHASE3.md position 3: layout is computed once, here, in core; both
+    /// shells only draw the result - never WebGL). The reader lock is
+    /// released before the layout force-simulation runs (`drop(store)`
+    /// below), so a slow layout over a large graph never blocks a concurrent
+    /// `recent_events`/`event_count` call on the same connection.
+    pub fn agent_graph(&self) -> Result<LayoutViewRecord, FfiError> {
+        let store = relock(&self.reader);
+        let graph = DelegationGraph::from_store(&store)?;
+        drop(store);
+        Ok(LayoutViewRecord::from(layout_view(
+            &graph.view(),
+            &LayoutConfig::default(),
+        )))
+    }
+
+    /// One agent's immediate delegation neighborhood (Agent 360's
+    /// Delegation section): the node itself, plus its direct parents
+    /// (delegators) and children (delegatees). An agent never seen on the
+    /// bus yields an all-empty slice (`node: None`), never an error - a
+    /// normal "no delegation activity for this agent" outcome.
+    pub fn agent_slice(&self, agent_id: String) -> Result<AgentSliceRecord, FfiError> {
+        let store = relock(&self.reader);
+        let graph = DelegationGraph::from_store(&store)?;
+        drop(store);
+        Ok(AgentSliceRecord::from(graph.agent_slice(&agent_id)))
+    }
+
+    /// This agent's most recent `limit` stored events, newest first (Agent
+    /// 360's Events section), reusing [`UiEvent`] - the same Record
+    /// [`FleetHandle::recent_events`] returns, just filtered server-side to
+    /// one `agent_id` via `Store::events_for_agent`'s own index.
+    pub fn events_for_agent(&self, agent_id: String, limit: u32) -> Result<Vec<UiEvent>, FfiError> {
+        let events = relock(&self.reader).events_for_agent(&agent_id, limit as usize)?;
+        Ok(events.into_iter().map(UiEvent::from).collect())
     }
 
     /// Register a live listener. Events ingested from this point on are
@@ -459,5 +676,118 @@ mod tests {
         let dir = handle.dir.clone();
         drop(handle); // joins both threads
         assert!(!dir.exists(), "drop must remove the temp world");
+    }
+
+    /// PHASE3 W3: `agent_graph`/`agent_slice`/`events_for_agent` over the
+    /// same demo campaign `crates/core/src/demo.rs` generates. `tier1-bot`
+    /// is `AGENTS[0]`, acting on run index 0 - a block run (`i < 12`) whose
+    /// index is a multiple of 4 and whose agent is not `orchestrator`, so
+    /// per `demo::generate`'s own delegation rule it carries the fixed
+    /// chain `user://taipanbox.dev/j.doe -> agent://.../orchestrator`,
+    /// giving this test a real, known parent edge to assert on rather than
+    /// a guessed one.
+    #[test]
+    fn agent_graph_agent_slice_and_events_for_agent_over_the_demo_campaign() {
+        let handle = FleetHandle::new().expect("construct demo world");
+
+        // agent_graph: a non-empty, internally coherent layout - every edge
+        // endpoint is a known node, every position finite and in-bounds
+        // (mirrors `layout::tests::every_node_positioned_in_bounds_and_finite`,
+        // just through the FFI Record shape).
+        let graph = handle.agent_graph().expect("agent_graph");
+        assert!(
+            !graph.nodes.is_empty(),
+            "expected a non-empty delegation graph over the demo campaign"
+        );
+        assert!(
+            !graph.edges.is_empty(),
+            "expected delegation edges (a fraction of demo runs delegate through the orchestrator)"
+        );
+        let ids: std::collections::BTreeSet<&str> =
+            graph.nodes.iter().map(|n| n.id.as_str()).collect();
+        for edge in &graph.edges {
+            assert!(
+                ids.contains(edge.from.as_str()) && ids.contains(edge.to.as_str()),
+                "edge {edge:?} must reference only known nodes"
+            );
+        }
+        for node in &graph.nodes {
+            assert!(
+                node.x.is_finite() && node.y.is_finite(),
+                "{} has a non-finite position",
+                node.id
+            );
+            assert!(
+                node.x >= 0.0 && node.x <= graph.width && node.y >= 0.0 && node.y <= graph.height,
+                "{} position out of the {}x{} canvas bounds",
+                node.id,
+                graph.width,
+                graph.height
+            );
+        }
+
+        // agent_slice: tier1-bot has a real node (it acted) and delegates
+        // through the orchestrator on at least one of its demo runs.
+        const TIER1: &str = "agent://taipanbox.dev/demo/tier1-bot";
+        const ORCHESTRATOR: &str = "agent://taipanbox.dev/demo/orchestrator";
+        let slice = handle
+            .agent_slice(TIER1.to_string())
+            .expect("agent_slice for a demo agent");
+        let node = slice.node.expect("tier1-bot must have acted on the bus");
+        assert_eq!(node.id, TIER1);
+        assert!(
+            node.event_count > 0,
+            "tier1-bot must have a positive event_count"
+        );
+        assert!(
+            slice.parents.iter().any(|p| p.id == ORCHESTRATOR),
+            "tier1-bot's demo runs delegate through the orchestrator, got parents {:?}",
+            slice.parents
+        );
+
+        // The orchestrator itself: a delegator with real children, and its
+        // own parent is the fixed demo user root - proves the neighborhood
+        // is symmetric, not just readable from one side.
+        let orch_slice = handle
+            .agent_slice(ORCHESTRATOR.to_string())
+            .expect("agent_slice for the orchestrator");
+        assert!(orch_slice.node.is_some());
+        assert!(
+            orch_slice
+                .parents
+                .iter()
+                .any(|p| p.id == "user://taipanbox.dev/j.doe"),
+            "the orchestrator's own parent must be the demo user root"
+        );
+        assert!(
+            !orch_slice.children.is_empty(),
+            "the orchestrator must have delegatee children in the demo campaign"
+        );
+
+        // An agent never seen on the bus yields an all-empty slice, never an
+        // error (`DelegationGraph::agent_slice`'s own fail-closed contract).
+        let unknown = handle
+            .agent_slice("agent://taipanbox.dev/demo/does-not-exist".to_string())
+            .expect("agent_slice must succeed even for an unknown agent");
+        assert!(
+            unknown.node.is_none() && unknown.parents.is_empty() && unknown.children.is_empty(),
+            "an unseen agent must yield an all-empty slice"
+        );
+
+        // events_for_agent: only this agent's own events, newest first.
+        let events = handle
+            .events_for_agent(TIER1.to_string(), 50)
+            .expect("events_for_agent for a demo agent");
+        assert!(!events.is_empty(), "tier1-bot must have stored events");
+        assert!(
+            events.iter().all(|e| e.agent_id == TIER1),
+            "events_for_agent must return only this agent's own events"
+        );
+        if events.len() > 1 {
+            assert!(
+                events[0].id >= events[1].id,
+                "events_for_agent must be newest-first by rowid"
+            );
+        }
     }
 }

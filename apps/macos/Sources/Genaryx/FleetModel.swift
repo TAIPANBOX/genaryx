@@ -75,6 +75,51 @@ final class FleetModel {
         }
         onNewEvent?(event)
     }
+
+    // MARK: - delegation graph + Agent 360 (PHASE3 W3)
+    //
+    // `FleetHandle` owns these three reads too: the delegation graph is
+    // core's own bus-fed graph (built from the SAME Store this model already
+    // seeded from), not Idryx's - see `crates/ffi/src/lib.rs`'s module doc.
+    // So `GraphModel`/`Agent360Model` call through THIS model's already-live
+    // `handle` rather than opening a second `FleetHandle` of their own
+    // (which would seed an independent throwaway demo world with its own
+    // ingest/feeder threads - wasteful, and not the same data this model's
+    // `events` already show). Every call runs inside `Task.detached`, off
+    // this model's `@MainActor` isolation, exactly like
+    // `CloudModel`/`PolicyModel`/`IdentityModel` wrap their own handles (see
+    // `CloudModel.swift`'s doc for the full rationale); only the
+    // already-resolved result is awaited back onto the main actor.
+
+    /// `handle`, or an honest `FfiError` when construction itself failed
+    /// (see `unavailableMessage`) - never a silent empty result, since
+    /// unlike a real read this is "the call could not even be attempted."
+    private func requireHandle() throws -> FleetHandle {
+        guard let handle else {
+            throw FfiError.Core(msg: unavailableMessage ?? "fleet handle unavailable")
+        }
+        return handle
+    }
+
+    /// The whole delegation graph, laid out for the Graph tab's Canvas2D
+    /// renderer (PHASE3.md position 3: layout computed once in core).
+    func agentGraph() async throws -> LayoutViewRecord {
+        let handle = try requireHandle()
+        return try await Task.detached { try handle.agentGraph() }.value
+    }
+
+    /// One agent's immediate delegation neighborhood, for Agent 360's
+    /// Delegation section.
+    func agentSlice(_ agentId: String) async throws -> AgentSliceRecord {
+        let handle = try requireHandle()
+        return try await Task.detached { try handle.agentSlice(agentId: agentId) }.value
+    }
+
+    /// This agent's own recent events, for Agent 360's Events section.
+    func eventsForAgent(_ agentId: String, limit: UInt32) async throws -> [UiEvent] {
+        let handle = try requireHandle()
+        return try await Task.detached { try handle.eventsForAgent(agentId: agentId, limit: limit) }.value
+    }
 }
 
 /// Bridges `EventListener.onEvent` (called from the Rust ingest thread,

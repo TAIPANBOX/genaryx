@@ -43,17 +43,34 @@ import SwiftUI
 /// is no privileged decision on this panel for a notification to deep-link
 /// into this wave (W3's Agent 360 is where a cross-panel click-through
 /// lands).
+///
+/// Phase-3 wave 3 adds `graphModel` (`GraphModel`, over `FleetModel`'s own
+/// `agentGraph()`) and the `Graph` tab - the delegation graph, drawn from
+/// core's laid-out positions. It also adds `agentFocus`: the Agent 360
+/// deep-link target, wired from a delegation-graph node tap
+/// (`DelegationGraphView`) and an Identity row tap (`IdentityView`) alike -
+/// PHASE3.md's exit gate: "a click on any agent, from anywhere, opens a
+/// full cross-plane Agent 360 card." Setting `agentFocus` presents
+/// `Agent360View` as a sheet over whichever tab is currently showing,
+/// mirroring `focusedApprovalId`'s own "a deep-link is just a piece of
+/// state another view reacts to" shape from Phase-2 wave 3, just routed to
+/// a sheet instead of an in-panel scroll+highlight (Agent 360 has no one
+/// natural host panel to scroll within - it spans five).
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
     @State private var cloudModel = CloudModel()
     @State private var policyModel = PolicyModel()
     @State private var identityModel = IdentityModel()
+    @State private var graphModel = GraphModel()
     @State private var notifications = ApprovalNotificationModel()
     @State private var tab: AppTab = .overview
     /// The approval to scroll to and highlight once `tab` is `.policy` -
     /// see the type doc's "Phase-2 wave 3" paragraph.
     @State private var focusedApprovalId: String?
+    /// The agent whose Agent 360 card is currently presented as a sheet -
+    /// see the type doc's "Phase-3 wave 3" paragraph. `nil` means no sheet.
+    @State private var agentFocus: AgentFocus?
 
     var body: some Scene {
         WindowGroup("Genaryx") {
@@ -71,7 +88,11 @@ struct GenaryxApp: App {
                             model: policyModel, busEvents: model.events, notifications: notifications,
                             focusedApprovalId: focusedApprovalId)
                     case .identity:
-                        IdentityView(model: identityModel)
+                        IdentityView(model: identityModel, onOpenAgent: { agentFocus = AgentFocus(agentId: $0) })
+                    case .graph:
+                        DelegationGraphView(
+                            fleetModel: model, model: graphModel,
+                            onOpenAgent: { agentFocus = AgentFocus(agentId: $0) })
                     case .posture:
                         PostureView(cloudModel: cloudModel, policyModel: policyModel, fleetModel: model)
                     case .bus:
@@ -85,6 +106,21 @@ struct GenaryxApp: App {
                 }
             }
             .frame(minWidth: 900, minHeight: 600)
+            .sheet(item: $agentFocus) { focus in
+                Agent360View(
+                    agentId: focus.agentId, fleetModel: model, cloudModel: cloudModel, policyModel: policyModel,
+                    identityModel: identityModel,
+                    onClose: { agentFocus = nil },
+                    onOpenMoney: {
+                        tab = .money
+                        agentFocus = nil
+                    },
+                    onOpenPolicy: {
+                        tab = .policy
+                        agentFocus = nil
+                    }
+                )
+            }
             .task {
                 wireNotifications()
             }
@@ -128,17 +164,28 @@ struct GenaryxApp: App {
     }
 }
 
-/// The six top-level nav destinations - Overview, Money, Policy, Identity,
-/// Posture, and the existing Bus Explorer - matching the Tauri shell's
-/// `ViewId`/`lib/views.ts` switcher (six-way as of Phase-3 wave 2's Identity
-/// panel), rendered as a native macOS tab strip instead of a web-styled nav
-/// bar (native macOS patterns over pixel parity, same rule `Theme.swift`
-/// already follows).
+/// The Agent 360 deep-link target (PHASE3 W3): `.sheet(item:)` needs
+/// `Identifiable`, and an agent id is already a stable, unique identifier -
+/// no separate UUID needed. Two agent-id-equal requests collapse to the
+/// SAME sheet identity, so re-tapping the already-open agent (from a second
+/// entry point) does not flicker the sheet closed and immediately reopened.
+private struct AgentFocus: Identifiable, Equatable {
+    let agentId: String
+    var id: String { agentId }
+}
+
+/// The seven top-level nav destinations - Overview, Money, Policy, Identity,
+/// Graph, Posture, and the existing Bus Explorer - matching the Tauri
+/// shell's `ViewId`/`lib/views.ts` switcher (seven-way as of Phase-3 wave
+/// 3's Graph tab), rendered as a native macOS tab strip instead of a
+/// web-styled nav bar (native macOS patterns over pixel parity, same rule
+/// `Theme.swift` already follows).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
     case policy = "Policy"
     case identity = "Identity"
+    case graph = "Graph"
     case posture = "Posture"
     case bus = "Bus Explorer"
 

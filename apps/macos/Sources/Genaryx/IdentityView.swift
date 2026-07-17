@@ -9,9 +9,15 @@ import SwiftUI
 /// Identity is read-only this wave (docs/PHASE3.md W2), at parity with the
 /// Tauri shell's own Identity panel (`apps/desktop/src-tauri/src/identity/*`
 /// + its React panel).
+///
+/// PHASE3 W3 adds `onOpenAgent`: tapping an identity row is one of this
+/// app's two Agent 360 deep-link entry points (the other is a delegation-
+/// graph node tap, `DelegationGraphView.swift`) - `GenaryxApp` wires this to
+/// its own `agentFocus` sheet state.
 @MainActor
 struct IdentityView: View {
     let model: IdentityModel
+    let onOpenAgent: (String) -> Void
 
     private static let refreshInterval: Duration = .seconds(20)
 
@@ -53,7 +59,7 @@ struct IdentityView: View {
                 }
 
                 section(title: "Identities") {
-                    IdentitiesListSection(identities: model.identities)
+                    IdentitiesListSection(identities: model.identities, onOpenAgent: onOpenAgent)
                 }
                 section(title: "Alerts") {
                     AlertsSection(
@@ -143,6 +149,7 @@ struct IdentityView: View {
 @MainActor
 private struct IdentitiesListSection: View {
     let identities: [IdentityRecord]
+    let onOpenAgent: (String) -> Void
 
     @State private var selectedTypes: Set<String> = []
 
@@ -171,7 +178,7 @@ private struct IdentitiesListSection: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(Array(filtered.prefix(Self.displayLimit)), id: \.id) { identity in
-                        IdentityRow(identity: identity)
+                        IdentityRow(identity: identity, onOpenAgent: onOpenAgent)
                     }
                 }
                 if filtered.count > Self.displayLimit {
@@ -211,9 +218,12 @@ private struct IdentitiesListSection: View {
     /// One identity: id / type / source / owner, privileged + admin-perm +
     /// remediation/rotation tags, the delegation chain, and the
     /// permission/events/alerts counts - explicitly labeled as counts
-    /// (PHASE3.md: "label them as counts, not objects").
+    /// (PHASE3.md: "label them as counts, not objects"). PHASE3 W3: the
+    /// whole row is one of this app's two Agent 360 deep-link entry points -
+    /// tapping it opens `identity.id`'s 360 card via `onOpenAgent`.
     private struct IdentityRow: View {
         let identity: IdentityRecord
+        let onOpenAgent: (String) -> Void
 
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
@@ -232,6 +242,9 @@ private struct IdentitiesListSection: View {
                     }
                     Spacer(minLength: 8)
                     countsColumn
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
                 }
 
                 if !tags.isEmpty {
@@ -256,6 +269,9 @@ private struct IdentitiesListSection: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                     .fill(Theme.panelElevated)
             )
+            .contentShape(Rectangle())
+            .onTapGesture { onOpenAgent(identity.id) }
+            .help("Open \(identity.id)'s Agent 360 card")
         }
 
         private var subtitle: String {
