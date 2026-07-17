@@ -44,3 +44,10 @@ thiserror = { workspace = true }
 # this adds a new direct edge to an already-resolved crate, not a second
 # version of it in the tree.
 base64 = { workspace = true }
+# Phase-4 wave 1 (crates/connectors/src/verdryx.rs): Verdryx exposes NO JSON
+# CLI (Python argparse, human text only), so VerdryxClient reads its
+# `verdryx.db` SQLite store directly, strictly read-only. Same
+# workspace-pinned rusqlite (bundled SQLite) that genaryx-core's Store
+# already uses, so this is a new direct edge to an already-resolved crate,
+# not a second copy in the tree.
+rusqlite = { workspace = true }

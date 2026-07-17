@@ -27,11 +27,23 @@
 //! plus an `idryx detect --format json` Rescan. Unauthenticated by design, and
 //! load-once, so the live delegation graph is genaryx-core's job (bus-fed), not
 //! this snapshot; see `crates/connectors/src/idryx.rs`.
+//!
+//! Phase-4 wave 1 (docs/PHASE4.md): [`VerdryxClient`] and [`QryxClient`] are the
+//! quality- and crypto-plane connectors the console's Quality and Crypto panels
+//! render from. They diverge on transport because the services do: Verdryx is a
+//! Python batch CLI with NO machine output, so [`VerdryxClient`] is a strictly
+//! read-only SQLite reader over `verdryx.db`; Qryx is a Go CLI whose machine
+//! surface IS `--format`, so [`QryxClient`] is a `ToolRunner` that shells it and
+//! parses the JSON (`ncsc`/`cbom`/`evidence`), including the ML-DSA-signed
+//! evidence bundles the Evidence Center reuses. See
+//! `crates/connectors/src/{verdryx,qryx}.rs`.
 
 mod cloud_rest;
 mod cloud_sse;
 mod idryx;
+mod qryx;
 mod sse_decoder;
+mod verdryx;
 mod wardryx;
 
 pub use cloud_rest::{
@@ -44,7 +56,15 @@ pub use idryx::{
     Permission as IdryxPermission, Recommendation as IdryxRecommendation,
     Remediation as IdryxRemediation,
 };
+pub use qryx::{
+    EvidenceReport, EvidenceSummary, NcscDiscovery, NcscFinding, NcscFullMigration, NcscPriority,
+    NcscReport, QryxClient, QryxError, Signature as QryxSignature, VerifyOutcome,
+};
 pub use sse_decoder::{SseDecoder, SseEvent};
+pub use verdryx::{
+    Baseline as VerdryxBaseline, EvalRun as VerdryxEvalRun, RunSummary as VerdryxRunSummary,
+    Score as VerdryxScore, VerdryxClient, VerdryxError,
+};
 pub use wardryx::{
     Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, DecideRequest,
     DecideResponse, Policy, PolicyRecord, WardryxClient, WardryxError,
