@@ -2,15 +2,18 @@
 //!
 //! `UiEvent` is a serde mirror of `genaryx_core::store::StoredEvent`, shaped
 //! for the frontend: every field the Bus Explorer renders (row + expand
-//! panel) round-trips through here. Today [`mock_events`] fabricates the
-//! list; see the `FOLLOW-UP WIRING POINT` doc comment below the `From` impl
-//! for exactly where that gets replaced by real data.
+//! panel) round-trips through here. The real wiring (`lib.rs`'s
+//! `recent_events` command plus the `live` module's background feeder) reads
+//! from a real `genaryx_core::store::Store`; [`mock_events`] below is now
+//! only the fail-closed fallback for when that store is unavailable (see the
+//! `From<StoredEvent>` and `From<ConsoleEvent>` impls just below).
 
 use chrono::{Duration, SecondsFormat, Utc};
-use genaryx_core::event::SchemaVersion;
+use genaryx_core::event::{ConsoleEvent, SchemaVersion};
 use genaryx_core::store::StoredEvent;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
+use std::sync::atomic::{AtomicI64, Ordering};
 
 /// UI-facing mirror of [`StoredEvent`]. Field-for-field: every byte the
 /// console ever stores about an event is a byte the Bus Explorer can show
@@ -39,20 +42,18 @@ pub struct UiEvent {
 }
 
 // ============================================================================
-// FOLLOW-UP WIRING POINT
+// REAL BUS WIRING
 // ============================================================================
-// This `From` impl is where the real bus gets connected. Today `recent_events`
-// (in `lib.rs`) calls [`mock_events`] directly. The follow-up task:
-//   1. holds a `genaryx_core::ingest::IngestService` (or a handle to its
-//      `Store`) in Tauri's managed state instead of nothing,
-//   2. replaces the `mock_events(limit)` call in the `recent_events` command
-//      with `store.recent_events(limit)?.into_iter().map(UiEvent::from).collect()`,
-//   3. subscribes once at startup via `IngestService::subscribe()` and forwards
-//      each `ConsoleEvent` to the frontend as a Tauri event (e.g. `app.emit`),
-//      converting it the same way after wrapping it into a `StoredEvent`-shaped
-//      value (or by extending this `From` site with a `ConsoleEvent` variant).
-// Everything downstream (`UiEvent`, the whole `src/` frontend) already
-// consumes this exact shape, so that swap is the entire follow-up task.
+// This is where the real bus connects to the UI shape. `recent_events` (in
+// `lib.rs`) reads a real `genaryx_core::store::Store` seeded at startup (see
+// `live::bootstrap`) and maps rows through the `From<StoredEvent>` impl just
+// below. The `live` module's background thread additionally re-polls the
+// same `IngestService` on a timer and forwards whatever it just broadcast to
+// the frontend as a Tauri `"bus:event"` event, converted via the
+// `From<ConsoleEvent>` impl further down (a `ConsoleEvent` has no database id
+// yet at broadcast time, so that impl assigns a synthetic one; see
+// `NEXT_LIVE_ID`). Everything downstream (`UiEvent`, the whole `src/`
+// frontend) consumes this one shape regardless of which impl produced it.
 impl From<StoredEvent> for UiEvent {
     fn from(e: StoredEvent) -> Self {
         Self {
@@ -71,6 +72,47 @@ impl From<StoredEvent> for UiEvent {
             raw: e.raw,
             file: e.file,
             off: e.off,
+        }
+    }
+}
+
+/// Monotonically decreasing synthetic id for events that reach the UI via the
+/// live broadcast path before they have a real SQLite row id. Real
+/// `StoredEvent` ids from `Store::recent_events` are always >= 1 (SQLite
+/// `INTEGER PRIMARY KEY` rowids), so negative ids can never collide with
+/// them. The Bus Explorer only needs *a* stable per-row key (React list key +
+/// the expand/collapse `Set<number>`), not a persisted identifier, so this is
+/// never round-tripped back into the store.
+static NEXT_LIVE_ID: AtomicI64 = AtomicI64::new(-1);
+
+/// Live-bus mirror of the `From<StoredEvent>` impl above: same field-for-field
+/// mapping, straight off the broadcast channel instead of a `Store` read. A
+/// `ConsoleEvent` broadcasts *before* its row is durably numbered, so there is
+/// no real id yet; see `NEXT_LIVE_ID`. Every other field here is exactly what
+/// `Store::insert_batch` (crates/core/src/store.rs) would have written from
+/// the same `ConsoleEvent`, so a live row looks identical to the same row
+/// read back after a restart, save for `id`.
+impl From<ConsoleEvent> for UiEvent {
+    fn from(ce: ConsoleEvent) -> Self {
+        let ConsoleEvent {
+            event, provenance, raw, ..
+        } = ce;
+        Self {
+            id: NEXT_LIVE_ID.fetch_sub(1, Ordering::Relaxed),
+            env: provenance.env,
+            ts: event.ts,
+            source: event.source,
+            event_type: event.event_type,
+            agent_id: event.agent_id,
+            run_id: event.run_id,
+            severity: event.severity,
+            schema: event.schema,
+            on_behalf_of: event.on_behalf_of,
+            data: event.data,
+            prev_hash: event.prev_hash,
+            raw,
+            file: provenance.file,
+            off: provenance.offset,
         }
     }
 }
@@ -297,6 +339,12 @@ fn seed_data(event_type: &str, run: u32, agent_id: &str) -> Value {
 /// show, not just the structured `data`. Shape matches
 /// `genaryx_core::demo::render_line` (schema/ts/source/type/agent_id/
 /// severity/run_id/on_behalf_of/data, in that order).
+///
+/// Pre-existing (unrelated to the live-store wiring): nine positional
+/// arguments mirror the nine fixed fields of the on-wire envelope in their
+/// canonical order, one-for-one, with no natural subgroup to bundle into a
+/// struct without inventing one just to satisfy the lint.
+#[allow(clippy::too_many_arguments)]
 fn raw_line(
     schema: &str,
     ts: &str,

@@ -33,8 +33,16 @@ tauri = { version = "2.11", features = [] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-# The frozen core (crates/core, HEAD 51ebbe3): StoredEvent + the future
-# IngestService::subscribe() wiring point (see src/events.rs).
+# `genaryx-core::ingest::IngestService::subscribe()` returns a
+# `tokio::sync::broadcast::Receiver` (see src/live.rs); naming that type here
+# requires depending on tokio directly even though it already reaches this
+# build transitively through genaryx-core. Only the "sync" feature is used
+# directly (plain, non-async `try_recv`/`send`, no runtime required); "rt"/
+# "time"/etc. still get pulled in and unified via genaryx-core's own
+# dependency, not duplicated by this line.
+tokio = { version = "1.52", features = ["sync"] }
+# The frozen core (crates/core, HEAD 51ebbe3): Store + IngestService, see
+# src/live.rs for the wiring.
 genaryx-core = { path = "../../../crates/core" }
 
 [profile.release]

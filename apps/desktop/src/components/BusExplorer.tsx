@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState } from "react";
 import { fetchRecentEvents, type EventsSource } from "../lib/recentEvents";
@@ -5,9 +7,13 @@ import type { UiEvent } from "../types";
 import { EventRow } from "./EventRow";
 import { Header } from "./Header";
 
-/** Comfortably above the ~40-event mock timeline; the real bus will hold far
- * more once wired (see the FOLLOW-UP WIRING POINT in src-tauri/src/events.rs). */
+/** Comfortably above the ~40-event mock timeline; also the cap applied to
+ * the live feed below so the list never grows unbounded. */
 const FETCH_LIMIT = 500;
+
+/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits on;
+ * payload is one `UiEvent`, same shape `recent_events` returns. */
+const LIVE_EVENT = "bus:event";
 
 const COLUMNS = "84px 108px 190px 1fr 108px 24px";
 
@@ -40,6 +46,38 @@ export function BusExplorer() {
     });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Live path: the Rust feeder (src-tauri/src/live.rs) emits one `UiEvent`
+  // every ~2s once it has appended and ingested a new line. Prepend each as
+  // it arrives, capped at FETCH_LIMIT so the list never grows unbounded.
+  // Skipped entirely outside a Tauri runtime (plain `vite build`/preview):
+  // `listen()` calls into the IPC bridge unconditionally and would reject
+  // with no `window.__TAURI_INTERNALS__` to answer it.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    listen<UiEvent>(LIVE_EVENT, (event) => {
+      setEvents((prev) => [event.payload, ...prev].slice(0, FETCH_LIMIT));
+    })
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error(`listen(${LIVE_EVENT}) failed:`, err);
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 
