@@ -13,10 +13,18 @@
 //! renders from. It reuses [`CloudSse`] for the live ticker and
 //! `genaryx-signing`'s `es256` module for signing; see
 //! `crates/connectors/src/cloud_rest.rs`.
+//!
+//! Phase-2 wave 1 (07 §4.3): [`WardryxClient`] is the Wardryx policy-plane
+//! REST connector - the PDP (`/v1/decide`), the approvals inbox
+//! (`/v1/approvals[...]`), and the admin policy-as-code routes
+//! (`/v1/policies[...]`) the console's policy panel renders from and acts
+//! through. Bearer-only auth (no device/signing, unlike `CloudClient`); see
+//! `crates/connectors/src/wardryx.rs`.
 
 mod cloud_rest;
 mod cloud_sse;
 mod sse_decoder;
+mod wardryx;
 
 pub use cloud_rest::{
     AckResponse, AgentAgg, Alert, AuditVerifyResponse, BudgetResponse, CloudClient, ConnectorError,
@@ -24,6 +32,10 @@ pub use cloud_rest::{
 };
 pub use cloud_sse::{CloudSse, CloudSseConfig};
 pub use sse_decoder::{SseDecoder, SseEvent};
+pub use wardryx::{
+    Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, DecideRequest,
+    DecideResponse, Policy, PolicyRecord, WardryxClient, WardryxError,
+};
 
 /// Marker for the connectors crate; real connectors land in F1+.
 pub const CRATE: &str = "genaryx-connectors";

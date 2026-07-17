@@ -37,3 +37,10 @@ serde_json = { workspace = true }
 # variants (thiserror::Error derive), matching the pattern genaryx-core's
 # error.rs and genaryx-signing's es256::SigningError already use.
 thiserror = { workspace = true }
+# Phase-2 wave 1 (crates/connectors/src/wardryx.rs): decoding an
+# approval_token's base64url(no-pad) claims payload
+# (`ApprovalTokenClaims::decode`). Already a direct dependency of the
+# sibling genaryx-signing crate at the same workspace-pinned version, so
+# this adds a new direct edge to an already-resolved crate, not a second
+# version of it in the tree.
+base64 = { workspace = true }
