@@ -30,9 +30,12 @@ kills the run with a hardware-signed (Secure Enclave) mutation the Cloud accepts
 - [ ] Overview + Money panel, BOTH shells: live burn, runs (budget/spent/steps/
       killed), savings, incidents (+ack), kill + budget change (hardware-signed).
 - [ ] menu-bar mini: burn rate + kill last runaway (SwiftUI NSStatusItem, Tauri tray).
-- [ ] `taipan up` v0: separate OPEN repo `TAIPANBOX/taipan`, native process
-      supervisor (generalize `bank-in-a-box`), port map (gateway 4100, Cloud 8080,
-      Idryx 8081, Wardryx 8090), events dir, keys, descriptor + console auto-discovery.
+- [x] `taipan up` v0: separate OPEN repo (local `~/Development/taipan` @ 30560c7,
+      push pending). Rust CLI up/down/demo, native supervisor: builds/locates
+      gateway+cloud (+wardryx/idryx via --with), process-group spawn, raw-TCP
+      healthz, minted dev keys (real: 401 without / 200 with), descriptor (07 §7)
+      the console auto-discovers, clean group-signal teardown (no orphans, never
+      ps/lsof). 7 tests. Live smoke: both stacks up + down verified.
 - [ ] Killer demo (09 §6) as an e2e acceptance test.
 
 ## Cloud API (verified from `~/Development/tokenfuse/crates/cloud/src`)
