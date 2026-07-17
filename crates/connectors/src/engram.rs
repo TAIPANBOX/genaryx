@@ -137,8 +137,13 @@ pub enum EngramProvenance {
         emotional_valence: Option<f64>,
         #[serde(default)]
         importance_score: Option<f64>,
+        /// The episode ids this episode summarizes. Always a list on the wire
+        /// (`Episode.summary_of: list[str]`, `engram/models.py:24`, default
+        /// `[]`), NOT a scalar - typing it as a single string made every
+        /// episodic `why` fail to deserialize (caught live against real
+        /// `engram-mcp`).
         #[serde(default)]
-        summary_of: Option<String>,
+        summary_of: Vec<String>,
         #[serde(default)]
         agent_id: Option<String>,
         access_count: i64,
@@ -318,17 +323,20 @@ mod tests {
         let episodic = serde_json::json!({
             "kind":"episodic","id":"e1","content":"observed a login","timestamp":"2026-07-17T10:00:00+00:00",
             "actors":["bot"],"tags":["auth"],"salience":0.4,"emotional_valence":0.0,
-            "importance_score":0.2,"summary_of":null,"agent_id":"agent://acme/x",
+            "importance_score":0.2,"summary_of":["ep-1","ep-2"],"agent_id":"agent://acme/x",
             "access_count":3,"last_accessed":"2026-07-17T11:00:00+00:00","note":"raw observation"
         });
         match serde_json::from_value::<EngramProvenance>(episodic).expect("episodic") {
             EngramProvenance::Episodic {
                 access_count,
                 content,
+                summary_of,
                 ..
             } => {
                 assert_eq!(access_count, 3);
                 assert_eq!(content, "observed a login");
+                // summary_of is a list on the wire, not a scalar.
+                assert_eq!(summary_of, vec!["ep-1", "ep-2"]);
             }
             other => panic!("expected Episodic, got {other:?}"),
         }

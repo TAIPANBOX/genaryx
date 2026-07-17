@@ -154,22 +154,55 @@ pub fn parse_tool_result(result: &Value) -> Result<Value, McpError> {
         }));
     }
 
-    // Prefer the typed structured content when the server provides it.
+    // FastMCP represents a tool's return two ways, and they differ by shape
+    // (both confirmed by a raw JSON-RPC probe of real `engram-mcp`):
+    //  - `structuredContent` holds the WHOLE value as a JSON object: a dict
+    //    tool (engram `stats`/`why`/`forget`) is the dict as-is; a NON-object
+    //    return (engram `recall`'s list) is wrapped under a synthetic single
+    //    `result` key, `{"result": [...]}`, so it stays an object.
+    //  - the `content` blocks are per-ITEM for a list return (one text block
+    //    per memory), so joining them is NOT valid JSON.
+    // So prefer `structuredContent` (unwrapping the `{"result": …}` wrapper) -
+    // it is the one intact source - and fall back to the text block only when
+    // structuredContent is absent (a dict tool on an SDK predating it).
+    // Preferring the per-item text blocks instead broke `recall` for any
+    // single-item result: the lone block parsed as one object, not an array.
     if let Some(sc) = result.get("structuredContent")
         && !sc.is_null()
     {
-        return Ok(sc.clone());
+        return Ok(unwrap_fastmcp_structured(sc));
     }
 
-    // Fall back to the always-present text block, parsed as JSON.
     let text = text_blocks();
-    if text.is_empty() {
-        return Err(McpError::Protocol(
-            "tools/call result had neither structuredContent nor text content".to_string(),
-        ));
+    if !text.is_empty() {
+        return match serde_json::from_str::<Value>(&text) {
+            Ok(v) => Ok(unwrap_fastmcp_structured(&v)),
+            // A bare-string tool return: surface the text as a JSON string.
+            Err(_) => Ok(Value::String(text)),
+        };
     }
-    serde_json::from_str(&text)
-        .map_err(|e| McpError::Protocol(format!("tool text content was not JSON: {e}")))
+
+    Err(McpError::Protocol(
+        "tools/call result had neither structuredContent nor text content".to_string(),
+    ))
+}
+
+/// FastMCP wraps a NON-object tool return (a list, a scalar, a string) under a
+/// synthetic single `result` key so the structured payload stays a JSON object.
+/// Unwrap exactly that shape - a single `result` key whose value is NOT itself
+/// an object (matching FastMCP's wrap-only-non-objects rule) - so a
+/// list-returning tool round-trips to its array. A genuine object return (every
+/// engram dict tool: `stats`/`why`/`forget`, all multi-key) and any other shape
+/// pass through untouched.
+fn unwrap_fastmcp_structured(v: &Value) -> Value {
+    if let Value::Object(map) = v
+        && map.len() == 1
+        && let Some(inner) = map.get("result")
+        && !inner.is_object()
+    {
+        return inner.clone();
+    }
+    v.clone()
 }
 
 // ---- client ----------------------------------------------------------------
@@ -404,15 +437,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_tool_result_prefers_structured_content() {
+    fn parse_tool_result_dict_return_round_trips() {
+        // A dict-returning tool (stats/why/forget): structuredContent is the
+        // dict as-is (multi-key, so the result-wrapper unwrap is a no-op).
         let result = json!({
-            "content": [{"type": "text", "text": "{\"stale\":true}"}],
+            "content": [{"type": "text", "text": "{\"agent_id\":\"a\",\"counts\":{\"episodic\":3}}"}],
             "structuredContent": {"agent_id": "a", "counts": {"episodic": 3}},
             "isError": false
         });
         let v = parse_tool_result(&result).expect("parse");
         assert_eq!(v["agent_id"], "a");
         assert_eq!(v["counts"]["episodic"], 3);
+    }
+
+    #[test]
+    fn parse_tool_result_list_return_is_the_array_not_the_fastmcp_result_wrapper() {
+        // The recall regression (caught live against real engram-mcp): FastMCP
+        // wraps a list return under {"result": [...]} in BOTH the text block AND
+        // structuredContent (this SDK version), so we must unwrap it from
+        // whichever source, returning the bare array so Vec<EngramMemory>
+        // deserializes.
+        let result = json!({
+            "content": [{"type": "text", "text": "{\"result\":[{\"id\":\"m1\"},{\"id\":\"m2\"}]}"}],
+            "structuredContent": {"result": [{"id":"m1"},{"id":"m2"}]},
+            "isError": false
+        });
+        let v = parse_tool_result(&result).expect("parse");
+        assert!(v.is_array(), "must be the array, not the result wrapper");
+        assert_eq!(v.as_array().unwrap().len(), 2);
+        assert_eq!(v[0]["id"], "m1");
+    }
+
+    #[test]
+    fn parse_tool_result_does_not_unwrap_a_genuine_object_return() {
+        // A single-key `result` object whose value is itself an OBJECT is NOT
+        // FastMCP's non-object wrapper, so it must pass through untouched (guards
+        // the `!inner.is_object()` precision).
+        let result = json!({
+            "content": [{"type": "text", "text": "{\"result\":{\"nested\":true}}"}]
+        });
+        let v = parse_tool_result(&result).expect("parse");
+        assert!(v.is_object());
+        assert_eq!(v["result"]["nested"], true);
+    }
+
+    #[test]
+    fn parse_tool_result_unwraps_result_wrapper_when_only_structured_present() {
+        // No text block at all: fall back to structuredContent and still unwrap
+        // FastMCP's {"result": X} single-key wrapper for a non-object return.
+        let result = json!({ "structuredContent": {"result": [{"id":"m1"}]} });
+        let v = parse_tool_result(&result).expect("parse");
+        assert!(v.is_array());
+        assert_eq!(v[0]["id"], "m1");
     }
 
     #[test]
