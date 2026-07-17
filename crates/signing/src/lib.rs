@@ -1,14 +1,28 @@
 //! genaryx-signing: signing and verification ceremonies.
 //!
-//! Phase-0 placeholder. The core prepares the canonical string; the shell's Signer
-//! adapter signs (SwiftUI natively via CryptoKit/Secure Enclave; Tauri via
-//! `security-framework`; YubiKey PIV cross-platform). Server verification already
-//! exists in `tokenfuse-cloud` device-pairing: ES256 over
+//! The core prepares the canonical string; the shell's Signer adapter signs
+//! (SwiftUI natively via CryptoKit/Secure Enclave; Tauri via
+//! `security-framework`; YubiKey PIV cross-platform). Server verification
+//! already exists in `tokenfuse-cloud` device-pairing: ES256 over
 //! `METHOD\nPATH\nsha256(body)hex\nTS\nNONCE` (06 §2, 07 §4.2).
 //!
-//! Spike #2 and #4 (06 §7) land here: Secure Enclave both paths, and ML-DSA verify.
+//! Spike #4 (06 §7) landed in [`mldsa`] (ML-DSA verify). Spike #2 landed in
+//! [`es256`] (portable ES256 signing/verify, honest [`es256::Assurance`]
+//! labels) and [`enclave`] (macOS Secure-Enclave/SecKey signers); the SwiftUI
+//! CryptoKit twin lives in `crates/signing/enclave-smoke/` and pins the same
+//! cross-language canonical vectors. Live-cloud drivers: `examples/pair_ack.rs`
+//! and `examples/verify_es256_blob.rs`.
 
+pub mod es256;
 pub mod mldsa;
+
+#[cfg(target_os = "macos")]
+pub mod enclave;
+
+pub use es256::{
+    Assurance, Es256Signer, SignedMutation, SigningError, SoftwareSigner, body_sha256_hex,
+    der_to_raw_rs, sign_mutation, sign_mutation_at, verify_es256, verify_es256_b64,
+};
 
 /// Build the canonical string a device signs for a Cloud mutation (07 §4.2).
 /// `body_sha256_hex` is the lowercase hex SHA-256 of the request body ("" -> empty body).

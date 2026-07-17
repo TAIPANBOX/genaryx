@@ -38,6 +38,16 @@ regex = "1.13.1"
 # version of either crate to the tree, only a new direct edge to each.
 reqwest = { version = "0.13.4", features = ["stream"] }
 futures-util = "0.3.32"
+# Phase-0 spike #2 (06 §7): ES256 device-pairing signatures in genaryx-signing.
+# `p256` is pinned to the exact version tokenfuse-cloud's devices.rs verifies
+# with; base64 and the two Apple-framework crates already resolve transitively
+# (reqwest's native-tls stack), so those add direct edges, not new families.
+p256 = "0.13.2"
+sha2 = "0.10.9"
+base64 = "0.22.1"
+getrandom = "0.2.17"
+security-framework = "3.7.0"
+core-foundation = "0.10.1"
 
 [profile.release]
 lto = "thin"

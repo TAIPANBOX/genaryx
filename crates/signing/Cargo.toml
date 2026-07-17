@@ -14,3 +14,24 @@ genaryx-core = { path = "../core" }
 # its `pkcs8` feature (default-on) parses the SPKI DER Qryx embeds (07 §4.5)
 # directly. See crates/signing/src/mldsa.rs for the full rationale.
 ml-dsa = "0.1.1"
+# Phase-0 spike #2 (06 §7): ES256 device-pairing signing (crates/signing/src/es256.rs).
+# p256 is the exact crate+version tokenfuse-cloud's devices.rs verifies with, so the
+# unit tests here exercise the server's own verification code path.
+p256 = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+getrandom = { workspace = true }
+thiserror = { workspace = true }
+
+# Spike #2, Tauri-shell path: Secure-Enclave-backed SecKey signing (src/enclave.rs).
+# core-foundation is only for reading the generated key's token attribute back
+# (fail-closed proof the key is enclave-resident, see `SecKeySigner::generate`).
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { workspace = true }
+core-foundation = { workspace = true }
+
+# For the live-cloud spike drivers under examples/ only.
+[dev-dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
