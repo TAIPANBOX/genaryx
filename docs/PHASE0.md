@@ -24,7 +24,7 @@ golden NDJSON fixtures + an ingest bench report are committed.
 
 | # | Spike | Status | Verdict |
 |---|-------|--------|---------|
-| 1 | UniFFI boundary: Swift bindings, async event streams, XCFramework packaging | TODO | — |
+| 1 | UniFFI boundary: Swift bindings, async event streams, XCFramework packaging | DONE | GO with change: the boundary is proven end to end, but live events cross it via a uniffi `callback_interface` (`EventListener`) pushed from a plain Rust thread that solely owns the non-`Sync` `IngestService` and drains its broadcast receiver with the synchronous `try_recv`, not via uniffi async streams; no async runtime exists on either side of the FFI. Everything else as planned: uniffi 0.32 proc-macro scaffolding (no UDL), project-pinned `uniffi-bindgen` bin in library mode, staticlib packaged by `xcodebuild -create-xcframework`, consumed as a SwiftPM binaryTarget. Evidence (`crates/ffi`, smoke `bash crates/ffi/build-smoke.sh`, run twice, exit 0): Swift constructed `FleetHandle`; `eventCount()` = 179 (full demo campaign, primed synchronously in the constructor); `recentEvents(limit: 5)` returned the 5 newest stored rows (ids 179..175, real qryx events); 3 live feeder events arrived through the callback within ~3s (live-run-001..003); `eventCount()` grew to 182 while Swift watched (second WAL reader connection sees the writer's commits). The same path runs as a Rust E2E test in CI (`cargo test -p genaryx-ffi`, ~2.4s, Linux-safe). Packaging gotchas and the id-on-push contract: see F-04. |
 | 2 | Secure Enclave two ways (SwiftUI CryptoKit + Tauri security-framework), full pair → signed-ack vs local `tokenfuse-cloud` | TODO | — |
 | 3 | SQLite ingest bench ≥ 50k NDJSON lines/min on M-series | DONE | GO: measured 6.8M-7.2M lines/min end-to-end (conform + Store insert), 25M-27M lines/min conform-only, target 50k/min; corpus 200,122 lines; see `crates/core/examples/ingest_bench.rs` |
 | 4 | ML-DSA verify in Rust (crate choice vs `qryx verify-evidence` bridge) | DONE | GO: crate `ml-dsa` v0.1.1 (RustCrypto `signatures` monorepo, FIPS-204 final). Covers ML-DSA-44/65/87 via one generic `verify(param_set, public_key, message, signature) -> Result<bool, String>`; SPKI/PKCS8 parsing is built into the crate (matches Qryx's embedded-key format, 07 §4.5) with a raw-key fallback for bare offline-license keys. 10 tests green: round-trip KAT + tampered-message + tampered-signature + wrong-key + malformed-input for all three param sets, see `crates/signing/src/mldsa.rs`. `qryx` is not on this box's PATH so the qryx-signed-evidence bonus was skipped as instructed; ran an adjacent check instead since this box's OpenSSL 3.6.3 signs ML-DSA-65 natively: OpenSSL-signed message/SPKI verified `true` through our code, tampered message verified `false`, real cross-implementation evidence beyond a same-crate round trip. `fips204` (single-maintainer) was the other candidate; rejected for lacking any SPKI/PKCS8 support, which would have meant hand-rolling ASN.1 parsing ourselves. |
@@ -66,6 +66,28 @@ evidence (bench numbers, a working signed ack, a passing smoke run) linked.
   on tamper would miss the decode-error case; the console's evidence/license
   verification call sites should treat `Err` and `Ok(false)` identically (both
   mean "reject"), never treat `Err` as "inconclusive, allow".
+
+- **F-04 (2026-07-17).** UniFFI boundary notes, from getting the spike-1 smoke
+  green (`crates/ffi`). (1) Async never crosses the FFI: `IngestService` is
+  `Send` but not `Sync`, so one plain thread owns it outright and forwards
+  broadcast events to Swift through a `callback_interface` after each 150ms
+  poll; `tokio::sync::broadcast::Receiver::try_recv` is synchronous, so no
+  runtime, executor, or uniffi-async machinery exists anywhere in the chain.
+  Callbacks run on the Rust ingest thread; the shell hops to `@MainActor`
+  itself before touching UI state. (2) Push-path events carry `id = 0`:
+  `ConsoleEvent` is broadcast before its rowid exists, so `UiEvent.id` is
+  meaningful only on `recent_events` rows; shells key live rows themselves (a
+  later core change could broadcast post-insert `StoredEvent`s if rowids are
+  ever needed live). (3) Pin `MACOSX_DEPLOYMENT_TARGET=14.0` when building the
+  staticlib: the host default (macOS 26.5 SDK) draws one ld warning per object
+  file (~700 of them) when linked into the macOS-14 SwiftPM target; pinned,
+  the link is warning-free. (4) Keeping the `uniffi-bindgen` bin inside
+  `genaryx-ffi` (uniffi feature `cli`) guarantees generator/runtime
+  version-lock but pulls bindgen-only deps (clap, askama, reqwest/rustls) into
+  the lib's graph: `libgenaryx_ffi.a` lands at ~139 MB, dead-stripping to a
+  ~20 MB linked smoke binary. Accepted for Phase 0; the remedy, if it ever
+  hurts, is a separate `crates/uniffi-bindgen` bin crate so the lib drops the
+  `cli` feature.
 
 ## Toolchain facts (verified 2026-07-16, box "factory")
 

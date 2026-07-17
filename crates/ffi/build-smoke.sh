@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Phase-0 spike 1: build the full UniFFI chain and run the Swift smoke.
+#
+#   Rust staticlib/cdylib -> uniffi-bindgen (library mode, Swift)
+#   -> xcframework (static lib + header + modulemap) -> SwiftPM smoke run
+#
+# Usage: bash crates/ffi/build-smoke.sh    (self-anchored; run from anywhere)
+# Exit code is the smoke's: 0 = history + live push proven end to end.
+set -euo pipefail
+
+# Active developer dir on this box is the CLT; xcodebuild needs the full
+# Xcode (docs/PHASE0.md toolchain facts). No sudo required this way.
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+
+# Build the Rust objects for the same minimum macOS the Swift package (and
+# apps/macos) declares, or every object in the staticlib draws an ld warning
+# ("built for newer macOS version than being linked").
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
+
+FFI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$FFI_DIR/../.." && pwd)"
+SMOKE="$FFI_DIR/swift-smoke"
+GEN_SWIFT="$SMOKE/Sources/GenaryxCoreFFI/Generated"
+STAGE="$SMOKE/Binary"
+
+echo "==> cargo build -p genaryx-ffi --release (staticlib + cdylib)"
+cargo build -p genaryx-ffi --release --manifest-path "$ROOT/Cargo.toml"
+
+echo "==> uniffi-bindgen generate --library (Swift)"
+BINDGEN_OUT="$(mktemp -d "${TMPDIR:-/tmp}/genaryx-ffi-bindgen.XXXXXX")"
+trap 'rm -rf "$BINDGEN_OUT"' EXIT
+cargo run -p genaryx-ffi --bin uniffi-bindgen --manifest-path "$ROOT/Cargo.toml" -- \
+    generate --library "$ROOT/target/release/libgenaryx_ffi.dylib" \
+    --language swift --out-dir "$BINDGEN_OUT"
+
+echo "==> staging: .swift into the SwiftPM target, header+modulemap into the xcframework"
+rm -rf "$GEN_SWIFT" "$STAGE"
+mkdir -p "$GEN_SWIFT" "$STAGE/headers"
+cp "$BINDGEN_OUT/genaryx_ffi.swift" "$GEN_SWIFT/genaryx_ffi.swift"
+cp "$BINDGEN_OUT/genaryx_ffiFFI.h" "$STAGE/headers/"
+# xcframeworks resolve the C module from a literal module.modulemap.
+cp "$BINDGEN_OUT/genaryx_ffiFFI.modulemap" "$STAGE/headers/module.modulemap"
+
+echo "==> xcodebuild -create-xcframework"
+xcodebuild -create-xcframework \
+    -library "$ROOT/target/release/libgenaryx_ffi.a" \
+    -headers "$STAGE/headers" \
+    -output "$STAGE/GenaryxFFI.xcframework"
+rm -rf "$STAGE/headers"
+
+echo "==> swift run Smoke"
+cd "$SMOKE"
+exec swift run Smoke
