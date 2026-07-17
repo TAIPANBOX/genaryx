@@ -62,10 +62,21 @@
 //! reads the SAME `AppState.events_dir` `recent_events` filtered to
 //! `source == "engram"`, and Drills' findings are simply part of the
 //! `MockryxReport` `drills_run` already returns.
+//!
+//! The Evidence Center's state (see `evidence/`, docs/PHASE4.md W3) is
+//! managed the same non-blocking way once more, resolving three independent
+//! local-tool sources (qryx/idryx/tokenfuse - see `evidence::state`'s module
+//! doc for why there is no single Ready/NoEnvironment gate here). It
+//! introduces NO new Cloud connection of its own: its build command reuses
+//! the Money panel's already-paired `CloudClient` straight out of
+//! `MoneyState` (see `evidence::commands`'s module doc), so it needs no
+//! `events_dir` handle either - journaling reads `MoneyClient.bus` at build
+//! time, not a handle stored on `EvidenceState` itself.
 
 mod crypto;
 mod drills;
 mod events;
+mod evidence;
 mod graph;
 mod identity;
 mod live;
@@ -79,6 +90,7 @@ mod tray;
 use crypto::CryptoState;
 use drills::DrillsState;
 use events::UiEvent;
+use evidence::EvidenceState;
 use identity::IdentityState;
 use live::AppState;
 use memory::MemoryState;
@@ -231,6 +243,21 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
+            // Evidence Center (docs/PHASE4.md W3): same shape again,
+            // resolving the three independent local-tool sources
+            // (qryx/idryx/tokenfuse) - see `evidence::state`'s module doc.
+            // No `events_dir`/Cloud pairing of its own: `evidence_build`
+            // reads the Money panel's `MoneyState` directly at call time
+            // (see `evidence::commands`'s module doc), so nothing else is
+            // threaded through here.
+            app.manage(EvidenceState::pending());
+            let evidence_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = evidence::bootstrap().await;
+                let state = evidence_handle.state::<EvidenceState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
@@ -276,6 +303,8 @@ pub fn run() {
             memory::commands::memory_forget,
             drills::commands::drills_status,
             drills::commands::drills_run,
+            evidence::commands::evidence_status,
+            evidence::commands::evidence_build,
             graph::agent_graph,
             graph::agent_slice,
             graph::agent_events,

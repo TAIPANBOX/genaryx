@@ -70,6 +70,16 @@ final class CloudModel {
 
     private var handle: CloudHandle?
 
+    /// The paired `CloudHandle` this model owns, exposed read-only so
+    /// `EvidenceModel` (Phase-4 W3, docs/PHASE4.md) can build an evidence
+    /// pack through the SAME paired device/signing key Money/Overview
+    /// already use, rather than pairing a second one ("do NOT make a fresh
+    /// handle that pairs a new device"). `nil` whenever `connection` is not
+    /// `.ready` - mirrors every other guard on `handle` in this model, and
+    /// updates automatically across a `connect()` retry since it always
+    /// reads the current `handle` rather than a captured snapshot.
+    var cloudHandle: CloudHandle? { handle }
+
     init() {
         Task { await self.connect() }
     }

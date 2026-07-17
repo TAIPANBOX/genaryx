@@ -56,20 +56,28 @@
 
 pub mod dto;
 pub mod env;
+pub mod evidence;
+pub mod evidence_env;
 
 pub use dto::{CloudError, Incident, MutationOutcome, Overview, Run, Savings};
 pub use env::EnvSource;
+pub use evidence::{
+    EvidenceBuildInputs, EvidenceError, EvidenceLoadEntry, EvidenceManifestRecord,
+    EvidencePackRecord, ManifestArtifactRecord, MissingSourceRecord,
+};
+pub use evidence_env::EvidenceEnvDefaultsRecord;
 
 use dto::{build_run, status_of};
 use env::ResolvedEnv;
-use genaryx_connectors::{CloudClient, ConnectorError};
+use evidence::non_blank;
+use genaryx_connectors::{CloudClient, ConnectorError, QryxClient, TokenfuseClient};
 use genaryx_core::CommandRecord;
 use genaryx_core::command;
 use genaryx_core::store::Store;
 use genaryx_signing::{Es256Signer, SoftwareSigner};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
@@ -171,6 +179,21 @@ impl CloudHandle {
     /// The paired device's sanitized org domain.
     pub fn org_domain(&self) -> String {
         self.org_domain.clone()
+    }
+
+    /// The `user://<org_domain>/<local-user>` principal every
+    /// `console_command`/`console_evidence_built` record on this handle is
+    /// journaled under - the Evidence Center's default "operator" label
+    /// (docs/PHASE4.md W3). Named `console_operator`, not `operator`: the
+    /// latter is a Swift keyword (see `evidence`'s own module doc for why
+    /// this crate avoids that class of friction wherever a Swift binding
+    /// would have to read the value back, not just construct it once) - and
+    /// this crate already has a private free function called
+    /// `operator_principal` (this handle's own pairing-time computation,
+    /// below), so reusing that exact name here would additionally shadow-
+    /// confuse two genuinely different things with the same identifier.
+    pub fn console_operator(&self) -> String {
+        self.operator.clone()
     }
 
     // ---- reads --------------------------------------------------------
@@ -309,6 +332,158 @@ impl CloudHandle {
                 )
             },
         )
+    }
+
+    // ---- Evidence Center (Phase-4 W3) -----------------------------------
+    // Builds through the SAME paired `CloudClient` (compliance/audit reads
+    // AND the ES256 manifest signer) Money/Overview already use - never a
+    // second device pairing (see `evidence`'s own module doc). Unlike
+    // `kill_run`/`set_budget`/`ack_incident` above, a build is not itself a
+    // remote mutation (it reads Cloud/Qryx/idryx/TokenFuse and produces a
+    // local artifact), so it does not go through `finish_mutation` - see
+    // `build_evidence_pack`'s own doc for its bespoke journal step.
+
+    /// Best-effort pre-fill for the Evidence panel's editable source fields
+    /// (qryx/idryx/tokenfuse binaries + targets) - a pure local filesystem
+    /// read, never a subprocess spawn or network call, so it is cheap to
+    /// call once when the panel becomes usable (mirrors
+    /// `CryptoHandle::default_scan_target`/`DrillsHandle::default_scenario_dir`'s
+    /// own "operator can see/set it, never enforced" contract). See
+    /// `evidence_env`'s own module doc for exactly what is resolved from
+    /// where.
+    pub fn evidence_env_defaults(&self) -> EvidenceEnvDefaultsRecord {
+        evidence_env::resolve_defaults()
+    }
+
+    /// Assemble a signed evidence pack from every requested source (Cloud
+    /// compliance + audit verdict when `include_cloud`, Qryx crypto evidence
+    /// + CBOM when both `qryx_bin`/`qryx_target` resolve, idryx Agent-BOM
+    /// when `idryx_bin` resolves, TokenFuse FOCUS export when both
+    /// `tokenfuse_bin`/`tokenfuse_traces_dir` resolve), then journals a
+    /// `console_evidence_built` record through the SAME Store +
+    /// `command::record` path every mutation above uses (docs/PHASE4.md W3:
+    /// "it IS a console action producing an artifact, so it records like
+    /// every other mutation"). A source whose input is `None`/blank is
+    /// simply left out - never an error on its own; a source that WAS
+    /// requested but failed is recorded as a [`MissingSourceRecord`] in the
+    /// returned manifest, never silently dropped (see
+    /// `genaryx_connectors::build_evidence_pack`'s own doc). `include_cloud:
+    /// false`, or no device signer attached, yields an honestly-UNSIGNED
+    /// pack ([`EvidencePackRecord::signed`] `= false`) - never an error and
+    /// never a false "signed" claim; only [`EvidenceError::NoArtifacts`]
+    /// (nothing at all could be gathered) and a GENUINE signing/assembly
+    /// failure surface as errors.
+    ///
+    /// The journal step is best-effort: journal failure is logged to
+    /// stderr and reflected in [`EvidencePackRecord::journaled`], but never
+    /// discards the pack the operator already successfully built - unlike
+    /// `kill_run`/`set_budget`/`ack_incident`, there is no remote mutation
+    /// outcome to report even on a journal failure (the pack was produced
+    /// purely locally), so there is nothing this method should fail closed
+    /// over here that would not also throw away a real, already-built
+    /// artifact.
+    pub fn build_evidence_pack(
+        &self,
+        inputs: EvidenceBuildInputs,
+    ) -> Result<EvidencePackRecord, EvidenceError> {
+        let operator = non_blank(inputs.operator_name).unwrap_or_else(|| self.operator.clone());
+        let org = non_blank(inputs.org).unwrap_or_else(|| self.org_domain.clone());
+
+        let qryx_bin = non_blank(inputs.qryx_bin);
+        let qryx_target = non_blank(inputs.qryx_target).map(PathBuf::from);
+        let qryx_sign_key = non_blank(inputs.qryx_sign_key).map(PathBuf::from);
+        let qryx_client = qryx_bin.map(QryxClient::new);
+        let qryx_input: Option<(&QryxClient, &Path, Option<&Path>)> =
+            match (&qryx_client, &qryx_target) {
+                (Some(client), Some(target)) => {
+                    Some((client, target.as_path(), qryx_sign_key.as_deref()))
+                }
+                _ => None,
+            };
+
+        let idryx_bin = non_blank(inputs.idryx_bin).map(PathBuf::from);
+        let idryx_loads: Vec<(&str, &str)> = inputs
+            .idryx_loads
+            .iter()
+            .map(|e| (e.source.as_str(), e.path.as_str()))
+            .collect();
+        let idryx_input: Option<(&Path, &[(&str, &str)])> = idryx_bin
+            .as_deref()
+            .map(|bin| (bin, idryx_loads.as_slice()));
+
+        let tokenfuse_bin = non_blank(inputs.tokenfuse_bin);
+        let tokenfuse_traces = non_blank(inputs.tokenfuse_traces_dir).map(PathBuf::from);
+        let tokenfuse_from = non_blank(inputs.tokenfuse_from);
+        let tokenfuse_to = non_blank(inputs.tokenfuse_to);
+        let tokenfuse_client = tokenfuse_bin.map(TokenfuseClient::new);
+        let tokenfuse_input: Option<(&TokenfuseClient, &Path, Option<&str>, Option<&str>)> =
+            match (&tokenfuse_client, &tokenfuse_traces) {
+                (Some(client), Some(traces)) => Some((
+                    client,
+                    traces.as_path(),
+                    tokenfuse_from.as_deref(),
+                    tokenfuse_to.as_deref(),
+                )),
+                _ => None,
+            };
+
+        let evidence_inputs = genaryx_connectors::EvidenceInputs {
+            operator: &operator,
+            org: &org,
+            generated_at: &inputs.generated_at,
+            include_cloud: inputs.include_cloud,
+            qryx: qryx_input,
+            idryx: idryx_input,
+            tokenfuse: tokenfuse_input,
+        };
+
+        let pack = self
+            .runtime
+            .block_on(genaryx_connectors::build_evidence_pack(
+                &self.client,
+                evidence_inputs,
+            ))?;
+
+        let sha256 = evidence::sha256_hex(&pack.zip_bytes);
+        let artifact_count = pack.manifest.artifacts.len();
+        let missing_count = pack.manifest.missing.len();
+        let signed = pack.signed;
+
+        let rec = CommandRecord {
+            operator: self.operator.clone(),
+            env: "local".to_string(),
+            action: "console.evidence_built".to_string(),
+            target: sha256.clone(),
+            params: json!({
+                "sha256": sha256,
+                "artifact_count": artifact_count,
+                "signed": signed,
+                "missing_count": missing_count,
+                "operator": operator,
+                "org": org,
+            }),
+            decision: "allow".to_string(),
+            sig_alg: "es256".to_string(),
+            sig_fpr: self.sig_fpr.to_string(),
+            http_status: 200,
+            verify_result: format!(
+                "signed:{signed} artifacts:{artifact_count} missing:{missing_count}"
+            ),
+        };
+        let (journaled, journal_err) = self.journal(&rec);
+        if let Some(err) = &journal_err {
+            eprintln!(
+                "genaryx-ffi cloud evidence: console_evidence_built journal failed (pack still \
+                 returned): {err}"
+            );
+        }
+
+        Ok(EvidencePackRecord {
+            zip_bytes: pack.zip_bytes,
+            manifest: EvidenceManifestRecord::from(&pack.manifest),
+            signed,
+            journaled,
+        })
     }
 }
 
@@ -775,6 +950,130 @@ mod tests {
             "genaryx-ffi cloud live_e2e: PASSED - paired against {base}, overview read, signed kill of \
              {run_id} accepted, console_command appended to {} and conforms",
             handle.console_events_path.display()
+        );
+    }
+
+    /// Live e2e for the Evidence Center (docs/PHASE4.md W3): a real,
+    /// freshly-paired `CloudHandle` builds a Cloud-only pack (every other
+    /// source deliberately `None`, so this proves the CloudHandle integration
+    /// itself - the hand-written, security-relevant part of this wave -
+    /// without needing external qryx/idryx/tokenfuse checkouts too). Same
+    /// gated, hermetic shape as the kill test above: reuses
+    /// [`try_start_cloud`], skips gracefully when `~/Development/tokenfuse`
+    /// is unavailable.
+    #[test]
+    fn live_e2e_build_evidence_pack_cloud_only_signs_and_journals() {
+        let Some((_guard, base)) = try_start_cloud() else {
+            return; // already explained why via eprintln! above
+        };
+
+        let handle = CloudHandle::connect(base.clone(), "devkey".to_string())
+            .expect("CloudHandle::connect must pair against a live Cloud");
+
+        let inputs = EvidenceBuildInputs {
+            operator_name: None, // falls back to console_operator()
+            org: None,           // falls back to org_domain()
+            generated_at: "2026-07-17T12:00:00.000Z".to_string(),
+            include_cloud: true,
+            qryx_bin: None,
+            qryx_target: None,
+            qryx_sign_key: None,
+            idryx_bin: None,
+            idryx_loads: Vec::new(),
+            tokenfuse_bin: None,
+            tokenfuse_traces_dir: None,
+            tokenfuse_from: None,
+            tokenfuse_to: None,
+        };
+
+        let pack = handle
+            .build_evidence_pack(inputs)
+            .expect("a Cloud-only build against a live, freshly-paired Cloud must succeed");
+
+        // ---- the pack itself ----
+        assert!(
+            !pack.zip_bytes.is_empty(),
+            "a built pack must have real bytes"
+        );
+        assert_eq!(
+            &pack.zip_bytes[..4],
+            b"PK\x03\x04",
+            "zip_bytes must start with the zip local-file-header magic"
+        );
+        assert!(
+            pack.signed,
+            "a freshly-paired CloudHandle always has a device signer attached, so this must be \
+             signed, never a false UNSIGNED claim"
+        );
+
+        // ---- the manifest: exactly the two Cloud sources were attempted,
+        // each landing as either an artifact or an honest MissingSource,
+        // never silently dropped ----
+        assert_eq!(pack.manifest.pack_version, "genaryx-evidence/v1");
+        assert_eq!(pack.manifest.generated_at, "2026-07-17T12:00:00.000Z");
+        assert_eq!(pack.manifest.operator_name, handle.console_operator());
+        assert_eq!(pack.manifest.org, handle.org_domain());
+        assert_eq!(
+            pack.manifest.artifacts.len() + pack.manifest.missing.len(),
+            2,
+            "include_cloud alone attempts exactly two sources (compliance evidence + audit \
+             verdict): {:?} / {:?}",
+            pack.manifest.artifacts,
+            pack.manifest.missing
+        );
+        for artifact in &pack.manifest.artifacts {
+            assert!(artifact.sha256.starts_with("sha256:"));
+            assert!(artifact.size_bytes > 0);
+        }
+
+        // ---- confirm the console_evidence_built line landed and conforms ----
+        let body = std::fs::read_to_string(&handle.console_events_path)
+            .expect("read the console events file back");
+        let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(
+            lines.len(),
+            1,
+            "exactly one console_command line appended for the evidence build"
+        );
+
+        let conformer = genaryx_core::Conformer::new().expect("embedded schemas must compile");
+        let report = conformer.check_line(lines[0]);
+        assert!(
+            report.valid,
+            "appended console_command must conform: {:?}\n  line: {}",
+            report.errors, lines[0]
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("parse the appended line");
+        assert_eq!(
+            value.get("type").and_then(|v| v.as_str()),
+            Some("console_command")
+        );
+        assert_eq!(
+            value
+                .get("data")
+                .and_then(|d| d.get("action"))
+                .and_then(|v| v.as_str()),
+            Some("console.evidence_built")
+        );
+        assert_eq!(
+            value
+                .get("data")
+                .and_then(|d| d.get("decision"))
+                .and_then(|v| v.as_str()),
+            Some("allow"),
+            "an evidence build is not a break-glass override"
+        );
+
+        eprintln!(
+            "genaryx-ffi cloud live_e2e: PASSED - Evidence Center: paired against {base}, built a \
+             {}-byte pack ({} artifacts, {} missing, signed={}), console_evidence_built appended and \
+             conforms",
+            pack.zip_bytes.len(),
+            pack.manifest.artifacts.len(),
+            pack.manifest.missing.len(),
+            pack.signed
         );
     }
 }

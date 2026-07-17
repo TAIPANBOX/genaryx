@@ -99,6 +99,16 @@ import SwiftUI
 /// not a new read through `MemoryHandle` (see `MemoryView.swift`'s own doc).
 /// `DrillsView` takes no bus feed at all: mockryx has no live signal of its
 /// own, every read is an explicit on-demand run.
+///
+/// Phase-4 wave 3 (docs/PHASE4.md W3) adds `evidenceModel` (`EvidenceModel`)
+/// and the `Evidence` tab, right after `Drills` - the last of the per-plane
+/// panels before the cross-cutting views (Graph/Replay/Posture/Bus
+/// Explorer). Unlike every other Phase-4 model, `EvidenceModel` owns no
+/// handle of its own: `EvidenceView` is handed `cloudModel` directly
+/// alongside `evidenceModel`, exactly how `PostureView` already receives
+/// `cloudModel` - the Evidence Center builds through the SAME paired
+/// `CloudHandle` Money/Overview use (`CloudModel.cloudHandle`), never a
+/// second device pairing.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
@@ -109,6 +119,7 @@ struct GenaryxApp: App {
     @State private var cryptoModel = CryptoModel()
     @State private var memoryModel = MemoryModel()
     @State private var drillsModel = DrillsModel()
+    @State private var evidenceModel = EvidenceModel()
     @State private var graphModel = GraphModel()
     @State private var replayModel = RunReplayModel()
     @State private var notifications = ApprovalNotificationModel()
@@ -148,6 +159,8 @@ struct GenaryxApp: App {
                         MemoryView(model: memoryModel, busEvents: model.events)
                     case .drills:
                         DrillsView(model: drillsModel)
+                    case .evidence:
+                        EvidenceView(model: evidenceModel, cloudModel: cloudModel)
                     case .graph:
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
@@ -254,16 +267,17 @@ private struct AgentFocus: Identifiable, Equatable {
     var id: String { agentId }
 }
 
-/// The twelve top-level nav destinations - Overview, Money, Policy, Identity,
-/// Quality, Crypto, Memory, Drills, Graph, Replay, Posture, and the existing
-/// Bus Explorer - matching the Tauri shell's `ViewId`/`lib/views.ts`
-/// switcher (extended with Memory + Drills in Phase-4 wave 2, mirroring wave
-/// 1's Quality + Crypto addition), rendered as a native macOS tab strip
-/// instead of a web-styled nav bar (native macOS patterns over pixel parity,
-/// same rule `Theme.swift` already follows). Memory and Drills sit right
-/// after Crypto, continuing the per-plane-panel sequence
-/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills) ahead of the
-/// cross-cutting views (Graph/Replay/Posture/Bus Explorer).
+/// The thirteen top-level nav destinations - Overview, Money, Policy,
+/// Identity, Quality, Crypto, Memory, Drills, Evidence, Graph, Replay,
+/// Posture, and the existing Bus Explorer - matching the Tauri shell's
+/// `ViewId`/`lib/views.ts` switcher (extended with Memory + Drills in
+/// Phase-4 wave 2, then Evidence in Phase-4 wave 3, mirroring wave 1's
+/// Quality + Crypto addition), rendered as a native macOS tab strip instead
+/// of a web-styled nav bar (native macOS patterns over pixel parity, same
+/// rule `Theme.swift` already follows). Memory, Drills, and Evidence sit
+/// right after Crypto, continuing the per-plane-panel sequence
+/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills/Evidence) ahead of
+/// the cross-cutting views (Graph/Replay/Posture/Bus Explorer).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
@@ -273,6 +287,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
     case crypto = "Crypto"
     case memory = "Memory"
     case drills = "Drills"
+    case evidence = "Evidence"
     case graph = "Graph"
     case replay = "Replay"
     case posture = "Posture"

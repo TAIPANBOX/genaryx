@@ -52,6 +52,11 @@ thiserror = { workspace = true }
 # in its constructor) to bridge genaryx-connectors' async CloudClient to
 # UniFFI's synchronous export surface - see `cloud/mod.rs`.
 tokio = { workspace = true }
+# Phase-4 wave 3 (docs/PHASE4.md W3): `cloud::evidence::sha256_hex` hashes the
+# assembled evidence zip for the `console_evidence_built` journal entry - the
+# same digest shape (and the same pinned version) `genaryx-core::evidence`
+# already uses for each artifact's own hash.
+sha2 = { workspace = true }
 
 [dev-dependencies]
 # Phase-4 wave 1 (docs/PHASE4.md): `quality::tests` builds a real verdryx.db

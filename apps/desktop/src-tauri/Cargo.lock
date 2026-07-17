@@ -1573,6 +1573,7 @@ dependencies = [
 name = "genaryx-desktop"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "genaryx-connectors",
  "genaryx-core",
@@ -1581,6 +1582,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",

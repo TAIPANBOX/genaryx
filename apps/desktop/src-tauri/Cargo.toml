@@ -69,6 +69,25 @@ genaryx-signing = { path = "../../../crates/signing" }
 # link rather than a real OS action button - see `notifications.ts`'s doc
 # comment.
 tauri-plugin-notification = "2.3.3"
+# Phase-4 wave 3 (docs/PHASE4.md W3, Evidence Center): `evidence_build`
+# base64-encodes a built pack's `zip_bytes` for its `zip_base64` return field
+# (the frontend downloads it via a Blob + a temporary `<a download>`, no Tauri
+# dialog plugin) - the same `Engine`/`STANDARD` usage
+# `genaryx_connectors::CloudClient::sign_evidence_manifest` already has. Same
+# version pin as the rest of the workspace (`base64 = "0.22.1"`, root
+# Cargo.toml); `base64` already reaches this build transitively through
+# genaryx-connectors, but (like `reqwest`/`rusqlite` below) is not directly
+# nameable here without being listed too.
+base64 = "0.22.1"
+# Phase-4 wave 3: sha256 over a built pack's whole `zip_bytes`, for the
+# `console_evidence_built` journal entry's `target`/`params.sha256` (distinct
+# from any single artifact's own hash inside the signed manifest, which
+# `genaryx_core::evidence` already computes internally). Same version pin as
+# the rest of the workspace (`sha2 = "0.10.9"`, root Cargo.toml); reaches this
+# build transitively through genaryx-core/genaryx-connectors/genaryx-signing
+# but is not directly nameable here without being listed too (same rationale
+# as `base64` just above).
+sha2 = "0.10.9"
 
 # Only for `src/money/state.rs`'s gated live-e2e test (spawns a real
 # `tokenfuse-cloud` and polls its `/healthz`, mirroring
