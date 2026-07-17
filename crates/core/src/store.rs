@@ -118,6 +118,20 @@ pub struct StoredEvent {
     pub off: Option<u64>,
 }
 
+/// The delegation-relevant columns of one event, as read by
+/// [`Store::delegation_events`] for building the [`crate::graph::DelegationGraph`].
+/// Deliberately narrower than [`StoredEvent`] (no `raw`/`data`/provenance) so a
+/// full-table scan for the graph stays cheap.
+#[derive(Debug, Clone)]
+pub struct DelegationRow {
+    pub agent_id: String,
+    pub on_behalf_of: Vec<String>,
+    pub ts: String,
+    pub source: String,
+    pub type_: String,
+    pub run_id: Option<String>,
+}
+
 /// Handle to the console's local store.
 pub struct Store {
     conn: Connection,
@@ -232,6 +246,40 @@ impl Store {
         let mut out = Vec::new();
         while let Some(row) = rows.next().map_err(store_err)? {
             out.push(stored_event_from_row(row)?);
+        }
+        Ok(out)
+    }
+
+    /// The delegation-relevant columns of every event, oldest-first (by `id`),
+    /// for batch-building the core [`crate::graph::DelegationGraph`] (PHASE3
+    /// W1). Only the columns the graph needs, so it stays cheap over a large
+    /// `events` table; the live path feeds the graph one
+    /// [`crate::event::AgentEvent`] at a time instead.
+    pub fn delegation_events(&self) -> Result<Vec<DelegationRow>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT agent_id, on_behalf_of, ts, source, type, run_id \
+                 FROM events ORDER BY id ASC",
+            )
+            .map_err(store_err)?;
+        let mut rows = stmt.query([]).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            let obo_json: Option<String> = row.get(1).map_err(store_err)?;
+            let on_behalf_of: Vec<String> = obo_json
+                .map(|s| serde_json::from_str(&s))
+                .transpose()
+                .map_err(store_err)?
+                .unwrap_or_default();
+            out.push(DelegationRow {
+                agent_id: row.get(0).map_err(store_err)?,
+                on_behalf_of,
+                ts: row.get(2).map_err(store_err)?,
+                source: row.get(3).map_err(store_err)?,
+                type_: row.get(4).map_err(store_err)?,
+                run_id: row.get(5).map_err(store_err)?,
+            });
         }
         Ok(out)
     }

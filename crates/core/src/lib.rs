@@ -13,12 +13,16 @@ pub mod conform;
 pub mod demo;
 pub mod error;
 pub mod event;
+pub mod graph;
 pub mod ingest;
+pub mod layout;
 pub mod store;
 
 pub use command::{CommandRecord, console_command_line, record};
 pub use conform::{ConformReport, Conformer};
 pub use error::{Error, Result};
 pub use event::{AgentEvent, ConsoleEvent, Provenance, SchemaVersion, Severity};
+pub use graph::{DelegationGraph, GraphEdge, GraphNode, GraphView, NodeKind};
 pub use ingest::{EventSource, FileTail, IngestService, IngestStats, RawRecord};
-pub use store::StoredEvent;
+pub use layout::{LayoutConfig, LayoutView, PositionedNode, layout, layout_view};
+pub use store::{DelegationRow, StoredEvent};
