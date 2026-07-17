@@ -29,7 +29,7 @@ golden NDJSON fixtures + an ingest bench report are committed.
 | 3 | SQLite ingest bench ≥ 50k NDJSON lines/min on M-series | DONE | GO: measured 6.8M-7.2M lines/min end-to-end (conform + Store insert), 25M-27M lines/min conform-only, target 50k/min; corpus 200,122 lines; see `crates/core/examples/ingest_bench.rs` |
 | 4 | ML-DSA verify in Rust (crate choice vs `qryx verify-evidence` bridge) | DONE | GO: crate `ml-dsa` v0.1.1 (RustCrypto `signatures` monorepo, FIPS-204 final). Covers ML-DSA-44/65/87 via one generic `verify(param_set, public_key, message, signature) -> Result<bool, String>`; SPKI/PKCS8 parsing is built into the crate (matches Qryx's embedded-key format, 07 §4.5) with a raw-key fallback for bare offline-license keys. 10 tests green: round-trip KAT + tampered-message + tampered-signature + wrong-key + malformed-input for all three param sets, see `crates/signing/src/mldsa.rs`. `qryx` is not on this box's PATH so the qryx-signed-evidence bonus was skipped as instructed; ran an adjacent check instead since this box's OpenSSL 3.6.3 signs ML-DSA-65 natively: OpenSSL-signed message/SPKI verified `true` through our code, tampered message verified `false`, real cross-implementation evidence beyond a same-crate round trip. `fips204` (single-maintainer) was the other candidate; rejected for lacking any SPKI/PKCS8 support, which would have meant hand-rolling ASN.1 parsing ourselves. |
 | 5 | Both-shell headless smoke in CI (tauri-driver + xcodebuild/XCUITest) | TODO | — |
-| 6 | SSE client vs Cloud `/v1/stream` under reconnect / chunk splits | TODO | — |
+| 6 | SSE client vs Cloud `/v1/stream` under reconnect / chunk splits | DONE | GO: `CloudSse` (`crates/connectors/src/cloud_sse.rs`) is a complete `EventSource` impl, not a proposal -- a dedicated OS thread owns a small current-thread Tokio runtime running the connect/decode/reconnect loop and forwards decoded `RawRecord`s through a `std::sync::mpsc` channel that `poll()` drains synchronously with `try_recv`, mirroring the async-to-sync bridge spike 1 already proved (F-04). Chunk-split framing is handled by `SseDecoder` (`crates/connectors/src/sse_decoder.rs`), a pure, transport-free byte-to-event state machine: 11 direct unit tests with no network cover a `data:` frame split mid-JSON across two `feed` calls, a `\r\n` terminator split exactly at the chunk boundary, a multi-byte UTF-8 character split across chunks, two frames delivered in one chunk, comments/keepalives ignored, sticky `id:` vs non-sticky `event:` fields, and a byte-at-a-time feed. Reconnect is a bounded exponential backoff (doubles, capped, configurable `max_attempts`; resets to 0 the moment any event is decoded, so a healthy connection that later drops reconnects instantly instead of with stacked backoff) that only ever surfaces a clean `Err` from `poll()` once genuinely unreachable, never a panic. Proven end to end against a real local mock server (`crates/connectors/tests/cloud_sse_test.rs`: a hand-rolled HTTP/1.1 chunked-encoding server over plain `std::net`, a real `reqwest`/hyper client, `127.0.0.1` on an ephemeral port): one event's JSON is split across two genuine HTTP chunks/socket reads and reassembles correctly, two more events arrive in a single chunk, the server then drops the connection mid-body and `CloudSse` reconnects on its own and reads a 4th event from a second accepted connection -- stable across 5 repeat runs (~0.15s each). Transport: `reqwest` + `futures-util` (both already resolved transitively via `genaryx-ffi`'s bindgen tooling, F-04, so this adds no new dependency family, only a direct edge to each), not `eventsource-client`: this spike's actual deliverable is the frame decoder itself under direct test, and a crate that owns its own internal SSE parser would hide exactly the logic being proven. `Last-Event-ID` is tracked and sent on reconnect; `CloudSseConfig` never prints its bearer token even via `{:?}`. One real finding from building this, see F-05. |
 
 Verdict = one of {GO as-planned, GO with change, FALLBACK to <plan B>}, with the
 evidence (bench numbers, a working signed ack, a passing smoke run) linked.
@@ -88,6 +88,31 @@ evidence (bench numbers, a working signed ack, a passing smoke run) linked.
   ~20 MB linked smoke binary. Accepted for Phase 0; the remedy, if it ever
   hurts, is a separate `crates/uniffi-bindgen` bin crate so the lib drops the
   `cli` feature.
+
+- **F-05 (2026-07-17).** Building `CloudSse`'s mock-server integration test
+  (spike 6) surfaced a real hyper-client behavior worth recording. A
+  close-delimited HTTP/1.1 response (`Connection: close`, no
+  `Content-Length` or `Transfer-Encoding`) is valid per RFC 7230 §3.3.3 and
+  `curl` accepts it, but reqwest's hyper-based client tore the whole
+  in-flight request down (`hyper::Error(Canceled, .. UnexpectedMessage)`)
+  before delivering any response at all when the test's mock server used
+  it. Switching to proper `Transfer-Encoding: chunked` framing (still ending
+  the body abruptly, no terminating `0\r\n\r\n` chunk, to simulate the drop)
+  fixed it, but only once the mock server also drained the client's request
+  bytes before responding: closing a socket with the peer's request still
+  sitting unread in the receive buffer sends a TCP RST rather than a clean
+  FIN, and hyper fails the whole request on an RST but treats a mid-body FIN
+  as an ordinary stream-read error surfaced *after* the legitimate `data:`
+  chunks are delivered -- matching `curl`'s own split between exit code 56
+  ("Recv failure: Connection reset by peer") and 18 ("transfer closed with
+  outstanding read data remaining") against the same two variants, verified
+  directly against both a Python and the real Rust server while narrowing
+  this down. Relevant beyond the test itself: a resilient SSE client must
+  expect a mid-stream disconnect to surface as either a clean stream end or
+  a hard read error depending on exactly how the peer's TCP stack tears the
+  connection down, not one canonical shape; `connect_and_stream` already
+  treats both the same way (any disconnection reconnects), which is exactly
+  what this finding validates rather than a code change it required.
 
 ## Toolchain facts (verified 2026-07-16, box "factory")
 

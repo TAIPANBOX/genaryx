@@ -10,3 +10,14 @@ description = "Genaryx environment/service connectors (FS, SSH, Cloud SSE, cloud
 
 [dependencies]
 genaryx-core = { path = "../core" }
+# Phase-0 spike #6 (06 §7): CloudSse's HTTP transport; `stream` unlocks
+# `Response::bytes_stream()`, the raw byte source our own SseDecoder parses.
+# See crates/connectors/src/cloud_sse.rs module docs for the transport
+# choice rationale.
+reqwest = { workspace = true }
+# Only for `StreamExt::next()` on `bytes_stream()`.
+futures-util = { workspace = true }
+# The background connect/decode/reconnect loop's own small current-thread
+# runtime (see cloud_sse.rs module docs for why it is not driven from
+# `EventSource::poll()` directly).
+tokio = { workspace = true }

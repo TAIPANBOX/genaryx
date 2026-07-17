@@ -32,6 +32,12 @@ rusqlite = { version = "0.40.1", features = ["bundled"] }
 tokio = { version = "1.52.4", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
 notify = "8"
 regex = "1.13.1"
+# Phase-0 spike #6 (06 §7): genaryx-connectors' CloudSse client. Versions
+# pinned to what genaryx-ffi's uniffi `cli`-feature bindgen tooling already
+# resolves transitively (docs/PHASE0.md F-04), so this does not add a second
+# version of either crate to the tree, only a new direct edge to each.
+reqwest = { version = "0.13.4", features = ["stream"] }
+futures-util = "0.3.32"
 
 [profile.release]
 lto = "thin"
