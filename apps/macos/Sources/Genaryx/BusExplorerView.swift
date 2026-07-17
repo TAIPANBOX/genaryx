@@ -1,25 +1,26 @@
+import GenaryxCoreFFI
 import SwiftUI
 
 /// The Bus Explorer: a live list of `UiEvent`s across all six bus sources.
-/// Phase 0 renders `MockData.events`; the follow-up UniFFI task swaps the
-/// `events` array for a live, appending stream (see the doc comment on
-/// `UiEvent`).
+/// Fed by `FleetModel`, which seeds from `FleetHandle.recentEvents` and
+/// prepends live pushes from the `EventListener` callback (see
+/// `FleetModel.swift`).
 @MainActor
 struct BusExplorerView: View {
     let events: [UiEvent]
 
-    @State private var expandedId: Int64?
+    @State private var expandedKey: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().overlay(Theme.hairline)
             List {
-                ForEach(events) { event in
+                ForEach(events, id: \.rowKey) { event in
                     EventRow(
                         event: event,
-                        isExpanded: expandedId == event.id,
-                        onToggle: { toggle(event.id) }
+                        isExpanded: expandedKey == event.rowKey,
+                        onToggle: { toggle(event.rowKey) }
                     )
                     .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                     .listRowSeparator(.hidden)
@@ -57,10 +58,22 @@ struct BusExplorerView: View {
         .padding(.vertical, 14)
     }
 
-    private func toggle(_ id: Int64) {
+    private func toggle(_ key: String) {
         withAnimation(.easeInOut(duration: 0.15)) {
-            expandedId = (expandedId == id) ? nil : id
+            expandedKey = (expandedKey == key) ? nil : key
         }
+    }
+}
+
+/// Stable SwiftUI list identity for one event row. `UiEvent.id` alone is
+/// not safe to key on: it is the SQLite rowid for stored rows but a fixed
+/// `0` for every live-pushed row (the rowid is not known on the broadcast
+/// path; see `crates/ffi/README.md`), so two live rows shown together would
+/// collide on `id`. Combining it with fields that vary per event keeps
+/// rows distinct regardless of provenance.
+extension UiEvent {
+    var rowKey: String {
+        "\(id)|\(ts)|\(agentId)|\(raw)"
     }
 }
 
@@ -79,7 +92,7 @@ private struct EventRow: View {
                 SeverityBadge(severity: event.severity)
                 SourceChip(source: event.source)
 
-                Text(event.type_)
+                Text(event.eventType)
                     .font(Theme.mono(12, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)

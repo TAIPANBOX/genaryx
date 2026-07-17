@@ -11,25 +11,37 @@ macOS SDK / SwiftUI toolchain used here):
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 cd apps/macos
+bash build-ffi.sh
 swift build
 swift run
 ```
 
-`swift build` compiles headlessly and is what CI should run. `swift run` additionally
-launches the app (a window plus a menu-bar item); only do that locally, not in a
-headless environment.
+`build-ffi.sh` builds `genaryx-ffi` (release, pinned to `MACOSX_DEPLOYMENT_TARGET=14.0`),
+runs the project-pinned `uniffi-bindgen` in library mode, and packages the result into
+an xcframework, staging the generated Swift under
+`Sources/GenaryxCoreFFI/Generated/` and the xcframework under `Binary/`. Both are
+gitignored; run the script again any time the Rust side changes (idempotent, wipes and
+regenerates each time). `swift build` will fail until it has run at least once on a
+fresh checkout.
 
-## Status: mock data
+`swift build` compiles headlessly and is what CI should run (after `build-ffi.sh`).
+`swift run` additionally launches the app (a window plus a menu-bar item); only do
+that locally, not in a headless environment.
 
-`BusExplorerView` currently renders `MockData.events`, ~40 hand-written `UiEvent`
-values shaped like a real `taipan demo` campaign (see `crates/core/src/demo.rs`),
-not live data. There is no Rust, Cargo, or UniFFI dependency yet.
+## Status: live core
 
-The follow-up task wires this shell to the real core: generate a UniFFI binding for
-`genaryx-core`, replace `UiEvent`/`MockData` with the generated `StoredEvent` type,
-and feed `BusExplorerView` from `IngestService::subscribe()`'s broadcast stream
-instead of the static mock array. See the doc comment on `UiEvent` in
-`Sources/Genaryx/UiEvent.swift` for the exact bridge point.
+`BusExplorerView` renders `FleetModel.events`, fed from the real `genaryx-core`
+through the UniFFI bridge in `crates/ffi` (see `crates/ffi/README.md`). The mock data
+(`MockData.swift`, `UiEvent.swift`) is gone: `UiEvent` is now the generated type from
+`GenaryxCoreFFI`.
+
+`FleetModel` (`Sources/Genaryx/FleetModel.swift`) constructs a `FleetHandle`, which
+seeds a throwaway demo world and runs its own ingest + feeder threads (~179 events
+primed, then roughly one live line per second); the model seeds `events` from
+`recentEvents(limit:)` and grows it from `EventListener` pushes, hopping to
+`@MainActor` before touching state. If `FleetHandle()` fails to construct, the shell
+still launches with an empty list and a visible "core unavailable" note instead of
+crashing (fail-closed).
 
 ## Design language
 
