@@ -41,18 +41,19 @@ Authoritative wire shapes live in the connector's own doc comments (`crates/conn
 ## Waves (playbook: core-first by the orchestrator, then two parallel per-shell Sonnet tracks)
 
 1. **W1 (orchestrator-owned, shared crates) - DONE:** `IdryxClient` (REST + `detect` Rescan) in `crates/connectors/src/idryx.rs` (commit `05d34a9`); `DelegationGraph` bus-fed builder + deterministic seeded force-layout in `crates/core/src/{graph,layout}.rs` + `Store::delegation_events` (commit `7d46c6b`). Gates green (fmt, clippy `-D warnings`, 12 core lib tests + 4 connector unit tests). The connector doc comments carry the full grounded contract above. TODO before the milestone: the live `idryx_test.rs` (serve snapshot + a `detect --format json` Rescan against a real `taipan up --with idryx`, skip-gracefully if absent) - lands in W4 alongside the exit gate.
-2. **W2 (two per-shell tracks):** the **Identity** panel in both shells: identities list with type filters (`/api/identities`), the 21-detector alert stream with severity filters (`/api/alerts` + Rescan), passport/attestation surfaced via the relevant alerts. Track A `apps/desktop/src-tauri/src/identity/` + React panel; Track B `crates/ffi/src/idryx/` (`IdryxHandle`) + SwiftUI panel. Empty state when no idryx (mirror `MoneyEmptyState` / `CloudError::NoEnvironment`).
+2. **W2 (two per-shell tracks) - DONE** (Track A `a9ab278`, Track B `4eb104e`): the **Identity** panel in both shells: identities list with type filters (`/api/identities`), the 21-detector alert stream with severity + detector filters (`/api/alerts` + Rescan), attestation surfaced via `attestation_missing`/`bom_incomplete` alerts. Track A `apps/desktop/src-tauri/src/identity/` (read-only, unauthenticated) + React panel; Track B `crates/ffi/src/idryx/` (`IdryxHandle`) + SwiftUI panel. Both landed two useful findings, independently: (a) `idryx detect`'s `--min-severity` does NOT filter `--format json` output (it only gates the `--slack`/`--webhook` sinks the connector never sets), so Rescan passes `low` and filters client-side; (b) a UniFFI doc comment whose text ends in `/*` corrupts the generated Swift (nested block comments) - never write a `/*`-ending path in a `crates/ffi` doc comment. Gates re-run by the orchestrator, all green (src-tauri 62/62 + tsc + pnpm build; ffi fmt/clippy/40 tests incl. a live idryx e2e + build-ffi + swift build).
 3. **W3 (two per-shell tracks):** the delegation graph (core layout engine + a Canvas2D renderer per shell) + **Agent 360** (the core aggregate) + the deep-link navigation contract (click an agent from any panel / menu-bar / notification -> its 360 card).
 4. **W4:** **Run Replay** (time-window + `/v1/replay/{run}` + playback clock) + **Posture full** (the §6/position-6 zonds) + the exit-gate e2e (`identity_360_test.rs`).
 
 ## Parity checklist (per wave; a feature is done only when it is in BOTH shells)
 
-**W2 - Identity panel**
-- [ ] Identities list renders `/api/identities` with type filters (human/service_account/key/agent/mcp_server), both shells
-- [ ] The 21-detector alert stream renders `/api/alerts` with severity filters + a **Rescan** (`detect --format json`) action, both shells
-- [ ] Attestation status surfaces via `attestation_missing`/`bom_incomplete` alerts (honest: not a clean field), both shells
-- [ ] Snapshot data is labeled "as of load" (never implied live), both shells
-- [ ] No-idryx environment renders a clean empty state, not an error, both shells
+**W2 - Identity panel (DONE, both shells)**
+- [x] Identities list renders `/api/identities` with type filters (human/service_account/key/agent/mcp_server), both shells
+- [x] The 21-detector alert stream renders `/api/alerts` with severity + detector filters + a **Rescan** (`detect --format json`) action, both shells
+- [x] Attestation status surfaces via `attestation_missing`/`bom_incomplete` alerts (honest: not a clean field), both shells
+- [x] Snapshot data is labeled "as of load" (never implied live), both shells
+- [x] No-idryx environment renders a clean empty state, not an error, both shells
+- [x] Rescan fails closed (honest RescanUnavailable) when the idryx binary is absent, never a fake empty success, both shells
 
 **W3 - graph + 360**
 - [ ] Delegation graph draws from the core layout (Canvas2D), the same node positions in both shells
