@@ -64,6 +64,62 @@ jobs:
           fi
           echo "Parity OK (both=$macos)."
 
-  # Placeholder jobs, wired when the shells land (Phase 0 delegation):
-  #   swiftui:  runs-on: macos-14; DEVELOPER_DIR=/Applications/Xcode.app; xcodebuild test
-  #   tauri:    runs-on: ubuntu-latest; pnpm i; pnpm build; tauri-driver smoke
+  # Both-shell build smoke (Phase-0 spike #5). Build-level smoke: both shells
+  # compile in CI, including the UniFFI xcframework for the SwiftUI shell. Full
+  # UI-driver smoke (tauri-driver + XCUITest) is deferred to F1; compiling both
+  # shells from the shared core is the Phase-0 bar (docs/PHASE0.md row 5).
+  swiftui-shell:
+    name: swiftui shell (macos)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Select full Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-macos-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-macos-
+      # Generates Sources/GenaryxCoreFFI/Generated + Binary/GenaryxFFI.xcframework
+      # (both gitignored), then builds the SwiftUI app against the real binding.
+      - name: Build FFI bindings + xcframework
+        working-directory: apps/macos
+        run: bash build-ffi.sh
+      - name: swift build
+        working-directory: apps/macos
+        run: swift build
+
+  tauri-shell:
+    name: tauri shell (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: WebKit system deps (tauri/wry)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - name: Frontend (install + typecheck + build)
+        working-directory: apps/desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec tsc --noEmit
+          pnpm build
+      - name: Build src-tauri (against the path-dep core)
+        working-directory: apps/desktop/src-tauri
+        run: cargo build
