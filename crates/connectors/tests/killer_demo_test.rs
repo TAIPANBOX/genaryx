@@ -5,15 +5,16 @@
 //! `taipan`). `command_test.rs` proves `command::record` with no network at
 //! all. Neither proves the actual product path: an operator runs `taipan
 //! up`, a console auto-discovers the environment `taipan` just wrote, and
-//! pairs. That auto-discovery path is exactly where issue #20 lived - with
-//! minted keys present, `tokenfuse-cloud`'s own key parser never activates
-//! its `devkey` fallback (it only fires when the parsed key map is empty),
-//! so pairing a device against the minted admin key over `/v1/pair/new`
-//! 401'd even though reads with that same key worked fine. This test drives
-//! the real fix (`taipan up --devkey`, `~/Development/taipan/src/commands/up.rs`)
-//! through the real CLI, start to finish:
+//! pairs. That auto-discovery path is where issue #20 lived: `taipan` minted
+//! `token:org:role` keys and wrote the FULL spec as the keyfile secret, but
+//! the server (tokenfuse `parse_keys`, wardryx auth) indexes its key map by
+//! the bare token before the first colon, so a `token:org:role` bearer never
+//! matched and BOTH reads and pairing 401'd. Fixed in `taipan` (keys.rs +
+//! commands/up.rs) by writing the bare token as the keyfile secret while still
+//! handing the full spec to the server's key env. This test drives that real,
+//! default minted path (no `--devkey`) end to end through the real CLI:
 //!
-//! 1. Build `taipan` (`~/Development/taipan`) and run `taipan up --devkey
+//! 1. Build `taipan` (`~/Development/taipan`) and run `taipan up
 //!    --name killerdemo-<pid>`: builds/spawns the real gateway + cloud
 //!    binaries from `~/Development/tokenfuse`, waits for both `/healthz`,
 //!    writes the descriptor + keyfile.
@@ -194,7 +195,7 @@ fn pid_alive(pid: i32) -> bool {
 
 // ---- bring-up / tear-down --------------------------------------------------
 
-/// One environment this test brought up via `taipan up --devkey`. `Drop`
+/// One environment this test brought up via `taipan up`. `Drop`
 /// always attempts `taipan down`, even on a mid-test panic, so a failed
 /// assertion never leaves the gateway/cloud pair running on the fixed ports.
 struct KillerDemoEnv {
@@ -271,7 +272,7 @@ fn build_taipan(repo: &Path) -> Option<PathBuf> {
     Some(bin)
 }
 
-/// Bring up `taipan up --devkey --name killerdemo-<pid>` and confirm the
+/// Bring up `taipan up --name killerdemo-<pid>` and confirm the
 /// descriptor landed. `None` (after an explanatory `eprintln!`) on any
 /// failure - matches `cloud_rest_test.rs`'s gating philosophy: only "is the
 /// live stack even up" degrades gracefully; everything downstream is a hard
@@ -302,7 +303,7 @@ fn try_bring_up() -> Option<KillerDemoEnv> {
     let descriptor_path = home.join("environments").join(format!("{name}.json"));
 
     let up_result = Command::new(&taipan_bin)
-        .args(["up", "--devkey", "--name", &name])
+        .args(["up", "--name", &name])
         .current_dir(&repo)
         .output();
     let output = match up_result {
@@ -314,7 +315,7 @@ fn try_bring_up() -> Option<KillerDemoEnv> {
     };
     if !output.status.success() {
         eprintln!(
-            "killer_demo_test: SKIPPING: `taipan up --devkey --name {name}` failed ({}):\n\
+            "killer_demo_test: SKIPPING: `taipan up --name {name}` failed ({}):\n\
              --- stdout ---\n{}\n--- stderr ---\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
@@ -323,7 +324,7 @@ fn try_bring_up() -> Option<KillerDemoEnv> {
         return None;
     }
     println!(
-        "killer_demo_test: `taipan up --devkey --name {name}` succeeded:\n{}",
+        "killer_demo_test: `taipan up --name {name}` succeeded:\n{}",
         String::from_utf8_lossy(&output.stdout)
     );
 
@@ -355,7 +356,7 @@ fn unique_temp_path(tag: &str) -> PathBuf {
 // ---- the killer demo --------------------------------------------------------
 
 #[tokio::test]
-async fn killer_demo_devkey_autodiscover_pair_kill_and_console_command_e2e() {
+async fn killer_demo_minted_autodiscover_pair_kill_and_console_command_e2e() {
     let Some(env) = try_bring_up() else {
         return; // Already explained why via eprintln! above.
     };
@@ -364,18 +365,30 @@ async fn killer_demo_devkey_autodiscover_pair_kill_and_console_command_e2e() {
     // shells' env::discover() reads ------------------------------------------
     let discovered = discover_taipan_env(&env.descriptor_path).unwrap_or_else(|| {
         panic!(
-            "taipan up --devkey must write a descriptor + keyfile auto-discovery can resolve: {}",
+            "taipan up must write a descriptor + keyfile auto-discovery can resolve: {}",
             env.descriptor_path.display()
         )
     });
-    assert_eq!(
-        discovered.admin_bearer, "devkey",
-        "the --devkey keyfile secret must be the literal `devkey` bearer tokenfuse-cloud's \
-         ALLOW_DEVKEY fallback actually accepts, not a minted key"
+    // Regression for the bug this test guards (issue #20): the keyfile secret
+    // (the bearer a client sends) must be the BARE minted token, not the full
+    // `token:org:role` spec. The server indexes its key map by the bare token,
+    // so a suffixed bearer never matches and 401s for both reads and pairing.
+    // taipan now writes the bare token; assert exactly that here, so a
+    // regression to the full-spec secret fails loudly at this line.
+    assert!(
+        discovered.admin_bearer.starts_with("tp_"),
+        "auto-discovered bearer must be a minted tp_ token, got {:?}",
+        discovered.admin_bearer
+    );
+    assert!(
+        !discovered.admin_bearer.contains(':'),
+        "the keyfile secret must be the BARE token (no :org:role suffix), got {:?} - a suffixed \
+         bearer never matches the server's bare-token key index (issue #20)",
+        discovered.admin_bearer
     );
     println!(
-        "killer_demo_test: auto-discovered cloud_url={} admin_bearer=devkey",
-        discovered.cloud_url
+        "killer_demo_test: auto-discovered cloud_url={} admin_bearer={}",
+        discovered.cloud_url, discovered.admin_bearer
     );
 
     // ---- step 3: pair, read, signed kill - the path that used to 401 -------
@@ -383,18 +396,22 @@ async fn killer_demo_devkey_autodiscover_pair_kill_and_console_command_e2e() {
         .expect("build CloudClient");
     let signer = SoftwareSigner::generate().expect("generate a software P-256 key");
     let paired = client.pair(&discovered.admin_bearer, &signer).await.expect(
-        "pairing through taipan-up auto-discovery must now succeed - this is the exact \
-             401 the --devkey fix closes (issue #20)",
+        "pairing through taipan-up auto-discovery must now succeed - this is the exact 401 the \
+             bare-token keyfile fix closes (issue #20)",
     );
     println!(
         "killer_demo_test: PAIR OK device_id={} org={} role={}",
         paired.device_id, paired.org, paired.role
     );
     assert_eq!(
-        paired.org, "default",
-        "ALLOW_DEVKEY's devkey fallback resolves org=default"
+        paired.role, "admin",
+        "the minted cloud_admin key pairs with admin role"
     );
-    assert_eq!(paired.role, "admin");
+    assert!(
+        paired.org.starts_with("taipan-"),
+        "minted org is taipan-<env name>, got {:?}",
+        paired.org
+    );
     assert!(!paired.device_id.is_empty());
     assert!(!paired.device_token.is_empty());
 
