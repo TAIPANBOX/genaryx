@@ -271,11 +271,19 @@ impl Store {
         Ok(out)
     }
 
-    /// Every event of one run, OLDEST-first (by `id`) - the chronological
+    /// Every event of one run, OLDEST-first by `id` (insertion order) - the
     /// timeline a Run Replay scrubs through (PHASE3 W4). Uses the existing
-    /// `idx_events_run_id` index; `limit` caps a pathologically long run. Note
-    /// this is oldest-first, the reverse of [`Store::recent_events`] /
-    /// [`Store::events_for_agent`], because replay plays forward in time.
+    /// `idx_events_run_id` index; `limit` caps a pathologically long run. This
+    /// is the reverse of [`Store::recent_events`] / [`Store::events_for_agent`],
+    /// so replay reads forward.
+    ///
+    /// Ordering caveat (found wiring Run Replay): `id` (insertion order) is NOT
+    /// the same as wall-clock `ts` order across sources, because the ingest
+    /// pipeline drains one bus file's whole backlog before the next - so a run
+    /// spanning several sources lands grouped by source, not interleaved by
+    /// time. A caller that wants true chronological playback sorts the returned
+    /// rows by `ts` itself (both shells' Run Replay do). This method deals in
+    /// stored order and stays cheap; it does not re-sort.
     pub fn events_for_run(&self, run_id: &str, limit: usize) -> Result<Vec<StoredEvent>> {
         let mut stmt = self
             .conn
