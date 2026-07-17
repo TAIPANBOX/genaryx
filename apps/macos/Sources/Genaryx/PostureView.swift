@@ -3,10 +3,12 @@ import SwiftUI
 
 /// The Posture panel: a read-only list of stack-sanity findings, each a
 /// {severity, title, why it matters, how to fix} row (docs/PHASE2.md Wave 3,
-/// "Posture-lite"). Fed by `PostureModel.findings(cloud:policy:fleet:)`,
-/// itself a pure function over the three models' already-live state - no
-/// new read, no new FFI call (PHASE2.md: "computed from already-observable
-/// signals"). PHASE2.md asks for the identical 4 v0 zonds in both shells;
+/// "Posture-lite"; extended to "Posture full" by docs/PHASE3.md Wave 4).
+/// Fed by `PostureModel.findings(cloud:policy:identity:fleet:)`, itself a
+/// pure function over the four models' already-live state - no new read, no
+/// new FFI call (PHASE2.md: "computed from already-observable signals").
+/// PHASE2.md asks for the identical 4 v0 zonds in both shells, and
+/// PHASE3.md extends that parity requirement to the identity-plane zonds;
 /// the Tauri track (`apps/desktop`) builds its own parallel panel from the
 /// same spec and is out of scope here (SwiftUI/Tauri are two independent
 /// tracks over one shared data contract, not a shared implementation).
@@ -18,15 +20,23 @@ import SwiftUI
 /// connection is `.ready` - see `PostureModel`'s own doc comments - while
 /// the schema-mix and bus-stale zonds read only `FleetModel`, which is
 /// independent of Cloud/Wardryx pairing entirely).
+///
+/// Phase-3 wave 4 ("Posture full") adds `identityModel` alongside
+/// `cloudModel`/`policyModel`/`fleetModel`: the four new identity-plane
+/// zonds (`PostureModel`'s own "PHASE3 W4" section) are, like every zond
+/// before them, a pure read of a model this view is simply handed - never a
+/// new handle or FFI call of this view's own.
 @MainActor
 struct PostureView: View {
     let cloudModel: CloudModel
     let policyModel: PolicyModel
+    let identityModel: IdentityModel
     let fleetModel: FleetModel
 
-    /// Cheap re-evaluation cadence so "bus stale" flips live while this tab
-    /// sits open with no new events arriving at all - the one zond here
-    /// that time alone can change, mirroring `TTLCountdownTile`'s own
+    /// Cheap re-evaluation cadence so the time-driven zonds - "bus stale"
+    /// (Phase 2) plus Phase-3 wave 4's "identity snapshot age" and
+    /// "detector-feed freshness" - flip live while this tab sits open with
+    /// no new state arriving at all, mirroring `TTLCountdownTile`'s own
     /// `TimelineView` use in `PolicyComponents.swift` for the identical
     /// reason (a value that must keep moving even with no state mutation to
     /// trigger a re-render).
@@ -47,13 +57,15 @@ struct PostureView: View {
         .task {
             while !Task.isCancelled {
                 await policyModel.refresh()
+                await identityModel.refresh()
                 try? await Task.sleep(for: Self.refreshInterval)
             }
         }
     }
 
     private func content(at date: Date) -> some View {
-        let findings = PostureModel.findings(cloud: cloudModel, policy: policyModel, fleet: fleetModel, now: date)
+        let findings = PostureModel.findings(
+            cloud: cloudModel, policy: policyModel, identity: identityModel, fleet: fleetModel, now: date)
         return ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header(findingCount: findings.count)

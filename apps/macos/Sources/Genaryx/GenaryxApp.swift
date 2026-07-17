@@ -56,6 +56,23 @@ import SwiftUI
 /// state another view reacts to" shape from Phase-2 wave 3, just routed to
 /// a sheet instead of an in-panel scroll+highlight (Agent 360 has no one
 /// natural host panel to scroll within - it spans five).
+///
+/// Phase-3 wave 4 adds `replayModel` (`RunReplayModel`, over `FleetModel`'s
+/// own `eventsForRun()`) and the `Replay` tab - a run's timeline, played
+/// back with a scrub/speed clock (PHASE3.md position 5). `replayModel` is
+/// owned here (not inside `RunReplayView`, unlike `Agent360Model`'s
+/// per-sheet lifetime) so a playback position survives switching to
+/// another tab and back, mirroring `graphModel`'s own precedent rather than
+/// `agentFocus`'s. `focusedRunId` is the Replay analogue of
+/// `focusedApprovalId`: a run row in the Money panel's `RunsTable` or in
+/// Agent 360's Money section sets it (`openReplay(_:)` below) and switches
+/// `tab` to `.replay` in the same step, exactly the established "a deep
+/// link is just a piece of state another view reacts to" idiom - chosen
+/// over presenting Replay as ANOTHER sheet (the task brief allows either)
+/// because the scrub timeline benefits from full tab real estate the way
+/// Agent 360's already-a-sheet card does not, and because Agent 360 is
+/// already a sheet - a sheet launching a second sheet is exactly the
+/// friction this idiom was introduced in Phase-2 wave 3 to avoid.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
@@ -63,6 +80,7 @@ struct GenaryxApp: App {
     @State private var policyModel = PolicyModel()
     @State private var identityModel = IdentityModel()
     @State private var graphModel = GraphModel()
+    @State private var replayModel = RunReplayModel()
     @State private var notifications = ApprovalNotificationModel()
     @State private var tab: AppTab = .overview
     /// The approval to scroll to and highlight once `tab` is `.policy` -
@@ -71,6 +89,9 @@ struct GenaryxApp: App {
     /// The agent whose Agent 360 card is currently presented as a sheet -
     /// see the type doc's "Phase-3 wave 3" paragraph. `nil` means no sheet.
     @State private var agentFocus: AgentFocus?
+    /// The run id to load once `tab` is `.replay` - see the type doc's
+    /// "Phase-3 wave 4" paragraph.
+    @State private var focusedRunId: String?
 
     var body: some Scene {
         WindowGroup("Genaryx") {
@@ -82,7 +103,7 @@ struct GenaryxApp: App {
                     case .overview:
                         OverviewView(model: cloudModel)
                     case .money:
-                        MoneyView(model: cloudModel)
+                        MoneyView(model: cloudModel, onOpenReplay: openReplay)
                     case .policy:
                         PolicyView(
                             model: policyModel, busEvents: model.events, notifications: notifications,
@@ -93,8 +114,12 @@ struct GenaryxApp: App {
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
                             onOpenAgent: { agentFocus = AgentFocus(agentId: $0) })
+                    case .replay:
+                        RunReplayView(fleetModel: model, model: replayModel, focusedRunId: focusedRunId)
                     case .posture:
-                        PostureView(cloudModel: cloudModel, policyModel: policyModel, fleetModel: model)
+                        PostureView(
+                            cloudModel: cloudModel, policyModel: policyModel, identityModel: identityModel,
+                            fleetModel: model)
                     case .bus:
                         VStack(spacing: 0) {
                             if let message = model.unavailableMessage {
@@ -118,7 +143,8 @@ struct GenaryxApp: App {
                     onOpenPolicy: {
                         tab = .policy
                         agentFocus = nil
-                    }
+                    },
+                    onOpenReplay: openReplay
                 )
             }
             .task {
@@ -131,12 +157,15 @@ struct GenaryxApp: App {
                 notifications.clearFocusRequest()
             }
             .onChange(of: tab) { _, newTab in
-                // Clear the highlight once the operator navigates away from
-                // Policy themselves, rather than on a timer - simple,
-                // deterministic, no race with `ScrollViewReader`'s own
-                // one-shot `scrollTo` in `PolicyView`.
+                // Clear the highlight/focus once the operator navigates away
+                // from its own tab themselves, rather than on a timer -
+                // simple, deterministic, no race with `ScrollViewReader`'s
+                // own one-shot `scrollTo` in `PolicyView`.
                 if newTab != .policy {
                     focusedApprovalId = nil
+                }
+                if newTab != .replay {
+                    focusedRunId = nil
                 }
             }
         }
@@ -162,6 +191,19 @@ struct GenaryxApp: App {
                 event: event, environment: ApprovalNotificationModel.environmentLabel(for: policyModel.connection))
         }
     }
+
+    /// The Run Replay deep-link entry point (PHASE3 W4): switches to the
+    /// `Replay` tab focused on `runId` and, if Agent 360 happened to be the
+    /// sheet a "Replay" link was tapped from, dismisses it - the exact same
+    /// two-step `onOpenMoney`/`onOpenPolicy` already perform, just landing
+    /// on `.replay` instead. Passed to both `MoneyView` (whose `RunsTable`
+    /// rows link out per PHASE3.md's "a run row") and `Agent360View` (whose
+    /// Money section rows do the same).
+    private func openReplay(_ runId: String) {
+        tab = .replay
+        focusedRunId = runId
+        agentFocus = nil
+    }
 }
 
 /// The Agent 360 deep-link target (PHASE3 W3): `.sheet(item:)` needs
@@ -174,18 +216,19 @@ private struct AgentFocus: Identifiable, Equatable {
     var id: String { agentId }
 }
 
-/// The seven top-level nav destinations - Overview, Money, Policy, Identity,
-/// Graph, Posture, and the existing Bus Explorer - matching the Tauri
-/// shell's `ViewId`/`lib/views.ts` switcher (seven-way as of Phase-3 wave
-/// 3's Graph tab), rendered as a native macOS tab strip instead of a
-/// web-styled nav bar (native macOS patterns over pixel parity, same rule
-/// `Theme.swift` already follows).
+/// The eight top-level nav destinations - Overview, Money, Policy, Identity,
+/// Graph, Replay, Posture, and the existing Bus Explorer - matching the
+/// Tauri shell's `ViewId`/`lib/views.ts` switcher (extended with Replay in
+/// Phase-3 wave 4, mirroring wave 3's Graph tab addition), rendered as a
+/// native macOS tab strip instead of a web-styled nav bar (native macOS
+/// patterns over pixel parity, same rule `Theme.swift` already follows).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
     case policy = "Policy"
     case identity = "Identity"
     case graph = "Graph"
+    case replay = "Replay"
     case posture = "Posture"
     case bus = "Bus Explorer"
 

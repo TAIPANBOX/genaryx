@@ -39,13 +39,17 @@ enum PostureModel {
     static let staleThreshold: TimeInterval = 60
 
     static func findings(
-        cloud: CloudModel, policy: PolicyModel, fleet: FleetModel, now: Date = Date()
+        cloud: CloudModel, policy: PolicyModel, identity: IdentityModel, fleet: FleetModel, now: Date = Date()
     ) -> [PostureFinding] {
         [
             devkeyFinding(cloud: cloud, policy: policy),
             governanceFailOpenFinding(policy: policy),
             schemaMixFinding(fleet: fleet),
             busStaleFinding(fleet: fleet, now: now),
+            idryxExposedFinding(identity: identity),
+            attestationCoverageFinding(identity: identity),
+            identitySnapshotAgeFinding(identity: identity, now: now),
+            detectorFeedFreshnessFinding(identity: identity, now: now),
         ]
         .compactMap { $0 }
     }
@@ -157,6 +161,182 @@ enum PostureModel {
             whyItMatters: "No bus events observed in the last minute, or the events source is empty.",
             howToFix: "Check the feeder, or the descriptor's events paths."
         )
+    }
+
+    // MARK: - PHASE3 W4: the identity-plane zonds ("Posture full")
+    //
+    // Four new zonds, computed the exact same way as the four v0 zonds
+    // above: a pure function over state a model already holds live
+    // (`IdentityModel`'s `connection`/`identities`/`alerts`/`loadedAt`, fed
+    // by `IdryxHandle` - see `IdentityModel.swift`), never a new FFI call or
+    // handle of this model's own. Each returns `nil` (no finding) whenever
+    // its signal is unavailable or nothing is wrong, matching every zond
+    // above's "no finding when things are fine" convention - never a
+    // fabricated row.
+    //
+    // PHASE3.md position 6 also names a fifth: "keyless-admin Wardryx (07
+    // §4.3)". `itrat-console/07 §4.3`'s own grounded note is "без ключів =
+    // devkey/admin; role за замовчуванням admin" (no keys -> devkey/admin;
+    // role defaults to admin) - i.e. a Wardryx bearer that never went
+    // through `taipan up`'s own key-minting lands on an implicit admin
+    // role. That is EXACTLY what `devkeyFinding` above already flags for
+    // Wardryx, via `isEnvFallback(source)` on `policy.connection`
+    // (`WardryxEnvSource.envFallback` - a bare `WARDRYX_ADMIN_KEY` used
+    // directly rather than a taipan-minted per-device key; see that
+    // finding's own doc comment, "an `orgDomain` equality check alone would
+    // never fire on the Wardryx side"). A second, differently-worded zond
+    // over the SAME signal would be noise dressed up as a new finding, so
+    // per this wave's own instruction ("omit a zond rather than fabricate
+    // one whose signal is unavailable") it is intentionally not duplicated
+    // here. What this wave genuinely CANNOT add: a true server-side "this
+    // Wardryx has zero WARDRYX_KEYS configured at all" probe -
+    // `WardryxHandle` deliberately never exposes the raw bearer or any
+    // keys-configured signal across FFI (`crates/ffi/src/wardryx/mod.rs`'s
+    // own "the admin bearer must never cross into Swift as a plain value
+    // beyond what construction already consumes it for" rule), and this
+    // wave's guardrails forbid touching that module to add one. That
+    // sharper signal stays a real, honestly-acknowledged residual gap
+    // rather than an approximated finding.
+
+    // MARK: - 5. idryx_exposed
+
+    /// PHASE3.md position 6, zond `idryx_exposed`: "the discovered idryx
+    /// URL is non-loopback... a real posture signal" (docs/PHASE3.md's own
+    /// grounded contract: idryx's `--addr` defaults to `:8080` on ALL
+    /// interfaces, not loopback, and `SECURITY.md` states outright that
+    /// `serve` "has no authentication; run it behind your own auth/network
+    /// controls" - `taipan up` remaps it to `127.0.0.1:8081`, but a
+    /// hand-started idryx, or a broken remap, can still bind wide open with
+    /// zero auth of any kind).
+    private static func idryxExposedFinding(identity: IdentityModel) -> PostureFinding? {
+        guard case .ready(_, let idryxUrl) = identity.connection, !isLoopbackUrl(idryxUrl) else { return nil }
+        return PostureFinding(
+            id: "idryx-exposed",
+            severity: "high",
+            title: "Idryx bound off loopback",
+            whyItMatters:
+                "The discovered idryx URL (\(idryxUrl)) is not loopback. idryx serve has no authentication of any kind, so a non-loopback bind exposes every identity, permission, and alert to the network unauthenticated.",
+            howToFix: "Bind idryx to loopback (idryx serve --addr 127.0.0.1:8081), or put it behind a tunnel / your own auth proxy."
+        )
+    }
+
+    /// `true` only for a URL whose host is confirmed loopback
+    /// (`127.0.0.1`/`localhost`/`::1`); an unparseable or hostless URL is
+    /// treated as NOT confirmed loopback (fails closed toward flagging the
+    /// finding, never toward silently assuming safety) rather than crashing
+    /// or guessing.
+    private static func isLoopbackUrl(_ urlString: String) -> Bool {
+        guard let host = URL(string: urlString)?.host else { return false }
+        let lowered = host.lowercased()
+        return lowered == "localhost" || lowered == "127.0.0.1" || lowered == "::1"
+    }
+
+    // MARK: - 6. attestation coverage
+
+    /// PHASE3.md position 6, zond "attestation coverage": of PRIVILEGED
+    /// identities (`IdentityRecord.privileged`), how many carry an
+    /// `attestation_missing`/`bom_incomplete` alert
+    /// (`AlertRecord.detector`, joined on `AlertRecord.identity ==
+    /// IdentityRecord.id`) - attestation is never a clean identity field
+    /// (docs/PHASE3.md: "not a structured field on the identity"), so a
+    /// coverage gap is only visible through these two detectors, exactly
+    /// how the Identity panel's own Attestation section already surfaces it
+    /// per-identity (PHASE3.md W2). Severity scales with how incomplete the
+    /// coverage is: "medium" once at least half of the privileged
+    /// identities are missing attestation (a majority gap), "info" for a
+    /// smaller, partial one - omitted entirely when there are no privileged
+    /// identities to begin with, or when every one of them is attested.
+    private static func attestationCoverageFinding(identity: IdentityModel) -> PostureFinding? {
+        guard identity.connection.isReady else { return nil }
+        let privileged = identity.identities.filter(\.privileged)
+        guard !privileged.isEmpty else { return nil }
+
+        let unattestedIds = Set(
+            identity.alerts
+                .filter { $0.detector == "attestation_missing" || $0.detector == "bom_incomplete" }
+                .map(\.identity)
+        )
+        let missingCount = privileged.filter { unattestedIds.contains($0.id) }.count
+        guard missingCount > 0 else { return nil }
+
+        let fraction = Double(missingCount) / Double(privileged.count)
+        return PostureFinding(
+            id: "attestation-coverage",
+            severity: fraction >= 0.5 ? "medium" : "info",
+            title: "Attestation gap on privileged identities",
+            whyItMatters:
+                "\(missingCount) of \(privileged.count) privileged identities carry an attestation_missing or bom_incomplete alert - unattested privileged identities are exactly the excessive_agency / tainted_agent blast radius those detectors exist to catch.",
+            howToFix: "Attest them (oidc / spiffe-svid / enclave-key / mtls-cert), then Rescan on the Identity panel to confirm the alert clears."
+        )
+    }
+
+    // MARK: - 7. identity snapshot age
+
+    /// PHASE3.md position 6, zond "identity snapshot age": idryx `serve` is
+    /// LOAD-ONCE (docs/PHASE3.md's own grounded contract: "no file-watch, no
+    /// SIGHUP, no reload endpoint, no polling, no TTL... polling `/api/*`
+    /// returns byte-identical data for the process lifetime"), so
+    /// `identity.loadedAt` (this console's own last successful pull, labeled
+    /// "as of load" - `IdentityModel`'s own doc comment) is the only honest
+    /// freshness signal there is. Always shown while ready (an "info" - the
+    /// point is transparency about staleness, not a defect to clear),
+    /// mirroring `schemaMixFinding`'s own "informational, not a defect"
+    /// precedent for a finding that is not itself a problem.
+    private static func identitySnapshotAgeFinding(identity: IdentityModel, now: Date) -> PostureFinding? {
+        guard identity.connection.isReady, let loadedAt = identity.loadedAt else { return nil }
+        let age = now.timeIntervalSince(loadedAt)
+        return PostureFinding(
+            id: "identity-snapshot-age",
+            severity: "info",
+            title: "Identity snapshot is \(formatAge(age)) old",
+            whyItMatters:
+                "idryx serve loads its data once at startup and never reloads (no file-watch, no SIGHUP, no TTL) - every identity/alert/remediation shown is exactly as of that load, never live.",
+            howToFix: "Rescan (Identity panel) to recompute alerts over the current bus, or restart idryx to reload identities/permissions themselves."
+        )
+    }
+
+    // MARK: - 8. detector-feed freshness
+
+    /// A detector feed that has produced nothing in over this long is worth
+    /// a nudge to Rescan, not just an FYI - see
+    /// `detectorFeedFreshnessFinding`'s own doc comment.
+    private static let staleDetectorFeedThreshold: TimeInterval = 24 * 60 * 60
+
+    /// PHASE3.md position 6, zond "detector-feed freshness": how long since
+    /// the most recent alert idryx produced (`AlertRecord.time`), vs now.
+    /// Distinct from `identitySnapshotAgeFinding` above: that one measures
+    /// when THIS CONSOLE last pulled the snapshot; this one measures how
+    /// old the detectors' own most recent finding is, which stays fixed at
+    /// whatever idryx computed at load/Rescan time regardless of how often
+    /// the console re-pulls the same byte-identical snapshot. Omitted (no
+    /// fabricated signal) when there are no alerts at all - "freshness" has
+    /// no meaning over an empty feed.
+    private static func detectorFeedFreshnessFinding(identity: IdentityModel, now: Date) -> PostureFinding? {
+        guard identity.connection.isReady, !identity.alerts.isEmpty else { return nil }
+        let mostRecent = identity.alerts.compactMap { parseTimestamp($0.time) }.max()
+        guard let mostRecent else { return nil }
+        let age = now.timeIntervalSince(mostRecent)
+        return PostureFinding(
+            id: "detector-feed-freshness",
+            severity: age > staleDetectorFeedThreshold ? "medium" : "info",
+            title: "Most recent detector alert is \(formatAge(age)) old",
+            whyItMatters:
+                "The freshest of the \(identity.alerts.count) loaded alerts fired \(formatAge(age)) ago. idryx never recomputes on its own (see the snapshot-age zond above), so a stale feed usually means the loaded findings predate the stack's current state.",
+            howToFix: "Rescan (Identity panel) to recompute the 21 detectors over the current bus."
+        )
+    }
+
+    /// Compact "4m12s" / "1h03m" / "37s" age formatting for the two zonds
+    /// above - deliberately not `MoneyFormat.timestamp` (that formats an
+    /// absolute clock reading, not an elapsed duration).
+    private static func formatAge(_ interval: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(interval))
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+        if hours > 0 { return "\(hours)h\(String(format: "%02d", minutes))m" }
+        if minutes > 0 { return "\(minutes)m\(String(format: "%02d", seconds))s" }
+        return "\(seconds)s"
     }
 
     // A dedicated small ISO8601 parsing helper, matching

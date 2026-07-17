@@ -120,6 +120,15 @@ final class FleetModel {
         let handle = try requireHandle()
         return try await Task.detached { try handle.eventsForAgent(agentId: agentId, limit: limit) }.value
     }
+
+    /// One run's full timeline, oldest-first - Run Replay's own source (PHASE3
+    /// W4). Mirrors `eventsForAgent` above exactly; see `RunReplayModel.swift`
+    /// for why the result is re-sorted by `ts` before use rather than trusted
+    /// as wall-clock order straight off this call.
+    func eventsForRun(_ runId: String, limit: UInt32) async throws -> [UiEvent] {
+        let handle = try requireHandle()
+        return try await Task.detached { try handle.eventsForRun(runId: runId, limit: limit) }.value
+    }
 }
 
 /// Bridges `EventListener.onEvent` (called from the Rust ingest thread,

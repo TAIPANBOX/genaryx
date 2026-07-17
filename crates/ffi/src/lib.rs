@@ -57,6 +57,16 @@
 //! those derive `Serialize`/`Deserialize` for the Tauri shell's IPC but are
 //! not themselves `uniffi::Record`/`uniffi::Enum`, exactly the reason
 //! [`UiEvent`] already mirrors `StoredEvent` by hand.
+//!
+//! Phase-3 wave 4 (docs/PHASE3.md, position 5, "Run Replay") adds
+//! [`FleetHandle::events_for_run`]: one more read on the same handle, one
+//! more reuse of [`UiEvent`], mirroring [`FleetHandle::events_for_agent`]
+//! exactly except for the `Store` index it filters through
+//! (`events_for_run` instead of `events_for_agent`) and the resulting sort
+//! direction (oldest-first, since a playback clock plays forward - see
+//! `genaryx_core::store::Store::events_for_run`'s own doc comment). No new
+//! Record, no new Object: a run's timeline is just another slice of the same
+//! events table the graph and Agent 360 reads already slice.
 
 pub mod cloud;
 pub mod idryx;
@@ -475,6 +485,34 @@ impl FleetHandle {
         Ok(events.into_iter().map(UiEvent::from).collect())
     }
 
+    /// Every event of one run, OLDEST-first (Run Replay's timeline - PHASE3
+    /// W4), reusing [`UiEvent`] exactly like
+    /// [`FleetHandle::events_for_agent`] does, just filtered server-side to
+    /// one `run_id` via `Store::events_for_run`'s own index. Oldest-first is
+    /// the reverse of every other read on this handle
+    /// (`recent_events`/`events_for_agent` are newest-first) because a
+    /// playback clock plays a run forward in time, not backward - see
+    /// `Store::events_for_run`'s own doc comment. A `run_id` this Store has
+    /// never seen (e.g. one that only exists in a separate Cloud
+    /// environment - PHASE3.md: "Cloud `/v1/replay/{run}` is a second
+    /// source") yields a clean empty `Vec`, never an error: a normal,
+    /// renderable "no events for this run" outcome for the Run Replay view's
+    /// own honest empty state, exactly like `agent_slice`'s "unseen agent"
+    /// contract above.
+    ///
+    /// NOTE for callers building a playback UI: this order is "oldest by
+    /// insertion" (SQLite `id`), not a promise that `ts` is monotonic across
+    /// SOURCES within the run - `IngestService::poll_once` batches one
+    /// source's entire backlog before moving to the next
+    /// (`crates/core/src/ingest.rs`), so a multi-source run's events land in
+    /// the Store in source-registration order, not wall-clock order. A
+    /// caller that wants a true wall-clock scrub should re-sort the returned
+    /// `Vec` by `ts` itself (see `apps/macos`'s `RunReplayModel.swift`).
+    pub fn events_for_run(&self, run_id: String, limit: u32) -> Result<Vec<UiEvent>, FfiError> {
+        let events = relock(&self.reader).events_for_run(&run_id, limit as usize)?;
+        Ok(events.into_iter().map(UiEvent::from).collect())
+    }
+
     /// Register a live listener. Events ingested from this point on are
     /// pushed to it from the Rust ingest thread; events from before
     /// registration are not replayed (fetch history via
@@ -789,5 +827,64 @@ mod tests {
                 "events_for_agent must be newest-first by rowid"
             );
         }
+    }
+
+    /// PHASE3 W4: `events_for_run` over the same demo campaign
+    /// `crates/core/src/demo.rs` generates. `demo-run-000` is run index 0 -
+    /// one of the first `BLOCK_RUN_COUNT` "block" runs (`demo::run_calls`),
+    /// so it is a real, known MULTI-SOURCE run (exactly three calls: wardryx
+    /// `policy_allow`, tokenfuse `budget_exhausted`, engram
+    /// `memory_written`, in that wall-clock order per
+    /// `demo::block_run_calls`) rather than a guessed one - giving this test
+    /// a chance to prove the subtlety called out in
+    /// [`FleetHandle::events_for_run`]'s own doc comment: because
+    /// `DEMO_SOURCES` registers tokenfuse before wardryx before engram, and
+    /// `IngestService::poll_once` drains one source's whole backlog before
+    /// the next, this run's events land in the Store id-ordered as
+    /// (tokenfuse, wardryx, engram) - SOURCE order - even though wardryx's
+    /// call is the one actually timestamped first. So "oldest-first" here
+    /// is proven as an `id` (insertion) guarantee, not mistaken for a `ts`
+    /// guarantee.
+    #[test]
+    fn events_for_run_over_the_demo_campaign_is_oldest_first_by_id() {
+        let handle = FleetHandle::new().expect("construct demo world");
+
+        const RUN: &str = "demo-run-000";
+        let events = handle
+            .events_for_run(RUN.to_string(), 50)
+            .expect("events_for_run for a demo run");
+
+        assert_eq!(
+            events.len(),
+            3,
+            "demo-run-000 is a known 3-call block run: {events:?}"
+        );
+        assert!(
+            events.iter().all(|e| e.run_id.as_deref() == Some(RUN)),
+            "events_for_run must return only this run's own events: {events:?}"
+        );
+        let sources: Vec<&str> = events.iter().map(|e| e.source.as_str()).collect();
+        assert_eq!(
+            sources,
+            vec!["tokenfuse", "wardryx", "engram"],
+            "id order follows DEMO_SOURCES registration order (tokenfuse, wardryx, \
+             engram), not wall-clock ts order - see this test's own doc comment"
+        );
+        assert!(
+            events[0].id < events[1].id && events[1].id < events[2].id,
+            "events_for_run must be oldest-first by id: {events:?}"
+        );
+
+        // A run_id this Store has never seen (e.g. a Money/Cloud-only run)
+        // yields a clean empty Vec, never an error - the Run Replay view's
+        // own honest empty state, mirroring `agent_slice`'s "an unseen
+        // agent is a normal empty outcome" fail-closed contract.
+        let unknown = handle
+            .events_for_run("does-not-exist".to_string(), 50)
+            .expect("events_for_run must succeed even for an unknown run_id");
+        assert!(
+            unknown.is_empty(),
+            "an unknown run_id must yield an empty Vec, not an error"
+        );
     }
 }

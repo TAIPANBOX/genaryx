@@ -30,13 +30,18 @@ struct Agent360View: View {
     let onClose: () -> Void
     let onOpenMoney: () -> Void
     let onOpenPolicy: () -> Void
+    /// PHASE3 W4: opens Run Replay (`GenaryxApp.openReplay`) focused on one
+    /// of this agent's runs - the "Agent 360" entry point PHASE3.md's Run
+    /// Replay brief names, wired down to `Agent360MoneySection`'s own run
+    /// rows below.
+    let onOpenReplay: (String) -> Void
 
     @State private var model: Agent360Model
 
     init(
         agentId: String, fleetModel: FleetModel, cloudModel: CloudModel, policyModel: PolicyModel,
         identityModel: IdentityModel, onClose: @escaping () -> Void, onOpenMoney: @escaping () -> Void,
-        onOpenPolicy: @escaping () -> Void
+        onOpenPolicy: @escaping () -> Void, onOpenReplay: @escaping (String) -> Void
     ) {
         self.agentId = agentId
         self.fleetModel = fleetModel
@@ -46,6 +51,7 @@ struct Agent360View: View {
         self.onClose = onClose
         self.onOpenMoney = onOpenMoney
         self.onOpenPolicy = onOpenPolicy
+        self.onOpenReplay = onOpenReplay
         _model = State(initialValue: Agent360Model(agentId: agentId))
     }
 
@@ -72,7 +78,7 @@ struct Agent360View: View {
                     section(title: "Money") {
                         Agent360MoneySection(
                             runs: agentRuns, incidents: agentIncidents, connectionReady: cloudModel.connection.isReady,
-                            onOpenMoney: onOpenMoney)
+                            onOpenMoney: onOpenMoney, onOpenReplay: onOpenReplay)
                     }
                     section(title: "Policy") {
                         Agent360PolicySection(
@@ -401,6 +407,8 @@ private struct Agent360MoneySection: View {
     let incidents: [Incident]
     let connectionReady: Bool
     let onOpenMoney: () -> Void
+    /// PHASE3 W4: see `Agent360View`'s own doc comment on `onOpenReplay`.
+    let onOpenReplay: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -453,6 +461,15 @@ private struct Agent360MoneySection: View {
                 .font(Theme.mono(11))
                 .monospacedDigit()
                 .foregroundStyle(Theme.textPrimary)
+            Button {
+                onOpenReplay(run.runId)
+            } label: {
+                Image(systemName: "play.circle")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.iris)
+            }
+            .buttonStyle(.plain)
+            .help("Replay this run")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)

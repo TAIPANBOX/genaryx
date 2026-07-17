@@ -1,13 +1,17 @@
 import GenaryxCoreFFI
 import SwiftUI
 
-/// The Money panel: runs table (kill + inline budget), incidents list
-/// (ack), and a savings breakdown. Fed by `CloudModel`, at parity with the
-/// Tauri shell's `MoneyView.tsx` / `RunsTable.tsx` / `IncidentsList.tsx` /
-/// `SavingsBreakdown.tsx`.
+/// The Money panel: runs table (kill + inline budget + Replay), incidents
+/// list (ack), and a savings breakdown. Fed by `CloudModel`, at parity with
+/// the Tauri shell's `MoneyView.tsx` / `RunsTable.tsx` / `IncidentsList.tsx`
+/// / `SavingsBreakdown.tsx`.
 @MainActor
 struct MoneyView: View {
     let model: CloudModel
+    /// PHASE3 W4: opens Run Replay (`GenaryxApp.openReplay`) focused on one
+    /// run - the "a run row" entry point PHASE3.md's Run Replay brief names,
+    /// wired down to `RunsTable`'s own rows below.
+    let onOpenReplay: (String) -> Void
 
     private static let refreshInterval: Duration = .seconds(20)
 
@@ -47,7 +51,8 @@ struct MoneyView: View {
                     RunsTable(
                         runs: model.runs,
                         onKill: { runId, reason in await model.killRun(runId, reason: reason) },
-                        onSetBudget: { runId, usd, reason in await model.setBudget(runId: runId, usd: usd, reason: reason) }
+                        onSetBudget: { runId, usd, reason in await model.setBudget(runId: runId, usd: usd, reason: reason) },
+                        onOpenReplay: onOpenReplay
                     )
                 }
                 section(title: "Incidents") {
@@ -99,6 +104,8 @@ private struct RunsTable: View {
     let runs: [Run]
     let onKill: (String, String) async -> Bool
     let onSetBudget: (String, Double, String) async -> Bool
+    /// PHASE3 W4: see `MoneyView`'s own doc comment on `onOpenReplay`.
+    let onOpenReplay: (String) -> Void
 
     private enum Column {
         static let agent: CGFloat = 130
@@ -107,7 +114,7 @@ private struct RunsTable: View {
         static let calls: CGFloat = 52
         static let steps: CGFloat = 52
         static let lastSeen: CGFloat = 118
-        static let actions: CGFloat = 190
+        static let actions: CGFloat = 240
     }
 
     var body: some View {
@@ -121,7 +128,7 @@ private struct RunsTable: View {
                 header
                 Divider().overlay(Theme.hairlineStrong)
                 ForEach(Array(runs.enumerated()), id: \.element.runId) { index, run in
-                    RunRow(run: run, onKill: onKill, onSetBudget: onSetBudget)
+                    RunRow(run: run, onKill: onKill, onSetBudget: onSetBudget, onOpenReplay: onOpenReplay)
                     if index < runs.count - 1 {
                         Divider().overlay(Theme.hairline)
                     }
@@ -169,6 +176,8 @@ private struct RunsTable: View {
         let run: Run
         let onKill: (String, String) async -> Bool
         let onSetBudget: (String, Double, String) async -> Bool
+        /// PHASE3 W4: see `MoneyView`'s own doc comment on `onOpenReplay`.
+        let onOpenReplay: (String) -> Void
 
         private enum BreakGlassAction {
             case kill
@@ -263,7 +272,24 @@ private struct RunsTable: View {
                     .foregroundStyle(Theme.textTertiary)
                     .frame(width: Column.lastSeen, alignment: .trailing)
 
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    // PHASE3 W4: the Run Replay entry point named in the
+                    // task brief ("a run row") - available regardless of
+                    // `run.killed`, since a killed run's timeline up to the
+                    // kill is still a real, replayable history.
+                    Button {
+                        onOpenReplay(run.runId)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.circle")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("Replay")
+                        }
+                        .font(Theme.mono(11, weight: .semibold))
+                        .foregroundStyle(Theme.iris)
+                    }
+                    .buttonStyle(.plain)
+
                     if run.killed {
                         Text("killed")
                             .font(Theme.mono(10, weight: .semibold))
