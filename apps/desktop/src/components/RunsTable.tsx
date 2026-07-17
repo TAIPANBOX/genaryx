@@ -10,6 +10,7 @@ export function RunsTable({
   runs,
   onKill,
   onSetBudget,
+  onOpenAgent,
 }: {
   runs: Run[];
   /** Break-glass (Phase-2 wave 3B): `reason` is the operator's mandatory,
@@ -17,6 +18,9 @@ export function RunsTable({
    * ceremony below, never a plain confirm. */
   onKill: (runId: string, reason: string) => Promise<void>;
   onSetBudget: (runId: string, budgetUsd: number, reason: string) => Promise<void>;
+  /** Phase-3 wave-3 deep link (docs/PHASE3.md W3): opens the Agent 360 card
+   * for a row's `agent_id`. */
+  onOpenAgent: (agentId: string) => void;
 }) {
   if (runs.length === 0) {
     return (
@@ -47,9 +51,21 @@ export function RunsTable({
           <span className="mono truncate text-[12px]" title={r.run_id} style={{ color: "var(--fg)" }}>
             {r.run_id}
           </span>
-          <span className="mono truncate text-[11.5px]" title={r.agent_id || undefined} style={{ color: "var(--dim)" }}>
-            {r.agent_id || "-"}
-          </span>
+          {r.agent_id ? (
+            <button
+              type="button"
+              className="mono truncate text-[11.5px] text-left"
+              title={`Open Agent 360 for ${r.agent_id}`}
+              style={{ color: "var(--dim)", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+              onClick={() => onOpenAgent(r.agent_id)}
+            >
+              {r.agent_id}
+            </button>
+          ) : (
+            <span className="mono truncate text-[11.5px]" style={{ color: "var(--dim)" }}>
+              -
+            </span>
+          )}
           <span className="mono tabular text-[12px]" style={{ color: "var(--fg)" }}>
             {formatUsd(r.spent_usd)}
           </span>

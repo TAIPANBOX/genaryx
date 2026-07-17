@@ -148,12 +148,14 @@ function PendingRow({
   highlighted,
   muted,
   onToggleMuteAgent,
+  onOpenAgent,
 }: {
   approval: Approval;
   onDecide: (id: string, decision: Decision) => Promise<void>;
   highlighted: boolean;
   muted: boolean;
   onToggleMuteAgent: (agentId: string) => void;
+  onOpenAgent: (agentId: string) => void;
 }) {
   const chain = approval.on_behalf_of;
   return (
@@ -166,9 +168,15 @@ function PendingRow({
         <span className="badge" style={cssVar("tone", "var(--sev-medium)")}>
           hold
         </span>
-        <span className="mono truncate text-[12px]" title={approval.agent_id} style={{ color: "var(--fg)" }}>
+        <button
+          type="button"
+          className="mono truncate text-[12px] text-left"
+          title={`Open Agent 360 for ${approval.agent_id}`}
+          style={{ color: "var(--fg)", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+          onClick={() => onOpenAgent(approval.agent_id)}
+        >
           {approval.agent_id}
-        </span>
+        </button>
         <MuteToggle agentId={approval.agent_id} muted={muted} onToggle={onToggleMuteAgent} />
         <span className="mono tabular text-[11px]" style={{ color: "var(--faint)" }}>
           {formatTimestamp(approval.requested_at)}
@@ -210,7 +218,15 @@ function PendingRow({
   );
 }
 
-function HistoryRow({ approval, highlighted }: { approval: Approval; highlighted: boolean }) {
+function HistoryRow({
+  approval,
+  highlighted,
+  onOpenAgent,
+}: {
+  approval: Approval;
+  highlighted: boolean;
+  onOpenAgent: (agentId: string) => void;
+}) {
   const granted = approval.decision === "grant";
   return (
     <div
@@ -222,9 +238,15 @@ function HistoryRow({ approval, highlighted }: { approval: Approval; highlighted
         {approval.decision ?? "decided"}
       </span>
       <div className="flex flex-col min-w-0 flex-1">
-        <span className="mono truncate text-[12px]" title={approval.agent_id} style={{ color: "var(--fg)" }}>
+        <button
+          type="button"
+          className="mono truncate text-[12px] text-left"
+          title={`Open Agent 360 for ${approval.agent_id}`}
+          style={{ color: "var(--fg)", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+          onClick={() => onOpenAgent(approval.agent_id)}
+        >
           {approval.agent_id}
-        </span>
+        </button>
         <span className="mono truncate text-[11px]" style={{ color: "var(--faint)" }}>
           {approval.decided_by ?? "unknown"} &middot; {approval.decided_at ? formatTimestamp(approval.decided_at) : "-"}
         </span>
@@ -292,6 +314,7 @@ export function ApprovalsInbox({
   focusApprovalId,
   mutedKeys,
   onToggleMuteAgent,
+  onOpenAgent,
 }: {
   approvals: Approval[];
   onDecide: (id: string, decision: Decision) => Promise<void>;
@@ -300,6 +323,9 @@ export function ApprovalsInbox({
   focusApprovalId: string | null;
   mutedKeys: ReadonlySet<string>;
   onToggleMuteAgent: (agentId: string) => void;
+  /** Phase-3 wave-3 deep link (docs/PHASE3.md W3): opens the Agent 360 card
+   * for a row's `agent_id`, both pending and decided. */
+  onOpenAgent: (agentId: string) => void;
 }) {
   const pending = approvals.filter((a) => a.pending);
   const history = approvals.filter((a) => !a.pending);
@@ -332,6 +358,7 @@ export function ApprovalsInbox({
               highlighted={a.approval_id === focusApprovalId}
               muted={mutedKeys.has(muteKey("agent", a.agent_id))}
               onToggleMuteAgent={onToggleMuteAgent}
+              onOpenAgent={onOpenAgent}
             />
           ))}
         </div>
@@ -346,7 +373,12 @@ export function ApprovalsInbox({
             History
           </span>
           {history.map((a) => (
-            <HistoryRow key={a.approval_id} approval={a} highlighted={a.approval_id === focusApprovalId} />
+            <HistoryRow
+              key={a.approval_id}
+              approval={a}
+              highlighted={a.approval_id === focusApprovalId}
+              onOpenAgent={onOpenAgent}
+            />
           ))}
         </div>
       )}

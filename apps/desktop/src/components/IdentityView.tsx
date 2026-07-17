@@ -92,7 +92,7 @@ function IdentityEmptyState({ status }: { status: IdentityStatus | null }) {
  * list only - idryx's CLI batch output is alerts-only, it can never refresh
  * the identities/remediations lists).
  */
-export function IdentityView() {
+export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {
   const status = useIdentityStatus();
   const ready = status?.state === "ready";
 
@@ -193,7 +193,7 @@ export function IdentityView() {
 
       <section className="flex flex-col gap-2">
         <SectionHeader title="Identities" />
-        {identities === null ? <Loading /> : <IdentityList identities={identities} />}
+        {identities === null ? <Loading /> : <IdentityList identities={identities} onOpenAgent={onOpenAgent} />}
       </section>
 
       <section className="flex flex-col gap-2">
@@ -206,6 +206,7 @@ export function IdentityView() {
             onRescan={() => void handleRescan()}
             rescanning={rescanning}
             rescanAvailable={status.rescan_available}
+            onOpenAgent={onOpenAgent}
           />
         )}
       </section>

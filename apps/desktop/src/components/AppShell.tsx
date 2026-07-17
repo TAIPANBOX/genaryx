@@ -3,8 +3,10 @@ import type { ApprovalAlert } from "../lib/notifications";
 import { muteKey } from "../lib/notifications";
 import { useApprovalNotifications } from "../lib/useApprovalNotifications";
 import type { ViewId } from "../lib/views";
+import { Agent360 } from "./Agent360";
 import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
+import { DelegationGraphView } from "./DelegationGraphView";
 import { IdentityView } from "./IdentityView";
 import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
@@ -57,6 +59,25 @@ export function AppShell() {
   const [unseenAlerts, setUnseenAlerts] = useState<readonly ApprovalAlert[]>([]);
   const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
   const focusTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Phase-3 wave-3 addition (docs/PHASE3.md "W3 - graph + 360"): the whole
+  // deep-link mechanism is this one piece of state, owned here for the same
+  // reason `focusApprovalId` is - Agent 360 must be reachable "from anywhere"
+  // (a graph node, an Identity/Money/Policy row, ...), so it is rendered as
+  // an overlay on top of whichever `view` is active rather than being a view
+  // itself. Setting it never changes `view`; closing it never clears `view`
+  // either, so opening a 360 card and dismissing it always returns the
+  // operator to exactly the panel they were on.
+  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
+  const onOpenAgent = useCallback((agentId: string) => setFocusedAgentId(agentId), []);
+  const onCloseAgent360 = useCallback(() => setFocusedAgentId(null), []);
+  // Agent 360's "Open <plane> panel" links (docs/PHASE3.md: actions link to
+  // the existing panels rather than re-implement a mutation in the card) -
+  // switch the active view AND dismiss the overlay in one operator gesture.
+  const onNavigateFromAgent360 = useCallback((next: ViewId) => {
+    setView(next);
+    setFocusedAgentId(null);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -137,13 +158,33 @@ export function AppShell() {
         policyAlertCount={unseenAlerts.length}
       />
       {view === "overview" && <OverviewView />}
-      {view === "money" && <MoneyView />}
+      {view === "money" && <MoneyView onOpenAgent={onOpenAgent} />}
       {view === "policy" && (
-        <PolicyView focusApprovalId={focusApprovalId} mutedKeys={mutedKeys} onToggleMuteAgent={onToggleMuteAgent} />
+        <PolicyView
+          focusApprovalId={focusApprovalId}
+          mutedKeys={mutedKeys}
+          onToggleMuteAgent={onToggleMuteAgent}
+          onOpenAgent={onOpenAgent}
+        />
       )}
-      {view === "identity" && <IdentityView />}
+      {view === "identity" && <IdentityView onOpenAgent={onOpenAgent} />}
+      {view === "graph" && (
+        <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
+          <DelegationGraphView onOpenAgent={onOpenAgent} fill />
+        </div>
+      )}
       {view === "posture" && <PostureView />}
       {view === "bus" && <BusExplorer />}
+
+      {focusedAgentId && (
+        <Agent360
+          key={focusedAgentId}
+          agentId={focusedAgentId}
+          onClose={onCloseAgent360}
+          onOpenAgent={onOpenAgent}
+          onNavigate={onNavigateFromAgent360}
+        />
+      )}
     </div>
   );
 }

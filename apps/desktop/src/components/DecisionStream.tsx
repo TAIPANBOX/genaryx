@@ -67,7 +67,7 @@ function dataStringArray(data: unknown, key: string): string[] | null {
  * correct severity per source/type, so there is no separate mapping to
  * maintain here.
  */
-export function DecisionStream() {
+export function DecisionStream({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {
   const [events, setEvents] = useState<UiEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -156,13 +156,15 @@ export function DecisionStream() {
             <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={e.type}>
               {e.type}
             </span>
-            <span
-              className="mono tabular truncate text-[11.5px]"
-              style={{ color: "var(--dim)" }}
-              title={e.agent_id}
+            <button
+              type="button"
+              className="mono tabular truncate text-[11.5px] text-left"
+              title={`Open Agent 360 for ${e.agent_id}`}
+              style={{ color: "var(--dim)", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+              onClick={() => onOpenAgent(e.agent_id)}
             >
               {e.agent_id}
-            </span>
+            </button>
             <span
               className="truncate text-[11.5px]"
               style={{ color: "var(--dim)" }}

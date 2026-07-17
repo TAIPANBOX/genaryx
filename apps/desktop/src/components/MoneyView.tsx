@@ -29,7 +29,7 @@ function Loading() {
   );
 }
 
-export function MoneyView() {
+export function MoneyView({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
 
@@ -118,7 +118,11 @@ export function MoneyView() {
 
       <section className="flex flex-col gap-2">
         <SectionHeader title="Runs" />
-        {runs === null ? <Loading /> : <RunsTable runs={runs} onKill={handleKill} onSetBudget={handleSetBudget} />}
+        {runs === null ? (
+          <Loading />
+        ) : (
+          <RunsTable runs={runs} onKill={handleKill} onSetBudget={handleSetBudget} onOpenAgent={onOpenAgent} />
+        )}
       </section>
 
       <section className="flex flex-col gap-2">

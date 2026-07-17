@@ -68,11 +68,15 @@ export function IdentityAlerts({
   onRescan,
   rescanning,
   rescanAvailable,
+  onOpenAgent,
 }: {
   alerts: IdryxAlert[];
   onRescan: () => void;
   rescanning: boolean;
   rescanAvailable: boolean;
+  /** Phase-3 wave-3 deep link (docs/PHASE3.md W3): opens the Agent 360 card
+   * for a row's `identity`. */
+  onOpenAgent: (agentId: string) => void;
 }) {
   const [activeSeverities, setActiveSeverities] = useState<ReadonlySet<string>>(new Set());
   const [detector, setDetector] = useState<string>("");
@@ -172,9 +176,15 @@ export function IdentityAlerts({
               <span className="mono truncate text-[11.5px]" title={a.detector} style={{ color: "var(--fg)" }}>
                 {a.detector}
               </span>
-              <span className="mono truncate text-[11.5px]" title={a.identity} style={{ color: "var(--dim)" }}>
+              <button
+                type="button"
+                className="mono truncate text-[11.5px] text-left"
+                title={`Open Agent 360 for ${a.identity}`}
+                style={{ color: "var(--dim)", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                onClick={() => onOpenAgent(a.identity)}
+              >
                 {a.identity}
-              </span>
+              </button>
               <span className="mono tabular text-[11px]" style={{ color: "var(--faint)" }}>
                 {formatAlertTime(a.time)}
               </span>

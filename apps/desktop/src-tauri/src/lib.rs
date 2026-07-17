@@ -25,8 +25,15 @@
 //! No Rust command of this crate's own reads or writes a notification: the
 //! frontend (`src/lib/notifications.ts`) watches the same `bus:event` feed
 //! `live.rs` already emits and calls straight into the plugin's JS API.
+//!
+//! `graph::agent_graph`/`agent_slice`/`agent_events` (docs/PHASE3.md Wave 3:
+//! the delegation graph + Agent 360) need no managed state of their own at
+//! all - they read the same `AppState.events_dir` `recent_events` already
+//! reads, straight off the shared `genaryx-core` `Store`, so there is
+//! nothing to bootstrap in `setup` for them.
 
 mod events;
+mod graph;
 mod identity;
 mod live;
 mod money;
@@ -161,6 +168,9 @@ pub fn run() {
             identity::commands::identity_list_alerts,
             identity::commands::identity_list_remediations,
             identity::commands::identity_rescan,
+            graph::agent_graph,
+            graph::agent_slice,
+            graph::agent_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

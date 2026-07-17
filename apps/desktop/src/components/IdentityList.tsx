@@ -65,7 +65,15 @@ function TypeFilterChips({
  * not the objects" - `crates/connectors/src/idryx.rs`). `on_behalf_of`
  * renders root-first, exactly as idryx returns it.
  */
-export function IdentityList({ identities }: { identities: IdryxIdentity[] }) {
+export function IdentityList({
+  identities,
+  onOpenAgent,
+}: {
+  identities: IdryxIdentity[];
+  /** Phase-3 wave-3 deep link (docs/PHASE3.md W3): opens the Agent 360 card
+   * for a row's `id`. */
+  onOpenAgent: (agentId: string) => void;
+}) {
   const [activeTypes, setActiveTypes] = useState<ReadonlySet<string>>(new Set());
 
   const toggleType = (t: string) => {
@@ -115,9 +123,15 @@ export function IdentityList({ identities }: { identities: IdryxIdentity[] }) {
           {rows.map((i) => (
             <div key={i.id} className="grid items-center gap-3 px-4 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
               <TypeChip type={i.type} />
-              <span className="mono truncate text-[12px]" title={i.id} style={{ color: "var(--fg)" }}>
+              <button
+                type="button"
+                className="mono truncate text-[12px] text-left"
+                title={`Open Agent 360 for ${i.id}`}
+                style={{ color: "var(--fg)", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                onClick={() => onOpenAgent(i.id)}
+              >
                 {i.id}
-              </span>
+              </button>
               <span className="mono truncate text-[11px]" style={{ color: "var(--dim)" }}>
                 {i.source}
               </span>

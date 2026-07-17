@@ -99,9 +99,12 @@ export interface PolicyViewProps {
   focusApprovalId: string | null;
   mutedKeys: ReadonlySet<string>;
   onToggleMuteAgent: (agentId: string) => void;
+  /** Phase-3 wave-3 deep link (docs/PHASE3.md W3): opens the Agent 360 card
+   * for an `agent_id`, threaded down to `DecisionStream`/`ApprovalsInbox`. */
+  onOpenAgent: (agentId: string) => void;
 }
 
-export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent }: PolicyViewProps) {
+export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOpenAgent }: PolicyViewProps) {
   const status = usePolicyStatus();
   const ready = status?.state === "ready";
 
@@ -178,7 +181,7 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent }: Po
 
       <section className="flex flex-col gap-2">
         <SectionHeader title="Decision Stream" />
-        <DecisionStream />
+        <DecisionStream onOpenAgent={onOpenAgent} />
       </section>
 
       <section className="flex flex-col gap-2">
@@ -194,6 +197,7 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent }: Po
             focusApprovalId={focusApprovalId}
             mutedKeys={mutedKeys}
             onToggleMuteAgent={onToggleMuteAgent}
+            onOpenAgent={onOpenAgent}
           />
         )}
       </section>
