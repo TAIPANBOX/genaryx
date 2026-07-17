@@ -22,12 +22,29 @@ import SwiftUI
 /// `model.events` (the existing `FleetModel` bus feed) directly, filtered to
 /// `source == "wardryx"` - PHASE2.md: "NOT a new REST read" - so `PolicyView`
 /// is handed `model.events` alongside its own `policyModel`.
+///
+/// Phase-2 wave 3 adds `notifications` (`ApprovalNotificationModel`) and the
+/// `Posture` tab. `notifications` is wired to `model.onNewEvent` exactly
+/// once below (`wireNotifications()`) so it sees every live bus event as it
+/// arrives, the same feed `PolicyView`'s Decision Stream filters - never a
+/// separate read. When a notification response comes back (Review / Approve
+/// / Deny, or a plain tap), `notifications.focusRequest` changes; this
+/// struct reacts by switching to the Policy tab and handing the target
+/// approval id down as `focusedApprovalId`, which `PolicyView` uses to
+/// scroll to and highlight that one row - PHASE2.md: "DEEP-LINKS... never
+/// bypassed". `Posture` is fed straight from the three existing live models
+/// (`cloudModel`, `policyModel`, `model`); it owns no handle and issues no
+/// read of its own (see `PostureModel.swift`).
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
     @State private var cloudModel = CloudModel()
     @State private var policyModel = PolicyModel()
+    @State private var notifications = ApprovalNotificationModel()
     @State private var tab: AppTab = .overview
+    /// The approval to scroll to and highlight once `tab` is `.policy` -
+    /// see the type doc's "Phase-2 wave 3" paragraph.
+    @State private var focusedApprovalId: String?
 
     var body: some Scene {
         WindowGroup("Genaryx") {
@@ -41,7 +58,11 @@ struct GenaryxApp: App {
                     case .money:
                         MoneyView(model: cloudModel)
                     case .policy:
-                        PolicyView(model: policyModel, busEvents: model.events)
+                        PolicyView(
+                            model: policyModel, busEvents: model.events, notifications: notifications,
+                            focusedApprovalId: focusedApprovalId)
+                    case .posture:
+                        PostureView(cloudModel: cloudModel, policyModel: policyModel, fleetModel: model)
                     case .bus:
                         VStack(spacing: 0) {
                             if let message = model.unavailableMessage {
@@ -53,6 +74,24 @@ struct GenaryxApp: App {
                 }
             }
             .frame(minWidth: 900, minHeight: 600)
+            .task {
+                wireNotifications()
+            }
+            .onChange(of: notifications.focusRequest) { _, newValue in
+                guard let newValue else { return }
+                tab = .policy
+                focusedApprovalId = newValue.approvalId
+                notifications.clearFocusRequest()
+            }
+            .onChange(of: tab) { _, newTab in
+                // Clear the highlight once the operator navigates away from
+                // Policy themselves, rather than on a timer - simple,
+                // deterministic, no race with `ScrollViewReader`'s own
+                // one-shot `scrollTo` in `PolicyView`.
+                if newTab != .policy {
+                    focusedApprovalId = nil
+                }
+            }
         }
 
         MenuBarExtra {
@@ -62,17 +101,33 @@ struct GenaryxApp: App {
         }
         .menuBarExtraStyle(.window)
     }
+
+    /// One-time wiring between `FleetModel`'s live event hook and
+    /// `notifications` - guarded so re-running this `.task` (e.g. a second
+    /// window) never double-attaches the closure. `environmentLabel` is
+    /// computed fresh on EVERY event rather than captured once, so a
+    /// (currently hypothetical) later reconnect is reflected immediately
+    /// rather than muting/notifying against a stale environment string.
+    private func wireNotifications() {
+        guard model.onNewEvent == nil else { return }
+        model.onNewEvent = { [policyModel, notifications] event in
+            notifications.handle(
+                event: event, environment: ApprovalNotificationModel.environmentLabel(for: policyModel.connection))
+        }
+    }
 }
 
-/// The four top-level nav destinations - Overview, Money, Policy, and the
-/// existing Bus Explorer - matching the Tauri shell's `ViewId`/`lib/views.ts`
-/// switcher (now four-way as of Phase-2 wave 2's Policy panel), rendered as
-/// a native macOS tab strip instead of a web-styled nav bar (native macOS
-/// patterns over pixel parity, same rule `Theme.swift` already follows).
+/// The five top-level nav destinations - Overview, Money, Policy, Posture,
+/// and the existing Bus Explorer - matching the Tauri shell's
+/// `ViewId`/`lib/views.ts` switcher (five-way as of Phase-2 wave 3's Posture
+/// panel), rendered as a native macOS tab strip instead of a web-styled nav
+/// bar (native macOS patterns over pixel parity, same rule `Theme.swift`
+/// already follows).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
     case policy = "Policy"
+    case posture = "Posture"
     case bus = "Bus Explorer"
 
     var id: String { rawValue }

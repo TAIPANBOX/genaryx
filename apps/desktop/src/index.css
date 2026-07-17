@@ -276,6 +276,18 @@ body {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
+/* ---------- notification deep-link focus (08 §Wave 3) ---------- */
+/* Applied to the Approvals Inbox row an actionable notification (or its
+   in-app nav-badge fallback) deep-links to, so `scrollIntoView` lands
+   somewhere visibly distinct - a calm border/glow fade, not a blinking
+   attention-grab, and fully covered by the `prefers-reduced-motion` reset
+   below like every other transition in this file. */
+.approval-focused {
+  border-color: color-mix(in srgb, var(--sev-medium) 60%, var(--line-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sev-medium) 45%, transparent);
+  transition: border-color 0.6s ease, box-shadow 0.6s ease;
+}
+
 /* ---------- JSON preview (hand-rolled, no dependency) ---------- */
 .json-pre {
   margin: 0;

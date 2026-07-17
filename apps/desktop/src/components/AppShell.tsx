@@ -1,38 +1,146 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ApprovalAlert } from "../lib/notifications";
+import { muteKey } from "../lib/notifications";
+import { useApprovalNotifications } from "../lib/useApprovalNotifications";
 import type { ViewId } from "../lib/views";
 import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
 import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
+import { PostureView } from "./PostureView";
+
+/** How long a notification's deep-link target stays "focused" (drives
+ * `ApprovalsInbox.tsx`'s scroll-to + `.approval-focused` highlight) before
+ * clearing itself - long enough for the operator to notice and locate the
+ * row after navigating over, short enough that it reads as "what just
+ * happened" rather than a permanent marker. The row stays fully visible and
+ * interactive either way; only the highlight fades. */
+const FOCUS_HIGHLIGHT_MS = 6_000;
 
 /**
  * App root: owns the theme (persisted to `document.documentElement.dataset`
  * the same way the Bus Explorer's header used to on its own) and the active
  * view, and renders the persistent `AppHeader` plus whichever view is
  * selected. The `.app` class (ambient backdrop + full-height flex column,
- * see `index.css`) now lives here instead of inside `BusExplorer`, since it
- * is a whole-app concern shared by all three views, not a Bus-specific one.
+ * see `index.css`) lives here instead of inside `BusExplorer`, since it is a
+ * whole-app concern shared by every view, not a Bus-specific one.
+ *
+ * Wave-3 addition (docs/PHASE2.md "Actionable notifications" +
+ * "Posture-lite"): this is also where `useApprovalNotifications` mounts -
+ * the one place guaranteed to stay alive across every view switch, which a
+ * background alert watcher needs. It owns the two pieces of state the
+ * notification deep link and per-agent mute span across views:
+ *
+ * - `mutedKeys` - the in-memory mute set (docs/PHASE2.md: "an in-memory mute
+ *   set is fine for v0"), read by the watcher on every live event and
+ *   written by `ApprovalsInbox.tsx`'s per-row mute toggle. Lives here (not
+ *   inside `PolicyView`) because a mute must keep suppressing notifications
+ *   even while the operator is looking at a different view.
+ * - `focusApprovalId` / `unseenAlerts` - the deep-link target and the
+ *   Policy nav badge count. A new alert arms both but does NOT itself
+ *   switch views (raising a background alert must never yank focus away
+ *   from whatever the operator is doing); only an explicit tap - the nav
+ *   badge, or a real OS notification-action click were one ever delivered
+ *   (`onActionApprovalId`) - navigates. `unseenAlerts` clears the moment
+ *   Policy becomes the active view (the badge's own "you looked" signal);
+ *   `focusApprovalId` clears itself after [`FOCUS_HIGHLIGHT_MS`] regardless
+ *   of view, so the highlight always fades even if the operator was already
+ *   on Policy when it was set.
  */
 export function AppShell() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [view, setView] = useState<ViewId>("overview");
 
+  const [mutedKeys, setMutedKeys] = useState<ReadonlySet<string>>(new Set());
+  const [unseenAlerts, setUnseenAlerts] = useState<readonly ApprovalAlert[]>([]);
+  const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
+  const focusTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  // The badge clears the moment the operator actually looks at Policy -
+  // matches how an unread count normally works, independent of the
+  // separate highlight-fade timer below.
+  useEffect(() => {
+    if (view === "policy" && unseenAlerts.length > 0) setUnseenAlerts([]);
+  }, [view, unseenAlerts.length]);
+
+  const armFocus = useCallback((approvalId: string) => {
+    setFocusApprovalId(approvalId);
+    if (focusTimer.current !== undefined) window.clearTimeout(focusTimer.current);
+    focusTimer.current = window.setTimeout(() => setFocusApprovalId(null), FOCUS_HIGHLIGHT_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (focusTimer.current !== undefined) window.clearTimeout(focusTimer.current);
+  }, []);
+
+  const onAlert = useCallback(
+    (alert: ApprovalAlert) => {
+      setUnseenAlerts((prev) => [...prev, alert]);
+      armFocus(alert.approvalId);
+    },
+    [armFocus],
+  );
+
+  // A real OS notification-action click, were one ever delivered (see
+  // `lib/notifications.ts`'s doc comment for why that does not happen on
+  // today's desktop plugin) - an explicit operator interaction, so unlike
+  // `onAlert` this DOES navigate.
+  const onActionApprovalId = useCallback(
+    (approvalId: string) => {
+      setView("policy");
+      armFocus(approvalId);
+    },
+    [armFocus],
+  );
+
+  useApprovalNotifications({ muted: mutedKeys, onAlert, onActionApprovalId });
+
+  const onToggleMuteAgent = useCallback((agentId: string) => {
+    setMutedKeys((prev) => {
+      const key = muteKey("agent", agentId);
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  // Clicking the Policy nav item (badge or not) always re-focuses the
+  // latest pending alert, if any - the in-app realization of "tap
+  // [the notification] to focus the Policy panel" (PHASE2.md).
+  const onSelectView = useCallback(
+    (next: ViewId) => {
+      setView(next);
+      if (next === "policy" && unseenAlerts.length > 0) {
+        armFocus(unseenAlerts[unseenAlerts.length - 1].approvalId);
+      }
+    },
+    [armFocus, unseenAlerts],
+  );
 
   return (
     <div className="app">
       <AppHeader
         view={view}
-        onSelectView={setView}
+        onSelectView={onSelectView}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        policyAlertCount={unseenAlerts.length}
       />
       {view === "overview" && <OverviewView />}
       {view === "money" && <MoneyView />}
-      {view === "policy" && <PolicyView />}
+      {view === "policy" && (
+        <PolicyView focusApprovalId={focusApprovalId} mutedKeys={mutedKeys} onToggleMuteAgent={onToggleMuteAgent} />
+      )}
+      {view === "posture" && <PostureView />}
       {view === "bus" && <BusExplorer />}
     </div>
   );

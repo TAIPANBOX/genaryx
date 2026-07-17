@@ -8,12 +8,30 @@ import SwiftUI
 /// Decision Stream is a FILTER over the same live tail the Bus Explorer
 /// renders, never a new REST read (PHASE2.md) - at parity with the Tauri
 /// shell's own Policy panel (`src-tauri/src/policy/*` + its React panel).
+///
+/// Phase-2 wave 3 adds `notifications` + `focusedApprovalId`: when an
+/// `ApprovalNotificationModel` notification response deep-links back in
+/// (PHASE2.md: "DEEP-LINKS into the Approvals Inbox focused on that
+/// approval_id"), `GenaryxApp` hands the target id down here, and this view
+/// scrolls the Approvals Inbox to that row and highlights it - never a
+/// decision by itself; the operator still has to press the existing
+/// Touch-ID-gated Grant/Deny on that row (see `ApprovalsInboxSection`).
 @MainActor
 struct PolicyView: View {
     let model: PolicyModel
     /// The app-wide bus feed (`FleetModel.events`), filtered below to
     /// `source == "wardryx"` for the Decision Stream - see the module doc.
     let busEvents: [UiEvent]
+    /// Owns the mute set an operator can toggle per pending approval row
+    /// below (PHASE2.md Wave 3: "Mute: per agent / per run / per
+    /// environment"). Never used to decide anything - see
+    /// `ApprovalNotificationModel`'s own doc for why it cannot be.
+    let notifications: ApprovalNotificationModel
+    /// The approval id to scroll to and highlight in the Approvals Inbox,
+    /// set by `GenaryxApp` from a notification deep link; `nil` in the
+    /// ordinary case of the operator just having clicked the Policy tab
+    /// themselves.
+    let focusedApprovalId: String?
 
     private static let refreshInterval: Duration = .seconds(20)
 
@@ -37,36 +55,64 @@ struct PolicyView: View {
     }
 
     private var content: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                environmentChip
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    environmentChip
 
-                if let notice = model.mutationNotice {
-                    noticeBar(notice)
-                }
-                if let bannerMessage = model.bannerMessage {
-                    ErrorBannerView(message: bannerMessage)
-                }
-                if let lastGrant = model.lastGrant {
-                    GrantTokenCard(outcome: lastGrant, onDismiss: { model.dismissLastGrant() })
-                }
+                    if let notice = model.mutationNotice {
+                        noticeBar(notice)
+                    }
+                    if let bannerMessage = model.bannerMessage {
+                        ErrorBannerView(message: bannerMessage)
+                    }
+                    if let lastGrant = model.lastGrant {
+                        GrantTokenCard(outcome: lastGrant, onDismiss: { model.dismissLastGrant() })
+                    }
 
-                section(title: "Decision Stream") {
-                    DecisionStreamSection(events: wardryxEvents)
+                    section(title: "Decision Stream") {
+                        DecisionStreamSection(events: wardryxEvents)
+                    }
+                    section(title: "Approvals Inbox") {
+                        ApprovalsInboxSection(
+                            approvals: model.approvals,
+                            focusedApprovalId: focusedApprovalId,
+                            onDecide: { id, verdict in await model.decide(id, verdict: verdict) },
+                            isMuted: { agentId, runId in
+                                notifications.isMuted(agentId: agentId, runId: runId, environment: environmentLabel)
+                            },
+                            onToggleMute: { agentId, runId in
+                                let environment = environmentLabel
+                                let alreadyMuted = notifications.isMuted(
+                                    agentId: agentId, runId: runId, environment: environment)
+                                if alreadyMuted {
+                                    notifications.unmute(agentId: agentId, runId: runId, environment: environment)
+                                } else {
+                                    notifications.mute(agentId: agentId, runId: runId, environment: environment)
+                                }
+                            }
+                        )
+                    }
+                    section(title: "Policies") {
+                        PolicyListSection(policies: model.policies, policyVersion: model.latestPolicyVersion)
+                    }
                 }
-                section(title: "Approvals Inbox") {
-                    ApprovalsInboxSection(
-                        approvals: model.approvals,
-                        onDecide: { id, verdict in await model.decide(id, verdict: verdict) }
-                    )
-                }
-                section(title: "Policies") {
-                    PolicyListSection(policies: model.policies, policyVersion: model.latestPolicyVersion)
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: focusedApprovalId) { _, newValue in
+                guard let newValue else { return }
+                withAnimation {
+                    proxy.scrollTo(newValue, anchor: .center)
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// PHASE2.md Wave 3's mute key third component - the same
+    /// `wardryxUrl` the environment chip below already shows the operator.
+    private var environmentLabel: String {
+        ApprovalNotificationModel.environmentLabel(for: model.connection)
     }
 
     /// PHASE2.md: "a live, filtered view of the shared bus where
@@ -256,7 +302,15 @@ private struct DecisionStreamSection: View {
 @MainActor
 private struct ApprovalsInboxSection: View {
     let approvals: [ApprovalRecord]
+    /// Wave 3: the row to scroll to and highlight - see `PolicyView`'s own
+    /// doc comment.
+    let focusedApprovalId: String?
     let onDecide: (String, ApprovalVerdict) async -> Void
+    /// Wave 3 mute affordance (PHASE2.md: "per agent / per run / per
+    /// environment") - keyed by `(agentId, runId)`, `PolicyView` already
+    /// closes over the third key component (the environment).
+    let isMuted: (String, String) -> Bool
+    let onToggleMute: (String, String) -> Void
 
     private static let decidedDisplayLimit = 20
 
@@ -280,7 +334,14 @@ private struct ApprovalsInboxSection: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(pending, id: \.approvalId) { approval in
-                        ApprovalRow(approval: approval, onDecide: onDecide)
+                        ApprovalRow(
+                            approval: approval,
+                            isFocused: approval.approvalId == focusedApprovalId,
+                            onDecide: onDecide,
+                            isMuted: isMuted(approval.agentId, approval.runId),
+                            onToggleMute: { onToggleMute(approval.agentId, approval.runId) }
+                        )
+                        .id(approval.approvalId)
                     }
                 }
             }
@@ -322,10 +383,15 @@ private struct ApprovalsInboxSection: View {
     /// (`MoneyComponents.swift`) with the actual hardware gate layered
     /// inside `onConfirm`: `PolicyModel.decide` ALWAYS challenges Touch ID
     /// before calling into `WardryxHandle`, regardless of which UI entry
-    /// point reaches it.
+    /// point reaches it - including a notification's Review/Approve/Deny
+    /// tap, which only ever sets `isFocused` via `PolicyView`'s
+    /// `focusedApprovalId` (Wave 3) and never calls `onDecide` itself.
     private struct ApprovalRow: View {
         let approval: ApprovalRecord
+        let isFocused: Bool
         let onDecide: (String, ApprovalVerdict) async -> Void
+        let isMuted: Bool
+        let onToggleMute: () -> Void
 
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
@@ -343,6 +409,7 @@ private struct ApprovalsInboxSection: View {
                             .truncationMode(.tail)
                     }
                     Spacer(minLength: 8)
+                    muteButton
                     Text(MoneyFormat.usd(approval.estCostUsd ?? 0))
                         .font(Theme.mono(13, weight: .semibold))
                         .monospacedDigit()
@@ -392,7 +459,11 @@ private struct ApprovalsInboxSection: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
-                    .fill(Theme.panelElevated)
+                    .fill(isFocused ? Theme.amber.opacity(0.1) : Theme.panelElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                    .strokeBorder(isFocused ? Theme.amber.opacity(0.7) : Color.clear, lineWidth: 1.5)
             )
         }
 
@@ -400,6 +471,25 @@ private struct ApprovalsInboxSection: View {
             approval.onBehalfOf.isEmpty
                 ? "run \(approval.runId)"
                 : "run \(approval.runId) \u{00B7} on behalf of \(approval.onBehalfOf.joined(separator: " \u{2192} "))"
+        }
+
+        /// A lightweight, non-privileged toggle (no `ConfirmButton`
+        /// ceremony, no Touch ID - muting is a local UI preference, never a
+        /// mutation against Wardryx) for PHASE2.md Wave 3's "Mute: per
+        /// agent / per run / per environment".
+        private var muteButton: some View {
+            Button(action: onToggleMute) {
+                Image(systemName: isMuted ? "bell.slash.fill" : "bell.slash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isMuted ? Theme.amber : Theme.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .help(muteHelpText)
+        }
+
+        private var muteHelpText: String {
+            let verb = isMuted ? "Unmute" : "Mute"
+            return "\(verb) notifications for \(approval.agentId) / \(approval.runId)"
         }
     }
 

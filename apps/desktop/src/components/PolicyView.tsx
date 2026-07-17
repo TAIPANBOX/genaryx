@@ -86,7 +86,22 @@ function PolicyEmptyState({ status }: { status: PolicyStatus | null }) {
   return null;
 }
 
-export function PolicyView() {
+/**
+ * Wave-3 deep-link props (docs/PHASE2.md "Actionable notifications"),
+ * threaded straight through to `ApprovalsInbox.tsx` - `AppShell.tsx` owns
+ * the actual state (`focusApprovalId`/`mutedKeys`) since both need to
+ * survive independently of which view is currently active (a mute toggled
+ * here must still suppress a notification raised while the operator is on
+ * a different view; a notification raised while on a different view must
+ * still be able to focus a row here once the operator switches over).
+ */
+export interface PolicyViewProps {
+  focusApprovalId: string | null;
+  mutedKeys: ReadonlySet<string>;
+  onToggleMuteAgent: (agentId: string) => void;
+}
+
+export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent }: PolicyViewProps) {
   const status = usePolicyStatus();
   const ready = status?.state === "ready";
 
@@ -176,6 +191,9 @@ export function PolicyView() {
             onDecide={handleDecide}
             grantedToken={grantedToken}
             onDismissToken={() => setGrantedToken(null)}
+            focusApprovalId={focusApprovalId}
+            mutedKeys={mutedKeys}
+            onToggleMuteAgent={onToggleMuteAgent}
           />
         )}
       </section>

@@ -11,10 +11,16 @@
 //! independently: a `WardryxClient` over Wardryx, with its own "no policy
 //! plane" clean-empty-state contract.
 //!
-//! Finally, `setup` builds the menu-bar/tray "mini" (see `tray.rs`): a system
-//! tray icon whose menu shows a live burn readout plus a "kill last runaway"
+//! `setup` builds the menu-bar/tray "mini" (see `tray.rs`): a system tray
+//! icon whose menu shows a live burn readout plus a "kill last runaway"
 //! action, over the same `MoneyState` the Money panel's own IPC commands
 //! read and mutate through.
+//!
+//! Finally, `.plugin(tauri_plugin_notification::init())` wires the OS
+//! notification plugin (docs/PHASE2.md Wave 3, "Actionable notifications").
+//! No Rust command of this crate's own reads or writes a notification: the
+//! frontend (`src/lib/notifications.ts`) watches the same `bus:event` feed
+//! `live.rs` already emits and calls straight into the plugin's JS API.
 
 mod events;
 mod live;
@@ -59,6 +65,12 @@ fn recent_events(limit: usize, state: tauri::State<'_, AppState>) -> Vec<UiEvent
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Phase-2 wave 3 (docs/PHASE2.md, "Actionable notifications"): native
+        // OS notifications for `approval_requested` bus events, driven
+        // entirely from the frontend (`src/lib/notifications.ts`) over this
+        // plugin's JS API - see `Cargo.toml`'s dependency comment for what is
+        // (and is not) wired on desktop.
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let events_dir = match live::bootstrap(app.handle().clone()) {
                 Ok(dir) => Some(dir),

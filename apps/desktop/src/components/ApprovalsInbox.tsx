@@ -1,8 +1,47 @@
 import { useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { formatTimestamp, formatUsd } from "../lib/format";
+import { agentIdFromMuteKey, muteKey } from "../lib/notifications";
 import type { Approval, Decision, DecideOutcome } from "../policyTypes";
 import { ConfirmButton } from "./ConfirmButton";
+
+/** Bell / bell-with-slash glyph for the per-row mute toggle (docs/PHASE2.md
+ * Wave 3: "a small mute control in the UI is enough") - inline SVG, no
+ * raster, matching every other icon in this app (`AppHeader.tsx`'s
+ * Sun/Moon/BrandMark). */
+function BellIcon({ muted }: { muted: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" aria-hidden="true">
+      <path
+        d="M6 10a6 6 0 1 1 12 0c0 3.4 1 5 1.5 5.5H4.5C5 15 6 13.4 6 10Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path d="M10 18.5a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      {muted && <path d="M3.5 3.5 20.5 20.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />}
+    </svg>
+  );
+}
+
+/** Mute/unmute this row's `agent_id` for future approval notifications
+ * (`lib/notifications.ts`'s `muteKey("agent", ...)`) - never touches the
+ * approval itself, purely a notification-side preference. */
+function MuteToggle({ agentId, muted, onToggle }: { agentId: string; muted: boolean; onToggle: (agentId: string) => void }) {
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      style={{ width: 24, height: 24, color: muted ? "var(--sev-medium)" : "var(--faint)" }}
+      title={muted ? `Unmute notifications for ${agentId}` : `Mute notifications for ${agentId}`}
+      aria-label={muted ? `Unmute notifications for ${agentId}` : `Mute notifications for ${agentId}`}
+      aria-pressed={muted}
+      onClick={() => onToggle(agentId)}
+    >
+      <BellIcon muted={muted} />
+    </button>
+  );
+}
 
 /** One just-granted token, kept in the parent's state so it survives the
  * approval moving from the pending queue into history on the next refresh -
@@ -106,13 +145,23 @@ function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToken; onDi
 function PendingRow({
   approval,
   onDecide,
+  highlighted,
+  muted,
+  onToggleMuteAgent,
 }: {
   approval: Approval;
   onDecide: (id: string, decision: Decision) => Promise<void>;
+  highlighted: boolean;
+  muted: boolean;
+  onToggleMuteAgent: (agentId: string) => void;
 }) {
   const chain = approval.on_behalf_of;
   return (
-    <div className="panel px-3 py-2.5 flex flex-col gap-2" style={{ background: "var(--panel-2)" }}>
+    <div
+      id={`approval-${approval.approval_id}`}
+      className={`panel px-3 py-2.5 flex flex-col gap-2${highlighted ? " approval-focused" : ""}`}
+      style={{ background: "var(--panel-2)" }}
+    >
       <div className="flex items-center gap-3">
         <span className="badge" style={cssVar("tone", "var(--sev-medium)")}>
           hold
@@ -120,6 +169,7 @@ function PendingRow({
         <span className="mono truncate text-[12px]" title={approval.agent_id} style={{ color: "var(--fg)" }}>
           {approval.agent_id}
         </span>
+        <MuteToggle agentId={approval.agent_id} muted={muted} onToggle={onToggleMuteAgent} />
         <span className="mono tabular text-[11px]" style={{ color: "var(--faint)" }}>
           {formatTimestamp(approval.requested_at)}
         </span>
@@ -160,10 +210,14 @@ function PendingRow({
   );
 }
 
-function HistoryRow({ approval }: { approval: Approval }) {
+function HistoryRow({ approval, highlighted }: { approval: Approval; highlighted: boolean }) {
   const granted = approval.decision === "grant";
   return (
-    <div className="panel px-3 py-2 flex items-center gap-3" style={{ background: "var(--panel-2)", opacity: 0.85 }}>
+    <div
+      id={`approval-${approval.approval_id}`}
+      className={`panel px-3 py-2 flex items-center gap-3${highlighted ? " approval-focused" : ""}`}
+      style={{ background: "var(--panel-2)", opacity: 0.85 }}
+    >
       <span className="badge" style={cssVar("tone", granted ? "var(--sev-low)" : "var(--sev-critical)")}>
         {approval.decision ?? "decided"}
       </span>
@@ -182,30 +236,87 @@ function HistoryRow({ approval }: { approval: Approval }) {
   );
 }
 
+/** "muted: agent-a [x] agent-b [x]" strip - only rendered when at least one
+ * agent is muted, so the common (nothing muted) case adds no chrome. */
+function MutedAgentsStrip({ mutedAgents, onUnmute }: { mutedAgents: readonly string[]; onUnmute: (agentId: string) => void }) {
+  if (mutedAgents.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+        notifications muted
+      </span>
+      {mutedAgents.map((agentId) => (
+        <button
+          key={agentId}
+          type="button"
+          className="chip"
+          style={{ ...cssVar("dot", "var(--sev-medium)"), cursor: "pointer" }}
+          title={`Unmute notifications for ${agentId}`}
+          onClick={() => onUnmute(agentId)}
+        >
+          <span className="dot" aria-hidden="true" />
+          <span className="mono truncate" style={{ maxWidth: 220 }}>
+            {agentId}
+          </span>
+          <span aria-hidden="true">&times;</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * The Approvals Inbox (PHASE2.md Wave 2): the queue of holds
  * (`pending == true`) with full context (who/what/cost/why/chain), Grant/Deny
  * through an explicit `ConfirmButton` ceremony (this shell's substitute for
  * SwiftUI's Touch ID gate - the hardware gate is a Wave-3 upgrade here),
  * and a history list of already-decided approvals underneath.
+ *
+ * Wave 3 additions (docs/PHASE2.md "Actionable notifications"): `focusApprovalId`
+ * scrolls to and briefly highlights the matching row - the working half of
+ * the notification deep link (`lib/notifications.ts`'s doc comment explains
+ * why this in-app scroll-to, rather than a real OS notification-click
+ * callback, is what actually fires on this desktop build). `mutedKeys`/
+ * `onToggleMuteAgent` back the per-row mute toggle that keys
+ * `useApprovalNotifications`'s mute set (`lib/notifications.ts`'s
+ * `muteKey`/`isMuted` composite-key format, shared verbatim - never a
+ * second, differently-shaped "muted" collection) - muting only ever affects
+ * whether a FUTURE `approval_requested` raises a notification, never this
+ * inbox's own contents or the Grant/Deny path.
  */
 export function ApprovalsInbox({
   approvals,
   onDecide,
   grantedToken,
   onDismissToken,
+  focusApprovalId,
+  mutedKeys,
+  onToggleMuteAgent,
 }: {
   approvals: Approval[];
   onDecide: (id: string, decision: Decision) => Promise<void>;
   grantedToken: GrantedToken | null;
   onDismissToken: () => void;
+  focusApprovalId: string | null;
+  mutedKeys: ReadonlySet<string>;
+  onToggleMuteAgent: (agentId: string) => void;
 }) {
   const pending = approvals.filter((a) => a.pending);
   const history = approvals.filter((a) => !a.pending);
+  const mutedAgentIds = Array.from(mutedKeys)
+    .map(agentIdFromMuteKey)
+    .filter((id): id is string => id !== null);
+
+  useEffect(() => {
+    if (!focusApprovalId) return;
+    document.getElementById(`approval-${focusApprovalId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusApprovalId, approvals]);
 
   return (
     <div className="flex flex-col gap-3">
       {grantedToken && <GrantedTokenPanel granted={grantedToken} onDismiss={onDismissToken} />}
+
+      <MutedAgentsStrip mutedAgents={mutedAgentIds} onUnmute={onToggleMuteAgent} />
 
       {pending.length === 0 ? (
         <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
@@ -214,7 +325,14 @@ export function ApprovalsInbox({
       ) : (
         <div className="flex flex-col gap-2">
           {pending.map((a) => (
-            <PendingRow key={a.approval_id} approval={a} onDecide={onDecide} />
+            <PendingRow
+              key={a.approval_id}
+              approval={a}
+              onDecide={onDecide}
+              highlighted={a.approval_id === focusApprovalId}
+              muted={mutedKeys.has(muteKey("agent", a.agent_id))}
+              onToggleMuteAgent={onToggleMuteAgent}
+            />
           ))}
         </div>
       )}
@@ -228,7 +346,7 @@ export function ApprovalsInbox({
             History
           </span>
           {history.map((a) => (
-            <HistoryRow key={a.approval_id} approval={a} />
+            <HistoryRow key={a.approval_id} approval={a} highlighted={a.approval_id === focusApprovalId} />
           ))}
         </div>
       )}

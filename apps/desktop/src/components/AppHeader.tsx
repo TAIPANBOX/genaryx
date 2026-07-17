@@ -39,22 +39,32 @@ function MoonIcon() {
 }
 
 /**
- * Persistent app chrome: brand mark, view nav (Overview / Money / Bus
- * Explorer), and the theme toggle - shown once regardless of which view is
- * active, replacing the Bus Explorer's former standalone header now that it
- * is one of three views instead of the whole app (see `BusStatusBar` for
- * what stayed behind, scoped to the Bus view).
+ * Persistent app chrome: brand mark, view nav (Overview / Money / Policy /
+ * Posture / Bus Explorer), and the theme toggle - shown once regardless of
+ * which view is active, replacing the Bus Explorer's former standalone
+ * header now that it is one of several views instead of the whole app (see
+ * `BusStatusBar` for what stayed behind, scoped to the Bus view).
+ *
+ * `policyAlertCount` (docs/PHASE2.md Wave 3, "Actionable notifications"): a
+ * small unread-count badge on the Policy nav item, owned by `AppShell.tsx`.
+ * This IS the working half of the notification deep link on this desktop
+ * build (see `lib/notifications.ts`'s doc comment for the grounded reason a
+ * real OS notification-click callback does not fire here) - clicking Policy
+ * while the badge shows a count always scrolls to and highlights the
+ * relevant Approvals Inbox row (`AppShell.tsx`'s `onSelectView`).
  */
 export function AppHeader({
   view,
   onSelectView,
   theme,
   onToggleTheme,
+  policyAlertCount,
 }: {
   view: ViewId;
   onSelectView: (view: ViewId) => void;
   theme: "dark" | "light";
   onToggleTheme: () => void;
+  policyAlertCount: number;
 }) {
   return (
     <header
@@ -83,13 +93,14 @@ export function AppHeader({
       <nav className="flex items-center gap-1 ml-3" aria-label="Views">
         {VIEWS.map((item) => {
           const active = item.id === view;
+          const alertCount = item.id === "policy" ? policyAlertCount : 0;
           return (
             <button
               key={item.id}
               type="button"
               onClick={() => onSelectView(item.id)}
               aria-current={active ? "page" : undefined}
-              className="mono"
+              className="mono inline-flex items-center gap-1.5"
               style={{
                 fontSize: 11.5,
                 padding: "6px 12px",
@@ -101,6 +112,22 @@ export function AppHeader({
               }}
             >
               {item.label}
+              {alertCount > 0 && (
+                <span
+                  aria-label={`${alertCount} approval alert${alertCount === 1 ? "" : "s"} awaiting review`}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    padding: "2.5px 5.5px",
+                    borderRadius: 999,
+                    background: "var(--sev-medium)",
+                    color: "var(--ink)",
+                  }}
+                >
+                  {alertCount}
+                </span>
+              )}
             </button>
           );
         })}

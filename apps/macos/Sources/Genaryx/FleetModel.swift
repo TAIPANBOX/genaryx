@@ -34,6 +34,17 @@ final class FleetModel {
     /// on the Swift side for as long as Rust needs it.
     private var listener: FleetEventListener?
 
+    /// Fired synchronously, on the main actor, immediately after a new
+    /// live-pushed event is prepended - the one choke point every live
+    /// event already passes through. `GenaryxApp` wires this once at launch
+    /// so `ApprovalNotificationModel` (docs/PHASE2.md Wave 3, "actionable
+    /// notifications") can watch "the SAME FleetModel bus events the
+    /// Decision Stream already filters" event-by-event, instead of polling
+    /// `events` on a timer. Not fired for the initial `recentEvents` seed in
+    /// `init()` - PHASE2.md only asks for a notification when a fresh
+    /// `approval_requested` "arrives", never a backlog replay on launch.
+    var onNewEvent: ((UiEvent) -> Void)?
+
     init() {
         do {
             let handle = try FleetHandle()
@@ -62,6 +73,7 @@ final class FleetModel {
         if events.count > Self.capacity {
             events.removeLast(events.count - Self.capacity)
         }
+        onNewEvent?(event)
     }
 }
 

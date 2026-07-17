@@ -199,7 +199,10 @@ private struct TTLCountdownTile: View {
 // MARK: - UiEvent wardryx `data` parsing (Decision Stream)
 
 /// Best-effort extraction of the couple of `data.*` fields the Decision
-/// Stream row needs. `UiEvent` only carries the envelope's typed fields
+/// Stream row needs, plus `approval_id` for `ApprovalNotificationModel`
+/// (docs/PHASE2.md Wave 3: de-dupe "at most one notification per
+/// approval_id"), the same shape the Decision Stream already keys its own
+/// rows off of. `UiEvent` only carries the envelope's typed fields
 /// (`crates/ffi/src/lib.rs`'s own doc comment: "`data`... omitted until a
 /// view needs them"), so this parses `raw` directly - the same thing
 /// `RawJsonView` already does for its full pretty-print
@@ -210,6 +213,7 @@ extension UiEvent {
     struct WardryxFields {
         let reason: String?
         let toolNames: [String]
+        let approvalId: String?
     }
 
     var wardryxFields: WardryxFields {
@@ -218,11 +222,12 @@ extension UiEvent {
             let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
             let data = object["data"] as? [String: Any]
         else {
-            return WardryxFields(reason: nil, toolNames: [])
+            return WardryxFields(reason: nil, toolNames: [], approvalId: nil)
         }
         return WardryxFields(
             reason: data["reason"] as? String,
-            toolNames: data["tool_names"] as? [String] ?? []
+            toolNames: data["tool_names"] as? [String] ?? [],
+            approvalId: data["approval_id"] as? String
         )
     }
 }

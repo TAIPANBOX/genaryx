@@ -56,6 +56,19 @@ genaryx-connectors = { path = "../../../crates/connectors" }
 # Money panel's dev-pairing flow. `enclave::SecKeySigner` (Secure Enclave) is
 # a later hardware wave, not wired here yet.
 genaryx-signing = { path = "../../../crates/signing" }
+# Phase-2 wave 3 (docs/PHASE2.md, "Actionable notifications"): native OS
+# notifications for `approval_requested` bus events. Registered via
+# `src/lib.rs`'s `.plugin(tauri_plugin_notification::init())`; everything else
+# (permission request, sending, de-dupe, mute) is driven from the frontend
+# (`src/lib/notifications.ts`) over this plugin's JS API - no other Rust code
+# needed. On desktop this crate wires exactly three Tauri commands (`notify`/
+# `request_permission`/`is_permission_granted`, confirmed by reading its own
+# `src/lib.rs` `invoke_handler`); its richer actions/channels JS surface
+# exists for parity with the mobile backend but is not wired on desktop,
+# which is why the notification's Approve/Deny routes through an in-app deep
+# link rather than a real OS action button - see `notifications.ts`'s doc
+# comment.
+tauri-plugin-notification = "2.3.3"
 
 # Only for `src/money/state.rs`'s gated live-e2e test (spawns a real
 # `tokenfuse-cloud` and polls its `/healthz`, mirroring
