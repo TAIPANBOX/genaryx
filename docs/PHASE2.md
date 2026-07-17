@@ -120,3 +120,66 @@ error.
 - [ ] Grant/Deny journals a conforming `console_command` (action `console.grant_approval`/`console.deny_approval`)
 - [ ] Policy view shows policies + set-level `policy_version`
 - [ ] No-wardryx environment renders a clean empty state, not an error
+
+## Wave 3 — actionable notifications + Posture-lite (both shells, PARITY)
+
+Two per-shell tracks (Track A `apps/desktop`, Track B `apps/macos`); each shell
+does BOTH features, from existing signals (no `crates/core`/`crates/connectors`
+change; add a minimal ffi accessor only if strictly unavoidable). Break-glass +
+the fail-closed privileged-path precheck are a SEPARATE, security-focused pass
+(task #30), not this wave.
+
+### Actionable notifications
+When an `approval_requested` event arrives on the live bus (the same feed the
+Decision Stream filters), raise a NATIVE notification -
+"Approval needed - `<agent_id>` (`data.reason`)":
+- SwiftUI: `UNUserNotificationCenter` + `UNNotificationAction` (request
+  authorization once on launch); actions **Review / Approve / Deny**.
+- Tauri: `tauri-plugin-notification` (add it if absent); actions where the
+  platform supports them, otherwise a tap that focuses the Policy panel.
+- SECURITY (non-negotiable): an Approve/Deny action must NOT silently execute
+  the privileged mutation. It DEEP-LINKS into the Approvals Inbox focused on
+  that `approval_id`, where the operator completes the existing
+  Touch-ID / confirm-gated grant/deny from Wave 2. The notification alerts and
+  routes; the hardware/confirm gate stays on the actual decision, never bypassed.
+- De-dupe: at most one notification per `approval_id` (never re-raised on a
+  list refresh).
+- Mute: per agent / per run / per environment (an in-memory mute set is fine for
+  v0); a muted key raises nothing.
+
+### Posture-lite
+A new sidebar item **Posture** - a read-only list of stack-sanity findings
+computed from already-observable signals (the resolved env source, the live bus
+events, `list_policies()`); each finding = {severity, title, why it matters, how
+to fix (a concrete command / env var)}. v0 zonds (identical set, both shells):
+1. **devkey in use** (high) - the environment authenticates via a devkey /
+   `ALLOW_DEVKEY` fallback (org resolved to `default`, or the bearer is literally
+   `devkey`). Fix: mint real keys (`taipan up` mints them; or set real
+   `TOKENFUSE_CLOUD_KEYS` / `WARDRYX_KEYS`).
+2. **Governance fail-open: no policies** (high) - wardryx is reachable but
+   `list_policies()` is empty, so every action is allowed. Fix: PUT policies (or
+   `taipan up --with wardryx` with a seeded `-policy`).
+3. **Schema mix v0.1 + v0.2** (info) - the bus carries both envelope versions
+   (tokenfuse/qryx emit v0.1, wardryx/verdryx/mockryx v0.2). Fix: the
+   tokenfuse-core v0.2 PR (workstream C). Informational, not a defect.
+4. **Bus stale** (medium) - no events observed recently, or the events source is
+   empty. Fix: check the feeder / the descriptor's events paths.
+
+The "missing `WARDRYX_APPROVAL_SECRET`" zond is surfaced reactively by the
+Approvals Inbox when a grant returns `NoApprovalSecret`; a proactive probe is
+deferred.
+
+### Parity checklist (Wave 3)
+- [ ] `approval_requested` raises a native, de-duped, mutable notification, both shells
+- [ ] notification Approve/Deny ROUTE to the Touch-ID/confirm-gated decision (never silent-execute), both shells
+- [ ] Posture panel shows the 4 v0 zonds with why + how-to-fix, both shells
+
+## Wave 3B — break-glass + fail-closed privileged path (task #30, security-focused)
+
+Deferred to its own carefully-reviewed pass: a `console_command` `decision`
+of `break_glass` (operator override of a Wardryx `deny`) with a heightened
+ceremony (mandatory typed reason + hardware confirm) and loud journaling; and
+the fail-closed privileged-path precheck (a privileged mutation consults Wardryx
+`/v1/decide` first - `deny` blocks pending an explicit break-glass, `hold`
+requires an approval, a missing approval secret refuses rather than proceeds).
+Pairs with the `taipan` gateway->wardryx wiring in #29.
