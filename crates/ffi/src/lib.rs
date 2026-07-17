@@ -32,8 +32,17 @@
 //! owned-runtime async-to-sync bridge as `CloudHandle`, simpler in one
 //! respect (bearer-only auth, no pairing/device/signer) - see
 //! `wardryx/mod.rs` for its own design docs.
+//!
+//! Phase-3 wave 2 (docs/PHASE3.md) adds [`idryx::IdryxHandle`]: a fourth
+//! UniFFI Object, over `genaryx_connectors::IdryxClient`, for the SwiftUI
+//! Identity surface (identities list, the 21-detector alert stream, Rescan).
+//! Same owned-runtime async-to-sync bridge again, simpler still than
+//! `WardryxHandle`: no auth at all (not even a bearer), and no
+//! `command::record` journal (Identity is read-only this wave) - see
+//! `idryx/mod.rs` for its own design docs.
 
 pub mod cloud;
+pub mod idryx;
 pub mod wardryx;
 
 use std::fs::OpenOptions;

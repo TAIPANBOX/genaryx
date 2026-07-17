@@ -35,11 +35,20 @@ import SwiftUI
 /// bypassed". `Posture` is fed straight from the three existing live models
 /// (`cloudModel`, `policyModel`, `model`); it owns no handle and issues no
 /// read of its own (see `PostureModel.swift`).
+///
+/// Phase-3 wave 2 (docs/PHASE3.md) adds `identityModel` (`IdentityModel`,
+/// over `IdryxHandle`) and the `Identity` tab - identities list, the
+/// 21-detector alert stream, Attestation. Read-only, so unlike `policyModel`
+/// it needs no wiring into `notifications`/`focusedApprovalId` at all: there
+/// is no privileged decision on this panel for a notification to deep-link
+/// into this wave (W3's Agent 360 is where a cross-panel click-through
+/// lands).
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
     @State private var cloudModel = CloudModel()
     @State private var policyModel = PolicyModel()
+    @State private var identityModel = IdentityModel()
     @State private var notifications = ApprovalNotificationModel()
     @State private var tab: AppTab = .overview
     /// The approval to scroll to and highlight once `tab` is `.policy` -
@@ -61,6 +70,8 @@ struct GenaryxApp: App {
                         PolicyView(
                             model: policyModel, busEvents: model.events, notifications: notifications,
                             focusedApprovalId: focusedApprovalId)
+                    case .identity:
+                        IdentityView(model: identityModel)
                     case .posture:
                         PostureView(cloudModel: cloudModel, policyModel: policyModel, fleetModel: model)
                     case .bus:
@@ -117,9 +128,9 @@ struct GenaryxApp: App {
     }
 }
 
-/// The five top-level nav destinations - Overview, Money, Policy, Posture,
-/// and the existing Bus Explorer - matching the Tauri shell's
-/// `ViewId`/`lib/views.ts` switcher (five-way as of Phase-2 wave 3's Posture
+/// The six top-level nav destinations - Overview, Money, Policy, Identity,
+/// Posture, and the existing Bus Explorer - matching the Tauri shell's
+/// `ViewId`/`lib/views.ts` switcher (six-way as of Phase-3 wave 2's Identity
 /// panel), rendered as a native macOS tab strip instead of a web-styled nav
 /// bar (native macOS patterns over pixel parity, same rule `Theme.swift`
 /// already follows).
@@ -127,6 +138,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
     case policy = "Policy"
+    case identity = "Identity"
     case posture = "Posture"
     case bus = "Bus Explorer"
 
