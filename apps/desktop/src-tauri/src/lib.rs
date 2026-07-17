@@ -7,10 +7,16 @@
 //! `setup` also manages the Money panel's state (see `money/`): a paired
 //! `CloudClient` over TokenFuse Cloud, resolved in the background so a slow
 //! or absent Cloud never delays the window opening.
+//!
+//! Finally, `setup` builds the menu-bar/tray "mini" (see `tray.rs`): a system
+//! tray icon whose menu shows a live burn readout plus a "kill last runaway"
+//! action, over the same `MoneyState` the Money panel's own IPC commands
+//! read and mutate through.
 
 mod events;
 mod live;
 mod money;
+mod tray;
 
 use events::UiEvent;
 use live::AppState;
@@ -74,6 +80,13 @@ pub fn run() {
             });
 
             app.manage(AppState { events_dir });
+
+            // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
+            // just managed above via the same `money::commands` functions
+            // the window's IPC commands call - no separate Cloud calls, no
+            // duplicated connector logic. See `tray.rs`'s module docs.
+            tray::setup(app.handle())?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

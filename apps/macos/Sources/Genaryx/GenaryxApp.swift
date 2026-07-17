@@ -45,9 +45,9 @@ struct GenaryxApp: App {
         }
 
         MenuBarExtra {
-            MenuBarBusView(events: model.events, unavailableMessage: model.unavailableMessage)
+            MenuBarBusView(events: model.events, unavailableMessage: model.unavailableMessage, cloudModel: cloudModel)
         } label: {
-            MenuBarLabel(count: model.events.count)
+            MenuBarLabel(count: model.events.count, cloudModel: cloudModel)
         }
         .menuBarExtraStyle(.window)
     }
@@ -148,30 +148,58 @@ private struct CoreUnavailableBanner: View {
     }
 }
 
-/// The `NSStatusItem` label: a small glyph plus the live event count, kept
-/// terse since the status bar has very little horizontal room.
+/// The `NSStatusItem` label: a small glyph plus the live event count (kept
+/// exactly as before - terse, since the status bar has very little
+/// horizontal room), plus a compact burn figure from `CloudModel` (Phase-1
+/// wave 5, docs/PHASE1.md; 08 §2, 09 Ф1 upstream) alongside it.
 @MainActor
 private struct MenuBarLabel: View {
     let count: Int
+    let cloudModel: CloudModel
 
     var body: some View {
-        Label {
-            Text("\(count)")
-                .monospacedDigit()
-        } icon: {
-            Image(systemName: "waveform.path.ecg")
+        HStack(spacing: 6) {
+            Label {
+                Text("\(count)")
+                    .monospacedDigit()
+            } icon: {
+                Image(systemName: "waveform.path.ecg")
+            }
+            if let burnText {
+                Text(burnText)
+                    .monospacedDigit()
+            }
         }
+    }
+
+    /// `nil` until `CloudModel` has a real reading (still connecting, no
+    /// environment, pairing failed), so the always-visible status item never
+    /// shows a fabricated or stale-looking number - fail-closed: absent
+    /// beats wrong. Once `CloudModel.overview` has a value, this keeps
+    /// showing it even through a later transient refresh error, the same
+    /// "last known good over blank" posture `MoneyView`/`OverviewView`
+    /// already take with their own `model.overview`/`model.runs`.
+    private var burnText: String? {
+        guard let overview = cloudModel.overview else { return nil }
+        return MoneyFormat.usd(overview.totalSpentUsd)
     }
 }
 
 /// The MenuBarExtra's popover content: a condensed, read-only slice of the
-/// bus feed, so a quick glance never requires opening the main window.
+/// bus feed, so a quick glance never requires opening the main window - plus
+/// (Phase-1 wave 5) the Money section right below the header: a burn
+/// readout and a "kill last runaway" action over the same `CloudModel` the
+/// Overview/Money tabs use, so the mini never issues its own Cloud calls.
 @MainActor
 private struct MenuBarBusView: View {
     let events: [UiEvent]
     let unavailableMessage: String?
+    let cloudModel: CloudModel
 
     private static let previewCount = 8
+    /// Matches `OverviewView`/`MoneyView`'s own refresh cadence, so the mini
+    /// never looks "more live" or "more stale" than the panel it mirrors.
+    private static let refreshInterval: Duration = .seconds(20)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -190,7 +218,12 @@ private struct MenuBarBusView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
-            .padding(12)
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+
+            MenuBarMoneySection(cloudModel: cloudModel)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
 
             Divider().overlay(Theme.hairline)
 
@@ -224,6 +257,19 @@ private struct MenuBarBusView: View {
         }
         .frame(width: 320)
         .background(Theme.background)
+        .task(id: cloudModel.connection.isReady) {
+            // Own refresh loop, independent of whether the Overview/Money
+            // tabs happen to be the active tab in the main window right now
+            // (their own `.task`s only run while THEY are on-screen) - runs
+            // for as long as this popover is mounted, so opening the menu
+            // bar alone is enough to keep the mini's burn readout live.
+            guard cloudModel.connection.isReady else { return }
+            while !Task.isCancelled {
+                await cloudModel.refreshOverview()
+                await cloudModel.refreshMoney()
+                try? await Task.sleep(for: Self.refreshInterval)
+            }
+        }
     }
 
     private var footerText: String {
@@ -231,6 +277,106 @@ private struct MenuBarBusView: View {
             return "core unavailable: \(unavailableMessage)"
         }
         return "live: genaryx-core via UniFFI"
+    }
+}
+
+/// The popover's Money section: a compact burn readout (total spent, active
+/// runs) plus a "Kill last runaway" action, both fed by the same
+/// `CloudModel` the Overview/Money tabs read and mutate through.
+///
+/// Fail-closed: any state short of `CloudConnection.ready`, or an empty/
+/// not-yet-loaded runs list, shows an honest status line instead of a
+/// number and disables the kill action - never a crash, never a silent
+/// no-op.
+@MainActor
+private struct MenuBarMoneySection: View {
+    let cloudModel: CloudModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            statusLine
+            killRow
+        }
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        switch cloudModel.connection {
+        case .ready:
+            if let overview = cloudModel.overview {
+                HStack(spacing: 10) {
+                    Text(MoneyFormat.usd(overview.totalSpentUsd))
+                        .font(Theme.mono(15, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("\(overview.activeRuns) active")
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                Text("loading money data...")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        case .connecting:
+            Text("connecting to Cloud...")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.textTertiary)
+        case .noEnvironment:
+            Text("no Cloud environment")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.textTertiary)
+        case .pairingFailed:
+            Text("Cloud pairing failed")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.coral)
+        }
+    }
+
+    @ViewBuilder
+    private var killRow: some View {
+        if let target = lastRunaway {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("last runaway")
+                            .font(Theme.mono(9, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(Theme.textTertiary)
+                        Text(target.runId)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(target.runId)
+                    }
+                    Spacer(minLength: 8)
+                    Text(MoneyFormat.usd(target.spentUsd))
+                        .font(Theme.mono(12, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textPrimary)
+                }
+                ConfirmButton(
+                    label: "Kill last runaway",
+                    confirmLabel: "Confirm kill",
+                    tone: Theme.ember,
+                    onConfirm: { _ = await cloudModel.killRun(target.runId) }
+                )
+            }
+        } else {
+            Text(cloudModel.connection.isReady ? "no active runs" : "kill unavailable")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    /// The non-killed run with the highest `spentUsd`, out of `CloudModel`'s
+    /// own `runs` - the same list `MoneyView`'s `RunsTable` shows, so "last
+    /// runaway" always names the same run in both the Money panel and the
+    /// menu-bar mini.
+    private var lastRunaway: Run? {
+        cloudModel.runs.filter { !$0.killed }.max { $0.spentUsd < $1.spentUsd }
     }
 }
 
