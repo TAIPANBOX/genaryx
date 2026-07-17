@@ -6,12 +6,14 @@ import type { ViewId } from "../lib/views";
 import { Agent360 } from "./Agent360";
 import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
+import { CryptoView } from "./CryptoView";
 import { DelegationGraphView } from "./DelegationGraphView";
 import { IdentityView } from "./IdentityView";
 import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
+import { QualityView } from "./QualityView";
 import { RunReplayView } from "./RunReplayView";
 
 /** How long a notification's deep-link target stays "focused" (drives
@@ -188,6 +190,8 @@ export function AppShell() {
         />
       )}
       {view === "identity" && <IdentityView onOpenAgent={onOpenAgent} />}
+      {view === "quality" && <QualityView onOpenAgent={onOpenAgent} />}
+      {view === "crypto" && <CryptoView />}
       {view === "graph" && (
         <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
           <DelegationGraphView onOpenAgent={onOpenAgent} fill />

@@ -52,3 +52,12 @@ thiserror = { workspace = true }
 # in its constructor) to bridge genaryx-connectors' async CloudClient to
 # UniFFI's synchronous export surface - see `cloud/mod.rs`.
 tokio = { workspace = true }
+
+[dev-dependencies]
+# Phase-4 wave 1 (docs/PHASE4.md): `quality::tests` builds a real verdryx.db
+# (writer connection, the exact DDL `crates/connectors/src/verdryx.rs`'s own
+# tests use) to prove `QualityHandle`'s reads end to end against genuine
+# SQLite, mirroring that connector's own test-only use of rusqlite. Test-only:
+# `QualityHandle` itself never touches rusqlite directly, only through
+# `genaryx_connectors::VerdryxClient`.
+rusqlite = { workspace = true }

@@ -78,6 +78,16 @@ tauri-plugin-notification = "2.3.3"
 # being listed here too.
 [dev-dependencies]
 reqwest = "0.13"
+# Only for `src/quality/state.rs`'s tests (seeding a genuine, schema-less
+# SQLite file to prove `confirm_openable`'s read-only re-open path). Same
+# rationale as `reqwest` just above: rusqlite already reaches this build
+# transitively through `genaryx-connectors` (its `VerdryxClient` reads
+# `verdryx.db` directly, see `crates/connectors/src/verdryx.rs`), but a
+# transitive dependency is not directly nameable without being listed here
+# too. Version/feature matches the root workspace's own pin
+# (`rusqlite = { version = "0.40.1", features = ["bundled"] }`, `/Cargo.toml`)
+# so this never resolves a second, incompatible copy in the tree.
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [profile.release]
 lto = "thin"

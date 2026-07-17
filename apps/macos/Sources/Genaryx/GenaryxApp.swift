@@ -73,12 +73,26 @@ import SwiftUI
 /// Agent 360's already-a-sheet card does not, and because Agent 360 is
 /// already a sheet - a sheet launching a second sheet is exactly the
 /// friction this idiom was introduced in Phase-2 wave 3 to avoid.
+///
+/// Phase-4 wave 1 (docs/PHASE4.md W1) adds `qualityModel` (`QualityModel`,
+/// over `QualityHandle`) and `cryptoModel` (`CryptoModel`, over
+/// `CryptoHandle`), plus the `Quality` and `Crypto` tabs - continuing the
+/// per-plane-panel sequence right after `Identity`. Both are read-only, like
+/// `identityModel`, so neither needs wiring into `notifications`/
+/// `focusedApprovalId`. `QualityView` additionally takes `model.events` (the
+/// same `FleetModel` bus feed `PolicyView`'s Decision Stream already
+/// filters) for its live Drift Alerts section - Verdryx's `quality_drift`
+/// event, not a new read through `QualityHandle` (see `QualityView.swift`'s
+/// own doc). `CryptoView` takes no bus feed at all: Qryx has no live signal
+/// of its own, every read is an explicit on-demand scan.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
     @State private var cloudModel = CloudModel()
     @State private var policyModel = PolicyModel()
     @State private var identityModel = IdentityModel()
+    @State private var qualityModel = QualityModel()
+    @State private var cryptoModel = CryptoModel()
     @State private var graphModel = GraphModel()
     @State private var replayModel = RunReplayModel()
     @State private var notifications = ApprovalNotificationModel()
@@ -110,6 +124,10 @@ struct GenaryxApp: App {
                             focusedApprovalId: focusedApprovalId)
                     case .identity:
                         IdentityView(model: identityModel, onOpenAgent: { agentFocus = AgentFocus(agentId: $0) })
+                    case .quality:
+                        QualityView(model: qualityModel, busEvents: model.events)
+                    case .crypto:
+                        CryptoView(model: cryptoModel)
                     case .graph:
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
@@ -216,17 +234,22 @@ private struct AgentFocus: Identifiable, Equatable {
     var id: String { agentId }
 }
 
-/// The eight top-level nav destinations - Overview, Money, Policy, Identity,
-/// Graph, Replay, Posture, and the existing Bus Explorer - matching the
-/// Tauri shell's `ViewId`/`lib/views.ts` switcher (extended with Replay in
-/// Phase-3 wave 4, mirroring wave 3's Graph tab addition), rendered as a
-/// native macOS tab strip instead of a web-styled nav bar (native macOS
-/// patterns over pixel parity, same rule `Theme.swift` already follows).
+/// The ten top-level nav destinations - Overview, Money, Policy, Identity,
+/// Quality, Crypto, Graph, Replay, Posture, and the existing Bus Explorer -
+/// matching the Tauri shell's `ViewId`/`lib/views.ts` switcher (extended with
+/// Quality + Crypto in Phase-4 wave 1, mirroring wave 3's Graph tab
+/// addition), rendered as a native macOS tab strip instead of a web-styled
+/// nav bar (native macOS patterns over pixel parity, same rule `Theme.swift`
+/// already follows). Quality and Crypto sit right after Identity, continuing
+/// the per-plane-panel sequence (Money/Policy/Identity/Quality/Crypto) ahead
+/// of the cross-cutting views (Graph/Replay/Posture/Bus Explorer).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case money = "Money"
     case policy = "Policy"
     case identity = "Identity"
+    case quality = "Quality"
+    case crypto = "Crypto"
     case graph = "Graph"
     case replay = "Replay"
     case posture = "Posture"

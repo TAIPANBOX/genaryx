@@ -67,9 +67,27 @@
 //! `genaryx_core::store::Store::events_for_run`'s own doc comment). No new
 //! Record, no new Object: a run's timeline is just another slice of the same
 //! events table the graph and Agent 360 reads already slice.
+//!
+//! Phase-4 wave 1 (docs/PHASE4.md W1) adds [`quality::QualityHandle`] and
+//! [`crypto::CryptoHandle`]: a fifth and sixth UniFFI Object, over
+//! `genaryx_connectors::{VerdryxClient, QryxClient}`, for the SwiftUI Quality
+//! and Crypto surfaces. Both connectors are synchronous (a SQLite reader and
+//! a subprocess runner, respectively), so - unlike `CloudHandle`/
+//! `WardryxHandle`/`IdryxHandle` - neither handle owns a
+//! `tokio::runtime::Runtime`; see `quality/mod.rs` and `crypto/mod.rs` for
+//! their own design docs, including why `QualityHandle` opens a fresh
+//! `VerdryxClient` per call rather than holding one (`Connection` is
+//! `!Sync`) while `CryptoHandle` holds one `QryxClient` for its lifetime
+//! (trivially `Send + Sync`, no connection to go stale). Quality's live
+//! drift alerts are NOT a new read here at all: the Swift shell filters
+//! `FleetHandle`'s existing bus feed by `source == "verdryx"`, exactly how
+//! `PolicyView`'s Decision Stream already filters that same feed by
+//! `source == "wardryx"`.
 
 pub mod cloud;
+pub mod crypto;
 pub mod idryx;
+pub mod quality;
 pub mod wardryx;
 
 use std::fs::OpenOptions;

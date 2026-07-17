@@ -37,21 +37,36 @@
 //! state of its own. The playback clock itself (play/pause/scrub/speed) is
 //! pure frontend state over that one fetched list; see `replay.rs`'s module
 //! doc.
+//!
+//! The Quality panel's state (see `quality/`, docs/PHASE4.md Wave 1) is
+//! managed the same non-blocking way again, independently: a resolved
+//! `verdryx.db` path (Verdryx has no serve process to pair with - see
+//! `quality::state`'s module doc). The Crypto panel's state (see `crypto/`,
+//! docs/PHASE4.md Wave 1) is managed the same way once more: a resolved
+//! `qryx` binary plus a default scan target, on-demand rather than a live
+//! connection. Quality's drift alerts need no managed state of their own at
+//! all - they read the SAME `AppState.events_dir` `recent_events` already
+//! reads, filtered client-side to `source == "verdryx"`, exactly like the
+//! Policy panel's Decision Stream filters to `source == "wardryx"`.
 
+mod crypto;
 mod events;
 mod graph;
 mod identity;
 mod live;
 mod money;
 mod policy;
+mod quality;
 mod replay;
 mod tray;
 
+use crypto::CryptoState;
 use events::UiEvent;
 use identity::IdentityState;
 use live::AppState;
 use money::MoneyState;
 use policy::PolicyState;
+use quality::QualityState;
 use tauri::Manager;
 
 /// Recent events for the Bus Explorer, newest first, capped at `limit`.
@@ -146,6 +161,30 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
+            // Quality panel (docs/PHASE4.md W1): same non-blocking
+            // manage-then-spawn-resolve shape as Money/Policy/Identity
+            // above, independent state, independent background task. Reads
+            // Verdryx's `verdryx.db` directly (no serve process to pair
+            // with) - see `quality::state`'s module doc.
+            app.manage(QualityState::pending());
+            let quality_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = quality::bootstrap().await;
+                let state = quality_handle.state::<QualityState>();
+                *state.inner.lock().await = resolved;
+            });
+
+            // Crypto panel (docs/PHASE4.md W1): same shape again, resolving
+            // the on-demand `qryx` CLI binary rather than pairing with a
+            // live service - see `crypto::state`'s module doc.
+            app.manage(CryptoState::pending());
+            let crypto_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = crypto::bootstrap().await;
+                let state = crypto_handle.state::<CryptoState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
@@ -175,6 +214,15 @@ pub fn run() {
             identity::commands::identity_list_alerts,
             identity::commands::identity_list_remediations,
             identity::commands::identity_rescan,
+            quality::commands::quality_status,
+            quality::commands::quality_list_run_summaries,
+            quality::commands::quality_run_scores,
+            quality::commands::quality_list_baselines,
+            crypto::commands::crypto_status,
+            crypto::commands::crypto_scan_ncsc,
+            crypto::commands::crypto_scan_cbom,
+            crypto::commands::crypto_scan_evidence,
+            crypto::commands::crypto_verify_evidence,
             graph::agent_graph,
             graph::agent_slice,
             graph::agent_events,
