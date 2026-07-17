@@ -9,7 +9,11 @@
 //! or absent Cloud never delays the window opening. The Policy panel's
 //! state (see `policy/`, docs/PHASE2.md Wave 2) is managed the same way,
 //! independently: a `WardryxClient` over Wardryx, with its own "no policy
-//! plane" clean-empty-state contract.
+//! plane" clean-empty-state contract. The Identity panel's state (see
+//! `identity/`, docs/PHASE3.md Wave 2) is managed the same non-blocking way
+//! again, independently: an `IdryxClient` over Idryx - unauthenticated and
+//! read-only, so unlike Money/Policy it journals nothing and needs no
+//! events-dir handle at all.
 //!
 //! `setup` builds the menu-bar/tray "mini" (see `tray.rs`): a system tray
 //! icon whose menu shows a live burn readout plus a "kill last runaway"
@@ -23,12 +27,14 @@
 //! `live.rs` already emits and calls straight into the plugin's JS API.
 
 mod events;
+mod identity;
 mod live;
 mod money;
 mod policy;
 mod tray;
 
 use events::UiEvent;
+use identity::IdentityState;
 use live::AppState;
 use money::MoneyState;
 use policy::PolicyState;
@@ -108,6 +114,24 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
+            // Identity panel (docs/PHASE3.md wave 2): same non-blocking
+            // manage-then-spawn-resolve shape as Money/Policy above,
+            // independent state, independent background task. Unlike
+            // Money/Policy, `bootstrap` takes no `events_dir`: Identity
+            // journals nothing onto the console's own live-wire bus (see
+            // `identity`'s module doc), so it has no use for that directory
+            // at all - only the SEPARATE taipan-descriptor `events` section
+            // `identity::env::discover` reads matters here, and that comes
+            // off the same descriptor as the idryx URL, not from this app's
+            // own startup seeding.
+            app.manage(IdentityState::pending());
+            let identity_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = identity::bootstrap().await;
+                let state = identity_handle.state::<IdentityState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
@@ -132,6 +156,11 @@ pub fn run() {
             policy::commands::policy_list_approvals,
             policy::commands::policy_list_policies,
             policy::commands::policy_decide_approval,
+            identity::commands::identity_status,
+            identity::commands::identity_list_identities,
+            identity::commands::identity_list_alerts,
+            identity::commands::identity_list_remediations,
+            identity::commands::identity_rescan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

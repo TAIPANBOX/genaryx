@@ -5,6 +5,7 @@ import { useApprovalNotifications } from "../lib/useApprovalNotifications";
 import type { ViewId } from "../lib/views";
 import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
+import { IdentityView } from "./IdentityView";
 import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
@@ -140,6 +141,7 @@ export function AppShell() {
       {view === "policy" && (
         <PolicyView focusApprovalId={focusApprovalId} mutedKeys={mutedKeys} onToggleMuteAgent={onToggleMuteAgent} />
       )}
+      {view === "identity" && <IdentityView />}
       {view === "posture" && <PostureView />}
       {view === "bus" && <BusExplorer />}
     </div>
