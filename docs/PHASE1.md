@@ -11,15 +11,19 @@ kills the run with a hardware-signed (Secure Enclave) mutation the Cloud accepts
 
 **REACHED 2026-07-17.** All 5 waves done, each with a live e2e against a real
 tokenfuse-cloud. Cloud connector + CommandBroker + `taipan up` + Money/Overview
-in BOTH shells + menu-bar. Killer-demo e2e green via `taipan up --devkey`
-(auto-discover -> pair -> signed kill -> console_command). 9 commits on
-`phase-1-money`; taipan is a separate local repo. Known follow-ups (non-blocking):
-minted-key bearer format (taipan writes `token:org:role`, cloud indexes the bare
-`token`, so `--devkey` is currently the only auto-discovery mode that authenticates;
-supersedes #20), SwiftUI shared events-dir, FileTail offset byte-exactness. The
-hardware-Secure-Enclave signer path (spike #2) is wired and available; the shells
-pair a SoftwareSigner for dev, so mutations are labelled `software-signed` until
-the SE signer is selected in a later pass.
+in BOTH shells + menu-bar. Killer-demo e2e green in the DEFAULT minted-key mode
+(`taipan up`, no `--devkey`): auto-discover -> pair -> signed kill ->
+console_command. Merged to `main` and pushed; taipan is now the public repo
+`TAIPANBOX/taipan`. The minted-key bearer bug that had forced `--devkey` (taipan
+wrote the full `token:org:role` as the keyfile secret, but tokenfuse `parse_keys`
+and wardryx `auth` index the key map by the bare `token`, so a suffixed bearer
+never matched and both reads and pairing 401'd) is FIXED at the source in taipan:
+the keyfile secret is the bare token, the server env keeps the full spec, with a
+`keys.rs` unit regression and the killer-demo converted to the real minted path.
+This closes #20. Remaining follow-ups (non-blocking): SwiftUI shared events-dir,
+FileTail offset byte-exactness. The hardware-Secure-Enclave signer path (spike #2)
+is wired and available; the shells pair a SoftwareSigner for dev, so mutations are
+labelled `software-signed` until the SE signer is selected in a later pass.
 
 ## Scope
 
@@ -36,22 +40,25 @@ the SE signer is selected in a later pass.
       `tokenfuse-cloud`: pair, reads, a signed kill, a signed budget change,
       and a tampered signature rejected `403` - see
       `crates/connectors/tests/cloud_rest_test.rs`.
-- [ ] CommandBroker (`crates/core`): draft -> precheck -> (Wardryx decide, ENT)
+- [x] CommandBroker (`crates/core`): draft -> precheck -> (Wardryx decide, ENT)
       -> sign -> execute -> journal + emit `console_command`; fail-closed,
       break-glass ceremony.
-- [ ] Overview + Money panel, BOTH shells: live burn, runs (budget/spent/steps/
+- [x] Overview + Money panel, BOTH shells: live burn, runs (budget/spent/steps/
       killed), savings, incidents (+ack), kill + budget change (hardware-signed).
-- [ ] menu-bar mini: burn rate + kill last runaway (SwiftUI NSStatusItem, Tauri tray).
-- [x] `taipan up` v0: separate OPEN repo (local `~/Development/taipan` @ 30560c7,
-      push pending). Rust CLI up/down/demo, native supervisor: builds/locates
-      gateway+cloud (+wardryx/idryx via --with), process-group spawn, raw-TCP
-      healthz, minted dev keys (real: 401 without / 200 with), descriptor (07 §7)
-      the console auto-discovers, clean group-signal teardown (no orphans, never
-      ps/lsof). 7 tests. Live smoke: both stacks up + down verified.
-- [x] Killer demo (09 §6) e2e: `taipan up --devkey` -> console auto-discovers ->
-      pair (was 401, now 200) -> summary -> signed kill 200 -> console_command
-      conforms (v0.2, source:console, verify_result:killed:true) -> clean teardown.
-      Live-verified in `crates/connectors/tests/killer_demo_test.rs`.
+- [x] menu-bar mini: burn rate + kill last runaway (SwiftUI NSStatusItem, Tauri tray).
+- [x] `taipan up` v0: separate OPEN repo, now public `TAIPANBOX/taipan` @ 1c9e61c.
+      Rust CLI up/down/demo, native supervisor: builds/locates gateway+cloud
+      (+wardryx/idryx via --with), process-group spawn, raw-TCP healthz, minted
+      dev keys (bare `tp_` token as the keyfile secret, full `token:org:role` to
+      the server env), descriptor (07 §7) the console auto-discovers, clean
+      group-signal teardown (no orphans, never ps/lsof). 8 tests. Live smoke:
+      both stacks up + down verified, default minted mode authenticates.
+- [x] Killer demo (09 §6) e2e in the DEFAULT minted mode: `taipan up` (no
+      `--devkey`) -> console auto-discovers a bare-token bearer -> pair 200 ->
+      summary -> signed kill 200 -> console_command conforms (v0.2, source:console,
+      verify_result:killed:true) -> clean teardown. Live-verified in
+      `crates/connectors/tests/killer_demo_test.rs`. `--devkey` remains a valid dev
+      convenience but is no longer required for auto-discovery auth.
 
 ## Cloud API (verified from `~/Development/tokenfuse/crates/cloud/src`)
 
