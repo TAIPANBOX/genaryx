@@ -1,0 +1,40 @@
+[package]
+name = "genaryx-copilot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Felyx, the Genaryx AI copilot (D13): read + propose, never act. A small hand-rolled agent loop over the existing connectors, provider-agnostic, residency-gated."
+
+# SECURITY INVARIANT (docs/PHASE6.md, itrat-console/13 D13.3/D13.4): this crate
+# has NO dependency on `genaryx-signing` and holds no signer of any kind. It is
+# structurally unable to produce an `X-Fuse` signature, so an accepted proposal
+# can only be executed by the EXISTING human-signed ceremony, never by the
+# copilot. Do not add genaryx-signing here. A test asserts this at build time
+# (tests/no_signer.rs).
+
+[dependencies]
+# The copilot is a CONSUMER of the existing connectors (all tool I/O is a typed
+# call to a client that already exists). Zero new I/O code.
+genaryx-connectors = { path = "../connectors" }
+# Core DTO/JSON only (the store event + graph types the context reads). NOT the
+# signer.
+genaryx-core = { path = "../core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+# The two provider clients (OpenAI-compatible + Anthropic Messages) speak HTTP;
+# `json` is not enabled workspace-wide, so bodies are serialized with serde_json
+# and parsed the same way, exactly like CloudClient does.
+reqwest = { workspace = true }
+# Dyn-safe async trait methods for LlmProvider + Tool (see workspace Cargo.toml).
+async-trait = { workspace = true }
+# base_url host classification for the residency gate.
+url = { workspace = true }
+chrono = { workspace = true }
+# Parse the `[copilot]` block (docs/PHASE6.md D13.2). Same 0.8 line the relay's
+# config.rs uses, so this is a new direct edge, not a second version in the tree.
+toml = "0.8"

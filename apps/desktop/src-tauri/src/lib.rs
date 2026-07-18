@@ -88,7 +88,14 @@
 //! directly) and the relay admin URL (`pocket::env::relay_admin_url`) fresh,
 //! per call. See `pocket::commands`'s module doc for the full mint-code /
 //! arm-window / render-QR / show-device flow.
+//!
+//! The Copilot panel's state (see `copilot/`, docs/PHASE6.md C0) is managed
+//! the same non-blocking way once more, simplest of all: there is no
+//! environment to discover (see `copilot::state`'s module doc) - `bootstrap`
+//! just builds a disabled-by-default `CopilotService` and the panel is
+//! `Ready` almost immediately either way.
 
+mod copilot;
 mod crypto;
 mod drills;
 mod events;
@@ -105,6 +112,7 @@ mod remote;
 mod replay;
 mod tray;
 
+use copilot::CopilotState;
 use crypto::CryptoState;
 use drills::DrillsState;
 use events::UiEvent;
@@ -290,6 +298,19 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
+            // Copilot panel (docs/PHASE6.md C0): same non-blocking
+            // manage-then-spawn-resolve shape once more, simplest of all -
+            // `bootstrap` discovers nothing (no `taipan up` descriptor, no
+            // binary path), it just builds the C0 default (disabled)
+            // `CopilotService` - see `copilot::state`'s module doc.
+            app.manage(CopilotState::pending());
+            let copilot_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = copilot::bootstrap().await;
+                let state = copilot_handle.state::<CopilotState>();
+                *state.inner.lock().await = resolved;
+            });
+
             app.manage(AppState { events_dir });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
@@ -353,6 +374,8 @@ pub fn run() {
             graph::agent_slice,
             graph::agent_events,
             replay::run_events,
+            copilot::commands::copilot_status,
+            copilot::commands::copilot_ask,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

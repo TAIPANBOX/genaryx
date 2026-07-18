@@ -482,7 +482,7 @@ fn classify_error(status: reqwest::StatusCode, bytes: &[u8]) -> ConnectorError {
 /// `GET /v1/summary` body. Exact shape of `store.rs::Summary`: `runs`/`calls`
 /// are exact across the org's whole ingest history; `spent_microusd` is real
 /// spend only (blocked/avoided-spend rows excluded).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Summary {
     pub runs: u64,
     pub calls: u64,
@@ -492,7 +492,7 @@ pub struct Summary {
 /// One element of `GET /v1/runs`. Exact shape of `store.rs::RunAgg` -
 /// `last_seen_millis` on the wire (the Rust field there is `last_seen`, `#[serde(rename)]`'d;
 /// named `last_seen_millis` here directly since only the wire name matters to a reader).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RunAgg {
     pub run_id: String,
     pub model: String,
@@ -507,7 +507,7 @@ pub struct RunAgg {
 
 /// One element of `GET /v1/agents`. Exact shape of `store.rs::AgentAgg`; the
 /// empty-string `agent_id` is the "unattributed" bucket.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentAgg {
     pub agent_id: String,
     pub spent_microusd: i64,
@@ -519,7 +519,7 @@ pub struct AgentAgg {
 /// `GET /v1/savings` body. Exact shape of `store.rs::SavingsSummary` - the
 /// FinOps headline number is `total_saved_microusd` (blocked + cache + router
 /// savings, summed server-side).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SavingsSummary {
     pub blocked_spend_microusd: i64,
     pub cache_saved_microusd: i64,
@@ -529,7 +529,7 @@ pub struct SavingsSummary {
 }
 
 /// One element of `GET /v1/alerts`. Exact shape of `store.rs::Alert`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub run_id: String,
     pub spent_microusd: i64,
@@ -543,7 +543,7 @@ pub struct Alert {
 /// and the wire form - lowercase string - is a two-line mirror). Confirmed
 /// against `tokenfuse/crates/core/src/mcpreport.rs`: `#[serde(rename_all =
 /// "lowercase")]` over exactly these five variants, low-to-high.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Info,
@@ -556,7 +556,7 @@ pub enum Severity {
 /// One element of `GET /v1/incidents`. Exact shape of `store.rs::Incident`.
 /// `run_id`/`agent_id` are always present as a JSON key (possibly `null`) on
 /// the wire, never omitted, so no `#[serde(default)]` is needed on either.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Incident {
     pub id: String,
     pub org: String,

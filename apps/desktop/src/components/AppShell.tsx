@@ -6,6 +6,7 @@ import type { ViewId } from "../lib/views";
 import { Agent360 } from "./Agent360";
 import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
+import { CopilotView } from "./CopilotView";
 import { CryptoView } from "./CryptoView";
 import { DelegationGraphView } from "./DelegationGraphView";
 import { DrillsView } from "./DrillsView";
@@ -212,6 +213,7 @@ export function AppShell() {
       )}
       {view === "posture" && <PostureView />}
       {view === "bus" && <BusExplorer />}
+      {view === "copilot" && <CopilotView />}
 
       {focusedAgentId && (
         <Agent360

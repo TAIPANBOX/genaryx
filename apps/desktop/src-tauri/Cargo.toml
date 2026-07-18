@@ -56,6 +56,13 @@ genaryx-connectors = { path = "../../../crates/connectors" }
 # Money panel's dev-pairing flow. `enclave::SecKeySigner` (Secure Enclave) is
 # a later hardware wave, not wired here yet.
 genaryx-signing = { path = "../../../crates/signing" }
+# Phase-6 C0 (docs/PHASE6.md, itrat-console/13 D13): Felyx, the read-only AI
+# copilot. See src/copilot/ for the wiring (a disabled-by-default
+# `CopilotService` bootstrapped the same non-blocking way every other panel's
+# state is). This crate has no dependency on genaryx-signing and holds no
+# signer of its own (its own Cargo.toml's SECURITY INVARIANT comment) - it
+# cannot mutate any plane, only read and (from a later cut) propose.
+genaryx-copilot = { path = "../../../crates/copilot" }
 # Phase-2 wave 3 (docs/PHASE2.md, "Actionable notifications"): native OS
 # notifications for `approval_requested` bus events. Registered via
 # `src/lib.rs`'s `.plugin(tauri_plugin_notification::init())`; everything else

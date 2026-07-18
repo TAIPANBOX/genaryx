@@ -130,8 +130,22 @@
 //! URL fresh, per call (stateless by design, mirroring the Tauri shell's
 //! identical `pocket::commands` module doc). See `pocket/mod.rs` for the
 //! full flow.
+//!
+//! Phase-6 (docs/PHASE6.md C0-W2, D13 Felyx) adds [`copilot::CopilotHandle`]:
+//! an eleventh UniFFI Object, over `genaryx_copilot::CopilotService`, for the
+//! SwiftUI Copilot surface - Felyx, the read-only, never-act AI copilot.
+//! Simpler than every other handle: C0 has no external plane to discover (the
+//! service is built once, locally, from `CopilotConfig::default()` -
+//! `provider = "none"` - and `Clients::default()`), so there is no
+//! `discover()`/`connect()` split and no `EnvSource` enum; an unconfigured
+//! copilot is a normal, fully-built, honestly *disabled* service, not an
+//! absent plane. `CopilotService::ask` is async, so this handle still owns a
+//! `tokio::runtime::Runtime` and bridges with `block_on`, exactly like
+//! `WardryxHandle`/`IdryxHandle` - see `copilot/mod.rs` for the full design
+//! doc.
 
 pub mod cloud;
+pub mod copilot;
 pub mod crypto;
 pub mod drills;
 pub mod idryx;

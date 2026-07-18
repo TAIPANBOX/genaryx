@@ -561,7 +561,7 @@ pub struct ApprovalDecideResponse {
 /// authenticated principal on top, `api.go:277-285`) - as an untyped JSON
 /// object, per this task's spec: prefer the typed accessor methods below
 /// over reaching into `context` directly.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Approval {
     pub approval_id: String,
     pub agent_id: String,
@@ -699,7 +699,7 @@ pub struct Policy {
 /// not `{"id":"demo","policy":{...},"updated_at":"..."}`.
 /// `#[serde(flatten)]` on the embedded `policy` field reproduces the same
 /// shape here.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRecord {
     /// The URL path segment this policy is addressed by
     /// (`PUT /v1/policies/{id}`); distinct from [`Policy::name`], which

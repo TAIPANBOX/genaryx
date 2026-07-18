@@ -133,6 +133,14 @@ import SwiftUI
 /// transport sense Remote is (pairing/disconnect are local transport
 /// actions, not remote governance decisions), so like `remoteModel` it needs
 /// no wiring into `notifications`/`focusedApprovalId` either.
+///
+/// Phase-6 (docs/PHASE6.md C0-W2, D13 Felyx) adds `copilotModel`
+/// (`CopilotModel`, over `CopilotHandle`) and the `Copilot` tab, right after
+/// `Pocket` - continuing the same per-plane-panel sequence one more time.
+/// Felyx is Genaryx's own read + propose (never act) AI copilot: C0 ships
+/// the read path and a chat pane only, no proposals yet, so `CopilotView`
+/// needs no wiring into `notifications`/`focusedApprovalId` either, exactly
+/// like the other read-only panels above.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
@@ -146,6 +154,7 @@ struct GenaryxApp: App {
     @State private var evidenceModel = EvidenceModel()
     @State private var remoteModel = RemoteModel()
     @State private var pocketModel = PocketModel()
+    @State private var copilotModel = CopilotModel()
     @State private var graphModel = GraphModel()
     @State private var replayModel = RunReplayModel()
     @State private var notifications = ApprovalNotificationModel()
@@ -193,6 +202,8 @@ struct GenaryxApp: App {
                         RemoteView(model: remoteModel)
                     case .pocket:
                         PocketView(model: pocketModel)
+                    case .copilot:
+                        CopilotView(model: copilotModel)
                     case .graph:
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
@@ -299,17 +310,18 @@ private struct AgentFocus: Identifiable, Equatable {
     var id: String { agentId }
 }
 
-/// The fifteen top-level nav destinations - Overview, Money, Policy,
+/// The sixteen top-level nav destinations - Overview, Money, Policy,
 /// Identity, Quality, Crypto, Memory, Drills, Evidence, Remote, Pocket,
-/// Graph, Replay, Posture, and the existing Bus Explorer - matching the
-/// Tauri shell's `ViewId`/`lib/views.ts` switcher (extended with Memory +
+/// Copilot, Graph, Replay, Posture, and the existing Bus Explorer - matching
+/// the Tauri shell's `ViewId`/`lib/views.ts` switcher (extended with Memory +
 /// Drills in Phase-4 wave 2, then Evidence in Phase-4 wave 3, then Remote in
-/// Phase-4 wave 4, then Pocket in Phase-5 wave 2, mirroring wave 1's Quality
-/// + Crypto addition), rendered as a native macOS tab strip instead of a
-/// web-styled nav bar (native macOS patterns over pixel parity, same rule
-/// `Theme.swift` already follows). Memory, Drills, Evidence, Remote, and
-/// Pocket sit right after Crypto, continuing the per-plane-panel sequence
-/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills/Evidence/Remote/Pocket)
+/// Phase-4 wave 4, then Pocket in Phase-5 wave 2, then Copilot in Phase-6,
+/// mirroring wave 1's Quality + Crypto addition), rendered as a native macOS
+/// tab strip instead of a web-styled nav bar (native macOS patterns over
+/// pixel parity, same rule `Theme.swift` already follows). Memory, Drills,
+/// Evidence, Remote, Pocket, and Copilot sit right after Crypto, continuing
+/// the per-plane-panel sequence
+/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills/Evidence/Remote/Pocket/Copilot)
 /// ahead of the cross-cutting views (Graph/Replay/Posture/Bus Explorer).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
@@ -323,6 +335,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
     case evidence = "Evidence"
     case remote = "Remote"
     case pocket = "Pocket"
+    case copilot = "Copilot"
     case graph = "Graph"
     case replay = "Replay"
     case posture = "Posture"

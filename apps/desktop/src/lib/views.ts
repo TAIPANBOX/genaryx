@@ -14,7 +14,8 @@ export type ViewId =
   | "graph"
   | "replay"
   | "posture"
-  | "bus";
+  | "bus"
+  | "copilot";
 
 export const VIEWS: readonly { id: ViewId; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -32,4 +33,5 @@ export const VIEWS: readonly { id: ViewId; label: string }[] = [
   { id: "replay", label: "Replay" },
   { id: "posture", label: "Posture" },
   { id: "bus", label: "Bus Explorer" },
+  { id: "copilot", label: "Copilot" },
 ];

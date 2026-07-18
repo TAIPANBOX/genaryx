@@ -37,6 +37,14 @@ genaryx-connectors = { path = "../connectors" }
 # CloudHandle pairs a fresh SoftwareSigner at connect time (portable, no
 # hardware requirement), mirroring `apps/desktop/src-tauri/src/money/state.rs`.
 genaryx-signing = { path = "../signing" }
+# Phase-6 (docs/PHASE6.md C0-W2, D13 Felyx): CopilotHandle wraps CopilotService
+# for the SwiftUI Copilot surface - the read-only, never-act AI copilot. This
+# does not weaken `crates/copilot`'s own "no genaryx-signing" invariant (that
+# crate's Cargo.toml SECURITY INVARIANT comment): genaryx-ffi already depends
+# on genaryx-signing for CloudHandle above, and genaryx-copilot itself still
+# has no such dependency - the invariant is about the copilot crate never
+# being ABLE to sign, not about what depends on it.
+genaryx-copilot = { path = "../copilot" }
 uniffi = { version = "0.32", features = ["cli"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }
