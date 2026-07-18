@@ -1,0 +1,14 @@
+{
+  "name": "genaryx-live",
+  "services": {
+    "cloud":   { "url": "http://127.0.0.1:8080" },
+    "wardryx": { "url": "http://127.0.0.1:8090" },
+    "idryx":   { "url": "http://127.0.0.1:8081" },
+    "gateway": { "url": "http://127.0.0.1:4100", "mode": "enforce" }
+  },
+  "events": { "dir": "/tmp/genaryx-events", "files": {} },
+  "keys": {
+    "cloud_admin_ref":   "taipan/genaryx-live/cloud_admin",
+    "wardryx_admin_ref": "taipan/genaryx-live/wardryx_admin"
+  }
+}
