@@ -1,0 +1,61 @@
+# genaryx-relay: the always-on headless relay (Phase 5 / D12). Sits next to the
+# client-hosted TokenFuse Cloud, holds /v1/stream, computes the exception slice,
+# serves the phone over TLS+pin, forwards signed mutations verbatim. Closed,
+# licensed, proprietary. See docs/PHASE5.md + itrat-console/13 (D12).
+[package]
+name = "genaryx-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "genaryx-relay"
+path = "src/main.rs"
+
+[dependencies]
+genaryx-core = { path = "../core" }
+genaryx-connectors = { path = "../connectors" }
+genaryx-signing = { path = "../signing" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# The relay is a real server: on top of the workspace's baseline tokio
+# features (rt-multi-thread/macros/sync/time/fs/io-util) it additionally
+# needs "net" (TcpListener, for the loopback-only admin listener; the public
+# listener is bound by axum-server, which pulls its own net bits in via
+# tokio-rustls) and "signal" (Ctrl-C-driven graceful shutdown of both
+# listeners). Cargo feature-unifies this with every other workspace member's
+# plain `{ workspace = true }` tokio, so this crate is the only one that pays
+# for the extra features, not a version fork.
+tokio = { workspace = true, features = ["net", "signal"] }
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+getrandom = { workspace = true }
+# W1 web/TLS stack (docs/PHASE5.md W1). Pinned to versions that resolve
+# against this workspace's existing reqwest-0.13 tree without a second copy
+# of rustls: reqwest 0.13 already pulls hyper-rustls 0.27 -> rustls 0.23.42 +
+# tokio-rustls 0.26 (`cargo tree -i rustls`), and axum-server 0.7's
+# `tls-rustls` feature resolves onto that exact tokio-rustls/rustls 0.23
+# line, so the public TLS listener adds one edge to an already-resolved
+# dependency, not a fork.
+axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+# The self-signed P-256 cert for the public listener + the SPKI-SHA256 pin
+# the QR carries (itrat-console/13 D12.2 step 3, the phone-channel trust
+# root). Default features (crypto+pem+ring) are kept deliberately: this
+# workspace's rustls already resolves onto `aws-lc-rs` (via axum-server's
+# default), so rcgen's own `ring` backend is a second crypto-provider crate
+# in the tree rather than a shared one either way; `aws_lc_rs` would need
+# `aws-lc-sys`, which needs `cmake` (not present on this box). Same accepted
+# trade-off D12.4 already made for the two-reqwest-versions case: extra
+# compile time, not a runtime or security cost (ring only ever signs our own
+# self-signed cert, it never touches the phone's ES256 mutation path).
+rcgen = "0.13"
+# Relay config: a TOML file + env overlay (docs/PHASE5.md config module),
+# parsed with the same `serde` this workspace already pins everywhere else.
+toml = "0.8"

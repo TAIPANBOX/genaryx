@@ -1,0 +1,378 @@
+//! Read proxy + mutation pass-through (docs/PHASE5.md "proxy" module;
+//! itrat-console/13 D12.2b/c).
+//!
+//! Two very different trust shapes share this file because they share a
+//! wire contract (the same `/v1` path space, D12.3: "The relay presents the
+//! same `/v1` path space to the phone precisely for this"):
+//!
+//! - **Reads** ([`summary_handler`]): the phone's OWN bearer travels straight
+//!   through to the Cloud, which resolves it to (org, plan) itself
+//!   (`http.rs::org_for`). The relay adds no ambient authority here (D12.3:
+//!   "the relay adds no ambient authority to reads either") and therefore
+//!   checks nothing beyond forwarding -- a bad/missing bearer simply comes
+//!   back as the Cloud's own 401. Deliberately an explicit allowlist of ONE
+//!   path (`/v1/summary`), not a wildcard `/v1/*` forward: a wildcard would
+//!   quietly reopen the exact `/v1/runs` 9k-row choke the whole relay design
+//!   exists to close (docs/PHASE5.md, D12.2b step 5).
+//! - **Mutations** ([`mutation_passthrough`]): forwarded VERBATIM (same
+//!   method, path, body, `X-Fuse-*` headers) so the phone's ES256 signature
+//!   transfers with no re-canonicalization (D12.2c step 3) -- the relay
+//!   deliberately does NOT re-derive or re-verify the canonical string
+//!   itself (that would reintroduce exactly the re-canonicalization risk the
+//!   architecture avoids by design; the Cloud remains the sole verifier).
+//!   Ahead of forwarding it checks the three things D12.2c step 3 actually
+//!   asks for: "device row exists, token matches (constant-time), rate limit
+//!   OK" -- via the registry and [`crate::ratelimit::RateLimiter`].
+
+use axum::Json;
+use axum::body::Bytes;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::response::{IntoResponse, Response};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProxyError {
+    #[error("unauthorized")]
+    Unauthorized,
+    #[error("rate limit exceeded")]
+    RateLimited,
+    #[error("internal: {0}")]
+    Internal(String),
+}
+
+impl IntoResponse for ProxyError {
+    fn into_response(self) -> Response {
+        let (status, code) = match &self {
+            ProxyError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            ProxyError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+            ProxyError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+        };
+        (status, Json(serde_json::json!({ "error": code }))).into_response()
+    }
+}
+
+/// The bearer token from `Authorization`, with or without the `Bearer `
+/// prefix -- mirrors `tokenfuse-cloud::http.rs::bearer` exactly, since the
+/// relay speaks the same convention on its own public routes.
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let raw = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let token = raw.strip_prefix("Bearer ").unwrap_or(raw).trim();
+    (!token.is_empty()).then_some(token)
+}
+
+/// `GET /v1/summary`, proxied read (see module docs: the only allowlisted
+/// read path in W1). The phone's own `Authorization` header travels through
+/// unchanged; every other header is dropped rather than forwarded blind.
+pub async fn summary_handler(
+    State(state): State<crate::PublicState>,
+    headers: HeaderMap,
+) -> Response {
+    let mut req = state
+        .http
+        .get(format!("{}/v1/summary", state.cloud_base_url));
+    if let Some(auth) = headers.get(header::AUTHORIZATION) {
+        req = req.header(header::AUTHORIZATION, auth.clone());
+    }
+    match req.send().await {
+        Ok(resp) => reqwest_response_to_axum(resp).await,
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": "upstream_unavailable", "detail": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// One handler registered at all three mutation routes
+/// (`/v1/runs/{run}/kill`, `/v1/runs/{run}/budget`, `/v1/incidents/{id}/ack`):
+/// `uri.path()` is already the literal, concrete incoming request path (no
+/// path param is ever re-assembled from a decoded `Path<String>`), so a
+/// single code path forwards every one of them byte-identically.
+pub async fn mutation_passthrough(
+    State(state): State<crate::PublicState>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Bytes,
+) -> Result<Response, ProxyError> {
+    let token = bearer_token(&headers).ok_or(ProxyError::Unauthorized)?;
+    let device = state
+        .registry
+        .verify_bearer(token)
+        .map_err(|e| ProxyError::Internal(e.to_string()))?
+        .ok_or(ProxyError::Unauthorized)?;
+
+    if !state.mutation_rate_limiter.check(&device.device_id) {
+        return Err(ProxyError::RateLimited);
+    }
+    if let Err(e) = state
+        .registry
+        .touch_last_seen(&device.device_id, crate::exceptions::now_unix())
+    {
+        eprintln!("genaryx-relay: proxy: touch_last_seen failed (non-fatal): {e}");
+    }
+
+    // Every header the Cloud's signature verification and bearer auth
+    // actually consult (`http.rs::verify_device_signature`/`bearer`), plus
+    // `content-type` for a correct body parse on the budget mutation.
+    // Nothing else is forwarded -- and nothing about the body or these
+    // values is ever modified.
+    const FORWARD_HEADERS: &[&str] = &[
+        "authorization",
+        "x-fuse-device",
+        "x-fuse-ts",
+        "x-fuse-nonce",
+        "x-fuse-sig",
+        "content-type",
+    ];
+    let mut req = state
+        .http
+        .post(format!("{}{}", state.cloud_base_url, uri.path()));
+    for name in FORWARD_HEADERS {
+        if let Some(v) = headers.get(*name) {
+            req = req.header(*name, v.clone());
+        }
+    }
+    let resp = req
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("forwarding to Cloud: {e}")))?;
+    Ok(reqwest_response_to_axum(resp).await)
+}
+
+/// Turn a `reqwest::Response` into an `axum::response::Response` with the
+/// same status, body, and content-type -- used by both the read proxy and
+/// the mutation pass-through so a caller (phone) sees exactly what the
+/// Cloud said, verbatim.
+async fn reqwest_response_to_axum(resp: reqwest::Response) -> Response {
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let content_type = resp.headers().get(header::CONTENT_TYPE).cloned();
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(
+                    serde_json::json!({ "error": "upstream_read_failed", "detail": e.to_string() }),
+                ),
+            )
+                .into_response();
+        }
+    };
+    let mut builder = Response::builder().status(status);
+    if let Some(ct) = content_type {
+        builder = builder.header(header::CONTENT_TYPE, ct);
+    }
+    match builder.body(axum::body::Body::from(bytes)) {
+        Ok(response) => response,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers_with_auth(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::AUTHORIZATION, value.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn bearer_token_strips_the_bearer_prefix() {
+        assert_eq!(
+            bearer_token(&headers_with_auth("Bearer abc123")),
+            Some("abc123")
+        );
+    }
+
+    #[test]
+    fn bearer_token_accepts_a_raw_token_with_no_prefix() {
+        assert_eq!(bearer_token(&headers_with_auth("abc123")), Some("abc123"));
+    }
+
+    #[test]
+    fn bearer_token_is_none_for_empty_or_missing_header() {
+        assert_eq!(bearer_token(&HeaderMap::new()), None);
+        assert_eq!(bearer_token(&headers_with_auth("")), None);
+        assert_eq!(bearer_token(&headers_with_auth("Bearer ")), None);
+    }
+
+    // ---- mutation_passthrough: verbatim forwarding, end to end -------------
+    //
+    // These stand up a tiny local "fake Cloud" (a real axum server on
+    // 127.0.0.1) that records exactly what it received, so the assertions
+    // below are against genuine forwarded bytes/headers over a real HTTP
+    // round trip, not a mocked call.
+
+    #[derive(Debug, Default, Clone)]
+    struct Captured {
+        method: String,
+        path: String,
+        body: Vec<u8>,
+        headers: HeaderMap,
+    }
+
+    /// Start a fake Cloud that records the one request it receives and
+    /// answers `200 {"ok":true}`. Returns its base URL and the capture slot.
+    async fn spawn_fake_cloud() -> (String, std::sync::Arc<std::sync::Mutex<Option<Captured>>>) {
+        let captured: std::sync::Arc<std::sync::Mutex<Option<Captured>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_for_handler = captured.clone();
+
+        let app = axum::Router::new().fallback(move |req: axum::extract::Request| {
+            let captured = captured_for_handler.clone();
+            async move {
+                let method = req.method().to_string();
+                let path = req.uri().path().to_string();
+                let headers = req.headers().clone();
+                let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+                    .await
+                    .unwrap_or_default();
+                *captured.lock().unwrap() = Some(Captured {
+                    method,
+                    path,
+                    body: body.to_vec(),
+                    headers,
+                });
+                (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
+            }
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}"), captured)
+    }
+
+    fn state_with_paired_device(cloud_base_url: String) -> crate::PublicState {
+        let registry = std::sync::Arc::new(crate::registry::Registry::open_in_memory().unwrap());
+        registry
+            .insert_paired_device(crate::registry::NewDevice {
+                device_id: "dev-1".to_string(),
+                name: "iPhone".to_string(),
+                platform: "ios".to_string(),
+                org: "acme".to_string(),
+                role: "admin".to_string(),
+                device_token: "tok-1".to_string(),
+                paired_at_unix: 1000,
+            })
+            .unwrap();
+        crate::PublicState {
+            registry,
+            engine: std::sync::Arc::new(crate::exceptions::ExceptionEngine::new("acme", 0.8, 600)),
+            http: reqwest::Client::new(),
+            cloud_base_url,
+            public_advertise_url: "https://127.0.0.1:8443".to_string(),
+            mutation_rate_limiter: std::sync::Arc::new(crate::ratelimit::RateLimiter::new(
+                100,
+                std::time::Duration::from_secs(60),
+            )),
+            pairing_rate_limiter: std::sync::Arc::new(crate::ratelimit::RateLimiter::new(
+                100,
+                std::time::Duration::from_secs(60),
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn mutation_passthrough_forwards_method_path_body_and_fuse_headers_verbatim() {
+        let (cloud_base_url, captured) = spawn_fake_cloud().await;
+        let state = state_with_paired_device(cloud_base_url);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer tok-1".parse().unwrap());
+        headers.insert("x-fuse-device", "dev-1".parse().unwrap());
+        headers.insert("x-fuse-ts", "1700000000".parse().unwrap());
+        headers.insert("x-fuse-nonce", "abc123".parse().unwrap());
+        headers.insert("x-fuse-sig", "deadbeef==".parse().unwrap());
+        headers.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+        // Not in the forward allowlist: must NOT reach the Cloud.
+        headers.insert("x-should-not-forward", "nope".parse().unwrap());
+
+        let uri: Uri = "/v1/runs/spike2-e2e/budget".parse().unwrap();
+        let body = Bytes::from_static(br#"{"budget_usd":12.5}"#);
+
+        let response = mutation_passthrough(State(state), headers, uri, body)
+            .await
+            .expect("forwards successfully");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let cap = captured
+            .lock()
+            .unwrap()
+            .take()
+            .expect("the fake Cloud received exactly one request");
+        assert_eq!(cap.method, "POST");
+        assert_eq!(
+            cap.path, "/v1/runs/spike2-e2e/budget",
+            "path forwarded verbatim"
+        );
+        assert_eq!(
+            cap.body, br#"{"budget_usd":12.5}"#,
+            "body forwarded verbatim, unmodified"
+        );
+        assert_eq!(
+            cap.headers.get(header::AUTHORIZATION).unwrap(),
+            "Bearer tok-1"
+        );
+        assert_eq!(cap.headers.get("x-fuse-device").unwrap(), "dev-1");
+        assert_eq!(cap.headers.get("x-fuse-ts").unwrap(), "1700000000");
+        assert_eq!(cap.headers.get("x-fuse-nonce").unwrap(), "abc123");
+        assert_eq!(cap.headers.get("x-fuse-sig").unwrap(), "deadbeef==");
+        assert!(
+            cap.headers.get("x-should-not-forward").is_none(),
+            "only the allowlisted headers are forwarded, never the full set"
+        );
+    }
+
+    #[tokio::test]
+    async fn mutation_passthrough_rejects_wrong_bearer_before_ever_reaching_the_cloud() {
+        let (cloud_base_url, captured) = spawn_fake_cloud().await;
+        let state = state_with_paired_device(cloud_base_url);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer wrong-token".parse().unwrap());
+        headers.insert("x-fuse-device", "dev-1".parse().unwrap());
+        let uri: Uri = "/v1/runs/r1/kill".parse().unwrap();
+
+        let err = mutation_passthrough(State(state), headers, uri, Bytes::new())
+            .await
+            .expect_err("a non-matching bearer must be rejected");
+        assert!(matches!(err, ProxyError::Unauthorized));
+        assert!(
+            captured.lock().unwrap().is_none(),
+            "the relay must reject BEFORE forwarding anything to the Cloud"
+        );
+    }
+
+    #[tokio::test]
+    async fn mutation_passthrough_enforces_the_rate_limit_before_forwarding() {
+        let (cloud_base_url, _captured) = spawn_fake_cloud().await;
+        let mut state = state_with_paired_device(cloud_base_url);
+        state.mutation_rate_limiter = std::sync::Arc::new(crate::ratelimit::RateLimiter::new(
+            1,
+            std::time::Duration::from_secs(60),
+        ));
+
+        let headers = || {
+            let mut h = HeaderMap::new();
+            h.insert(header::AUTHORIZATION, "Bearer tok-1".parse().unwrap());
+            h.insert("x-fuse-device", "dev-1".parse().unwrap());
+            h
+        };
+        let uri: Uri = "/v1/runs/r1/kill".parse().unwrap();
+
+        let first =
+            mutation_passthrough(State(state.clone()), headers(), uri.clone(), Bytes::new()).await;
+        assert!(first.is_ok(), "first call within budget succeeds");
+
+        let second = mutation_passthrough(State(state), headers(), uri, Bytes::new())
+            .await
+            .expect_err("second call exceeds the per-device budget");
+        assert!(matches!(second, ProxyError::RateLimited));
+    }
+}
