@@ -165,8 +165,31 @@ async fn pair_read_signed_mutations_and_tamper_reject_against_live_cloud() {
         return; // Already explained why via eprintln! above.
     };
 
-    // ---- pair a portable SoftwareSigner (CI-safe: no Secure Enclave needed) ----
+    // ---- pair_new alone (Phase 5 W2, D12.2a step 1): the desktop Pocket
+    // panel's own call shape - mint a code and stop, no redeem, distinct from
+    // pair()'s single-shot mint-then-redeem below. ----
     let mut client = CloudClient::new(&base, "devkey").expect("build CloudClient");
+    let minted = client
+        .pair_new("devkey")
+        .await
+        .expect("pair_new against the live cloud");
+    assert_eq!(
+        minted.code.len(),
+        8,
+        "devices::pairing_code() mints an 8-char code: {:?}",
+        minted.code
+    );
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("post-epoch clock")
+        .as_secs() as i64;
+    assert!(
+        minted.expires_unix > now_unix,
+        "a freshly minted code must expire in the future: {} vs now {now_unix}",
+        minted.expires_unix
+    );
+
+    // ---- pair a portable SoftwareSigner (CI-safe: no Secure Enclave needed) ----
     let signer = SoftwareSigner::generate().expect("generate a software P-256 key");
     let paired = client
         .pair("devkey", &signer)

@@ -81,6 +81,13 @@
 //! SECOND stateful-connector panel after Memory - it holds both a `WgTunnel`
 //! and an `SshClient` long-lived, each behind its own cell, for the app's
 //! whole life once the operator connects/pins them.
+//!
+//! The Pocket panel's commands (see `pocket/`, docs/PHASE5.md W2) need NO
+//! managed state at all and so are never `app.manage`d in `setup` - every
+//! command resolves the Cloud admin key (reusing `money::env::discover`
+//! directly) and the relay admin URL (`pocket::env::relay_admin_url`) fresh,
+//! per call. See `pocket::commands`'s module doc for the full mint-code /
+//! arm-window / render-QR / show-device flow.
 
 mod crypto;
 mod drills;
@@ -91,6 +98,7 @@ mod identity;
 mod live;
 mod memory;
 mod money;
+mod pocket;
 mod policy;
 mod quality;
 mod remote;
@@ -338,6 +346,9 @@ pub fn run() {
             remote::commands::remote_ssh_read_file,
             remote::commands::remote_ssh_tail_start,
             remote::commands::remote_ssh_tail_stop,
+            pocket::commands::pocket_status,
+            pocket::commands::pocket_connect,
+            pocket::commands::pocket_disconnect,
             graph::agent_graph,
             graph::agent_slice,
             graph::agent_events,

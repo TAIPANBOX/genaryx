@@ -1,8 +1,10 @@
 //! Admin API (docs/PHASE5.md "admin" module; itrat-console/13 D12.2 step 2,
-//! 10): pairing-window arm, paired-device view, disconnect. Served on a
-//! SEPARATE listener bound to loopback only (`main.rs` refuses to construct
-//! it on anything else, mirroring `config.rs`'s own validation) -- never the
-//! public interface the phone talks to.
+//! 10): pairing-window arm, paired-device view, disconnect, plus (Phase 5 W2)
+//! `GET /admin/pairing-info` so the desktop's Pocket panel can build the
+//! pairing QR without duplicating the relay's own TLS/config internals.
+//! Served on a SEPARATE listener bound to loopback only (`main.rs` refuses to
+//! construct it on anything else, mirroring `config.rs`'s own validation) --
+//! never the public interface the phone talks to.
 
 use axum::Json;
 use axum::extract::State;
@@ -42,6 +44,37 @@ impl IntoResponse for AdminError {
         };
         (status, Json(serde_json::json!({ "error": code }))).into_response()
     }
+}
+
+/// `GET /admin/pairing-info` response (Phase 5 W2, docs/PHASE5.md: "the
+/// desktop needs the relay's SPKI pin + `public_advertise_url` + `org` to
+/// build the QR"): the three static, license-free values the Pocket panel
+/// folds into the `genaryx-pocket://pair/v1?relay=...&pin=...&code=...&org=...`
+/// QR content (D12.2 step 3) verbatim -- `code` itself comes from the
+/// SEPARATE `POST /v1/pair/new` call at the Cloud (admin key), never from
+/// this endpoint, so this response alone is never enough to mint a working
+/// pairing QR (D12.3's trust-boundary table: the relay holds no admin
+/// authority of its own).
+#[derive(Debug, Serialize)]
+pub struct PairingInfoResponse {
+    /// The public listener's SPKI-SHA256 pin, base64 (`tls.rs::spki_sha256_b64`).
+    pub pin: String,
+    /// `public_advertise_url` (`config.rs`) -- what the relay tells a pairing
+    /// phone its own base URL is; may differ from the raw bind address.
+    pub relay_url: String,
+    /// The org this relay serves (single-tenant per relay instance, `config.rs`).
+    pub org: String,
+}
+
+/// Infallible: every field is a value the relay already resolved at startup
+/// (TLS identity, config) and holds for its whole lifetime, so there is
+/// nothing here that can fail per-request.
+pub async fn pairing_info(State(state): State<crate::AdminState>) -> Json<PairingInfoResponse> {
+    Json(PairingInfoResponse {
+        pin: state.pin.clone(),
+        relay_url: state.relay_url.clone(),
+        org: state.org.clone(),
+    })
 }
 
 /// `POST /admin/pairing-window` request: the desktop already knows the
@@ -174,5 +207,39 @@ mod tests {
             AdminError::from(RegistryError::WindowNotOpen),
             AdminError::Internal(_)
         ));
+    }
+
+    fn test_state(pin: &str, relay_url: &str, org: &str) -> crate::AdminState {
+        crate::AdminState {
+            registry: std::sync::Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
+            pin: pin.to_string(),
+            relay_url: relay_url.to_string(),
+            org: org.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn pairing_info_echoes_the_configured_pin_relay_url_and_org() {
+        let state = test_state(
+            "dGVzdC1zcGtpLXBpbi1iYXNlNjQ=",
+            "https://198.51.100.7:8443",
+            "acme",
+        );
+        let Json(resp) = pairing_info(State(state)).await;
+        assert_eq!(resp.pin, "dGVzdC1zcGtpLXBpbi1iYXNlNjQ=");
+        assert_eq!(resp.relay_url, "https://198.51.100.7:8443");
+        assert_eq!(resp.org, "acme");
+    }
+
+    #[tokio::test]
+    async fn pairing_info_never_touches_the_registry() {
+        // The QR content this response feeds (D12.2 step 3) is entirely
+        // static per relay instance -- proving this handler is infallible
+        // and side-effect-free, unlike arm_pairing_window/get_device/
+        // disconnect which all read or write the device row.
+        let state = test_state("pin", "https://127.0.0.1:8443", "org");
+        assert!(state.registry.current_device().unwrap().is_none());
+        let _ = pairing_info(State(state.clone())).await;
+        assert!(state.registry.current_device().unwrap().is_none());
     }
 }

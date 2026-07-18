@@ -10,6 +10,7 @@ export type ViewId =
   | "drills"
   | "evidence"
   | "remote"
+  | "pocket"
   | "graph"
   | "replay"
   | "posture"
@@ -26,6 +27,7 @@ export const VIEWS: readonly { id: ViewId; label: string }[] = [
   { id: "drills", label: "Drills" },
   { id: "evidence", label: "Evidence" },
   { id: "remote", label: "Remote" },
+  { id: "pocket", label: "Pocket" },
   { id: "graph", label: "Graph" },
   { id: "replay", label: "Replay" },
   { id: "posture", label: "Posture" },

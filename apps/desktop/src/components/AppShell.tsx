@@ -14,6 +14,7 @@ import { IdentityView } from "./IdentityView";
 import { MemoryView } from "./MemoryView";
 import { MoneyView } from "./MoneyView";
 import { OverviewView } from "./OverviewView";
+import { PocketView } from "./PocketView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
 import { QualityView } from "./QualityView";
@@ -200,6 +201,7 @@ export function AppShell() {
       {view === "drills" && <DrillsView />}
       {view === "evidence" && <EvidenceView />}
       {view === "remote" && <RemoteView />}
+      {view === "pocket" && <PocketView />}
       {view === "graph" && (
         <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
           <DelegationGraphView onOpenAgent={onOpenAgent} fill />

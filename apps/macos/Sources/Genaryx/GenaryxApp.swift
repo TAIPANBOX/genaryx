@@ -121,6 +121,18 @@ import SwiftUI
 /// transport actions, not remote governance decisions), so like
 /// `identityModel`/`cryptoModel` it needs no wiring into
 /// `notifications`/`focusedApprovalId` either.
+///
+/// Phase-5 wave 2 (docs/PHASE5.md W2, itrat-console/13 D12.2a) adds
+/// `pocketModel` (`PocketModel`, over `PocketHandle`) and the `Pocket` tab,
+/// right after `Remote` - continuing the same per-plane-panel sequence.
+/// "Connect TokenFuse Pocket" mints a pairing code, arms the relay's pairing
+/// window, and renders the QR the phone scans; unlike `remoteModel` it holds
+/// no long-lived connection of its own (no keypair, no tunnel) - every
+/// method resolves the Cloud admin key and the relay admin URL fresh, per
+/// call (see `PocketModel.swift`'s own doc). Read/act-only in the local
+/// transport sense Remote is (pairing/disconnect are local transport
+/// actions, not remote governance decisions), so like `remoteModel` it needs
+/// no wiring into `notifications`/`focusedApprovalId` either.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
@@ -133,6 +145,7 @@ struct GenaryxApp: App {
     @State private var drillsModel = DrillsModel()
     @State private var evidenceModel = EvidenceModel()
     @State private var remoteModel = RemoteModel()
+    @State private var pocketModel = PocketModel()
     @State private var graphModel = GraphModel()
     @State private var replayModel = RunReplayModel()
     @State private var notifications = ApprovalNotificationModel()
@@ -178,6 +191,8 @@ struct GenaryxApp: App {
                         EvidenceView(model: evidenceModel, cloudModel: cloudModel)
                     case .remote:
                         RemoteView(model: remoteModel)
+                    case .pocket:
+                        PocketView(model: pocketModel)
                     case .graph:
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
@@ -284,17 +299,17 @@ private struct AgentFocus: Identifiable, Equatable {
     var id: String { agentId }
 }
 
-/// The fourteen top-level nav destinations - Overview, Money, Policy,
-/// Identity, Quality, Crypto, Memory, Drills, Evidence, Remote, Graph,
-/// Replay, Posture, and the existing Bus Explorer - matching the Tauri
-/// shell's `ViewId`/`lib/views.ts` switcher (extended with Memory + Drills in
-/// Phase-4 wave 2, then Evidence in Phase-4 wave 3, then Remote in Phase-4
-/// wave 4, mirroring wave 1's Quality + Crypto addition), rendered as a
-/// native macOS tab strip instead of a web-styled nav bar (native macOS
-/// patterns over pixel parity, same rule `Theme.swift` already follows).
-/// Memory, Drills, Evidence, and Remote sit right after Crypto, continuing
-/// the per-plane-panel sequence
-/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills/Evidence/Remote)
+/// The fifteen top-level nav destinations - Overview, Money, Policy,
+/// Identity, Quality, Crypto, Memory, Drills, Evidence, Remote, Pocket,
+/// Graph, Replay, Posture, and the existing Bus Explorer - matching the
+/// Tauri shell's `ViewId`/`lib/views.ts` switcher (extended with Memory +
+/// Drills in Phase-4 wave 2, then Evidence in Phase-4 wave 3, then Remote in
+/// Phase-4 wave 4, then Pocket in Phase-5 wave 2, mirroring wave 1's Quality
+/// + Crypto addition), rendered as a native macOS tab strip instead of a
+/// web-styled nav bar (native macOS patterns over pixel parity, same rule
+/// `Theme.swift` already follows). Memory, Drills, Evidence, Remote, and
+/// Pocket sit right after Crypto, continuing the per-plane-panel sequence
+/// (Money/Policy/Identity/Quality/Crypto/Memory/Drills/Evidence/Remote/Pocket)
 /// ahead of the cross-cutting views (Graph/Replay/Posture/Bus Explorer).
 private enum AppTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
@@ -307,6 +322,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
     case drills = "Drills"
     case evidence = "Evidence"
     case remote = "Remote"
+    case pocket = "Pocket"
     case graph = "Graph"
     case replay = "Replay"
     case posture = "Posture"

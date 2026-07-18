@@ -118,12 +118,25 @@
 //! for the full design doc, including the one SSH lifecycle subtlety
 //! `ssh_tail_once` has to get right (`SshClient`'s pinned `known_hosts` temp
 //! file must outlive its own spawned tail child).
+//!
+//! Phase-5 wave 2 (docs/PHASE5.md W2, itrat-console/13 D12.2a) adds
+//! [`pocket::PocketHandle`]: a tenth UniFFI Object, the SwiftUI Pocket
+//! panel's connector to `genaryx-relay`'s admin API plus the Cloud's
+//! `POST /v1/pair/new` - "Connect TokenFuse Pocket" mints a pairing code,
+//! arms the relay's pairing window, and returns the QR content to render.
+//! Same owned-runtime async-to-sync bridge as `CloudHandle`/`RemoteHandle`,
+//! but simpler than either: no paired device, no keypair, no tunnel to
+//! hold, since every method resolves its Cloud admin key and relay admin
+//! URL fresh, per call (stateless by design, mirroring the Tauri shell's
+//! identical `pocket::commands` module doc). See `pocket/mod.rs` for the
+//! full flow.
 
 pub mod cloud;
 pub mod crypto;
 pub mod drills;
 pub mod idryx;
 pub mod memory;
+pub mod pocket;
 pub mod quality;
 pub mod remote;
 pub mod wardryx;

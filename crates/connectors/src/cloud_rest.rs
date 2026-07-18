@@ -309,14 +309,33 @@ impl CloudClient {
 
     // ---- pairing (devices.rs) ----------------------------------------------
 
-    /// Pair a new device: `POST /v1/pair/new` with `admin_bearer` (an admin
-    /// org key - `http.rs::admin_org_key` requires role `admin`, and this is
-    /// deliberately a separate parameter from `self.bearer_token`, since the
-    /// principal minting a pairing code need not be the same one this client
-    /// reads with), then `POST /v1/pair` redeeming the returned code with
-    /// `signer.public_key_b64()` (no bearer on this second call - the code
-    /// itself is the credential, exactly as `devices.rs`'s module doc and
-    /// `http.rs::pair`'s doc specify).
+    /// Mint a one-time pairing code: `POST /v1/pair/new` with `admin_bearer`
+    /// (an admin org key - `http.rs::admin_org_key` requires role `admin`).
+    /// Deliberately separate from [`CloudClient::pair`] (Phase 5 W2,
+    /// itrat-console/13 D12.2a step 1): the desktop's Pocket panel mints a
+    /// code for a PHONE to redeem later (over the relay, W3), so it must stop
+    /// after this step rather than immediately generating its own signer and
+    /// redeeming the code itself the way `pair`'s single-shot flow does.
+    pub async fn pair_new(&self, admin_bearer: &str) -> Result<PairNewResponse, ConnectorError> {
+        let resp = self
+            .http
+            .post(format!("{}/v1/pair/new", self.base_url))
+            .bearer_auth(admin_bearer)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await?;
+        parse_response(resp).await
+    }
+
+    /// Pair a new device: mints a code via [`CloudClient::pair_new`], then
+    /// `POST /v1/pair` redeeming it with `signer.public_key_b64()` (no bearer
+    /// on this second call - the code itself is the credential, exactly as
+    /// `devices.rs`'s module doc and `http.rs::pair`'s doc specify). This is
+    /// the desktop's OWN device self-pairing flow (Money/Overview, Phase 1);
+    /// the Pocket panel's phone-pairing flow (Phase 5 W2) uses `pair_new`
+    /// directly instead, since the code there is redeemed by the PHONE, over
+    /// the relay, not by this client.
     ///
     /// Returns the full [`PairResponse`]; the caller decides whether (and
     /// when) to hand its `device_id`/`device_token` to
@@ -328,15 +347,7 @@ impl CloudClient {
         admin_bearer: &str,
         signer: &dyn Es256Signer,
     ) -> Result<PairResponse, ConnectorError> {
-        let resp = self
-            .http
-            .post(format!("{}/v1/pair/new", self.base_url))
-            .bearer_auth(admin_bearer)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body("{}")
-            .send()
-            .await?;
-        let issued: PairNewResponse = parse_response(resp).await?;
+        let issued = self.pair_new(admin_bearer).await?;
 
         let pubkey_b64 = signer.public_key_b64()?;
         let redeem_body = serde_json::to_vec(&PairRequestBody {
@@ -573,12 +584,19 @@ pub struct AuditVerifyResponse {
 
 // ---- pairing DTOs (devices.rs / http.rs) -----------------------------------
 
-/// `POST /v1/pair/new` response; only `code` is consumed by
-/// [`CloudClient::pair`] (the redeemable one-time code), so `expires_unix` is
-/// intentionally not modeled - an unknown JSON field is simply ignored by serde.
-#[derive(Debug, Deserialize)]
-struct PairNewResponse {
-    code: String,
+/// `POST /v1/pair/new` response. Exact shape of `http.rs::PairNewResponse`
+/// (`devices.rs`/`http.rs:470-473`): `code` is the redeemable one-time code
+/// (an 8-char unambiguous-alphabet string, `devices::pairing_code()`),
+/// `expires_unix` is when it stops being redeemable (currently a fixed 600s
+/// from mint, `http.rs::pair_new`). Public since Phase 5 W2: the Pocket
+/// panel's [`CloudClient::pair_new`] hands this straight back to its caller
+/// (the desktop needs `code` for the QR and `expires_unix` to know how long
+/// the relay's pairing window should stay armed) rather than consuming it
+/// internally the way [`CloudClient::pair`] does.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PairNewResponse {
+    pub code: String,
+    pub expires_unix: i64,
 }
 
 /// `POST /v1/pair` request body. Exact shape of `http.rs::PairRequest`.
@@ -775,6 +793,15 @@ mod tests {
         let a: AckResponse =
             serde_json::from_str(r#"{"acknowledged":"inc1"}"#).expect("valid AckResponse");
         assert_eq!(a.acknowledged, "inc1");
+    }
+
+    #[test]
+    fn pair_new_response_deserializes_code_and_expiry() {
+        let p: PairNewResponse =
+            serde_json::from_str(r#"{"code":"ABCD1234","expires_unix":1758000600}"#)
+                .expect("valid PairNewResponse");
+        assert_eq!(p.code, "ABCD1234");
+        assert_eq!(p.expires_unix, 1_758_000_600);
     }
 
     #[test]

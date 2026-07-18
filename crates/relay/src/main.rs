@@ -54,6 +54,13 @@ pub struct PublicState {
 #[derive(Clone)]
 pub struct AdminState {
     pub registry: Arc<registry::Registry>,
+    /// The public listener's SPKI-SHA256 pin, base64 -- see
+    /// `admin::PairingInfoResponse`'s doc for why this trio is served here
+    /// rather than making the desktop re-derive it from `RelayConfig`/
+    /// `RelayIdentity` itself (Phase 5 W2).
+    pub pin: String,
+    pub relay_url: String,
+    pub org: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -195,6 +202,9 @@ async fn run() -> Result<(), RelayError> {
     };
     let admin_state = AdminState {
         registry: registry.clone(),
+        pin: identity.spki_sha256_b64().to_string(),
+        relay_url: config.public_advertise_url.clone(),
+        org: config.org.clone(),
     };
 
     let public_app = axum::Router::new()
@@ -219,6 +229,10 @@ async fn run() -> Result<(), RelayError> {
         .with_state(public_state);
 
     let admin_app = axum::Router::new()
+        .route(
+            "/admin/pairing-info",
+            axum::routing::get(admin::pairing_info),
+        )
         .route(
             "/admin/pairing-window",
             axum::routing::post(admin::arm_pairing_window),

@@ -1,0 +1,19 @@
+//! Pocket: the Phase-5 wave-2 "Connect TokenFuse Pocket" panel
+//! (docs/PHASE5.md W2, itrat-console/13 D12.2a) - mints a pairing code at
+//! the Cloud, arms the relay's pairing window, renders the QR the phone
+//! scans (a later wave, W3), and shows the paired device + Disconnect.
+//! Track A (Tauri/React) of the two-shell parallel build; the SwiftUI half
+//! lives in `crates/ffi::pocket` + `apps/macos`.
+//!
+//! Unlike every other panel in this app, Pocket holds NO Tauri managed
+//! state at all: every command resolves its own Cloud admin key (reusing
+//! `crate::money::env::discover` directly - minting a pairing code needs
+//! exactly the same admin bearer Money's own device pairing does) and its
+//! own relay admin URL ([`env::relay_admin_url`]), fresh, per call. There is
+//! no persistent connection worth holding onto between an operator's
+//! Connect/status-poll/Disconnect actions (mirrors
+//! `remote::commands::remote_hetzner_list`'s identical "stateless by
+//! design" shape) - see [`commands`]'s module doc for the full flow.
+
+pub mod commands;
+pub mod env;

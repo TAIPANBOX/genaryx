@@ -49,6 +49,14 @@
 //! error) the Drills panel runs and renders. See
 //! `crates/connectors/src/{mcp_stdio,engram,mockryx}.rs`.
 //!
+//! Phase-5 wave 2 (docs/PHASE5.md W2): [`RelayAdminClient`] is the desktop
+//! Pocket panel's connector to `genaryx-relay`'s loopback/WG-only admin API
+//! (pairing-info, pairing-window arm, paired-device view, disconnect) - see
+//! `crates/connectors/src/relay_admin.rs`. [`CloudClient::pair_new`] is a
+//! small addition alongside it: the mint-only half of the existing
+//! [`CloudClient::pair`] flow, since the Pocket panel mints a code for a
+//! PHONE to redeem later (over the relay) rather than redeeming it itself.
+//!
 //! Phase-4 wave 3 (docs/PHASE4.md W3): the Evidence Center. [`build_evidence_pack`]
 //! is the ONE function both shells call to assemble a signed evidence zip - it
 //! gathers Cloud compliance evidence + the audit verdict
@@ -70,6 +78,7 @@ mod idryx;
 mod mcp_stdio;
 mod mockryx;
 mod qryx;
+mod relay_admin;
 mod sse_decoder;
 mod ssh;
 mod tokenfuse;
@@ -79,7 +88,8 @@ mod wg;
 
 pub use cloud_rest::{
     AckResponse, AgentAgg, Alert, AuditVerifyResponse, BudgetResponse, CloudClient, ConnectorError,
-    Incident, KillResponse, PairResponse, RunAgg, SavingsSummary, Severity, Summary,
+    Incident, KillResponse, PairNewResponse, PairResponse, RunAgg, SavingsSummary, Severity,
+    Summary,
 };
 pub use cloud_sse::{CloudSse, CloudSseConfig};
 pub use engram::{
@@ -100,6 +110,11 @@ pub use mockryx::{
 pub use qryx::{
     EvidenceReport, EvidenceSummary, NcscDiscovery, NcscFinding, NcscFullMigration, NcscPriority,
     NcscReport, QryxClient, QryxError, Signature as QryxSignature, VerifyOutcome,
+};
+pub use relay_admin::{
+    ArmPairingWindowResponse as RelayArmPairingWindowResponse, DeviceView as RelayDeviceView,
+    DisconnectResponse as RelayDisconnectResponse, PairingInfo as RelayPairingInfo,
+    RelayAdminClient, RelayAdminError,
 };
 pub use sse_decoder::{SseDecoder, SseEvent};
 pub use ssh::{SshClient, SshError, SshTarget};
