@@ -219,6 +219,14 @@ pub struct WgInterfaceAddr {
 /// it is unit-testable. Returns `(program, args)`.
 fn addr_command(interface: &str, addr: &WgInterfaceAddr) -> (String, Vec<String>) {
     if cfg!(target_os = "macos") {
+        // A host netmask (255.255.255.255) is REQUIRED on a macOS `utun`
+        // point-to-point interface: `ifconfig utunN inet LOCAL PEER alias`
+        // returns success but silently leaves the interface without an inet
+        // address (utunN comes UP with no IP), so no data flows and reachability
+        // never completes. `netmask 255.255.255.255` is what actually assigns
+        // the address. Verified live on the Phase-4 Hetzner campaign
+        // (2026-07-18): the `alias` form left `utun6` address-less; the netmask
+        // form brought the tunnel data-path up.
         (
             "ifconfig".to_string(),
             vec![
@@ -226,7 +234,8 @@ fn addr_command(interface: &str, addr: &WgInterfaceAddr) -> (String, Vec<String>
                 "inet".to_string(),
                 addr.local_ip.clone(),
                 addr.peer_ip.clone(),
-                "alias".to_string(),
+                "netmask".to_string(),
+                "255.255.255.255".to_string(),
             ],
         )
     } else {
@@ -560,7 +569,9 @@ mod tests {
         let joined = format!("{prog} {}", args.join(" "));
         if cfg!(target_os = "macos") {
             assert_eq!(prog, "ifconfig");
-            assert!(joined.contains("utun7 inet 10.9.0.2 10.9.0.1 alias"));
+            // Host netmask (not `alias`) is what actually assigns the address on
+            // a macOS utun point-to-point interface - see addr_command's note.
+            assert!(joined.contains("utun7 inet 10.9.0.2 10.9.0.1 netmask 255.255.255.255"));
         } else {
             assert_eq!(prog, "ip");
             assert!(joined.contains("address add 10.9.0.2/32 peer 10.9.0.1/32 dev utun7"));
