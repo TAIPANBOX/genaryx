@@ -59,6 +59,12 @@ The only thing that genuinely needs the paid Apple account is real APNs remote-p
 
 ## Exit gate (Ф5 sim)
 
+> **Status: PASSED (2026-07-18).** Full evidence in [PHASE5-W4-RESULTS.md](PHASE5-W4-RESULTS.md):
+> device-signed kill verified phone -> relay (verbatim) -> Cloud (viewer-key kill = 403, so only a
+> device ES256 signature could have killed it); single-device 409 -> Disconnect -> 200; read path
+> 401s a revoked device (no auth gap). One correctness fix shipped in `tokenfuse-mobile`: the phone
+> now returns to Connect on a 401 instead of silently freezing on last-known-good data.
+
 On the simulator against a local Cloud: a phone pairs by scanning a QR off the desktop (zero
 manual entry, SPKI pin enforced), sees ONLY the exception slice (never the full fleet), and
 performs a hardware-path-signed (software key in sim) kill that travels relay -> Cloud verbatim
