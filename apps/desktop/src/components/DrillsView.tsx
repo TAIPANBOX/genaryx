@@ -2,8 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { describeDrillsError, runDrills } from "../lib/drills";
 import { useDrillsStatus } from "../lib/useDrillsStatus";
+import { formatHm, formatUsd } from "../lib/format";
+import { hasGaps } from "../drillsTypes";
 import type { DrillsError, DrillsStatus, MockryxReport } from "../drillsTypes";
 import { DrillsResults } from "./DrillsResults";
+import { FreshBadge } from "./FreshBadge";
+import { Hero, HeroBand, KpiTile, Section } from "./dash";
 
 const FIELD_STYLE = {
   background: "var(--panel)",
@@ -97,8 +101,14 @@ export function DrillsView() {
     return <DrillsEmptyState status={status} />;
   }
 
+  const hhmm = ranAtMs !== null ? formatHm(ranAtMs) : undefined;
+  const heldCount = report ? report.results.filter((r) => r.status !== "failed" && r.findings.length === 0).length : 0;
+  const gapCount = report ? report.results.length - heldCount : 0;
+  const totalCalls = report ? report.results.reduce((s, r) => s + r.metrics.calls, 0) : 0;
+  const totalBudget = report ? report.results.reduce((s, r) => s + r.metrics.budget_burned_usd, 0) : 0;
+
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
+    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="chip" style={cssVar("dot", "var(--src-mockryx)")}>
           <span className="dot" aria-hidden="true" />
@@ -109,13 +119,10 @@ export function DrillsView() {
           {status.gateway_url}
           {status.has_api_key ? " · bearer resolved" : " · no bearer resolved"}
         </span>
-        <span className="chip" style={cssVar("dot", "var(--faint)")}>
-          <span className="dot" aria-hidden="true" />
-          {ranAtMs !== null ? `as of last run · ${new Date(ranAtMs).toLocaleTimeString()}` : "no run yet"}
-        </span>
+        <FreshBadge variant="onDemand" detail={hhmm} title="mockryx has no live feed - nothing here auto-runs" />
       </div>
 
-      <div className="panel px-4 py-3 flex flex-col gap-2.5" style={{ background: "var(--panel-2)" }}>
+      <div className="d-card px-4 py-3 flex flex-col gap-2.5">
         <div className="flex items-center gap-2">
           <span className="text-[11.5px] shrink-0" style={{ color: "var(--dim)" }}>
             scenario dir
@@ -157,35 +164,65 @@ export function DrillsView() {
           <input type="checkbox" checked={failOnSkip} onChange={(e) => setFailOnSkip(e.target.checked)} />
           fail on skip (promotes unconfigured-guardrail skips into gaps)
         </label>
-        <div className="flex items-center gap-3 flex-wrap">
-          <button
-            type="button"
-            className="icon-btn"
-            style={{ width: "auto", padding: "0 14px", fontSize: 11 }}
-            onClick={() => void onRun()}
-            disabled={running || scenarioDir.trim().length === 0}
-          >
-            {running ? "Running..." : "Run drills"}
-          </button>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 14px", fontSize: 11 }}
+              onClick={() => void onRun()}
+              disabled={running || scenarioDir.trim().length === 0}
+            >
+              {running ? "Running..." : "Run drills"}
+            </button>
+          </div>
           <span className="text-[11px]" style={{ color: "var(--faint)" }}>
-            makes real calls against the gateway above and burns real budget - never runs on its own.
+            Runs real gateway calls and burns real budget.
           </span>
         </div>
       </div>
 
       {error && (
-        <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}>
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeDrillsError(error)}
         </div>
       )}
 
       {report === null ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
-          run drills to see results.
+        <div className="mono" style={{ fontSize: 12, color: "var(--faint)" }}>
+          run drills to see the verdict.
         </div>
       ) : (
-        <DrillsResults report={report} />
+        <HeroBand
+          hero={
+            <Hero
+              cap="Drills · guardrail verdict"
+              value={`${heldCount}/${report.results.length}`}
+              sub={<>{hasGaps(report) ? "GAPS FOUND" : "all held"}</>}
+              fuseFraction={report.results.length > 0 ? heldCount / report.results.length : 0}
+              fuseTone={gapCount === 0 ? "mint" : "ember"}
+              noteLeft={<>held <b>{heldCount}</b></>}
+              noteRight={<>gaps <b>{gapCount}</b></>}
+            />
+          }
+          tiles={
+            <>
+              <KpiTile label="Scenarios" value={report.results.length.toLocaleString("en-US")} sub={`${gapCount} with gaps`} />
+              <KpiTile label="Budget burned" value={formatUsd(totalBudget)} sub={`${totalCalls.toLocaleString("en-US")} calls`} />
+            </>
+          }
+        />
       )}
+
+      <Section title="Results" right={<FreshBadge variant="onDemand" detail={hhmm} />}>
+        {report === null ? (
+          <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+            run drills to see results.
+          </div>
+        ) : (
+          <DrillsResults report={report} />
+        )}
+      </Section>
     </div>
   );
 }

@@ -118,10 +118,10 @@ export function QualityDriftStream({ onOpenAgent }: { onOpenAgent: (agentId: str
   }
 
   return (
-    <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+    <>
       <div
-        className="grid gap-3 px-4 py-2"
-        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+        className="grid gap-3 px-5 py-2"
+        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
       >
         {["time", "severity", "agent", "delta", "verdict", "baseline"].map((label) => (
           <span
@@ -139,7 +139,7 @@ export function QualityDriftStream({ onOpenAgent }: { onOpenAgent: (agentId: str
         const baselineId = dataString(e.data, "baseline_id");
         const meanScore = dataNumber(e.data, "mean_score");
         return (
-          <div key={e.id} className="grid items-center gap-3 px-4 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+          <div key={e.id} className="grid items-center gap-3 px-5 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
             <span className="mono tabular text-[11px]" style={{ color: "var(--faint)" }}>
               {formatTimestamp(e.ts)}
             </span>
@@ -172,6 +172,6 @@ export function QualityDriftStream({ onOpenAgent }: { onOpenAgent: (agentId: str
           </div>
         );
       })}
-    </div>
+    </>
   );
 }

@@ -129,6 +129,21 @@ enum LoadedAtFormat {
         let iso = ISO8601DateFormatter().string(from: date)
         return "as of load \u{00B7} \(MoneyFormat.timestamp(iso))"
     }
+
+    /// Bare "HH:mm" clock for a `FreshBadge.snapshot`, e.g. "SNAPSHOT ·
+    /// 14:32" - the compact counterpart to `label(_:)`'s fuller "as of load
+    /// · ..." line the hero card still shows in full.
+    static func clock(_ date: Date?) -> String {
+        guard let date else { return "--:--" }
+        return clockFormatter.string(from: date)
+    }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 }
 
 // MARK: - AlertRecord attestation parsing

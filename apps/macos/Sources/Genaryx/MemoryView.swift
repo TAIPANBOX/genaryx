@@ -40,7 +40,7 @@ struct MemoryView: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 environmentChip
 
                 if let notice = model.mutationNotice {
@@ -50,21 +50,92 @@ struct MemoryView: View {
                     ErrorBannerView(message: bannerMessage)
                 }
 
-                section(title: "Store Stats") {
-                    StoreStatsSection(stats: model.stats, loadedAt: model.statsLoadedAt, isLoading: model.isLoadingStats)
-                }
-                section(title: "Recall") {
-                    RecallSection(model: model)
-                }
-                section(title: "Provenance") {
-                    ProvenanceSection(model: model)
-                }
-                section(title: "Timeline") {
-                    MemoryTimelineSection(events: timelineEvents)
-                }
+                dashboard
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Hero (total memories + a facts-health fuse) over Recall + Provenance
+    /// (the interactive primary column), plus Store Stats and the live
+    /// Timeline (rail) - the design spec's Memory blueprint (section 5):
+    /// stats is `.auto("20s")`, Recall is `.onDemand`, Timeline is `.live`.
+    /// Forget's own ceremony (a plain guarded confirm, not break-glass) is
+    /// untouched by this pass - see `ProvenanceSection`'s own doc comment.
+    private var dashboard: some View {
+        let refresh: () -> Void = { Task { await model.refreshStats() } }
+
+        return VStack(spacing: 16) {
+            HeroBand {
+                storeHero
+            } tiles: {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                    KpiTile(label: "episodic", value: model.stats.map { Dash.int(Int($0.counts.episodic)) } ?? "-")
+                    KpiTile(label: "semantic", value: model.stats.map { Dash.int(Int($0.counts.semantic)) } ?? "-")
+                    KpiTile(label: "vector index", value: model.stats.map { Dash.int(Int($0.vectorIndexSize)) } ?? "-")
+                    KpiTile(
+                        label: "recall hits", value: Dash.int(model.recallResults.count),
+                        sub: model.lastRecallAt == nil ? "no query yet" : "in last query",
+                        tone: model.recallResults.isEmpty ? nil : Theme.iris)
+                }
+            }
+
+            DashMain {
+                DashSection(title: "Recall", badge: .onDemand(last: RecallFormat.clock(model.lastRecallAt))) {
+                    RecallSection(model: model)
+                }
+                DashSection(title: "Provenance") {
+                    ProvenanceSection(model: model)
+                }
+            } rail: {
+                DashSection(title: "Store Stats", badge: .auto(period: "20s"), onRefresh: refresh) {
+                    StoreStatsSection(stats: model.stats, loadedAt: model.statsLoadedAt, isLoading: model.isLoadingStats)
+                }
+                DashSection(title: "Timeline", badge: .live) {
+                    MemoryTimelineSection(events: timelineEvents)
+                }
+            }
+        }
+    }
+
+    /// The store-stats hero card: total memories (episodic + semantic) as
+    /// the headline, entities/reflections as the sub-line, and a facts
+    /// active-vs-total fuse (mint - most fact volume is still live, not
+    /// superseded by a later write). Falls back to an honest "no store
+    /// stats yet" card before the first `refreshStats()` completes, mirroring
+    /// `CryptoView.ncscHero`'s own optional-hero precedent.
+    @ViewBuilder
+    private var storeHero: some View {
+        if let stats = model.stats {
+            let total = stats.counts.episodic + stats.counts.semantic
+            HeroCard(
+                cap: "Memory \u{00B7} engram store",
+                value: Dash.int(Int(total)),
+                sub: Text("\(Dash.int(Int(stats.entities))) entities \u{00B7} \(Dash.int(Int(stats.reflections))) reflections"),
+                fuseFraction: stats.factsTotal > 0 ? Double(stats.factsActive) / Double(stats.factsTotal) : nil,
+                fuseTone: .mint,
+                note: stats.factsTotal > 0
+                    ? (
+                        left: Text("\(Dash.int(Int(stats.factsActive))) active facts"),
+                        right: Text("\(Dash.int(Int(stats.factsSuperseded))) superseded")
+                    ) : nil
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Memory \u{00B7} engram store")
+                    .font(Theme.mono(10.5, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(Theme.textTertiary)
+                Text(model.isLoadingStats ? "loading store stats..." : "no store stats yet.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dashCard()
         }
     }
 
@@ -135,17 +206,6 @@ struct MemoryView: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                     .fill(Theme.panelElevated)
             )
-    }
-
-    @ViewBuilder
-    private func section<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.textTertiary)
-            content()
-        }
     }
 }
 

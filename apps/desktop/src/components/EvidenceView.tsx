@@ -4,9 +4,12 @@ import { cssVar } from "../lib/cssVars";
 import { buildEvidence, describeEvidenceError, downloadEvidencePack } from "../lib/evidence";
 import { fetchMoneyStatus } from "../lib/money";
 import { useEvidenceStatus } from "../lib/useEvidenceStatus";
+import { formatBytes, formatHm } from "../lib/format";
 import type { EvidenceBuildResult, EvidenceError } from "../evidenceTypes";
 import type { MoneyStatus } from "../moneyTypes";
 import { EvidenceManifestView } from "./EvidenceManifestView";
+import { FreshBadge } from "./FreshBadge";
+import { Hero, HeroBand, KpiTile } from "./dash";
 
 const FIELD_STYLE = {
   background: "var(--panel)",
@@ -214,16 +217,43 @@ export function EvidenceView() {
     return <EvidenceEmptyState resolving={resolving} />;
   }
 
+  const hhmm = builtAtMs !== null ? formatHm(builtAtMs) : undefined;
+  const totalSize = result ? result.manifest.artifacts.reduce((s, a) => s + a.size_bytes, 0) : 0;
+
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
+    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="chip" style={cssVar("dot", "var(--faint)")}>
-          <span className="dot" aria-hidden="true" />
-          {builtAtMs !== null ? `as of last build · ${new Date(builtAtMs).toLocaleTimeString()}` : "no pack built yet"}
-        </span>
+        <FreshBadge variant="onDemand" detail={hhmm} title="nothing here auto-builds - only an explicit Build click does" />
       </div>
 
-      <div className="panel px-4 py-3 flex flex-col gap-1" style={{ background: "var(--panel-2)" }}>
+      {result && (
+        <HeroBand
+          hero={
+            <Hero
+              cap="Evidence · last pack"
+              value={result.manifest.artifacts.length.toLocaleString("en-US")}
+              sub={
+                <span className="badge" style={cssVar("tone", result.signed ? "var(--sev-low)" : "var(--sev-medium)")}>
+                  {result.signed ? "SIGNED" : "UNSIGNED"}
+                </span>
+              }
+            />
+          }
+          tiles={
+            <>
+              <KpiTile label="Total size" value={formatBytes(totalSize)} sub={result.filename} />
+              <KpiTile
+                label="Not included"
+                value={result.manifest.missing.length.toLocaleString("en-US")}
+                tone={result.manifest.missing.length > 0 ? "var(--sev-medium)" : "var(--mint)"}
+                sub={result.manifest.missing.length > 0 ? "sources unavailable" : "every requested source included"}
+              />
+            </>
+          }
+        />
+      )}
+
+      <div className="d-card px-4 py-3 flex flex-col gap-1">
         <span className="text-[11.5px]" style={{ color: "var(--dim)" }}>
           Choose sources, then build one signed evidence pack. Signing needs a paired TokenFuse Cloud device (see
           Money) - without one, the pack is honestly built UNSIGNED.
@@ -314,7 +344,7 @@ export function EvidenceView() {
       </div>
 
       {error && (
-        <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}>
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeEvidenceError(error)}
         </div>
       )}

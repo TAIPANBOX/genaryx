@@ -42,10 +42,8 @@ struct EvidenceView: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                section(title: "Sources") {
-                    sourceTogglesSection
-                }
+            VStack(alignment: .leading, spacing: 16) {
+                sourceTogglesSection
                 buildRow
 
                 if let bannerMessage = model.bannerMessage {
@@ -55,38 +53,75 @@ struct EvidenceView: View {
                     savedNotice(lastSavedPath)
                 }
 
-                if let pack = model.lastPack {
-                    section(title: "Manifest") {
-                        ManifestHeaderView(pack: pack)
-                    }
-                    section(title: "Artifacts") {
-                        ArtifactsTableSection(artifacts: pack.manifest.artifacts)
-                    }
-                    section(title: "Not Included") {
-                        MissingSourcesSection(missing: pack.manifest.missing)
-                    }
-                } else {
-                    section(title: "Manifest") {
-                        Text(model.isBuilding ? "building..." : "build a pack to see its manifest.")
-                            .font(Theme.mono(12))
-                            .foregroundStyle(Theme.textTertiary)
-                            .padding(.vertical, 4)
-                    }
-                }
+                dashboard
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
+    /// Hero ("last pack": SIGNED/UNSIGNED pill, artifact count, total size)
+    /// over the Artifacts table (primary) and the "Not Included" list (rail)
+    /// - the design spec's Evidence blueprint (section 5): `.onDemand(last:
+    /// builtAt)` on both, since a pack is built only on an explicit "Build
+    /// evidence pack" press, never auto-refreshed - every number in this
+    /// dashboard is honestly "as of last build".
+    private var dashboard: some View {
+        let builtAt = EvidenceBuiltFormat.clock(model.lastPack)
+        let sourcesEnabled = [model.includeCloud, model.qryxEnabled, model.idryxEnabled, model.tokenfuseEnabled]
+            .filter { $0 }.count
+        let missingCount = model.lastPack?.manifest.missing.count ?? 0
+
+        return VStack(spacing: 16) {
+            HeroBand {
+                lastPackHero
+            } tiles: {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                    KpiTile(
+                        label: "not included", value: model.lastPack != nil ? String(missingCount) : "-",
+                        tone: missingCount > 0 ? Theme.amber : nil)
+                    KpiTile(label: "pack version", value: model.lastPack?.manifest.packVersion ?? "-")
+                    KpiTile(
+                        label: "journaled", value: model.lastPack.map { $0.journaled ? "yes" : "no" } ?? "-",
+                        tone: model.lastPack.map { $0.journaled ? Theme.mint : Theme.amber })
+                    KpiTile(label: "sources enabled", value: String(sourcesEnabled), sub: "of 4 available")
+                }
+            }
+
+            DashMain {
+                DashSection(title: "Artifacts", badge: .onDemand(last: builtAt)) {
+                    ArtifactsTableSection(artifacts: model.lastPack?.manifest.artifacts ?? [])
+                }
+            } rail: {
+                DashSection(title: "Not Included", badge: .onDemand(last: builtAt)) {
+                    MissingSourcesSection(missing: model.lastPack?.manifest.missing ?? [])
+                }
+            }
+        }
+    }
+
+    /// Falls back to an honest "build a pack to see its manifest" card
+    /// before the first build completes, mirroring `CryptoView.ncscHero`'s
+    /// own optional-hero precedent.
     @ViewBuilder
-    private func section<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.textTertiary)
-            content()
+    private var lastPackHero: some View {
+        if let pack = model.lastPack {
+            LastPackHero(pack: pack)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Evidence \u{00B7} last pack")
+                    .font(Theme.mono(10.5, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(Theme.textTertiary)
+                Text(model.isBuilding ? "building..." : "build a pack to see its manifest.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dashCard()
         }
     }
 
@@ -291,40 +326,71 @@ private struct EvidenceSourceRow<Fields: View>: View {
     }
 }
 
-// MARK: - ManifestHeaderView
+// MARK: - LastPackHero
 
 /// docs/PHASE4.md W3: "a manifest/contents view (pack header + a
 /// signed/UNSIGNED badge)". `signed: false` is rendered exactly as
 /// prominently as `true` - an honest UNSIGNED badge, never soft-pedaled or
-/// hidden (06 §0.5).
+/// hidden (06 §0.5). The dashboard conversion promotes this from a small
+/// "Manifest" section into the panel's own hero (design spec section 5: "a
+/// 'last pack' hero card - SIGNED/UNSIGNED pill, artifact count, total
+/// size"), so this now also carries the artifact count as its headline
+/// number and the pack's total size, alongside everything the old
+/// `ManifestHeaderView` it replaces already showed.
 @MainActor
-private struct ManifestHeaderView: View {
+private struct LastPackHero: View {
     let pack: EvidencePackRecord
 
     private var manifest: EvidenceManifestRecord { pack.manifest }
+    private var totalBytes: UInt64 { manifest.artifacts.reduce(UInt64(0)) { $0 + $1.sizeBytes } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Evidence \u{00B7} last pack")
+                .font(Theme.mono(10.5, weight: .semibold))
+                .tracking(1.6)
+                .foregroundStyle(Theme.textTertiary)
+
+            HStack(alignment: .lastTextBaseline, spacing: 14) {
                 signedBadge
+                Text("\(manifest.artifacts.count) artifact\(manifest.artifacts.count == 1 ? "" : "s")")
+                    .font(Theme.display(28, weight: .heavy))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Spacer(minLength: 8)
+                Text(EvidenceSizeFormat.label(totalBytes))
+                    .font(Theme.mono(15, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.top, 4)
+
+            Text(
+                "generated \(MoneyFormat.timestamp(manifest.generatedAt)) \u{00B7} operator \(manifest.operatorName) \u{00B7} org \(manifest.org)"
+            )
+            .font(Theme.mono(11.5))
+            .foregroundStyle(Theme.textSecondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.top, 4)
+
+            HStack(spacing: 10) {
+                Text("\(manifest.missing.count) not included \u{00B7} pack version \(manifest.packVersion)")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.textTertiary)
                 if !pack.journaled {
                     journalNotRecordedBadge
                 }
                 Spacer(minLength: 0)
             }
-            Text(
-                "generated \(MoneyFormat.timestamp(manifest.generatedAt)) \u{00B7} operator \(manifest.operatorName) \u{00B7} org \(manifest.org)"
-            )
-            .font(Theme.mono(10.5))
-            .foregroundStyle(Theme.textTertiary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            Text(
-                "\(manifest.artifacts.count) artifact\(manifest.artifacts.count == 1 ? "" : "s") \u{00B7} \(manifest.missing.count) not included \u{00B7} pack version \(manifest.packVersion)"
-            )
-            .font(Theme.mono(10.5))
-            .foregroundStyle(Theme.textSecondary)
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dashCard()
     }
 
     private var signedBadge: some View {
@@ -363,7 +429,8 @@ private struct ArtifactsTableSection: View {
             Text("no artifacts in this pack.")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
         } else {
             VStack(spacing: 0) {
                 header
@@ -375,6 +442,8 @@ private struct ArtifactsTableSection: View {
                     }
                 }
             }
+            .padding(.top, 6)
+            .padding(.bottom, 8)
             .background(Theme.panel)
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay(
@@ -472,7 +541,8 @@ private struct MissingSourcesSection: View {
             Text("nothing left out - every enabled source made it into the pack.")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(missing.enumerated()), id: \.offset) { _, item in
@@ -498,6 +568,9 @@ private struct MissingSourcesSection: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                     .fill(Theme.panelElevated)
             )
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
         }
     }
 }

@@ -26,10 +26,10 @@ export function QualityBaselines({
   }
 
   return (
-    <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+    <div style={{ overflowX: "auto" }}>
       <div
-        className="grid gap-3 px-4 py-2"
-        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+        className="grid gap-3 px-5 py-2"
+        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
       >
         {["label", "source run", "mean score", "created"].map((label) => (
           <span
@@ -44,7 +44,7 @@ export function QualityBaselines({
       {baselines.map((b) => {
         const sourceRun = runs?.find((r) => r.run.id === b.eval_run_id)?.run ?? null;
         return (
-          <div key={b.id} className="grid items-center gap-3 px-4 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+          <div key={b.id} className="grid items-center gap-3 px-5 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
             <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={b.id}>
               {b.label.trim().length > 0 ? b.label : "(unlabeled)"}
             </span>

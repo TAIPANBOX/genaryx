@@ -2,14 +2,7 @@ import { cssVar } from "../lib/cssVars";
 import { formatTimestamp } from "../lib/format";
 import type { EvidenceBuildResult } from "../evidenceTypes";
 import { EvidenceArtifactsTable } from "./EvidenceArtifactsTable";
-
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <span className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--faint)" }}>
-      {title}
-    </span>
-  );
-}
+import { Section } from "./dash";
 
 /**
  * The built pack's contents view (docs/PHASE4.md W3): the header
@@ -25,7 +18,7 @@ export function EvidenceManifestView({ result }: { result: EvidenceBuildResult }
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="panel px-4 py-3 flex flex-col gap-2.5" style={{ background: "var(--panel-2)" }}>
+      <div className="d-card px-4 py-3 flex flex-col gap-2.5">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="badge" style={cssVar("tone", signed ? "var(--sev-low)" : "var(--sev-medium)")}>
             {signed ? "SIGNED" : "UNSIGNED"}
@@ -51,24 +44,22 @@ export function EvidenceManifestView({ result }: { result: EvidenceBuildResult }
         </span>
       </div>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title={`Artifacts (${manifest.artifacts.length})`} />
+      <Section title={`Artifacts (${manifest.artifacts.length})`}>
         <EvidenceArtifactsTable artifacts={manifest.artifacts} />
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title={`Not included (${manifest.missing.length})`} />
+      <Section title={`Not included (${manifest.missing.length})`}>
         {manifest.missing.length === 0 ? (
           <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
             every requested source was included.
           </div>
         ) : (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 px-5 py-3">
             {manifest.missing.map((m) => (
               <div
                 key={m.name}
-                className="panel px-3 py-2 flex items-baseline gap-2 flex-wrap"
-                style={{ background: "var(--panel-2)", borderLeft: "3px solid var(--sev-medium)" }}
+                className="d-card px-3 py-2 flex items-baseline gap-2 flex-wrap"
+                style={{ borderLeft: "3px solid var(--sev-medium)" }}
               >
                 <span className="text-[11.5px]" style={{ color: "var(--fg)" }}>
                   {m.name}
@@ -80,7 +71,7 @@ export function EvidenceManifestView({ result }: { result: EvidenceBuildResult }
             ))}
           </div>
         )}
-      </section>
+      </Section>
     </div>
   );
 }

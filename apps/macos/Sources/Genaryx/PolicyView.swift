@@ -57,7 +57,7 @@ struct PolicyView: View {
     private var content: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     environmentChip
 
                     if let notice = model.mutationNotice {
@@ -70,32 +70,7 @@ struct PolicyView: View {
                         GrantTokenCard(outcome: lastGrant, onDismiss: { model.dismissLastGrant() })
                     }
 
-                    section(title: "Decision Stream") {
-                        DecisionStreamSection(events: wardryxEvents)
-                    }
-                    section(title: "Approvals Inbox") {
-                        ApprovalsInboxSection(
-                            approvals: model.approvals,
-                            focusedApprovalId: focusedApprovalId,
-                            onDecide: { id, verdict in await model.decide(id, verdict: verdict) },
-                            isMuted: { agentId, runId in
-                                notifications.isMuted(agentId: agentId, runId: runId, environment: environmentLabel)
-                            },
-                            onToggleMute: { agentId, runId in
-                                let environment = environmentLabel
-                                let alreadyMuted = notifications.isMuted(
-                                    agentId: agentId, runId: runId, environment: environment)
-                                if alreadyMuted {
-                                    notifications.unmute(agentId: agentId, runId: runId, environment: environment)
-                                } else {
-                                    notifications.mute(agentId: agentId, runId: runId, environment: environment)
-                                }
-                            }
-                        )
-                    }
-                    section(title: "Policies") {
-                        PolicyListSection(policies: model.policies, policyVersion: model.latestPolicyVersion)
-                    }
+                    dashboard
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,6 +79,66 @@ struct PolicyView: View {
                 guard let newValue else { return }
                 withAnimation {
                     proxy.scrollTo(newValue, anchor: .center)
+                }
+            }
+        }
+    }
+
+    /// Hero (pending queue depth, decided-today, policy count) over a live
+    /// Decision Stream + the Approvals Inbox (primary column), plus the
+    /// read-only Policies reference (rail) - the design spec's Policy
+    /// blueprint (section 5).
+    private var dashboard: some View {
+        let pending = model.approvals.filter(\.pending)
+        let decided = model.approvals.filter { !$0.pending }
+        let decidedToday = decided.filter { approval in
+            guard let decidedAt = approval.decidedAt, let date = PolicyDate.parse(decidedAt) else { return false }
+            return Calendar.current.isDateInToday(date)
+        }.count
+
+        return VStack(spacing: 16) {
+            HeroBand {
+                HeroCard(
+                    cap: "Approvals \u{00B7} pending queue",
+                    value: Dash.int(pending.count),
+                    sub: Text(pending.isEmpty ? "queue clear" : "awaiting Grant / Deny")
+                )
+            } tiles: {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                    KpiTile(label: "decided today", value: Dash.int(decidedToday), sub: "\(Dash.int(decided.count)) total decided")
+                    KpiTile(
+                        label: "policies", value: Dash.int(model.policies.count),
+                        sub: model.latestPolicyVersion.map { "policy_version \($0)" } ?? "read-only")
+                }
+            }
+
+            DashMain {
+                DashSection(title: "Decision Stream", badge: .live) {
+                    DecisionStreamSection(events: wardryxEvents)
+                }
+                DashSection(title: "Approvals Inbox", badge: .auto(period: "20s")) {
+                    ApprovalsInboxSection(
+                        approvals: model.approvals,
+                        focusedApprovalId: focusedApprovalId,
+                        onDecide: { id, verdict in await model.decide(id, verdict: verdict) },
+                        isMuted: { agentId, runId in
+                            notifications.isMuted(agentId: agentId, runId: runId, environment: environmentLabel)
+                        },
+                        onToggleMute: { agentId, runId in
+                            let environment = environmentLabel
+                            let alreadyMuted = notifications.isMuted(
+                                agentId: agentId, runId: runId, environment: environment)
+                            if alreadyMuted {
+                                notifications.unmute(agentId: agentId, runId: runId, environment: environment)
+                            } else {
+                                notifications.mute(agentId: agentId, runId: runId, environment: environment)
+                            }
+                        }
+                    )
+                }
+            } rail: {
+                DashSection(title: "Policies", right: "editor in v1", badge: .auto(period: "20s")) {
+                    PolicyListSection(policies: model.policies, policyVersion: model.latestPolicyVersion)
                 }
             }
         }
@@ -162,17 +197,6 @@ struct PolicyView: View {
                     .fill(Theme.panelElevated)
             )
     }
-
-    @ViewBuilder
-    private func section<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.textTertiary)
-            content()
-        }
-    }
 }
 
 // MARK: - DecisionStreamSection
@@ -195,23 +219,17 @@ private struct DecisionStreamSection: View {
             Text("no wardryx bus activity yet.")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
         } else {
             let shown = Array(events.prefix(Self.displayLimit))
             VStack(spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.rowKey) { index, event in
+                    if index > 0 { Divider().overlay(Theme.hairline) }
                     DecisionStreamRow(event: event)
-                    if index < shown.count - 1 {
-                        Divider().overlay(Theme.hairline)
-                    }
                 }
             }
-            .background(Theme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .strokeBorder(Theme.hairline, lineWidth: 1)
-            )
+            .padding(.bottom, 4)
         }
     }
 
@@ -261,7 +279,7 @@ private struct DecisionStreamSection: View {
                     .foregroundStyle(Theme.textTertiary)
                     .frame(width: 118, alignment: .trailing)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 20)
             .padding(.vertical, 8)
         }
 
@@ -325,12 +343,14 @@ private struct ApprovalsInboxSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 4) {
             if pending.isEmpty {
                 Text("no pending approvals.")
                     .font(Theme.mono(12))
                     .foregroundStyle(Theme.textTertiary)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
             } else {
                 VStack(spacing: 8) {
                     ForEach(pending, id: \.approvalId) { approval in
@@ -344,10 +364,14 @@ private struct ApprovalsInboxSection: View {
                         .id(approval.approvalId)
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 6)
             }
 
             if !decided.isEmpty {
                 decidedHistory
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
             }
         }
     }
@@ -359,20 +383,13 @@ private struct ApprovalsInboxSection: View {
                 .font(Theme.mono(10, weight: .semibold))
                 .tracking(1.0)
                 .foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, 20)
             VStack(spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.approvalId) { index, approval in
+                    if index > 0 { Divider().overlay(Theme.hairline) }
                     DecidedApprovalRow(approval: approval)
-                    if index < shown.count - 1 {
-                        Divider().overlay(Theme.hairline)
-                    }
                 }
             }
-            .background(Theme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .strokeBorder(Theme.hairline, lineWidth: 1)
-            )
         }
     }
 
@@ -519,7 +536,7 @@ private struct ApprovalsInboxSection: View {
                     .monospacedDigit()
                     .foregroundStyle(Theme.textSecondary)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 20)
             .padding(.vertical, 8)
         }
 
@@ -571,6 +588,9 @@ private struct PolicyListSection: View {
                 }
             }
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 16)
     }
 
     private struct PolicyListRow: View {

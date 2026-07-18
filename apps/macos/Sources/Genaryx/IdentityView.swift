@@ -19,8 +19,6 @@ struct IdentityView: View {
     let model: IdentityModel
     let onOpenAgent: (String) -> Void
 
-    private static let refreshInterval: Duration = .seconds(20)
-
     var body: some View {
         Group {
             if model.connection.isReady {
@@ -31,18 +29,20 @@ struct IdentityView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
+        // PARITY FIX #4 (design spec section 7): idryx `serve` is load-once,
+        // so this no longer re-polls on a timer - a single load when the
+        // panel becomes ready, otherwise only ever refreshed by the
+        // operator's own Refresh/Rescan buttons next to each section's
+        // `.snapshot` badge below.
         .task(id: model.connection.isReady) {
             guard model.connection.isReady else { return }
-            while !Task.isCancelled {
-                await model.refresh()
-                try? await Task.sleep(for: Self.refreshInterval)
-            }
+            await model.refresh()
         }
     }
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 environmentChip
 
                 if let notice = model.mutationNotice {
@@ -58,10 +58,50 @@ struct IdentityView: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
 
-                section(title: "Identities") {
+                dashboard
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Hero (identities, privileged count, alerts by severity, attestation
+    /// gaps) over the Identities list + Alerts stream (primary column), plus
+    /// the derived Attestation reference (rail). Every section badges
+    /// `.snapshot(at:)` off the same `loadedAt` - idryx `serve` never
+    /// re-reads, so every card on this tab is honestly the same age.
+    private var dashboard: some View {
+        let privileged = model.identities.filter(\.privileged).count
+        let attestationGaps = model.alerts.filter { $0.detector == "attestation_missing" || $0.detector == "bom_incomplete" }.count
+        let clock = LoadedAtFormat.clock(model.loadedAt)
+        let refresh: () -> Void = { Task { await model.refresh() } }
+
+        return VStack(spacing: 16) {
+            HeroBand {
+                HeroCard(
+                    cap: "Identities \u{00B7} load-once snapshot",
+                    value: Dash.int(model.identities.count),
+                    sub: Text(LoadedAtFormat.label(model.loadedAt))
+                )
+            } tiles: {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                    KpiTile(
+                        label: "privileged", value: Dash.int(privileged),
+                        sub: "of \(Dash.int(model.identities.count)) identities", tone: privileged > 0 ? Theme.amber : nil)
+                    KpiTile(
+                        label: "alerts", value: Dash.int(model.alerts.count),
+                        sub: severityBreakdown, tone: model.alerts.isEmpty ? nil : Theme.coral)
+                    KpiTile(
+                        label: "attestation gaps", value: Dash.int(attestationGaps),
+                        sub: "missing or incomplete BOM", tone: attestationGaps > 0 ? Theme.violet : nil)
+                }
+            }
+
+            DashMain {
+                DashSection(title: "Identities", badge: .snapshot(at: clock), onRefresh: refresh) {
                     IdentitiesListSection(identities: model.identities, onOpenAgent: onOpenAgent)
                 }
-                section(title: "Alerts") {
+                DashSection(title: "Alerts", badge: .snapshot(at: clock), onRefresh: refresh) {
                     AlertsSection(
                         alerts: model.alerts,
                         isRescanning: model.isRescanning,
@@ -69,13 +109,24 @@ struct IdentityView: View {
                         onRescan: { await model.rescan() }
                     )
                 }
-                section(title: "Attestation") {
+            } rail: {
+                DashSection(title: "Attestation", badge: .snapshot(at: clock), onRefresh: refresh) {
                     AttestationSection(alerts: model.alerts)
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// "alerts by severity" for the hero's `alerts` tile sub-line, e.g.
+    /// "2 critical \u{00B7} 5 high \u{00B7} 1 medium" - the same four named
+    /// buckets `AlertsSection`'s own filter chips use, omitting any bucket
+    /// that is currently zero so the line never reads "0 critical".
+    private var severityBreakdown: String {
+        let counts = ["critical", "high", "medium", "low"].map { severity in
+            (severity, model.alerts.filter { $0.severity.lowercased() == severity }.count)
+        }
+        let parts = counts.filter { $0.1 > 0 }.map { "\($0.1) \($0.0)" }
+        return parts.isEmpty ? "none" : parts.joined(separator: " \u{00B7} ")
     }
 
     @ViewBuilder
@@ -85,24 +136,16 @@ struct IdentityView: View {
         // `PolicyView.environmentChip` documents for its own unreachable
         // non-`.ready` branch.
         if case .ready(let source, let idryxUrl) = model.connection {
-            HStack(spacing: 10) {
-                HStack(spacing: 6) {
-                    Circle().fill(Theme.steel).frame(width: 6, height: 6)
-                    Text("\(sourceLabel(source)) \u{00B7} \(idryxUrl)")
-                        .font(Theme.mono(11, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Theme.panelElevated))
-                .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
-
-                Text(LoadedAtFormat.label(model.loadedAt))
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textTertiary)
-
-                Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                Circle().fill(Theme.steel).frame(width: 6, height: 6)
+                Text("\(sourceLabel(source)) \u{00B7} \(idryxUrl)")
+                    .font(Theme.mono(11, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Theme.panelElevated))
+            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
         }
     }
 
@@ -125,17 +168,6 @@ struct IdentityView: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                     .fill(Theme.panelElevated)
             )
-    }
-
-    @ViewBuilder
-    private func section<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.textTertiary)
-            content()
-        }
     }
 }
 
@@ -188,6 +220,9 @@ private struct IdentitiesListSection: View {
                 }
             }
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 16)
     }
 
     private var typeFilterRow: some View {
@@ -365,43 +400,41 @@ private struct AlertsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             toolbar
+                .padding(.horizontal, 20)
 
             if let rescanUnavailableReason {
                 Text("Rescan unavailable: \(rescanUnavailableReason)")
                     .font(Theme.mono(10.5))
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 20)
             }
 
             if filtered.isEmpty {
                 Text(alerts.isEmpty ? "no alerts in this snapshot." : "no alerts match the current filters.")
                     .font(Theme.mono(12))
                     .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 20)
                     .padding(.vertical, 4)
             } else {
                 let shown = Array(filtered.prefix(Self.displayLimit))
                 VStack(spacing: 0) {
                     ForEach(Array(shown.enumerated()), id: \.offset) { index, alert in
+                        if index > 0 { Divider().overlay(Theme.hairline) }
                         AlertRow(alert: alert)
-                        if index < shown.count - 1 {
-                            Divider().overlay(Theme.hairline)
-                        }
                     }
                 }
-                .background(Theme.panel)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                        .strokeBorder(Theme.hairline, lineWidth: 1)
-                )
 
                 if filtered.count > Self.displayLimit {
                     Text("+\(filtered.count - Self.displayLimit) more (showing most recent \(Self.displayLimit))")
                         .font(Theme.mono(10.5))
                         .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 20)
                 }
             }
         }
+        .padding(.top, 6)
+        .padding(.bottom, 8)
     }
 
     private var toolbar: some View {
@@ -505,7 +538,7 @@ private struct AlertsSection: View {
                     .foregroundStyle(Theme.textTertiary)
                     .frame(width: 118, alignment: .trailing)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 20)
             .padding(.vertical, 8)
         }
 
@@ -555,29 +588,25 @@ private struct AttestationSection: View {
             .font(Theme.mono(10.5))
             .foregroundStyle(Theme.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 20)
 
             if relevant.isEmpty {
                 Text("no attestation or BOM findings in this snapshot.")
                     .font(Theme.mono(12))
                     .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 20)
                     .padding(.vertical, 4)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(relevant.enumerated()), id: \.offset) { index, alert in
+                        if index > 0 { Divider().overlay(Theme.hairline) }
                         AttestationRow(alert: alert)
-                        if index < relevant.count - 1 {
-                            Divider().overlay(Theme.hairline)
-                        }
                     }
                 }
-                .background(Theme.panel)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                        .strokeBorder(Theme.hairline, lineWidth: 1)
-                )
             }
         }
+        .padding(.top, 6)
+        .padding(.bottom, 8)
     }
 
     private struct AttestationRow: View {
@@ -608,7 +637,7 @@ private struct AttestationSection: View {
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 20)
             .padding(.vertical, 8)
         }
 

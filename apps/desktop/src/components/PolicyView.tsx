@@ -6,6 +6,8 @@ import type { Approval, Decision, PolicyError, PolicyRecord, PolicyStatus } from
 import { ApprovalsInbox, type GrantedToken } from "./ApprovalsInbox";
 import { DecisionStream } from "./DecisionStream";
 import { PolicyList } from "./PolicyList";
+import { FreshBadge } from "./FreshBadge";
+import { Hero, HeroBand, KpiTile, Section } from "./dash";
 
 /** Same feels-alive refresh cadence as `MoneyView.tsx`/`OverviewView.tsx` -
  * not a live push (the Approvals Inbox and Policy list are plain reads),
@@ -13,12 +15,12 @@ import { PolicyList } from "./PolicyList";
  * decision settles. */
 const REFRESH_INTERVAL_MS = 20_000;
 
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <span className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--faint)" }}>
-      {title}
-    </span>
-  );
+/** Local-day comparison for the hero's "decided today" tile - no timezone
+ * conversion, matches how an operator reads their own wall clock. */
+function isToday(iso: string): boolean {
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
 
 function Loading() {
@@ -159,8 +161,11 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
   // element is the most recent one without needing to re-sort.
   const latestPolicyVersion = approvals && approvals.length > 0 ? approvals[approvals.length - 1].policy_version : null;
 
+  const pendingCount = (approvals ?? []).filter((a) => a.pending).length;
+  const decidedTodayCount = (approvals ?? []).filter((a) => a.decided_at !== null && isToday(a.decided_at)).length;
+
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
+    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <span className="chip" style={cssVar("dot", "var(--src-wardryx)")}>
         <span className="dot" aria-hidden="true" />
         {status.source.source === "taipan" ? `taipan up · ${status.source.name}` : "env fallback"} &middot;{" "}
@@ -168,24 +173,44 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
       </span>
 
       {notice && (
-        <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel-2)", color: "var(--sev-low)" }}>
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--mint)" }}>
           {notice}
         </div>
       )}
 
       {error && (
-        <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}>
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describePolicyError(error)}
         </div>
       )}
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Decision Stream" />
-        <DecisionStream onOpenAgent={onOpenAgent} />
-      </section>
+      {approvals === null || policies === null ? (
+        <div className="mono" style={{ fontSize: 12, color: "var(--faint)" }}>
+          loading policy plane...
+        </div>
+      ) : (
+        <HeroBand
+          hero={
+            <Hero
+              cap="Policy · approvals awaiting decision"
+              value={pendingCount.toLocaleString("en-US")}
+              sub={<>{decidedTodayCount} decided today</>}
+            />
+          }
+          tiles={
+            <>
+              <KpiTile label="Decided today" value={decidedTodayCount.toLocaleString("en-US")} sub="grants + denies" />
+              <KpiTile label="Policies" value={policies.length.toLocaleString("en-US")} sub="read-only · editor in v1" />
+            </>
+          }
+        />
+      )}
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Approvals Inbox" />
+      <Section title="Decision Stream" right={<FreshBadge variant="live" />}>
+        <DecisionStream onOpenAgent={onOpenAgent} />
+      </Section>
+
+      <Section title="Approvals Inbox" right={<FreshBadge variant="auto" detail="20s" />}>
         {approvals === null ? (
           <Loading />
         ) : (
@@ -200,12 +225,11 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
             onOpenAgent={onOpenAgent}
           />
         )}
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Policies" />
+      <Section title="Policies" right={<FreshBadge variant="auto" detail="20s" />}>
         {policies === null ? <Loading /> : <PolicyList policies={policies} policyVersion={latestPolicyVersion} />}
-      </section>
+      </Section>
     </div>
   );
 }

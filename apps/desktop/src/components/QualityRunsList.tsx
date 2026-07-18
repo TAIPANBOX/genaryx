@@ -26,10 +26,10 @@ export function QualityRunsList({
   }
 
   return (
-    <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+    <div style={{ overflowX: "auto" }}>
       <div
-        className="grid gap-3 px-4 py-2"
-        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+        className="grid gap-3 px-5 py-2"
+        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
       >
         {["run", "started", "finished", "cases", "mean score", "total cost"].map((label) => (
           <span
@@ -48,7 +48,7 @@ export function QualityRunsList({
             key={s.run.id}
             type="button"
             onClick={() => onSelect(s.run.id)}
-            className="grid items-center gap-3 px-4 py-2.5 bus-row w-full text-left"
+            className="grid items-center gap-3 px-5 py-2.5 bus-row w-full text-left"
             style={{
               gridTemplateColumns: COLUMNS,
               background: active ? "color-mix(in srgb, var(--accent) 8%, transparent)" : "transparent",

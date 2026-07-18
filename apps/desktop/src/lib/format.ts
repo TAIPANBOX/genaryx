@@ -6,6 +6,17 @@ export function formatUsd(value: number): string {
   return `$${value.toFixed(decimals)}`;
 }
 
+/** Compact 24-hour "hh:mm" clock - the freshness-badge detail format
+ * (`FreshBadge.tsx`'s `snapshot`/`onDemand` variants: "SNAPSHOT · 14:32"),
+ * deliberately shorter than `formatTimestamp`'s full table-row precision. */
+export function formatHm(ms: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "-";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 /** Compact "Jul 16 14:32:05" clock for table rows - same
  * hours:minutes:seconds precision as `EventRow.tsx`'s `formatClock`, plus a
  * date since Money/Overview data is not assumed to all be from today. */

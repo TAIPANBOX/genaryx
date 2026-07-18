@@ -336,3 +336,535 @@ body {
     animation: none !important;
   }
 }
+
+/* ============================================================
+   Dashboard design system (Overview + Money hero surfaces).
+   A modern, readable layer over the control-room tokens above,
+   with the "fuse" heat language (mint -> amber -> ember) and
+   hand-rolled SVG charts, matching the TokenFuse Cloud dashboard.
+   ============================================================ */
+:root {
+  --mint: #35e0a1;
+  --amber: #f4b23e;
+  --ember: #ff574b;
+  --iris: #6c7bff;
+}
+
+/* soft gradient card, larger radius than the flat .panel */
+.d-card {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+
+.d-sechead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 12px;
+}
+.d-sechead .t {
+  font-family: var(--font-d);
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.d-sechead .r {
+  font-family: var(--font-m);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* hero band: big number + spark, and a 2x2 tile grid */
+.d-band {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 16px;
+}
+.d-hero {
+  padding: 22px 24px 18px;
+  display: flex;
+  flex-direction: column;
+}
+.d-cap {
+  font-family: var(--font-m);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.d-heroline {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.d-heronum {
+  font-family: var(--font-d);
+  font-weight: 800;
+  font-size: 54px;
+  line-height: 0.94;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.d-herosub {
+  margin-left: auto;
+  align-self: flex-end;
+  font-family: var(--font-m);
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.d-herosub b {
+  color: var(--mint);
+  font-weight: 600;
+}
+.d-heronote {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: var(--font-m);
+  font-size: 11.5px;
+  color: var(--dim);
+  margin-top: 12px;
+}
+.d-heronote b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.d-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.d-tile {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.d-tile .k {
+  font-family: var(--font-m);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.d-tile .n {
+  font-family: var(--font-d);
+  font-weight: 800;
+  font-size: 32px;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.d-tile .s {
+  font-family: var(--font-m);
+  font-size: 11px;
+  color: var(--dim);
+}
+
+/* the fuse heat bar */
+.d-fuse {
+  position: relative;
+  height: 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 65%, #000 20%);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  width: 100%;
+}
+.d-fuse > i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 6px;
+}
+.d-fuse.mint > i {
+  background: linear-gradient(90deg, #2bb98c, var(--mint));
+}
+.d-fuse.amber > i {
+  background: linear-gradient(90deg, var(--mint), var(--amber));
+  box-shadow: 0 0 12px rgba(244, 178, 62, 0.45);
+}
+.d-fuse.ember > i {
+  background: linear-gradient(90deg, var(--amber), var(--ember));
+  box-shadow: 0 0 14px rgba(255, 87, 75, 0.55);
+}
+.d-fuse.iris > i {
+  background: linear-gradient(90deg, #4c5ae0, var(--iris));
+  box-shadow: 0 0 12px rgba(108, 123, 255, 0.4);
+}
+
+.d-spark {
+  width: 100%;
+  height: 72px;
+  display: block;
+  margin: 14px 0 6px;
+}
+
+/* main grid: primary card + a fixed rail */
+.d-main {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 16px;
+  align-items: start;
+}
+.d-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* horizontal bar rows (spend by agent / by model) */
+.d-bars {
+  padding: 6px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.d-bar {
+  display: grid;
+  grid-template-columns: 176px 1fr 78px;
+  align-items: center;
+  gap: 12px;
+}
+.d-bar .lbl {
+  min-width: 0;
+}
+.d-bar .lbl .nm {
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.d-bar .lbl .tm {
+  font-family: var(--font-m);
+  font-size: 9.5px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  margin-top: 1px;
+}
+.d-bar .amt {
+  font-family: var(--font-m);
+  font-size: 12.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+/* composition rows (savings) */
+.d-comp {
+  padding: 6px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.d-comp .row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.d-comp .row .top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.d-comp .row .top .lbl {
+  color: var(--dim);
+}
+.d-comp .row .top .val {
+  font-family: var(--font-m);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+/* incident / alert feed rows */
+.d-arow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+.d-arow .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 9px currentColor;
+}
+.d-arow .tx {
+  flex: 1;
+  min-width: 0;
+}
+.d-arow .tx .m {
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.d-arow .tx .s {
+  font-family: var(--font-m);
+  font-size: 10.5px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+.d-arow .oc {
+  font-family: var(--font-d);
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* status pills */
+.d-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-m);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.d-pill.live {
+  color: var(--mint);
+  border-color: color-mix(in srgb, var(--mint) 32%, transparent);
+  background: color-mix(in srgb, var(--mint) 9%, transparent);
+}
+.d-pill.near {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 34%, transparent);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+.d-pill.over {
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 38%, transparent);
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+}
+.d-pill.dead {
+  color: var(--faint);
+  border-color: var(--line-2);
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
+}
+
+/* interactive rows table (runs, identities, policies, ...) */
+.d-th,
+.d-tr {
+  display: grid;
+  align-items: center;
+  gap: 14px;
+}
+.d-th {
+  padding: 11px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.d-th span {
+  font-family: var(--font-m);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.d-th span.r,
+.d-tr .cell-r {
+  text-align: right;
+}
+.d-tr {
+  padding: 11px 20px;
+  border-top: 1px solid var(--line);
+}
+.d-tr:first-of-type {
+  border-top: 0;
+}
+.d-tr:hover {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.d-run {
+  min-width: 0;
+}
+.d-run .rid {
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.d-run .rag {
+  display: block;
+  font-family: var(--font-m);
+  font-size: 10.5px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-top: 2px;
+  cursor: pointer;
+  text-align: left;
+  max-width: 100%;
+}
+.d-run .rag:hover {
+  color: var(--fg);
+}
+.d-spentcell {
+  font-family: var(--font-m);
+  font-variant-numeric: tabular-nums;
+}
+.d-spentcell .amt {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--fg);
+  margin-bottom: 6px;
+}
+.d-spentcell .amt .cap {
+  color: var(--dim);
+}
+.d-num {
+  font-family: var(--font-m);
+  font-size: 12px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.d-acts {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+/* clickable drill-down rows (open detail in place, never switch tab) */
+.d-bar.clk,
+.d-arow.clk {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.d-bar.clk {
+  margin: 0 -8px;
+  padding: 4px 8px;
+  border-radius: 9px;
+}
+.d-bar.clk:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.d-bar.clk:hover .nm {
+  color: var(--iris);
+}
+.d-arow.clk:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.d-bar.clk:focus-visible,
+.d-arow.clk:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+@media (max-width: 1080px) {
+  .d-band,
+  .d-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* freshness-grammar badge (FreshBadge.tsx) - lives in a Section's `right`
+   slot. Tone classes reuse the fuse palette (mint/iris/amber) plus the
+   neutral dim/faint tokens; the dot is `currentColor` so it always tracks
+   the tone. Reduced-motion is handled by the app-wide `* { animation: none
+   !important; }` reset above, not repeated here. */
+.d-fresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-m);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  white-space: nowrap;
+}
+.d-fresh .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.d-fresh .dot.pulse {
+  animation: d-fresh-pulse 1.6s ease-in-out infinite;
+}
+@keyframes d-fresh-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.78);
+  }
+}
+.d-fresh-detail {
+  color: inherit;
+  opacity: 0.82;
+}
+.d-fresh.mint {
+  color: var(--mint);
+  border-color: color-mix(in srgb, var(--mint) 32%, transparent);
+  background: color-mix(in srgb, var(--mint) 9%, transparent);
+}
+.d-fresh.iris {
+  color: var(--iris);
+  border-color: color-mix(in srgb, var(--iris) 32%, transparent);
+  background: color-mix(in srgb, var(--iris) 9%, transparent);
+}
+.d-fresh.amber {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 34%, transparent);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+.d-fresh.dim {
+  color: var(--dim);
+  border-color: var(--line-2);
+  background: color-mix(in srgb, var(--dim) 7%, transparent);
+}
+.d-fresh.faint {
+  color: var(--faint);
+  border-color: var(--line-2);
+  background: color-mix(in srgb, var(--faint) 6%, transparent);
+}
+.d-fresh.clk {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.d-fresh.clk:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.d-fresh.clk:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: 1px;
+}

@@ -31,7 +31,7 @@ struct CryptoView: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 environmentChip
                 scanControls
 
@@ -39,25 +39,50 @@ struct CryptoView: View {
                     ErrorBannerView(message: bannerMessage)
                 }
 
-                section(title: "PQC Readiness Timeline") {
-                    if let ncscReport = model.ncscReport {
-                        NcscTimelineHero(report: ncscReport)
-                    } else {
-                        placeholder("run a scan to see the PQC readiness timeline.")
-                    }
+                dashboard
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The PQC readiness timeline as the hero itself (the three NCSC
+    /// milestone cards - already documented as this panel's "hero" before
+    /// this conversion), beside findings/CBOM/evidence-score tiles, then the
+    /// findings + CBOM tables (primary) and the Evidence section (rail).
+    /// Every card `.onDemand` - qryx never auto-refreshes, every number here
+    /// is honestly "as of last scan" (design spec's Crypto blueprint,
+    /// section 5).
+    private var dashboard: some View {
+        let findings = model.ncscReport?.discovery2028.quantumVulnerableFindings
+        let cbomCount = CbomParser.components(fromJson: model.cbomJson).count
+        let scorePct = model.evidenceReport?.summary.scorePct
+        let lastScan = LastScanFormat.clock(model.lastScanAt)
+
+        return VStack(spacing: 16) {
+            HeroBand {
+                ncscHero
+            } tiles: {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                    KpiTile(
+                        label: "quantum-vulnerable", value: Dash.int((findings ?? []).count),
+                        sub: findingsSeverityBreakdown(findings ?? []), tone: (findings?.isEmpty ?? true) ? nil : Theme.coral)
+                    KpiTile(label: "CBOM components", value: Dash.int(cbomCount), sub: "scan_cbom inventory")
+                    KpiTile(
+                        label: "evidence score", value: scorePct.map { "\($0)%" } ?? "n/a",
+                        sub: model.evidenceScope.label, tone: scorePct.map(scoreTone))
                 }
-                section(title: "Quantum-Vulnerable Findings") {
-                    if let ncscReport = model.ncscReport {
-                        QuantumVulnerableFindingsSection(
-                            findings: ncscReport.discovery2028.quantumVulnerableFindings)
-                    } else {
-                        placeholder("run a scan to see quantum-vulnerable findings.")
-                    }
+            }
+
+            DashMain {
+                DashSection(title: "Quantum-Vulnerable Findings", badge: .onDemand(last: lastScan)) {
+                    QuantumVulnerableFindingsSection(findings: findings, isScanning: model.isScanning)
                 }
-                section(title: "CBOM Inventory") {
+                DashSection(title: "CBOM Inventory", badge: .onDemand(last: lastScan)) {
                     CbomInventorySection(json: model.cbomJson, isScanning: model.isScanning)
                 }
-                section(title: "Evidence") {
+            } rail: {
+                DashSection(title: "Evidence", badge: .onDemand(last: lastScan)) {
                     EvidenceSection(
                         report: model.evidenceReport,
                         scope: Binding(get: { model.evidenceScope }, set: { model.evidenceScope = $0 }),
@@ -68,16 +93,47 @@ struct CryptoView: View {
                     )
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func placeholder(_ text: String) -> some View {
-        Text(model.isScanning ? "scanning..." : text)
-            .font(Theme.mono(12))
-            .foregroundStyle(Theme.textTertiary)
-            .padding(.vertical, 4)
+    @ViewBuilder
+    private var ncscHero: some View {
+        if let ncscReport = model.ncscReport {
+            NcscTimelineHero(report: ncscReport)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("PQC readiness timeline")
+                    .font(Theme.mono(10.5, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(Theme.textTertiary)
+                Text(model.isScanning ? "scanning..." : "run a scan to see the PQC readiness timeline.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dashCard()
+        }
+    }
+
+    /// "findings by severity" for the hero tile's sub-line - the same
+    /// named-bucket shape `IdentityView.severityBreakdown` uses, duplicated
+    /// locally rather than shared (each view's own small, panel-specific
+    /// derivation, matching this codebase's established convention).
+    private func findingsSeverityBreakdown(_ findings: [NcscFindingRecord]) -> String {
+        let counts = ["critical", "high", "medium", "low"].map { severity in
+            (severity, findings.filter { $0.severity.lowercased() == severity }.count)
+        }
+        let parts = counts.filter { $0.1 > 0 }.map { "\($0.1) \($0.0)" }
+        if !parts.isEmpty { return parts.joined(separator: " \u{00B7} ") }
+        return findings.isEmpty ? "none found" : "unclassified"
+    }
+
+    private func scoreTone(_ pct: Int64) -> Color {
+        if pct >= 90 { return Theme.mint }
+        if pct >= 60 { return Theme.amber }
+        return Theme.coral
     }
 
     @ViewBuilder
@@ -113,27 +169,23 @@ struct CryptoView: View {
 
     /// The on-demand scan controls: an editable target path (pre-filled from
     /// `CryptoHandle.defaultScanTarget()`, never enforced - docs/PHASE4.md
-    /// W1: "operator can see/set it"), a Scan button, and the "as of last
-    /// scan" label every section below honors.
+    /// W1: "operator can see/set it") and a Scan button. The "as of last
+    /// scan" time itself now lives in every section's own `.onDemand` badge
+    /// below, rather than a second, separately-worded copy up here.
     private var scanControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                TextField(
-                    "path to scan", text: Binding(get: { model.scanTarget }, set: { model.scanTarget = $0 })
-                )
-                .textFieldStyle(.plain)
-                .font(Theme.mono(11.5))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.panelElevated))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hairlineStrong, lineWidth: 1))
+        HStack(spacing: 8) {
+            TextField(
+                "path to scan", text: Binding(get: { model.scanTarget }, set: { model.scanTarget = $0 })
+            )
+            .textFieldStyle(.plain)
+            .font(Theme.mono(11.5))
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.panelElevated))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hairlineStrong, lineWidth: 1))
 
-                scanButton
-            }
-            Text(LastScanFormat.label(model.lastScanAt))
-                .font(Theme.mono(10.5))
-                .foregroundStyle(Theme.textTertiary)
+            scanButton
         }
     }
 
@@ -159,17 +211,6 @@ struct CryptoView: View {
         }
         .buttonStyle(.plain)
         .disabled(model.isScanning)
-    }
-
-    @ViewBuilder
-    private func section<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.textTertiary)
-            content()
-        }
     }
 }
 
@@ -208,13 +249,18 @@ private struct NcscTimelineHero: View {
                     // docs/PHASE4.md W1 guard: migrated_count is ALWAYS 0 -
                     // labeled as "not tracked", never as real progress.
                     note:
-                        "migrated: not tracked (\(report.highestPriority2031.migratedCount)) \u{2014} qryx keeps no cross-run remediation state"
+                        "migrated: not tracked (\(report.highestPriority2031.migratedCount)) \u{00B7} qryx keeps no cross-run remediation state"
                 )
                 MilestoneCard(
                     year: "2035", title: "Full Migration", verdict: report.fullMigration2035.verdict,
                     stats: [("in scope", String(report.fullMigration2035.count))], note: nil)
             }
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dashCard()
     }
 
     private struct MilestoneCard: View {
@@ -294,39 +340,47 @@ private struct NcscTimelineHero: View {
 /// `NcscPriority`/`NcscFullMigration`).
 @MainActor
 private struct QuantumVulnerableFindingsSection: View {
-    let findings: [NcscFindingRecord]
+    /// `nil` before the first scan this session (honestly distinct from a
+    /// scan that came back clean) - mirrors `CbomInventorySection.json`'s
+    /// own nil-vs-empty split just below.
+    let findings: [NcscFindingRecord]?
+    let isScanning: Bool
 
     private static let displayLimit = 100
 
     var body: some View {
-        if findings.isEmpty {
-            Text("no quantum-vulnerable findings in the 2028 discovery milestone.")
-                .font(Theme.mono(12))
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
-        } else {
-            let shown = Array(findings.prefix(Self.displayLimit))
-            VStack(spacing: 0) {
-                header
-                Divider().overlay(Theme.hairlineStrong)
-                ForEach(Array(shown.enumerated()), id: \.offset) { index, finding in
-                    FindingRow(finding: finding)
-                    if index < shown.count - 1 {
-                        Divider().overlay(Theme.hairline)
+        if let findings {
+            if findings.isEmpty {
+                Text("no quantum-vulnerable findings in the 2028 discovery milestone.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 20)
+            } else {
+                let shown = Array(findings.prefix(Self.displayLimit))
+                VStack(spacing: 0) {
+                    header
+                    Divider().overlay(Theme.hairlineStrong)
+                    ForEach(Array(shown.enumerated()), id: \.offset) { index, finding in
+                        if index > 0 { Divider().overlay(Theme.hairline) }
+                        FindingRow(finding: finding)
                     }
                 }
+                .padding(.bottom, 4)
+                if findings.count > Self.displayLimit {
+                    Text("+\(findings.count - Self.displayLimit) more (showing \(Self.displayLimit))")
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
             }
-            .background(Theme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .strokeBorder(Theme.hairline, lineWidth: 1)
-            )
-            if findings.count > Self.displayLimit {
-                Text("+\(findings.count - Self.displayLimit) more (showing \(Self.displayLimit))")
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textTertiary)
-            }
+        } else {
+            Text(isScanning ? "scanning..." : "run a scan to see quantum-vulnerable findings.")
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
         }
     }
 
@@ -339,9 +393,9 @@ private struct QuantumVulnerableFindingsSection: View {
             columnLabel("LOCATIONS").frame(maxWidth: .infinity, alignment: .leading)
             columnLabel("FLAGS").frame(width: 160, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
         .padding(.vertical, 8)
-        .background(Theme.panelElevated)
     }
 
     private func columnLabel(_ text: String) -> some View {
@@ -383,7 +437,7 @@ private struct QuantumVulnerableFindingsSection: View {
                 flags
                     .frame(width: 160, alignment: .trailing)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 20)
             .padding(.vertical, 8)
         }
 
@@ -433,12 +487,14 @@ private struct CbomInventorySection: View {
             Text(isScanning ? "scanning..." : "run a scan to see the CBOM inventory.")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
         } else if components.isEmpty {
             Text("no components in this CBOM.")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 if let specVersion = CbomParser.specVersion(fromJson: json) {
@@ -447,30 +503,26 @@ private struct CbomInventorySection: View {
                     )
                     .font(Theme.mono(10.5))
                     .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 20)
                 }
                 let shown = Array(components.prefix(Self.displayLimit))
                 VStack(spacing: 0) {
                     header
                     Divider().overlay(Theme.hairlineStrong)
                     ForEach(Array(shown.enumerated()), id: \.offset) { index, component in
+                        if index > 0 { Divider().overlay(Theme.hairline) }
                         ComponentRow(component: component)
-                        if index < shown.count - 1 {
-                            Divider().overlay(Theme.hairline)
-                        }
                     }
                 }
-                .background(Theme.panel)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                        .strokeBorder(Theme.hairline, lineWidth: 1)
-                )
                 if components.count > Self.displayLimit {
                     Text("+\(components.count - Self.displayLimit) more (showing \(Self.displayLimit))")
                         .font(Theme.mono(10.5))
                         .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 20)
                 }
             }
+            .padding(.top, 6)
+            .padding(.bottom, 8)
         }
     }
 

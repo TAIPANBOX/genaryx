@@ -155,9 +155,11 @@ struct GenaryxApp: App {
                 Group {
                     switch tab {
                     case .overview:
-                        OverviewView(model: cloudModel)
+                        OverviewView(model: cloudModel, onOpenAgent: { agentFocus = AgentFocus(agentId: $0) })
                     case .money:
-                        MoneyView(model: cloudModel, onOpenReplay: openReplay)
+                        MoneyView(
+                            model: cloudModel, onOpenReplay: openReplay,
+                            onOpenAgent: { agentFocus = AgentFocus(agentId: $0) })
                     case .policy:
                         PolicyView(
                             model: policyModel, busEvents: model.events, notifications: notifications,
@@ -196,7 +198,7 @@ struct GenaryxApp: App {
                     }
                 }
             }
-            .frame(minWidth: 900, minHeight: 600)
+            .frame(minWidth: 1120, minHeight: 640)
             .sheet(item: $agentFocus) { focus in
                 Agent360View(
                     agentId: focus.agentId, fleetModel: model, cloudModel: cloudModel, policyModel: policyModel,
@@ -346,8 +348,10 @@ private struct TabBar: View {
                     } label: {
                         Text(item.rawValue)
                             .font(Theme.mono(11.5, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                             .foregroundStyle(tab == item ? Theme.textPrimary : Theme.textSecondary)
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 11)
                             .padding(.vertical, 6)
                             .background(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)

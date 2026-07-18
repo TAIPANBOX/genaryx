@@ -20,17 +20,25 @@ const FIELD_STYLE = {
  * selector cosine/spreading/hybrid, + limit) that runs `recall` on demand
  * and shows the ranked memories, most relevant first (the array already
  * arrives in that order - see `EngramMemory`'s doc comment). Never runs on
- * its own; results are labeled "as of last query". Selecting a row hands
- * its id up to `MemoryProvenance` via `onSelect`.
+ * its own; results are labeled "as of last query" both inline (precise, tied
+ * to the currently-shown result set) and, via `onQueried`, on
+ * `MemoryView.tsx`'s Recall section badge (the freshness-grammar `onDemand`
+ * pill in the `Section` header). Selecting a row hands its id up to
+ * `MemoryProvenance` via `onSelect`.
  */
 export function MemoryRecall({
   agentId,
   selectedId,
   onSelect,
+  onQueried,
 }: {
   agentId: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Fires with the query's completion time right after a successful
+   * `recall`, so the parent can mirror "as of last query" onto this
+   * section's freshness badge. */
+  onQueried: (ms: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<RecallMode>("cosine");
@@ -47,20 +55,19 @@ export function MemoryRecall({
     try {
       const hits = await recall(query, limit, mode, agentId);
       setResults(hits);
-      setQueriedAtMs(Date.now());
+      const now = Date.now();
+      setQueriedAtMs(now);
+      onQueried(now);
     } catch (err) {
       setError(err as MemoryError);
     } finally {
       setLoading(false);
     }
-  }, [query, limit, mode, agentId]);
+  }, [query, limit, mode, agentId, onQueried]);
 
   return (
     <div className="flex flex-col gap-3">
-      <div
-        className="panel px-4 py-3 flex flex-wrap items-center gap-2"
-        style={{ background: "var(--panel-2)" }}
-      >
+      <div className="d-card px-4 py-3 flex flex-wrap items-center gap-2">
         <input
           className="mono flex-1"
           style={{ ...FIELD_STYLE, minWidth: 160 }}
@@ -107,10 +114,7 @@ export function MemoryRecall({
       </div>
 
       {error && (
-        <div
-          className="panel px-3 py-2 mono text-[11.5px]"
-          style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}
-        >
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeMemoryError(error)}
         </div>
       )}
@@ -129,13 +133,12 @@ export function MemoryRecall({
             as of last query
             {queriedAtMs !== null ? ` · ${new Date(queriedAtMs).toLocaleTimeString()}` : ""}
           </span>
-          <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
             <div
-              className="grid gap-3 px-4 py-2"
+              className="grid gap-3 px-5 py-2"
               style={{
                 gridTemplateColumns: COLUMNS,
-                borderBottom: "1px solid var(--line-2)",
-                background: "var(--panel-2)",
+                borderBottom: "1px solid var(--line)",
               }}
             >
               {["content", "score", "importance", "timestamp", "actors", "tags"].map((label) => (
@@ -160,7 +163,7 @@ export function MemoryRecall({
                   key={m.id}
                   type="button"
                   onClick={() => onSelect(m.id)}
-                  className="grid items-center gap-3 px-4 py-2.5 bus-row w-full text-left"
+                  className="grid items-center gap-3 px-5 py-2.5 bus-row w-full text-left"
                   style={{
                     gridTemplateColumns: COLUMNS,
                     background: active

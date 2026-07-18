@@ -2,3 +2,6 @@
 # Mirrors crates/ffi/.gitignore.
 Sources/GenaryxCoreFFI/Generated/
 Binary/
+
+# built app bundle (screenshot/demo artifact, not source)
+Genaryx.app/

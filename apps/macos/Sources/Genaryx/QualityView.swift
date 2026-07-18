@@ -18,7 +18,11 @@ struct QualityView: View {
     /// Alerts - see the type doc.
     let busEvents: [UiEvent]
 
-    private static let refreshInterval: Duration = .seconds(20)
+    // PARITY FIX (design spec section 7 item 4): Quality keeps its own
+    // auto-poll (unlike Identity's load-once idryx serve), just slowed from
+    // 20s to 60s - eval history changes only as fast as `verdryx eval` runs
+    // complete, not worth a 20s hammer on verdryx.db.
+    private static let refreshInterval: Duration = .seconds(60)
 
     var body: some View {
         Group {
@@ -41,14 +45,54 @@ struct QualityView: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 environmentChip
 
                 if let bannerMessage = model.bannerMessage {
                     ErrorBannerView(message: bannerMessage)
                 }
 
-                section(title: "Eval Runs") {
+                dashboard
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Hero (eval runs, latest mean score, baselines) over the Eval Runs
+    /// history + its Run Detail (primary column), plus Baselines and the
+    /// live Drift Alerts feed (rail) - the design spec's Quality blueprint
+    /// (section 5): history sections are `.window`, Drift Alerts is `.live`.
+    private var dashboard: some View {
+        // `evalRuns` is newest-started-first (the connector's own sort - see
+        // `QualityModel.evalRuns`'s doc comment), so `.first` is the latest.
+        let latestRun = model.evalRuns.first
+        let latestSummary = latestRun.flatMap { model.runSummaries[$0.id] }
+        let series = model.evalRuns.reversed().compactMap { model.runSummaries[$0.id]?.meanScore }
+        let heroSub: Text =
+            latestRun.map { run in
+                Text("run ") + Text(run.id).foregroundColor(Theme.textPrimary).fontWeight(.semibold)
+                    + Text(" \u{00B7} \(run.model)")
+            } ?? Text("no eval runs yet")
+        let refresh: () -> Void = { Task { await model.refresh() } }
+
+        return VStack(spacing: 16) {
+            HeroBand {
+                HeroCard(
+                    cap: "Quality \u{00B7} latest mean score",
+                    value: QualityFormat.meanScore(latestSummary?.meanScore),
+                    sub: heroSub,
+                    series: series.count >= 2 ? series : nil
+                )
+            } tiles: {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                    KpiTile(label: "eval runs", value: Dash.int(model.evalRuns.count), sub: "in verdryx.db")
+                    KpiTile(label: "baselines", value: Dash.int(model.baselines.count), sub: "saved snapshots")
+                }
+            }
+
+            DashMain {
+                DashSection(title: "Eval Runs", badge: .window(label: "history"), onRefresh: refresh) {
                     EvalRunsSection(
                         runs: model.evalRuns,
                         summaries: model.runSummaries,
@@ -56,19 +100,18 @@ struct QualityView: View {
                         onSelect: { runId in await model.selectRun(runId) }
                     )
                 }
-                section(title: "Run Detail") {
+                DashSection(title: "Run Detail", badge: .window(label: "history"), onRefresh: refresh) {
                     RunDetailSection(
                         summary: model.selectedRunSummary, scores: model.scores, isLoading: model.isLoadingDetail)
                 }
-                section(title: "Baselines") {
+            } rail: {
+                DashSection(title: "Baselines", badge: .window(label: "history"), onRefresh: refresh) {
                     BaselinesSection(baselines: model.baselines)
                 }
-                section(title: "Drift Alerts") {
+                DashSection(title: "Drift Alerts", badge: .live) {
                     DriftAlertsSection(events: driftEvents)
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -118,17 +161,6 @@ struct QualityView: View {
             "working directory"
         }
     }
-
-    @ViewBuilder
-    private func section<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.textTertiary)
-            content()
-        }
-    }
 }
 
 // MARK: - EvalRunsSection
@@ -145,25 +177,30 @@ private struct EvalRunsSection: View {
     private static let displayLimit = 100
 
     var body: some View {
-        if runs.isEmpty {
-            Text("no eval runs in verdryx.db yet.")
-                .font(Theme.mono(12))
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
-        } else {
-            VStack(spacing: 8) {
-                ForEach(Array(runs.prefix(Self.displayLimit)), id: \.id) { run in
-                    EvalRunRow(
-                        run: run, summary: summaries[run.id], isSelected: run.id == selectedRunId,
-                        onSelect: { Task { await onSelect(run.id) } })
+        VStack(alignment: .leading, spacing: 8) {
+            if runs.isEmpty {
+                Text("no eval runs in verdryx.db yet.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(Array(runs.prefix(Self.displayLimit)), id: \.id) { run in
+                        EvalRunRow(
+                            run: run, summary: summaries[run.id], isSelected: run.id == selectedRunId,
+                            onSelect: { Task { await onSelect(run.id) } })
+                    }
+                }
+                if runs.count > Self.displayLimit {
+                    Text("+\(runs.count - Self.displayLimit) more (showing newest \(Self.displayLimit))")
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textTertiary)
                 }
             }
-            if runs.count > Self.displayLimit {
-                Text("+\(runs.count - Self.displayLimit) more (showing newest \(Self.displayLimit))")
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textTertiary)
-            }
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 16)
     }
 
     /// One eval run: model + id + started/finished, plus (once its
@@ -279,6 +316,9 @@ private struct RunDetailSection: View {
                 scoresTable
             }
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 14)
     }
 
     private func headerStats(_ summary: RunSummaryRecord) -> some View {
@@ -298,25 +338,18 @@ private struct RunDetailSection: View {
             scoresHeader
             Divider().overlay(Theme.hairlineStrong)
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, score in
+                if index > 0 { Divider().overlay(Theme.hairline) }
                 ScoreRow(score: score)
-                if index < shown.count - 1 {
-                    Divider().overlay(Theme.hairline)
-                }
             }
             if scores.count > Self.displayLimit {
                 Text("+\(scores.count - Self.displayLimit) more (showing first \(Self.displayLimit))")
                     .font(Theme.mono(10.5))
                     .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 14)
                     .padding(.vertical, 6)
             }
         }
-        .background(Theme.panel)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                .strokeBorder(Theme.hairline, lineWidth: 1)
-        )
+        .background(Theme.panelElevated.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
     }
 
     private var scoresHeader: some View {
@@ -328,7 +361,6 @@ private struct RunDetailSection: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Theme.panelElevated)
     }
 
     private func columnLabel(_ text: String) -> some View {
@@ -388,18 +420,23 @@ private struct BaselinesSection: View {
     let baselines: [BaselineRecord]
 
     var body: some View {
-        if baselines.isEmpty {
-            Text("no baselines saved.")
-                .font(Theme.mono(12))
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
-        } else {
-            VStack(spacing: 8) {
-                ForEach(baselines, id: \.id) { baseline in
-                    BaselineRow(baseline: baseline)
+        VStack(alignment: .leading, spacing: 8) {
+            if baselines.isEmpty {
+                Text("no baselines saved.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(baselines, id: \.id) { baseline in
+                        BaselineRow(baseline: baseline)
+                    }
                 }
             }
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 16)
     }
 
     private struct BaselineRow: View {
@@ -456,23 +493,17 @@ private struct DriftAlertsSection: View {
             Text("no quality_drift events yet - drift alerts fire only on a real regression.")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textTertiary)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
         } else {
             let shown = Array(events.prefix(Self.displayLimit))
             VStack(spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.rowKey) { index, event in
+                    if index > 0 { Divider().overlay(Theme.hairline) }
                     DriftAlertRow(event: event)
-                    if index < shown.count - 1 {
-                        Divider().overlay(Theme.hairline)
-                    }
                 }
             }
-            .background(Theme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .strokeBorder(Theme.hairline, lineWidth: 1)
-            )
+            .padding(.bottom, 4)
         }
     }
 
@@ -503,7 +534,7 @@ private struct DriftAlertsSection: View {
                     .foregroundStyle(Theme.textTertiary)
                     .frame(width: 118, alignment: .trailing)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 20)
             .padding(.vertical, 9)
         }
 

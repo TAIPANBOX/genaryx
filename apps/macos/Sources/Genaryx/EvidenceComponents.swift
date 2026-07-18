@@ -125,3 +125,46 @@ enum EvidenceSizeFormat {
         formatter.string(fromByteCount: Int64(bytes))
     }
 }
+
+// MARK: - "as of last build" formatting
+
+/// The Evidence panel's "as of last build" clock for a `FreshBadge.onDemand`
+/// - docs/PHASE4.md W3: a pack is built only on an explicit "Build evidence
+/// pack" press, never auto-refreshed. Reads the pack's own
+/// `manifest.generatedAt` (RFC3339, stamped by `EvidenceModel.build` at
+/// build time) rather than a separately-tracked "when did the Swift model
+/// last touch this" timestamp - mirrors `DrillRunFormat`'s identical
+/// reasoning for `DrillReportRecord.generatedAt`. `nil` before any pack has
+/// been built this session, matching `FreshBadge.onDemand(last:)`'s own "no
+/// last action" case.
+enum EvidenceBuiltFormat {
+    static func clock(_ pack: EvidencePackRecord?) -> String? {
+        guard let pack, let date = isoDate(pack.manifest.generatedAt) else { return nil }
+        return clockFormatter.string(from: date)
+    }
+
+    private static func isoDate(_ iso: String) -> Date? {
+        isoFrac.date(from: iso) ?? isoPlain.date(from: iso)
+    }
+
+    // `nonisolated(unsafe)`: configured once at first access and only ever
+    // read afterward, the same reasoning `MoneyFormat`'s own formatters
+    // document - `ISO8601DateFormatter` does not conform to `Sendable` on
+    // this SDK, unlike `DateFormatter` below.
+    private nonisolated(unsafe) static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private nonisolated(unsafe) static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+}

@@ -196,6 +196,32 @@ private struct TTLCountdownTile: View {
     }
 }
 
+// MARK: - PolicyDate
+
+/// Parses the RFC3339 UTC timestamps `ApprovalRecord.decidedAt`/`requestedAt`
+/// carry (see the generated binding's own doc comment) into a `Date`, for the
+/// hero band's "decided today" count - the one derived stat this view
+/// computes locally rather than reading directly off a DTO field. Mirrors
+/// `Dash`'s own private `isoFrac`/`isoPlain` pair (`DashKit.swift`), kept as
+/// a second small copy rather than exposed from there so `DashKit.swift`
+/// stays a pure, panel-agnostic kit.
+enum PolicyDate {
+    static func parse(_ iso: String) -> Date? {
+        isoFrac.date(from: iso) ?? isoPlain.date(from: iso)
+    }
+
+    private nonisolated(unsafe) static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private nonisolated(unsafe) static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+}
+
 // MARK: - UiEvent wardryx `data` parsing (Decision Stream)
 
 /// Best-effort extraction of the couple of `data.*` fields the Decision

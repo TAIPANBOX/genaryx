@@ -27,7 +27,7 @@ struct DrillsView: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 environmentChip
                 runControls
 
@@ -35,24 +35,76 @@ struct DrillsView: View {
                     ErrorBannerView(message: bannerMessage)
                 }
 
-                if let report = model.report {
-                    section(title: "Verdict") {
-                        VerdictHero(report: report)
-                    }
-                    section(title: "Scenario Results") {
-                        ScenarioResultsSection(results: report.results)
-                    }
-                } else {
-                    section(title: "Verdict") {
-                        Text(model.isRunning ? "running..." : "run a drill to see the verdict.")
-                            .font(Theme.mono(12))
-                            .foregroundStyle(Theme.textTertiary)
-                            .padding(.vertical, 4)
-                    }
-                }
+                dashboard
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Verdict hero (held/gap/skip + a FuseBar) over a single full-width
+    /// Scenario Results section - the design spec's Drills blueprint
+    /// (section 5): `.onDemand(last:)`, since mockryx never auto-refreshes
+    /// and every number here is "as of last run". No natural rail content
+    /// exists for a one-report-at-a-time panel (unlike Policy/Quality/
+    /// Crypto's multi-section tabs), so this skips `DashMain`'s primary/rail
+    /// split and renders the one section at full width, matching
+    /// `DashSection`'s own `.frame(maxWidth: .infinity)`.
+    private var dashboard: some View {
+        VStack(spacing: 16) {
+            HeroBand {
+                verdictHero
+            } tiles: {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                    KpiTile(label: "held", value: model.report.map { String($0.heldCount) } ?? "-", tone: Theme.mint)
+                    KpiTile(
+                        label: "gap", value: model.report.map { String($0.gapCount) } ?? "-",
+                        tone: (model.report?.hasGaps ?? false) ? Theme.coral : nil)
+                    KpiTile(label: "skip", value: model.report.map { String($0.skippedCount) } ?? "-")
+                    KpiTile(
+                        label: "budget burned", value: model.report.map { MoneyFormat.usd($0.totalBudgetBurnedUsd) } ?? "-",
+                        tone: Theme.amber)
+                }
+            }
+
+            DashSection(title: "Scenario Results", badge: .onDemand(last: DrillRunFormat.clock(model.report))) {
+                if let report = model.report {
+                    ScenarioResultsSection(results: report.results)
+                        .padding(.top, 6)
+                        .padding(.bottom, 12)
+                } else {
+                    Text(model.isRunning ? "running..." : "run a drill to see the verdict.")
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                }
+            }
+        }
+    }
+
+    /// Falls back to an honest "no run yet" card before the first run (or
+    /// past-saved-report load) completes, mirroring `CryptoView.ncscHero`'s
+    /// own optional-hero precedent.
+    @ViewBuilder
+    private var verdictHero: some View {
+        if let report = model.report {
+            VerdictHero(report: report)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Drills \u{00B7} verdict")
+                    .font(Theme.mono(10.5, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(Theme.textTertiary)
+                Text(model.isRunning ? "running..." : "run a drill to see the verdict.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dashCard()
         }
     }
 
@@ -117,6 +169,13 @@ struct DrillsView: View {
 
                 Spacer(minLength: 0)
             }
+            // A dim, always-visible awareness caption - Run drills sends
+            // real adversarial traffic at a live TokenFuse gateway and
+            // really burns budget (see `DrillsModel`'s own type doc: "genuinely
+            // consequential"), never a dry-run.
+            Text("Runs real gateway calls and burns real budget.")
+                .font(Theme.mono(10, weight: .medium))
+                .foregroundStyle(Theme.textTertiary)
         }
     }
 
@@ -154,62 +213,82 @@ struct DrillsView: View {
         .buttonStyle(.plain)
         .disabled(model.isRunning)
     }
+}
 
-    @ViewBuilder
-    private func section<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.textTertiary)
-            content()
-        }
-    }
+// MARK: - DrillReportRecord verdict derivations
+
+/// Held/gap/skip counts + total budget burned, shared by `VerdictHero` and
+/// `DrillsView.dashboard`'s own KPI tiles - one small file-local extension
+/// rather than two copies of the same three filters (`ScenarioResultsSection`
+/// and the old `VerdictHero.summaryCounts` duplicated this logic before the
+/// dashboard conversion; folded into one place now that two call sites need
+/// it). Mirrors `CryptoView.findingsSeverityBreakdown` in spirit (a small
+/// panel-specific derivation), just factored as a type extension instead of
+/// a free function since two different views in this file both need it.
+extension DrillReportRecord {
+    fileprivate var heldCount: Int { results.filter { $0.status == "passed" && $0.findings.isEmpty }.count }
+    fileprivate var gapCount: Int { results.filter { !$0.findings.isEmpty || $0.status == "failed" }.count }
+    fileprivate var skippedCount: Int { results.filter { $0.status == "skipped_not_configured" && $0.findings.isEmpty }.count }
+    fileprivate var totalBudgetBurnedUsd: Double { results.reduce(0) { $0 + $1.metrics.budgetBurnedUsd } }
 }
 
 // MARK: - VerdictHero
 
 /// docs/PHASE4.md W2: "rendering the MockryxReport with an overall verdict
-/// from has_gaps()".
+/// from has_gaps()". The dashboard conversion adds a `FuseBar` reading
+/// held/total as its fraction, toned mint when every scenario held and ember
+/// the moment any gap exists (design spec section 5: "verdict hero with
+/// FuseBar, mint all-held, ember gaps") - the color is driven by
+/// `report.hasGaps` itself, not a numeric threshold, so a single gap among a
+/// hundred held scenarios still reads unmistakably as ember.
 @MainActor
 private struct VerdictHero: View {
     let report: DrillReportRecord
 
+    private var total: Int { report.results.count }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Drills \u{00B7} verdict")
+                .font(Theme.mono(10.5, weight: .semibold))
+                .tracking(1.6)
+                .foregroundStyle(Theme.textTertiary)
+
+            HStack(alignment: .lastTextBaseline, spacing: 14) {
                 Text(DrillVerdictFormat.label(hasGaps: report.hasGaps))
-                    .font(Theme.mono(16, weight: .bold))
+                    .font(Theme.display(30, weight: .heavy))
                     .foregroundStyle(DrillVerdictFormat.color(hasGaps: report.hasGaps))
-                Text("run \(report.runId) \u{00B7} gateway \(report.gateway)")
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .minimumScaleFactor(0.6)
+                Spacer(minLength: 8)
+                summaryCounts
             }
-            Spacer(minLength: 8)
-            summaryCounts
+            .padding(.top, 6)
+
+            if total > 0 {
+                FuseBar(fraction: Double(report.heldCount) / Double(total), tone: report.hasGaps ? .ember : .mint)
+                    .padding(.top, 6)
+            }
+
+            Text("run \(report.runId) \u{00B7} gateway \(report.gateway)")
+                .font(Theme.mono(11.5))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.top, 6)
         }
-        .padding(14)
+        .padding(.horizontal, 24)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                .fill(Theme.panelElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                .strokeBorder(DrillVerdictFormat.color(hasGaps: report.hasGaps).opacity(0.4), lineWidth: 1)
-        )
+        .dashCard()
     }
 
     private var summaryCounts: some View {
-        let held = report.results.filter { $0.status == "passed" && $0.findings.isEmpty }.count
-        let gaps = report.results.filter { !$0.findings.isEmpty || $0.status == "failed" }.count
-        let skipped = report.results.filter { $0.status == "skipped_not_configured" && $0.findings.isEmpty }.count
-        return HStack(spacing: 14) {
-            countTile("held", held, Theme.mint)
-            countTile("gap", gaps, Theme.coral)
-            countTile("skip", skipped, Theme.textTertiary)
+        HStack(spacing: 14) {
+            countTile("held", report.heldCount, Theme.mint)
+            countTile("gap", report.gapCount, Theme.coral)
+            countTile("skip", report.skippedCount, Theme.textTertiary)
         }
     }
 

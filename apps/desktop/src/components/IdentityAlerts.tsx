@@ -58,22 +58,18 @@ function formatAlertTime(iso: string): string {
 /**
  * The alert stream (docs/PHASE3.md W2): the 21 detectors from
  * `GET /api/alerts` (or the freshest `identity_rescan` result once one has
- * run), with severity-filter chips AND a detector-id filter, plus the
- * Rescan action. Read-only: there is no decision/mutation here at all,
- * unlike `ApprovalsInbox`'s Grant/Deny - Rescan only ever recomputes and
- * replaces this list.
+ * run), with severity-filter chips AND a detector-id filter. Read-only:
+ * there is no decision/mutation here at all, unlike `ApprovalsInbox`'s
+ * Grant/Deny. Rescan itself lives at the top of `IdentityView.tsx` next to
+ * the freshness badge (Genaryx v2 design spec section 5: "Refresh and
+ * Rescan buttons next to the badge") rather than in this filter row - this
+ * component only ever renders whatever the parent's `alerts` prop holds.
  */
 export function IdentityAlerts({
   alerts,
-  onRescan,
-  rescanning,
-  rescanAvailable,
   onOpenAgent,
 }: {
   alerts: IdryxAlert[];
-  onRescan: () => void;
-  rescanning: boolean;
-  rescanAvailable: boolean;
   /** Phase-3 wave-3 deep link (docs/PHASE3.md W3): opens the Agent 360 card
    * for a row's `identity`. */
   onOpenAgent: (agentId: string) => void;
@@ -125,21 +121,6 @@ export function IdentityAlerts({
             </option>
           ))}
         </select>
-        <div className="flex-1" />
-        <button
-          type="button"
-          className="icon-btn"
-          style={{ width: "auto", padding: "0 10px", fontSize: 11, whiteSpace: "nowrap" }}
-          onClick={onRescan}
-          disabled={!rescanAvailable || rescanning}
-          title={
-            rescanAvailable
-              ? "Recompute the 21 detectors now (idryx detect)"
-              : "Rescan needs the idryx binary at ~/.taipan/bin/idryx, which was not found"
-          }
-        >
-          {rescanning ? "Rescanning..." : "Rescan"}
-        </button>
       </div>
 
       {alerts.length === 0 ? (
@@ -151,10 +132,10 @@ export function IdentityAlerts({
           no alerts match the selected filters.
         </div>
       ) : (
-        <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
           <div
-            className="grid gap-3 px-4 py-2"
-            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+            className="grid gap-3 px-5 py-2"
+            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
           >
             {["severity", "detector", "identity", "time", "summary"].map((label) => (
               <span
@@ -169,7 +150,7 @@ export function IdentityAlerts({
           {rows.map((a, idx) => (
             <div
               key={`${a.detector}-${a.identity}-${a.time}-${idx}`}
-              className="grid items-center gap-3 px-4 py-2 bus-row"
+              className="grid items-center gap-3 px-5 py-2 bus-row"
               style={{ gridTemplateColumns: COLUMNS }}
             >
               <SeverityBadge severity={a.severity} />

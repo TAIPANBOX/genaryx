@@ -65,7 +65,7 @@ function FindingRow({ finding, gap }: { finding: MockryxFinding; gap: boolean })
 
 function ScenarioCard({ result }: { result: MockryxResult }) {
   return (
-    <div className="panel px-4 py-3 flex flex-col gap-2.5" style={{ background: "var(--panel-2)" }}>
+    <div className="d-card px-4 py-3 flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-2">
         <span className="mono text-[12px]" style={{ color: "var(--fg)", fontWeight: 650 }}>
           {result.scenario}
@@ -135,7 +135,7 @@ export function DrillsResults({ report }: { report: MockryxReport }) {
   const gaps = hasGaps(report);
   return (
     <div className="flex flex-col gap-3">
-      <div className="panel px-4 py-3 flex items-center gap-3" style={{ background: "var(--panel-2)" }}>
+      <div className="d-card px-4 py-3 flex items-center gap-3">
         <span className="badge" style={cssVar("tone", gaps ? "var(--sev-high)" : "var(--sev-low)")}>
           {gaps ? "GAPS FOUND" : "guardrails held"}
         </span>

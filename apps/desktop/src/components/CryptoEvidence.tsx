@@ -3,6 +3,36 @@ import { describeCryptoError, scanEvidence, verifyEvidence } from "../lib/crypto
 import type { CryptoError, EvidenceReport, VerifyOutcome } from "../cryptoTypes";
 import { StatTile } from "./StatTile";
 
+/** Genaryx v2 design spec section 7 parity fix #5: SwiftUI's Evidence
+ * section has a `repository` / `agent stack` scope toggle (`CryptoModel.swift`'s
+ * `EvidenceScope`, backed by two distinct `CryptoHandle` methods -
+ * `scan_evidence` vs `agents_evidence`). The Tauri `crypto_scan_evidence`
+ * command (`src-tauri/src/crypto/commands.rs`) takes only `{ path, sign_key }`
+ * - no scope argument, and there is no second `crypto_agents_evidence`
+ * command either - so this toggle is UI-only for now: visible for parity,
+ * disabled with an honest tooltip, wired to nothing. Flip `disabled` off
+ * once src-tauri grows the argument (or the second command) and thread the
+ * chosen scope into `scanEvidence`. */
+const SCOPE_DISABLED_TITLE = "needs crypto_scan_evidence scope arg (src-tauri)";
+
+function EvidenceScopeToggle() {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[11.5px] shrink-0" style={{ color: "var(--dim)" }}>
+        scope
+      </span>
+      <div className="flex items-center gap-1.5" role="group" aria-label="Evidence scope (not yet wired to the backend)">
+        <button type="button" className="chip" disabled title={SCOPE_DISABLED_TITLE} style={{ opacity: 1 }} aria-pressed="true">
+          repository
+        </button>
+        <button type="button" className="chip" disabled title={SCOPE_DISABLED_TITLE} style={{ opacity: 0.45 }} aria-pressed="false">
+          agent stack
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PathInput({
   value,
   onChange,
@@ -84,10 +114,11 @@ export function CryptoEvidence({ defaultPath }: { defaultPath: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="panel px-4 py-3 flex flex-col gap-2.5" style={{ background: "var(--panel-2)" }}>
+      <div className="d-card px-4 py-3 flex flex-col gap-2.5">
         <span className="text-[11.5px]" style={{ color: "var(--dim)" }}>
           Build an unsigned CNSA evidence bundle for a target path.
         </span>
+        <EvidenceScopeToggle />
         <div className="flex items-center gap-2">
           <PathInput value={buildPath} onChange={setBuildPath} placeholder="/path/to/scan" />
           <button
@@ -128,7 +159,7 @@ export function CryptoEvidence({ defaultPath }: { defaultPath: string }) {
         )}
       </div>
 
-      <div className="panel px-4 py-3 flex flex-col gap-2.5" style={{ background: "var(--panel-2)" }}>
+      <div className="d-card px-4 py-3 flex flex-col gap-2.5">
         <span className="text-[11.5px]" style={{ color: "var(--dim)", lineHeight: 1.6 }}>
           Verify a saved evidence JSON file&apos;s digest and signature - a file already on disk (e.g. from a previous
           qryx run), not necessarily the bundle built above.

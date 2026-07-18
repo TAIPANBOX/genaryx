@@ -103,10 +103,10 @@ export function IdentityList({
           no identities match the selected type filter.
         </div>
       ) : (
-        <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
           <div
-            className="grid gap-3 px-4 py-2"
-            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+            className="grid gap-3 px-5 py-2"
+            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
           >
             {["type", "id", "source", "owner", "privileged", "perms", "events", "alerts", "on_behalf_of"].map(
               (label) => (
@@ -121,7 +121,7 @@ export function IdentityList({
             )}
           </div>
           {rows.map((i) => (
-            <div key={i.id} className="grid items-center gap-3 px-4 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+            <div key={i.id} className="grid items-center gap-3 px-5 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
               <TypeChip type={i.type} />
               <button
                 type="button"

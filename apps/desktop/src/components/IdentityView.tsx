@@ -2,17 +2,24 @@ import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { describeIdentityError, fetchAlerts, fetchIdentities, fetchRemediations, rescan } from "../lib/identity";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
+import { formatHm } from "../lib/format";
 import { ATTESTATION_DETECTORS } from "../identityTypes";
 import type { IdentityError, IdentityStatus, IdryxAlert, IdryxIdentity, IdryxRecommendation } from "../identityTypes";
 import { IdentityAlerts } from "./IdentityAlerts";
 import { IdentityList } from "./IdentityList";
+import { FreshBadge } from "./FreshBadge";
+import { Hero, HeroBand, KpiTile, Section } from "./dash";
 
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <span className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--faint)" }}>
-      {title}
-    </span>
+const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info", "none"] as const;
+
+/** "2 critical · 5 high" style breakdown for the hero's Alerts tile - empty
+ * only when there are truly no alerts (an honest empty state, never a
+ * fabricated "0 critical · 0 high · ..." line). */
+function severityBreakdown(alerts: IdryxAlert[]): string {
+  const parts = SEVERITY_ORDER.map((sev) => ({ sev, count: alerts.filter((a) => a.severity === sev).length })).filter(
+    (x) => x.count > 0,
   );
+  return parts.length > 0 ? parts.map((p) => `${p.count} ${p.sev}`).join(" · ") : "none";
 }
 
 function Loading() {
@@ -142,19 +149,17 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
   }
 
   const attestationAlerts = (alerts ?? []).filter((a) => ATTESTATION_DETECTORS.has(a.detector));
+  const privilegedCount = (identities ?? []).filter((i) => i.privileged).length;
+  const hhmm = asOfMs !== null ? formatHm(asOfMs) : undefined;
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
+    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="chip" style={cssVar("dot", "var(--src-qryx)")}>
           <span className="dot" aria-hidden="true" />
           taipan up &middot; {status.source.name} &middot; {status.idryx_url}
         </span>
-        <span className="chip" style={cssVar("dot", "var(--faint)")}>
-          <span className="dot" aria-hidden="true" />
-          as of load{asOfMs !== null ? ` · fetched ${new Date(asOfMs).toLocaleTimeString()}` : ""}
-        </span>
-        <div className="flex-1" />
+        <FreshBadge variant="snapshot" detail={hhmm} title="idryx serve loads once at startup; this is when the console last read that snapshot" />
         <button
           type="button"
           className="icon-btn"
@@ -163,6 +168,21 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
         >
           Refresh
         </button>
+        <button
+          type="button"
+          className="icon-btn"
+          style={{ width: "auto", padding: "0 10px", fontSize: 11 }}
+          onClick={() => void handleRescan()}
+          disabled={!status.rescan_available || rescanning}
+          title={
+            status.rescan_available
+              ? "Recompute the 21 detectors now (idryx detect)"
+              : "Rescan needs the idryx binary at ~/.taipan/bin/idryx, which was not found"
+          }
+        >
+          {rescanning ? "Rescanning..." : "Rescan"}
+        </button>
+        <div className="flex-1" />
       </div>
 
       <span className="text-[11px]" style={{ color: "var(--faint)" }}>
@@ -171,48 +191,58 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
       </span>
 
       {error && (
-        <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}>
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeIdentityError(error)}
         </div>
       )}
 
-      <div className="panel px-3 py-2.5 flex items-center gap-3" style={{ background: "var(--panel-2)" }}>
-        <span className="text-[11.5px]" style={{ color: "var(--dim)", lineHeight: 1.6 }}>
-          Attestation is not a clean field on an identity (idryx has none) - it surfaces only via{" "}
-          <span className="mono" style={{ color: "var(--fg)" }}>attestation_missing</span> /{" "}
-          <span className="mono" style={{ color: "var(--fg)" }}>bom_incomplete</span> alerts, below.
-        </span>
-        <div className="flex-1" />
-        <span
-          className="badge"
-          style={cssVar("tone", attestationAlerts.length > 0 ? "var(--sev-high)" : "var(--sev-low)")}
-        >
-          {attestationAlerts.length} found
-        </span>
-      </div>
+      {identities === null || alerts === null ? (
+        <div className="mono" style={{ fontSize: 12, color: "var(--faint)" }}>
+          loading identity snapshot...
+        </div>
+      ) : (
+        <HeroBand
+          hero={
+            <Hero
+              cap="Identity · idryx snapshot"
+              value={identities.length.toLocaleString("en-US")}
+              sub={<>{privilegedCount} privileged</>}
+            />
+          }
+          tiles={
+            <>
+              <KpiTile
+                label="Privileged"
+                value={privilegedCount.toLocaleString("en-US")}
+                tone={privilegedCount > 0 ? "var(--sev-high)" : undefined}
+                sub={`of ${identities.length.toLocaleString("en-US")} identities`}
+              />
+              <KpiTile
+                label="Alerts"
+                value={alerts.length.toLocaleString("en-US")}
+                tone={alerts.length > 0 ? "var(--sev-high)" : undefined}
+                sub={severityBreakdown(alerts)}
+              />
+              <KpiTile
+                label="Attestation gaps"
+                value={attestationAlerts.length.toLocaleString("en-US")}
+                tone={attestationAlerts.length > 0 ? "var(--sev-high)" : "var(--mint)"}
+                sub="attestation_missing + bom_incomplete"
+              />
+            </>
+          }
+        />
+      )}
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Identities" />
+      <Section title="Identities" right={<FreshBadge variant="snapshot" detail={hhmm} />}>
         {identities === null ? <Loading /> : <IdentityList identities={identities} onOpenAgent={onOpenAgent} />}
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Alerts" />
-        {alerts === null ? (
-          <Loading />
-        ) : (
-          <IdentityAlerts
-            alerts={alerts}
-            onRescan={() => void handleRescan()}
-            rescanning={rescanning}
-            rescanAvailable={status.rescan_available}
-            onOpenAgent={onOpenAgent}
-          />
-        )}
-      </section>
+      <Section title="Alerts" right={<FreshBadge variant="snapshot" detail={hhmm} />}>
+        {alerts === null ? <Loading /> : <IdentityAlerts alerts={alerts} onOpenAgent={onOpenAgent} />}
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Remediations" />
+      <Section title="Remediations" right={<FreshBadge variant="snapshot" detail={hhmm} />}>
         {remediations === null ? (
           <Loading />
         ) : remediations.length === 0 ? (
@@ -220,11 +250,11 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
             no remediations in this snapshot.
           </div>
         ) : (
-          <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
             {remediations.map((r, idx) => (
               <div
                 key={`${r.identity}-${r.kind}-${idx}`}
-                className="grid items-center gap-3 px-4 py-2.5 bus-row"
+                className="grid items-center gap-3 px-5 py-2.5 bus-row"
                 style={{ gridTemplateColumns: "1fr 110px 1fr" }}
               >
                 <span className="mono truncate text-[11.5px]" title={r.identity} style={{ color: "var(--fg)" }}>
@@ -243,7 +273,7 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
             ))}
           </div>
         )}
-      </section>
+      </Section>
     </div>
   );
 }

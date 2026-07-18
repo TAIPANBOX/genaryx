@@ -41,10 +41,10 @@ export function EvidenceArtifactsTable({ artifacts }: { artifacts: ManifestArtif
   }
 
   return (
-    <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+    <div style={{ overflowX: "auto" }}>
       <div
-        className="grid gap-3 px-4 py-2"
-        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+        className="grid gap-3 px-5 py-2"
+        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
       >
         {["name", "source", "sha256", "size", "verify status"].map((label) => (
           <span
@@ -57,7 +57,7 @@ export function EvidenceArtifactsTable({ artifacts }: { artifacts: ManifestArtif
         ))}
       </div>
       {artifacts.map((a) => (
-        <div key={a.filename} className="grid items-center gap-3 px-4 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+        <div key={a.filename} className="grid items-center gap-3 px-5 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
           <div className="flex flex-col gap-0.5 min-w-0">
             <span className="truncate text-[12px]" title={a.name} style={{ color: "var(--fg)" }}>
               {a.name}

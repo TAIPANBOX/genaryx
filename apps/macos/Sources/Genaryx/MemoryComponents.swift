@@ -110,6 +110,24 @@ enum RecallFormat {
         let iso = ISO8601DateFormatter().string(from: date)
         return "as of last query \u{00B7} \(MoneyFormat.timestamp(iso))"
     }
+
+    /// Bare "HH:mm" clock for a `FreshBadge.onDemand`, e.g. "ON-DEMAND ·
+    /// 14:32" - `nil` before the first recall query this session, matching
+    /// `FreshBadge.onDemand(last:)`'s own "no last action" case (the same
+    /// reasoning `LastScanFormat.clock` documents for Crypto's Scan). The
+    /// compact counterpart to `label(_:)`'s fuller "as of last query · ..."
+    /// line.
+    static func clock(_ date: Date?) -> String? {
+        guard let date else { return nil }
+        return clockFormatter.string(from: date)
+    }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 }
 
 // MARK: - UiEvent raw disclosure (Timeline)

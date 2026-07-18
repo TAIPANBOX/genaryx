@@ -37,7 +37,7 @@ export function QualityRunDetail({
       </div>
 
       {error && (
-        <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}>
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeQualityError(error)}
         </div>
       )}
@@ -51,10 +51,10 @@ export function QualityRunDetail({
           no per-case scores for this run.
         </div>
       ) : (
-        <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
           <div
-            className="grid gap-3 px-4 py-2"
-            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+            className="grid gap-3 px-5 py-2"
+            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
           >
             {["case", "value", "tokens", "cost"].map((label) => (
               <span
@@ -67,7 +67,7 @@ export function QualityRunDetail({
             ))}
           </div>
           {scores.map((s) => (
-            <div key={s.id} className="grid items-center gap-3 px-4 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+            <div key={s.id} className="grid items-center gap-3 px-5 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
               <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={s.case_id}>
                 {s.case_id}
               </span>

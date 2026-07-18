@@ -104,6 +104,44 @@ enum DrillRunFormat {
         guard let report else { return "no run yet" }
         return "as of last run \u{00B7} \(MoneyFormat.timestamp(report.generatedAt))"
     }
+
+    /// Bare "HH:mm" clock for a `FreshBadge.onDemand`, e.g. "ON-DEMAND ·
+    /// 14:32" - `nil` before any report (this session's own run, or a past
+    /// session's saved one) has ever loaded, matching
+    /// `FreshBadge.onDemand(last:)`'s own "no last action" case (the same
+    /// reasoning `LastScanFormat.clock`/`RecallFormat.clock` document for
+    /// Crypto/Memory). The compact counterpart to `label(_:)`'s fuller "as
+    /// of last run · ..." line - reads the report's own `generatedAt` for
+    /// the same reason `label(_:)` does (see this type's own doc).
+    static func clock(_ report: DrillReportRecord?) -> String? {
+        guard let report, let date = isoDate(report.generatedAt) else { return nil }
+        return clockFormatter.string(from: date)
+    }
+
+    private static func isoDate(_ iso: String) -> Date? {
+        isoFrac.date(from: iso) ?? isoPlain.date(from: iso)
+    }
+
+    // `nonisolated(unsafe)`: configured once at first access and only ever
+    // read afterward, the same reasoning `MoneyFormat`'s own formatters
+    // document - `ISO8601DateFormatter` does not conform to `Sendable` on
+    // this SDK, unlike `DateFormatter` below.
+    private nonisolated(unsafe) static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private nonisolated(unsafe) static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 }
 
 // MARK: - overall verdict

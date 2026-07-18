@@ -2,19 +2,23 @@ import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { describeQualityError, fetchBaselines, fetchRunScores, fetchRunSummaries } from "../lib/quality";
 import { useQualityStatus } from "../lib/useQualityStatus";
+import { formatHm } from "../lib/format";
 import type { QualityError, QualityStatus, VerdryxBaseline, VerdryxRunSummary, VerdryxScore } from "../qualityTypes";
 import { QualityBaselines } from "./QualityBaselines";
 import { QualityDriftStream } from "./QualityDriftStream";
 import { QualityRunDetail } from "./QualityRunDetail";
 import { QualityRunsList } from "./QualityRunsList";
+import { FreshBadge } from "./FreshBadge";
+import { Hero, HeroBand, KpiTile, Section } from "./dash";
 
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <span className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--faint)" }}>
-      {title}
-    </span>
-  );
-}
+/** Genaryx v2 design spec section 7 parity fix #4: Quality used to be
+ * one-shot-on-mount only (like Identity's true load-once idryx snapshot),
+ * but `verdryx.db` is a plain file an external `verdryx eval`/`baseline`
+ * run can update at any time, so - unlike Identity - a periodic re-read is
+ * both safe and useful. Both shells now poll every 60s in addition to the
+ * explicit Refresh button, mirroring `OverviewView.tsx`'s 20s pattern (just
+ * a longer period: eval runs land far less often than money/run events). */
+const REFRESH_INTERVAL_MS = 60_000;
 
 function Loading() {
   return (
@@ -82,10 +86,11 @@ function QualityEmptyState({ status }: { status: QualityStatus | null }) {
  * The Quality panel (docs/PHASE4.md W1): eval-runs history + run detail,
  * saved baselines, and live drift alerts, over a read-only Verdryx
  * connection. Mirrors `IdentityView.tsx`'s overall shape (status hook, empty
- * state, section layout) and its "no periodic auto-refresh" discipline: like
- * `idryx serve`, `verdryx.db` only changes when an operator runs `verdryx
- * eval`/`baseline` externally, so a timer here would just be a no-op most of
- * the time - the explicit Refresh button re-reads the current file instead.
+ * state, section layout) but NOT its "no periodic auto-refresh" discipline:
+ * unlike `idryx serve`'s true load-once snapshot, `verdryx.db` is a plain
+ * file an external `verdryx eval`/`baseline` run can update at any moment,
+ * so this view also polls every [`REFRESH_INTERVAL_MS`] (design spec
+ * section 7 parity fix #4) on top of the explicit Refresh button.
  */
 export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {
   const status = useQualityStatus();
@@ -116,6 +121,8 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
 
   useEffect(() => {
     void load();
+    const id = window.setInterval(() => void load(), REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [load]);
 
   useEffect(() => {
@@ -144,18 +151,20 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
   }
 
   const selectedSummary = runs?.find((r) => r.run.id === selectedRunId) ?? null;
+  const latestRun = runs && runs.length > 0 ? runs[0] : null;
+  const hhmm = asOfMs !== null ? formatHm(asOfMs) : undefined;
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
+    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="chip" style={cssVar("dot", "var(--src-verdryx)")}>
           <span className="dot" aria-hidden="true" />
           {status.source.source === "taipan" ? `taipan up · ${status.source.name}` : "well-known ~/.taipan/verdryx.db"}
           &nbsp;&middot;&nbsp;{status.db_path}
         </span>
-        <span className="chip" style={cssVar("dot", "var(--faint)")}>
-          <span className="dot" aria-hidden="true" />
-          as of load{asOfMs !== null ? ` · fetched ${new Date(asOfMs).toLocaleTimeString()}` : ""}
+        <FreshBadge variant="window" detail="history" title="verdryx.db, re-read on load and every 60s" />
+        <span className="mono" style={{ fontSize: 11, color: "var(--faint)" }}>
+          {hhmm !== undefined ? `last read ${hhmm}` : ""}
         </span>
         <div className="flex-1" />
         <button
@@ -169,30 +178,52 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
       </div>
 
       {error && (
-        <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}>
+        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeQualityError(error)}
         </div>
       )}
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Eval Runs" />
+      {runs === null || baselines === null ? (
+        <div className="mono" style={{ fontSize: 12, color: "var(--faint)" }}>
+          loading quality plane...
+        </div>
+      ) : (
+        <HeroBand
+          hero={
+            <Hero
+              cap="Quality · eval runs"
+              value={runs.length.toLocaleString("en-US")}
+              sub={<>latest mean {latestRun?.mean_score !== null && latestRun?.mean_score !== undefined ? latestRun.mean_score.toFixed(3) : "n/a"}</>}
+            />
+          }
+          tiles={
+            <>
+              <KpiTile
+                label="Latest mean score"
+                value={latestRun?.mean_score !== null && latestRun?.mean_score !== undefined ? latestRun.mean_score.toFixed(3) : "n/a"}
+                sub={latestRun ? `${latestRun.run.model} · ${latestRun.case_count} cases` : "no runs yet"}
+              />
+              <KpiTile label="Baselines" value={baselines.length.toLocaleString("en-US")} sub="saved snapshots" />
+            </>
+          }
+        />
+      )}
+
+      <Section title="Eval Runs" right={<FreshBadge variant="window" detail="history" />}>
         {runs === null ? <Loading /> : <QualityRunsList runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />}
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Run Detail" />
+      <Section title="Run Detail" right={<FreshBadge variant="window" detail="history" />}>
         <QualityRunDetail summary={selectedSummary} scores={scores} error={scoresError} />
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Baselines" />
+      <Section title="Baselines" right={<FreshBadge variant="window" detail="history" />}>
         {baselines === null ? <Loading /> : <QualityBaselines baselines={baselines} runs={runs} />}
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Drift Alerts" />
+      <Section title="Drift Alerts" right={<FreshBadge variant="live" />}>
         <QualityDriftStream onOpenAgent={onOpenAgent} />
-      </section>
+      </Section>
     </div>
   );
 }

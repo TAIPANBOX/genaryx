@@ -28,10 +28,10 @@ export function CryptoFindingsTable({ findings }: { findings: NcscFinding[] | nu
   }
 
   return (
-    <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+    <div style={{ overflowX: "auto" }}>
       <div
-        className="grid gap-3 px-4 py-2"
-        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+        className="grid gap-3 px-5 py-2"
+        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
       >
         {["algorithm", "type", "severity", "count", "locations", "flags"].map((label) => (
           <span
@@ -44,7 +44,7 @@ export function CryptoFindingsTable({ findings }: { findings: NcscFinding[] | nu
         ))}
       </div>
       {findings.map((f, idx) => (
-        <div key={`${f.algorithm}-${idx}`} className="grid items-center gap-3 px-4 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+        <div key={`${f.algorithm}-${idx}`} className="grid items-center gap-3 px-5 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
           <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={f.algorithm}>
             {f.algorithm}
           </span>

@@ -106,10 +106,10 @@ export function MemoryTimeline({ onOpenAgent }: { onOpenAgent: (agentId: string)
   }
 
   return (
-    <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+    <>
       <div
-        className="grid gap-3 px-4 py-2"
-        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+        className="grid gap-3 px-5 py-2"
+        style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
       >
         {["time", "severity", "type", "agent", "detail"].map((label) => (
           <span
@@ -133,7 +133,7 @@ export function MemoryTimeline({ onOpenAgent }: { onOpenAgent: (agentId: string)
           .filter((v): v is string => v !== null)
           .join(" · ");
         return (
-          <div key={e.id} className="grid items-center gap-3 px-4 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+          <div key={e.id} className="grid items-center gap-3 px-5 py-2 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
             <span className="mono tabular text-[11px]" style={{ color: "var(--faint)" }}>
               {formatTimestamp(e.ts)}
             </span>
@@ -156,6 +156,6 @@ export function MemoryTimeline({ onOpenAgent }: { onOpenAgent: (agentId: string)
           </div>
         );
       })}
-    </div>
+    </>
   );
 }

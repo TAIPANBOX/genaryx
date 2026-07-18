@@ -2,19 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { scanCbom, scanNcsc } from "../lib/crypto";
 import { useCryptoStatus } from "../lib/useCryptoStatus";
+import { formatHm } from "../lib/format";
 import type { CryptoError, CryptoStatus, NcscReport } from "../cryptoTypes";
 import { CryptoCbomTable } from "./CryptoCbomTable";
 import { CryptoEvidence } from "./CryptoEvidence";
 import { CryptoFindingsTable } from "./CryptoFindingsTable";
 import { CryptoTimeline } from "./CryptoTimeline";
-
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <span className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--faint)" }}>
-      {title}
-    </span>
-  );
-}
+import { FreshBadge } from "./FreshBadge";
+import { Hero, HeroBand, KpiTile, Section } from "./dash";
 
 /**
  * Shared "not ready yet" rendering for the Crypto view - mirrors
@@ -110,20 +105,19 @@ export function CryptoView() {
     return <CryptoEmptyState status={status} />;
   }
 
+  const hhmm = scannedAtMs !== null ? formatHm(scannedAtMs) : undefined;
+
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
+    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="chip" style={cssVar("dot", "var(--src-qryx)")}>
           <span className="dot" aria-hidden="true" />
           {status.qryx_bin}
         </span>
-        <span className="chip" style={cssVar("dot", "var(--faint)")}>
-          <span className="dot" aria-hidden="true" />
-          {scannedAtMs !== null ? `as of last scan · ${new Date(scannedAtMs).toLocaleTimeString()}` : "no scan run yet"}
-        </span>
+        <FreshBadge variant="onDemand" detail={hhmm} title="qryx is a pure on-demand CLI - nothing here auto-refreshes" />
       </div>
 
-      <div className="panel px-4 py-3 flex items-center gap-2" style={{ background: "var(--panel-2)" }}>
+      <div className="d-card px-4 py-3 flex items-center gap-2">
         <span className="text-[11.5px] shrink-0" style={{ color: "var(--dim)" }}>
           scan target
         </span>
@@ -153,25 +147,51 @@ export function CryptoView() {
         </button>
       </div>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="PQC Readiness Timeline" />
+      {ncsc === null ? (
+        <div className="mono" style={{ fontSize: 12, color: "var(--faint)" }}>
+          scan a target to see the PQC readiness timeline.
+        </div>
+      ) : (
+        <HeroBand
+          hero={
+            <Hero
+              cap="Crypto · 2028 complete discovery"
+              value={ncsc.discovery2028.quantumVulnerableCount.toLocaleString("en-US")}
+              sub={<>{ncsc.discovery2028.verdict}</>}
+            />
+          }
+          tiles={
+            <>
+              <KpiTile
+                label="2031 highest-priority"
+                value={ncsc.highestPriority2031.count.toLocaleString("en-US")}
+                sub={`${ncsc.highestPriority2031.remainingCount} remaining · ${ncsc.highestPriority2031.verdict}`}
+              />
+              <KpiTile
+                label="2035 full migration"
+                value={ncsc.fullMigration2035.count.toLocaleString("en-US")}
+                sub={ncsc.fullMigration2035.verdict}
+              />
+            </>
+          }
+        />
+      )}
+
+      <Section title="PQC Readiness Timeline" right={<FreshBadge variant="onDemand" detail={hhmm} />}>
         <CryptoTimeline report={ncsc} loading={ncscLoading} error={ncscError} />
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Quantum-Vulnerable Findings" />
+      <Section title="Quantum-Vulnerable Findings" right={<FreshBadge variant="onDemand" detail={hhmm} />}>
         <CryptoFindingsTable findings={ncsc?.discovery2028.quantumVulnerableFindings ?? null} />
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="CBOM Inventory" />
+      <Section title="CBOM Inventory" right={<FreshBadge variant="onDemand" detail={hhmm} />}>
         <CryptoCbomTable value={cbom} loading={cbomLoading} error={cbomError} />
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-2">
-        <SectionHeader title="Evidence" />
+      <Section title="Evidence" right={<FreshBadge variant="onDemand" title="built independently - see the build result below for its own as-of time" />}>
         <CryptoEvidence defaultPath={targetPath} />
-      </section>
+      </Section>
     </div>
   );
 }

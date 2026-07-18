@@ -109,10 +109,7 @@ export function MemoryProvenance({
 
   if (error) {
     return (
-      <div
-        className="panel px-3 py-2 mono text-[11.5px]"
-        style={{ background: "var(--panel-2)", color: "var(--sev-high)" }}
-      >
+      <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
         {describeMemoryError(error)}
       </div>
     );
@@ -121,7 +118,7 @@ export function MemoryProvenance({
   if (!provenance) return null;
 
   return (
-    <div className="panel px-4 py-3.5 flex flex-col gap-2.5" style={{ background: "var(--panel-2)" }}>
+    <div className="d-card px-4 py-3.5 flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-2">
         <span
           className="badge"

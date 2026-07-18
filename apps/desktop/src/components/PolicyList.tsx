@@ -26,10 +26,10 @@ export function PolicyList({ policies, policyVersion }: { policies: PolicyRecord
           no policies configured.
         </div>
       ) : (
-        <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
           <div
-            className="grid gap-3 px-4 py-2"
-            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}
+            className="grid gap-3 px-5 py-2"
+            style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
           >
             {["id", "target", "deny tool", "allow domains", "human >$", "deny >$", "steps", "unattested", "updated"].map(
               (label) => (
@@ -44,7 +44,7 @@ export function PolicyList({ policies, policyVersion }: { policies: PolicyRecord
             )}
           </div>
           {policies.map((p) => (
-            <div key={p.id} className="grid items-center gap-3 px-4 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
+            <div key={p.id} className="grid items-center gap-3 px-5 py-2.5 bus-row" style={{ gridTemplateColumns: COLUMNS }}>
               <span className="mono truncate text-[12px]" title={p.id} style={{ color: "var(--fg)" }}>
                 {p.id}
               </span>
