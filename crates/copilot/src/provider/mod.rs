@@ -187,6 +187,7 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
                 model,
                 api_key,
                 config.allow_non_local_endpoints,
+                config.run_id.clone(),
             )
             .map_err(ConfigError::Provider)?;
             Ok(Some(Box::new(provider)))
@@ -197,9 +198,14 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
             let api_key = config.resolve_api_key()?.ok_or(ConfigError::MissingField(
                 "api_key_ref (Anthropic requires a key)",
             ))?;
-            let provider =
-                AnthropicMessages::new(base_url, model, api_key, config.allow_non_local_endpoints)
-                    .map_err(ConfigError::Provider)?;
+            let provider = AnthropicMessages::new(
+                base_url,
+                model,
+                api_key,
+                config.allow_non_local_endpoints,
+                config.run_id.clone(),
+            )
+            .map_err(ConfigError::Provider)?;
             Ok(Some(Box::new(provider)))
         }
     }

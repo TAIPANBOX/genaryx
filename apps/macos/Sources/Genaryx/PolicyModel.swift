@@ -58,6 +58,17 @@ final class PolicyModel {
 
     private var handle: WardryxHandle?
 
+    /// The connected `WardryxHandle` this model owns, exposed read-only so
+    /// the C2 copilot-approval audit link (docs/PHASE6-C2.md, `GenaryxApp`'s
+    /// `approveCopilotGrantDeny`) can journal
+    /// `console.copilot_proposal_approved` through the SAME bearer client
+    /// the Policy panel already reads/decides through, mirroring
+    /// `CloudModel.cloudHandle`'s identical "reuse the existing handle,
+    /// never a second connection" rationale exactly. `nil` whenever
+    /// `connection` is not `.ready` - same guard as every other read on
+    /// `handle` in this model.
+    var wardryxHandle: WardryxHandle? { handle }
+
     init() {
         Task { await self.connect() }
     }

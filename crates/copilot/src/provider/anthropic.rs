@@ -21,6 +21,8 @@ pub struct AnthropicMessages {
     model: String,
     api_key: String,
     local: bool,
+    /// C2 self-budget: sent as `x-fuse-run-id` for TokenFuse-gateway metering.
+    run_id: String,
     http: reqwest::Client,
 }
 
@@ -30,6 +32,7 @@ impl AnthropicMessages {
         model: String,
         api_key: String,
         allow_non_local_endpoints: bool,
+        run_id: String,
     ) -> Result<Self, ProviderError> {
         let local = is_local_endpoint(&base_url);
         if !local && !allow_non_local_endpoints {
@@ -43,6 +46,7 @@ impl AnthropicMessages {
             model,
             api_key,
             local,
+            run_id,
             http,
         })
     }
@@ -83,6 +87,7 @@ impl LlmProvider for AnthropicMessages {
             .post(self.endpoint())
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("x-fuse-run-id", &self.run_id)
             .json(&body)
             .send()
             .await
@@ -224,7 +229,8 @@ mod tests {
                 "https://api.anthropic.com".into(),
                 "claude".into(),
                 "k".into(),
-                false
+                false,
+                "genaryx-copilot".into()
             ),
             Err(ProviderError::NonLocalEndpointRefused { .. })
         ));
@@ -233,6 +239,7 @@ mod tests {
             "claude".into(),
             "k".into(),
             true,
+            "genaryx-copilot".into(),
         )
         .unwrap();
         assert_eq!(p.endpoint(), "https://api.anthropic.com/v1/messages");

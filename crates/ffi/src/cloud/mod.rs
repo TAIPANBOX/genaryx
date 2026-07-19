@@ -334,6 +334,42 @@ impl CloudHandle {
         )
     }
 
+    // ---- C2 audit link (docs/PHASE6-C2.md) ------------------------------
+
+    /// Journal the fact that the operator approved a Felyx `ProposedAction`
+    /// of `kind` targeting `target`, ON TOP OF (never instead of) the
+    /// mutation's own `console.kill_run`/`console.set_budget` line above -
+    /// so the audit trail shows both WHAT happened (that line) and THAT a
+    /// copilot recommended it and a human approved it (this one), never
+    /// "copilot did Z". Uses the exact same `command::record` mechanism
+    /// every other journal call on this handle uses (`self.journal`), just
+    /// with its own fixed action name (`console.copilot_proposal_approved`)
+    /// and `decision: "allow"` (approving a recommendation is not itself a
+    /// governance override - the underlying mutation's own `decision`
+    /// already carries that). Best-effort and infallible by design, exactly
+    /// like every other journal call here: a failure to journal the LINK
+    /// must never be mistaken for the approved action itself having failed
+    /// (that already happened, successfully, before this is ever called -
+    /// see `apps/macos`'s `GenaryxApp` approve routing, which only calls
+    /// this after `killRun`/`setBudget` itself reports success). Returns
+    /// whether the line was actually appended, so the shell can note an
+    /// honest "not journaled" outcome rather than silently assuming success.
+    pub fn journal_copilot_proposal_approved(&self, kind: String, target: String) -> bool {
+        let rec = CommandRecord {
+            operator: self.operator.clone(),
+            env: "local".to_string(),
+            action: "console.copilot_proposal_approved".to_string(),
+            target,
+            params: json!({ "kind": kind }),
+            decision: "allow".to_string(),
+            sig_alg: "es256".to_string(),
+            sig_fpr: self.sig_fpr.to_string(),
+            http_status: 200,
+            verify_result: "approved".to_string(),
+        };
+        self.journal(&rec).0
+    }
+
     // ---- Evidence Center (Phase-4 W3) -----------------------------------
     // Builds through the SAME paired `CloudClient` (compliance/audit reads
     // AND the ES256 manifest signer) Money/Overview already use - never a
@@ -946,9 +982,48 @@ mod tests {
             Some("killed:true")
         );
 
+        // ---- C2 (docs/PHASE6-C2.md): the copilot-proposal audit link, ON
+        // TOP OF the console.kill_run line above, never instead of it ----
+        let linked = handle.journal_copilot_proposal_approved("kill".to_string(), run_id.clone());
+        assert!(linked, "the audit link must journal successfully too");
+
+        let body2 = std::fs::read_to_string(&handle.console_events_path)
+            .expect("read the console events file back, after the audit link");
+        let lines2: Vec<&str> = body2.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(
+            lines2.len(),
+            2,
+            "the console.kill_run line plus the copilot_proposal_approved link line, both appended"
+        );
+
+        let link_report = conformer.check_line(lines2[1]);
+        assert!(
+            link_report.valid,
+            "the appended link line must conform: {:?}\n  line: {}",
+            link_report.errors, lines2[1]
+        );
+        let link_value: serde_json::Value =
+            serde_json::from_str(lines2[1]).expect("parse the appended link line");
+        assert_eq!(
+            link_value
+                .get("data")
+                .and_then(|d| d.get("action"))
+                .and_then(|v| v.as_str()),
+            Some("console.copilot_proposal_approved"),
+            "the link must journal under its OWN action name, distinct from console.kill_run"
+        );
+        assert_eq!(
+            link_value
+                .get("data")
+                .and_then(|d| d.get("target"))
+                .and_then(|v| v.as_str()),
+            Some(run_id.as_str())
+        );
+
         eprintln!(
             "genaryx-ffi cloud live_e2e: PASSED - paired against {base}, overview read, signed kill of \
-             {run_id} accepted, console_command appended to {} and conforms",
+             {run_id} accepted, console_command appended to {} and conforms, plus the \
+             copilot_proposal_approved audit link",
             handle.console_events_path.display()
         );
     }

@@ -381,6 +381,7 @@ pub fn run() {
             copilot::commands::copilot_status,
             copilot::commands::copilot_ask,
             copilot::commands::copilot_explain,
+            copilot::commands::copilot_log_proposal_approved,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

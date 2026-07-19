@@ -3,10 +3,10 @@ import GenaryxCoreFFI
 import Observation
 
 /// One turn of the Copilot conversation - either the operator's own question
-/// or Felyx's reply. `toolTrace`/`promptTokens`/`completionTokens` are only
-/// ever non-empty/non-zero on an `.assistant` message (mirrors
-/// `genaryx_copilot::Answer`'s own shape: a question has no trace or usage of
-/// its own).
+/// or Felyx's reply. `toolTrace`/`promptTokens`/`completionTokens`/`proposals`
+/// are only ever non-empty/non-zero on an `.assistant` message (mirrors
+/// `genaryx_copilot::Answer`'s own shape: a question has no trace, usage, or
+/// proposals of its own).
 struct CopilotMessage: Identifiable {
     enum Role {
         case user
@@ -19,6 +19,11 @@ struct CopilotMessage: Identifiable {
     var toolTrace: [CopilotToolDto] = []
     var promptTokens: UInt32 = 0
     var completionTokens: UInt32 = 0
+    /// C2 (docs/PHASE6-C2.md): actions Felyx PROPOSES but never performs -
+    /// rendered by `CopilotView` as approve/dismiss cards below the text.
+    /// Empty on every C0/C1-shaped answer and on any C2 answer that only
+    /// read.
+    var proposals: [CopilotProposalDto] = []
 }
 
 /// Live Copilot state for the SwiftUI shell: owns a `CopilotHandle`
@@ -115,7 +120,8 @@ final class CopilotModel {
             messages.append(
                 CopilotMessage(
                     role: .assistant, text: answer.text, toolTrace: answer.toolTrace,
-                    promptTokens: answer.promptTokens, completionTokens: answer.completionTokens))
+                    promptTokens: answer.promptTokens, completionTokens: answer.completionTokens,
+                    proposals: answer.proposals))
         } catch {
             messages.append(CopilotMessage(role: .assistant, text: describe(error)))
         }
@@ -152,10 +158,27 @@ final class CopilotModel {
             messages.append(
                 CopilotMessage(
                     role: .assistant, text: answer.text, toolTrace: answer.toolTrace,
-                    promptTokens: answer.promptTokens, completionTokens: answer.completionTokens))
+                    promptTokens: answer.promptTokens, completionTokens: answer.completionTokens,
+                    proposals: answer.proposals))
         } catch {
             messages.append(CopilotMessage(role: .assistant, text: describe(error)))
         }
+    }
+
+    // MARK: - C2 proposal approval (docs/PHASE6-C2.md)
+
+    /// Append a short assistant-role note recording what just happened to a
+    /// proposal card - the in-chat half of the audit trail (the other half,
+    /// for Kill/Budget/GrantDeny, is the `console.copilot_proposal_approved`
+    /// journal line `GenaryxApp`'s approve routing writes through the SAME
+    /// paired handle the target panel already uses). Always appended,
+    /// success or failure, and even for Rescan (which has NO
+    /// `console_command` journal at all, by design - see
+    /// `crates/ffi/src/idryx/mod.rs`'s own module doc) - so the operator
+    /// always has an in-chat record of "I approved X" without needing to
+    /// switch tabs to confirm it landed.
+    func noteProposalOutcome(_ text: String) {
+        messages.append(CopilotMessage(role: .assistant, text: text))
     }
 
     // MARK: - error presentation

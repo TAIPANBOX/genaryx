@@ -193,6 +193,32 @@ impl WardryxHandle {
         ));
         self.finish_decision(action, &id, result)
     }
+
+    // ---- C2 audit link (docs/PHASE6-C2.md) ------------------------------
+
+    /// Journal the fact that the operator approved a Felyx `ProposedAction`
+    /// of `kind` targeting `target` (a GrantDeny proposal's approval id),
+    /// ON TOP OF (never instead of) `decide_approval`'s own
+    /// `console.grant_approval`/`console.deny_approval` line - mirrors
+    /// [`crate::cloud::CloudHandle::journal_copilot_proposal_approved`]
+    /// exactly (same fixed action name, same best-effort/infallible
+    /// contract, same `self.journal` mechanism); see that method's own doc
+    /// comment for the full rationale, not repeated here.
+    pub fn journal_copilot_proposal_approved(&self, kind: String, target: String) -> bool {
+        let rec = CommandRecord {
+            operator: self.operator.clone(),
+            env: "local".to_string(),
+            action: "console.copilot_proposal_approved".to_string(),
+            target,
+            params: json!({ "kind": kind }),
+            decision: "allow".to_string(),
+            sig_alg: SIG_ALG.to_string(),
+            sig_fpr: SIG_FPR.to_string(),
+            http_status: 200,
+            verify_result: "approved".to_string(),
+        };
+        self.journal(&rec).0
+    }
 }
 
 // ---- private helpers (not exported over FFI) -------------------------------
@@ -466,6 +492,66 @@ mod tests {
         assert_eq!(handle.wardryx_url(), "http://127.0.0.1:1");
         assert!(matches!(handle.source(), WardryxEnvSource::EnvFallback));
         assert_eq!(handle.org_domain(), "genaryx.local");
+    }
+
+    /// C2 (docs/PHASE6-C2.md): `journal_copilot_proposal_approved` is a pure
+    /// local journal write (`self.journal`, exactly like every other
+    /// mutation on this handle) - it never calls Wardryx at all, so this
+    /// proves it end to end with no live server, mirroring the test above's
+    /// own "never touches the network" setup. Checks the SAME two things
+    /// every other journal test on this handle checks: the line lands on
+    /// disk and it conforms to the agent-event schema.
+    #[test]
+    fn journal_copilot_proposal_approved_appends_a_conforming_link_line() {
+        let handle = WardryxHandle::connect("http://127.0.0.1:1".to_string(), "tk_dev".to_string())
+            .expect("connect() must succeed locally regardless of reachability");
+
+        let recorded =
+            handle.journal_copilot_proposal_approved("grant_deny".to_string(), "ap_1".to_string());
+        assert!(recorded, "a fresh temp world must always be writable");
+
+        let body = std::fs::read_to_string(&handle.console_events_path)
+            .expect("read the console events file back");
+        let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1, "exactly one console_command line appended");
+
+        let conformer = genaryx_core::Conformer::new().expect("embedded schemas must compile");
+        let report = conformer.check_line(lines[0]);
+        assert!(
+            report.valid,
+            "the appended link line must conform: {:?}\n  line: {}",
+            report.errors, lines[0]
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("parse the appended line");
+        assert_eq!(
+            value.get("type").and_then(|v| v.as_str()),
+            Some("console_command")
+        );
+        assert_eq!(
+            value
+                .get("data")
+                .and_then(|d| d.get("action"))
+                .and_then(|v| v.as_str()),
+            Some("console.copilot_proposal_approved"),
+            "the link must journal under its OWN action name, distinct from console.grant_approval/console.deny_approval"
+        );
+        assert_eq!(
+            value
+                .get("data")
+                .and_then(|d| d.get("target"))
+                .and_then(|v| v.as_str()),
+            Some("ap_1")
+        );
+        assert_eq!(
+            value
+                .get("data")
+                .and_then(|d| d.get("decision"))
+                .and_then(|v| v.as_str()),
+            Some("allow"),
+            "approving a proposal is not itself a break-glass override"
+        );
     }
 
     // ==========================================================================

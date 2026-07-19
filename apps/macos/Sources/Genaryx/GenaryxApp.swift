@@ -212,7 +212,12 @@ struct GenaryxApp: App {
                     case .pocket:
                         PocketView(model: pocketModel)
                     case .copilot:
-                        CopilotView(model: copilotModel)
+                        CopilotView(
+                            model: copilotModel,
+                            onApproveKill: approveCopilotKill,
+                            onApproveBudget: approveCopilotBudget,
+                            onApproveGrantDeny: approveCopilotGrantDeny,
+                            onApproveRescan: approveCopilotRescan)
                     case .graph:
                         DelegationGraphView(
                             fleetModel: model, model: graphModel,
@@ -318,7 +323,158 @@ struct GenaryxApp: App {
         tab = .copilot
         Task { await copilotModel.explain(incidentId: incidentId) }
     }
+
+    // MARK: - C2 "Approve" routing (docs/PHASE6-C2.md)
+    //
+    // `CopilotView`'s four `onApprove*` closures land here - the same "a
+    // deep link is just a piece of state/closure another view reacts to"
+    // idiom `explainIncident`/`openReplay` already establish, just routing
+    // INTO another panel's model instead of into `copilotModel`. Felyx
+    // itself never signs anything (`crates/copilot` holds no signer at
+    // all); every one of these four calls the EXACT existing signed
+    // mutation the Money/Policy/Identity panels themselves already trigger
+    // from their own UI - kill/setBudget/decide/rescan below are the very
+    // same `CloudModel`/`PolicyModel`/`IdentityModel` methods
+    // `MoneyView`/`PolicyView`/`IdentityView` call, reached through the
+    // SAME `cloudModel`/`policyModel`/`identityModel` instances those tabs
+    // use, never a duplicate signer or a second connection.
+    //
+    // On a successful Kill/Budget/GrantDeny approval, each also journals the
+    // proposal-to-approval LINK (`console.copilot_proposal_approved`,
+    // `kind`/`target`) through the SAME already-paired handle
+    // (`cloudModel.cloudHandle` / `policyModel.wardryxHandle`) the target
+    // panel already reads/mutates through - ON TOP OF, never instead of,
+    // that mutation's own `console.kill_run`/`console.set_budget`/
+    // `console.grant_approval`/`console.deny_approval` line, so the audit
+    // trail shows both WHAT happened and THAT a human approved a Felyx
+    // recommendation to do it (see `CloudHandle`/`WardryxHandle`'s own
+    // `journalCopilotProposalApproved` doc comments). Rescan has no such
+    // link to journal: `IdryxHandle` journals nothing at all, for ANY
+    // caller, by design (`crates/ffi/src/idryx/mod.rs`'s own module doc:
+    // "no journal at all... there is nothing to audit") - manually
+    // triggered rescans are just as unjournaled as a copilot-approved one,
+    // so adding a journal ONLY for the copilot path would be a more
+    // surprising inconsistency than the gap itself. Every path instead
+    // always leaves an in-chat trace via `copilotModel.noteProposalOutcome`,
+    // succeed or fail, so the operator never has to leave the Copilot tab to
+    // learn what an Approve tap actually did.
+
+    /// Best-effort journal the copilot-proposal audit link through whichever
+    /// already-paired handle the caller passed (never a new connection),
+    /// off the main actor via `Task.detached` - exactly the same
+    /// "extract the Sendable FFI handle, THEN detach" idiom
+    /// `CloudModel`/`PolicyModel`/`IdentityModel` already use for every
+    /// blocking call into a handle (see e.g. `CloudModel.killRun`'s own
+    /// `Task.detached { try handle.killRun(...) }.value`): capturing
+    /// `cloudModel`/`policyModel` themselves (both `@MainActor`, not
+    /// `Sendable`) into a detached closure would not compile, so this always
+    /// takes the already-resolved `handle` value instead. `handle == nil`
+    /// (the panel disconnected between the mutation succeeding and this
+    /// call) is a clean `false`, never a crash - generic over
+    /// `CopilotProposalJournaling` so this one function serves both
+    /// `CloudHandle` and `WardryxHandle` rather than two near-identical
+    /// copies.
+    private func journalCopilotApproval<H: CopilotProposalJournaling>(
+        kind: String, target: String, handle: H?
+    ) async -> Bool {
+        guard let handle else { return false }
+        return await Task.detached {
+            handle.journalCopilotProposalApproved(kind: kind, target: target)
+        }.value
+    }
+
+    /// Kill: the SAME break-glass path `MoneyView`'s `RunsBoard` kill button
+    /// uses - `CloudModel.killRun` (`CloudModel.swift:191`), which itself
+    /// challenges Touch ID before ever calling `CloudHandle.killRun`
+    /// (`crates/ffi/src/cloud/mod.rs`).
+    private func approveCopilotKill(runId: String, reason: String) async -> Bool {
+        let ok = await cloudModel.killRun(runId, reason: reason)
+        if ok {
+            let linked = await journalCopilotApproval(
+                kind: "kill", target: runId, handle: cloudModel.cloudHandle)
+            copilotModel.noteProposalOutcome(
+                "Approved - killed run \(runId) (a Felyx proposal)."
+                    + (linked ? " Linked in the audit journal." : ""))
+        } else {
+            copilotModel.noteProposalOutcome(
+                "Kill of run \(runId) was not completed - Touch ID was declined, or the request failed. See the Money tab for details."
+            )
+        }
+        return ok
+    }
+
+    /// Budget: the SAME break-glass path `MoneyView`'s `RunsBoard` budget
+    /// editor uses - `CloudModel.setBudget` (`CloudModel.swift:212`), same
+    /// Touch-ID gate as `killRun` above.
+    private func approveCopilotBudget(runId: String, usdCap: Double, reason: String) async -> Bool {
+        let ok = await cloudModel.setBudget(runId: runId, usd: usdCap, reason: reason)
+        if ok {
+            let linked = await journalCopilotApproval(
+                kind: "budget", target: runId, handle: cloudModel.cloudHandle)
+            copilotModel.noteProposalOutcome(
+                "Approved - set run \(runId)'s budget to \(MoneyFormat.usd(usdCap)) (a Felyx proposal)."
+                    + (linked ? " Linked in the audit journal." : ""))
+        } else {
+            copilotModel.noteProposalOutcome(
+                "Budget change for run \(runId) was not completed - Touch ID was declined, or the request failed. See the Money tab for details."
+            )
+        }
+        return ok
+    }
+
+    /// GrantDeny: the SAME path `PolicyView`'s `ApprovalRow` Grant/Deny
+    /// buttons use - `PolicyModel.decide` (`PolicyModel.swift:153`), which
+    /// itself challenges Touch ID before ever calling
+    /// `WardryxHandle.decideApproval` (`crates/ffi/src/wardryx/mod.rs`); no
+    /// typed reason (Wardryx grant/deny needs none - PHASE2.md).
+    private func approveCopilotGrantDeny(approvalId: String, verdict: ApprovalVerdict) async -> Bool {
+        let outcome = await policyModel.decide(approvalId, verdict: verdict)
+        let ok = outcome != nil
+        if ok {
+            let linked = await journalCopilotApproval(
+                kind: "grant_deny", target: approvalId, handle: policyModel.wardryxHandle)
+            let verb = verdict == .grant ? "granted" : "denied"
+            copilotModel.noteProposalOutcome(
+                "Approved - \(verb) approval \(approvalId) (a Felyx proposal)."
+                    + (linked ? " Linked in the audit journal." : ""))
+        } else {
+            copilotModel.noteProposalOutcome(
+                "Deciding approval \(approvalId) was not completed - Touch ID was declined, or the request failed. See the Policy tab for details."
+            )
+        }
+        return ok
+    }
+
+    /// Rescan: the SAME path `IdentityView`'s Rescan button uses -
+    /// `IdentityModel.rescan` (`IdentityModel.swift:171`). Unlike the three
+    /// above, this is not a break-glass override or a signed mutation at
+    /// all - a plain recompute with no confirm ceremony and no
+    /// `console_command` journal of any kind (see this function's own
+    /// "MARK" comment above), so there is no audit link to write; the
+    /// transcript note below is the only record.
+    private func approveCopilotRescan() async -> Bool {
+        let ok = await identityModel.rescan()
+        copilotModel.noteProposalOutcome(
+            ok
+                ? "Approved - re-ran the identity scan (a Felyx proposal)."
+                : "Rescan was not completed. See the Identity tab for details.")
+        return ok
+    }
 }
+
+/// C2 (docs/PHASE6-C2.md): both `CloudHandle` and `WardryxHandle` gained an
+/// identically-shaped audit-link method (see each's own
+/// `journalCopilotProposalApproved` doc comment) - this lets
+/// `GenaryxApp.journalCopilotApproval` stay one generic function instead of
+/// two near-identical copies. Both concrete types are already `Sendable`
+/// (UniFFI generates every handle `@unchecked Sendable`, and their own
+/// generated `*HandleProtocol`s already declare `: Sendable`), so this new
+/// conformance adds no concurrency obligation of its own.
+private protocol CopilotProposalJournaling: Sendable {
+    func journalCopilotProposalApproved(kind: String, target: String) -> Bool
+}
+extension CloudHandle: CopilotProposalJournaling {}
+extension WardryxHandle: CopilotProposalJournaling {}
 
 /// The Agent 360 deep-link target (PHASE3 W3): `.sheet(item:)` needs
 /// `Identifiable`, and an agent id is already a stable, unique identifier -

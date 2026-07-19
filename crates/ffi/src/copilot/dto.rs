@@ -86,8 +86,9 @@ impl From<genaryx_copilot::ToolInvocation> for CopilotToolDto {
 
 /// One finished answer: the model's text, every tool it ran (empty in C0 -
 /// [`super::CopilotHandle::create`] wires `Clients::default()`, so the
-/// registry has no tool to call even once a provider is configured), and
-/// token usage. Mirrors `genaryx_copilot::Answer`, with
+/// registry has no tool to call even once a provider is configured), token
+/// usage, and (C2, docs/PHASE6-C2.md) every action Felyx PROPOSES but never
+/// performs. Mirrors `genaryx_copilot::Answer`, with
 /// `usage.prompt_tokens`/`usage.completion_tokens` flattened directly onto
 /// this Record rather than nested behind a one-off `CopilotUsageDto` - there
 /// is exactly one consumer of `Usage` on this boundary, so nesting would only
@@ -98,6 +99,11 @@ pub struct CopilotAnswerDto {
     pub tool_trace: Vec<CopilotToolDto>,
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
+    /// C2: recommendations only - rendered as approve/reject cards. Empty
+    /// whenever the loop ran no propose tool (every C0/C1 answer, and any C2
+    /// answer that only reads). See [`CopilotProposalDto`]'s own doc comment
+    /// for why "Approve" never lives on this crate's side of the boundary.
+    pub proposals: Vec<CopilotProposalDto>,
 }
 
 impl From<genaryx_copilot::Answer> for CopilotAnswerDto {
@@ -107,6 +113,75 @@ impl From<genaryx_copilot::Answer> for CopilotAnswerDto {
             tool_trace: a.tool_trace.into_iter().map(CopilotToolDto::from).collect(),
             prompt_tokens: a.usage.prompt_tokens,
             completion_tokens: a.usage.completion_tokens,
+            proposals: a
+                .proposals
+                .into_iter()
+                .map(CopilotProposalDto::from)
+                .collect(),
+        }
+    }
+}
+
+/// One [`genaryx_copilot::ProposedAction`], flattened for UniFFI (C2,
+/// docs/PHASE6-C2.md): a structured recommendation with its evidence, never
+/// an executed mutation - this crate's `CopilotHandle` holds no signer (see
+/// `genaryx_copilot`'s own crate doc: "Act does not exist"), so there is no
+/// `approve()` method anywhere on this boundary. The shell renders this as a
+/// card and, on "Approve", routes into the EXISTING human-signed ceremony
+/// (`CloudHandle`'s break-glass kill/budget, `WardryxHandle`'s
+/// `decide_approval`, `IdryxHandle`'s `rescan`) - never a new signed path
+/// here.
+///
+/// `kind` is flattened to `genaryx_copilot::ActionKind`'s own lowercase wire
+/// string (`"kill"` / `"budget"` / `"grant_deny"` / `"rescan"`) rather than a
+/// UniFFI `Enum` mirror: the shell only ever switches on the string to pick
+/// which existing signed path to call, exactly like it already does for
+/// [`super::super::wardryx::ApprovalVerdict`]'s sibling string fields
+/// elsewhere on this boundary (e.g. `ApprovalRecord.decision`). `params` is
+/// serialized to a JSON string (`params_json`) rather than carried as
+/// `serde_json::Value` directly: UniFFI has no arbitrary-JSON type, so every
+/// other `Value`-shaped field on this crate's boundary is a `String` the
+/// Swift side decodes itself (mirrors how `crates/ffi/src/cloud/dto.rs`
+/// flattens connector-side JSON into typed fields, just without a fixed
+/// schema here - a proposal's `params` shape varies by `kind`).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct CopilotProposalDto {
+    pub kind: String,
+    /// The subject: a run id (Kill/Budget), an approval id (GrantDeny), or an
+    /// agent id / `"all"` (Rescan).
+    pub target: String,
+    /// `serde_json::to_string(&params)` - `{"usd_cap":5.0}` for Budget,
+    /// `{"verdict":"grant"}` for GrantDeny, `"{}"` for Kill/Rescan (never
+    /// fails in practice: a `serde_json::Value` is always encodable, but the
+    /// fallback keeps this conversion infallible rather than panicking on an
+    /// unreachable edge).
+    pub params_json: String,
+    pub rationale: String,
+    pub confidence: f64,
+    pub evidence_refs: Vec<String>,
+    /// Non-empty only when Wardryx is configured and governs this action's
+    /// target - see `genaryx_copilot::ProposedAction::policy_context`'s own
+    /// doc comment.
+    pub policy_context: Vec<String>,
+}
+
+impl From<genaryx_copilot::ProposedAction> for CopilotProposalDto {
+    fn from(p: genaryx_copilot::ProposedAction) -> Self {
+        let kind = match p.kind {
+            genaryx_copilot::ActionKind::Kill => "kill",
+            genaryx_copilot::ActionKind::Budget => "budget",
+            genaryx_copilot::ActionKind::GrantDeny => "grant_deny",
+            genaryx_copilot::ActionKind::Rescan => "rescan",
+        }
+        .to_string();
+        Self {
+            kind,
+            target: p.target,
+            params_json: serde_json::to_string(&p.params).unwrap_or_else(|_| "{}".to_string()),
+            rationale: p.rationale,
+            confidence: f64::from(p.confidence),
+            evidence_refs: p.evidence_refs,
+            policy_context: p.policy_context,
         }
     }
 }
@@ -164,5 +239,93 @@ impl From<genaryx_copilot::ConfigError> for CopilotFfiError {
         CopilotFfiError::Config {
             reason: e.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `ActionKind` maps to the exact lowercase wire string the shell
+    /// switches on (docs/PHASE6-C2.md), `params` round-trips through
+    /// `params_json` as real JSON (not just `Debug`-stringified), and every
+    /// other field carries straight through unchanged - proven once per
+    /// kind so a future `ActionKind` variant that forgets to extend the
+    /// match in `CopilotProposalDto::from` fails to compile rather than
+    /// silently falling through.
+    #[test]
+    fn copilot_proposal_dto_maps_every_kind_to_its_wire_string_and_serializes_params() {
+        let cases = [
+            (genaryx_copilot::ActionKind::Kill, "kill"),
+            (genaryx_copilot::ActionKind::Budget, "budget"),
+            (genaryx_copilot::ActionKind::GrantDeny, "grant_deny"),
+            (genaryx_copilot::ActionKind::Rescan, "rescan"),
+        ];
+        for (kind, wire) in cases {
+            let action = genaryx_copilot::ProposedAction {
+                kind,
+                target: "reconciliation-batch".to_string(),
+                params: serde_json::json!({ "usd_cap": 5.0 }),
+                rationale: "burn tripled after a policy hold".to_string(),
+                confidence: 0.82,
+                evidence_refs: vec!["incident:182".to_string()],
+                policy_context: vec!["agent://meridian/*".to_string()],
+            };
+            let dto = CopilotProposalDto::from(action);
+            assert_eq!(dto.kind, wire);
+            assert_eq!(dto.target, "reconciliation-batch");
+            assert_eq!(dto.rationale, "burn tripled after a policy hold");
+            assert!((dto.confidence - 0.82).abs() < 1e-6);
+            assert_eq!(dto.evidence_refs, vec!["incident:182".to_string()]);
+            assert_eq!(dto.policy_context, vec!["agent://meridian/*".to_string()]);
+
+            let decoded: serde_json::Value = serde_json::from_str(&dto.params_json)
+                .unwrap_or_else(|e| panic!("params_json must be real JSON for {wire}: {e}"));
+            assert_eq!(decoded["usd_cap"], 5.0);
+        }
+    }
+
+    /// An empty `params` (`{}`, Kill/Rescan's actual shape) round-trips to
+    /// the literal `"{}"` string, never `"null"` or a panic.
+    #[test]
+    fn copilot_proposal_dto_serializes_empty_params_as_an_empty_json_object() {
+        let action = genaryx_copilot::ProposedAction::new(
+            genaryx_copilot::ActionKind::Kill,
+            "r-1",
+            serde_json::json!({}),
+            "runaway",
+            0.9,
+            vec![],
+        );
+        let dto = CopilotProposalDto::from(action);
+        assert_eq!(dto.params_json, "{}");
+    }
+
+    /// `CopilotAnswerDto::from` carries `Answer.proposals` through via
+    /// `CopilotProposalDto::from` (not dropped, not left as a default-empty
+    /// `Vec` alongside a genuinely non-empty source) - the one new field
+    /// this DTO gained in C2.
+    #[test]
+    fn copilot_answer_dto_carries_proposals_through() {
+        let answer = genaryx_copilot::Answer {
+            text: "I'd recommend killing this run.".to_string(),
+            tool_trace: vec![],
+            usage: genaryx_copilot::Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+            },
+            proposals: vec![genaryx_copilot::ProposedAction::new(
+                genaryx_copilot::ActionKind::Kill,
+                "r-1",
+                serde_json::json!({}),
+                "runaway",
+                0.9,
+                vec![],
+            )],
+        };
+        let dto = CopilotAnswerDto::from(answer);
+        assert_eq!(dto.proposals.len(), 1);
+        assert_eq!(dto.proposals[0].kind, "kill");
+        assert_eq!(dto.proposals[0].target, "r-1");
     }
 }

@@ -6,7 +6,9 @@
 //! and it routes into the EXISTING human-signed ceremony (desktop enclave
 //! signature, phone Face-ID signature, or the Wardryx approvals/break-glass
 //! flow). This crate holds no signer, so it cannot execute one itself. The
-//! type is defined in C0 for stability; it is only emitted from C2.
+//! type was defined in C0 for stability; C2's propose tools
+//! (`tools::propose`) emit it, the loop collects it into `Answer.proposals`,
+//! and the shell renders it as an approve/reject card.
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +45,38 @@ pub struct ProposedAction {
     pub confidence: f32,
     /// Source row ids backing the rationale, rendered verbatim by the shell.
     pub evidence_refs: Vec<String>,
+    /// C2 Wardryx pre-check (side-effect-free): the targets of any policies that
+    /// govern this action, read from `list_policies` when Wardryx is configured,
+    /// so the card can show "governed by policy X". Empty when Wardryx is absent
+    /// or no policy matches. A precise binary allow/deny PDP dry-run is deferred
+    /// (it needs a genuine dry mode on Wardryx `/v1/decide`, which today can
+    /// create a hold as a side effect). `#[serde(default)]` keeps older payloads
+    /// that predate this field decodable.
+    #[serde(default)]
+    pub policy_context: Vec<String>,
+}
+
+impl ProposedAction {
+    /// Build a proposal with an empty `policy_context` (the propose tool fills it
+    /// in from a `list_policies` read when Wardryx is available).
+    pub fn new(
+        kind: ActionKind,
+        target: impl Into<String>,
+        params: serde_json::Value,
+        rationale: impl Into<String>,
+        confidence: f32,
+        evidence_refs: Vec<String>,
+    ) -> Self {
+        Self {
+            kind,
+            target: target.into(),
+            params,
+            rationale: rationale.into(),
+            confidence: confidence.clamp(0.0, 1.0),
+            evidence_refs,
+            policy_context: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -58,10 +92,34 @@ mod tests {
             rationale: "Burn tripled after a policy hold; cap it while investigating.".into(),
             confidence: 0.74,
             evidence_refs: vec!["incident:182".into(), "run:r-abc".into()],
+            policy_context: vec!["agent://meridian/*".into()],
         };
         let json = serde_json::to_string(&action).unwrap();
         let back: ProposedAction = serde_json::from_str(&json).unwrap();
         assert_eq!(action, back);
         assert!(json.contains("\"kind\":\"budget\""));
+    }
+
+    #[test]
+    fn new_clamps_confidence_and_defaults_policy_context() {
+        let a = ProposedAction::new(
+            ActionKind::Kill,
+            "r-1",
+            serde_json::json!({}),
+            "why",
+            1.5,
+            vec![],
+        );
+        assert_eq!(a.confidence, 1.0); // clamped
+        assert!(a.policy_context.is_empty());
+    }
+
+    #[test]
+    fn a_payload_without_policy_context_still_decodes() {
+        // #[serde(default)] keeps a C0/C1-era ProposedAction JSON decodable.
+        let json = r#"{"kind":"kill","target":"r-1","params":{},"rationale":"x",
+                       "confidence":0.5,"evidence_refs":[]}"#;
+        let a: ProposedAction = serde_json::from_str(json).unwrap();
+        assert!(a.policy_context.is_empty());
     }
 }

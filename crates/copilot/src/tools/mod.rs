@@ -13,6 +13,7 @@ mod cloud;
 mod crypto;
 mod idryx;
 mod memory;
+mod propose;
 mod quality;
 mod wardryx;
 
@@ -74,6 +75,12 @@ pub trait Tool: Send + Sync {
     fn params_schema(&self) -> Value {
         json!({"type": "object", "properties": {}, "additionalProperties": false})
     }
+    /// A "propose" tool (C2) returns a `ProposedAction` rather than reading a
+    /// plane; the loop collects its result into `Answer.proposals` for the shell
+    /// to render as an approve/reject card. Read tools leave this `false`.
+    fn is_propose(&self) -> bool {
+        false
+    }
     async fn run(&self, clients: &Clients, args: &Value) -> Result<Value, ToolError>;
 }
 
@@ -106,6 +113,11 @@ impl ToolRegistry {
         if clients.verdryx_db.is_some() {
             tools.extend(quality::tools());
         }
+        // Propose tools (C2) are always available: a proposal is a descriptor,
+        // not a plane read, so the copilot can recommend an action even where a
+        // plane is unconfigured. They emit a `ProposedAction` and never mutate;
+        // their Wardryx pre-check is best-effort (uses `clients.wardryx` if set).
+        tools.extend(propose::tools());
         Self { clients, tools }
     }
 
@@ -127,6 +139,15 @@ impl ToolRegistry {
 
     pub fn tool_names(&self) -> Vec<&'static str> {
         self.tools.iter().map(|t| t.name()).collect()
+    }
+
+    /// Whether the named tool is a "propose" tool (C2), so the loop knows to
+    /// collect its result into `Answer.proposals`. Unknown names are `false`.
+    pub fn is_propose_tool(&self, name: &str) -> bool {
+        self.tools
+            .iter()
+            .find(|t| t.name() == name)
+            .is_some_and(|t| t.is_propose())
     }
 
     /// Dispatch a model-requested call by name. An unknown name is an error the
@@ -151,11 +172,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_only_advertises_configured_planes() {
-        // No clients -> no tools.
-        let empty = ToolRegistry::new(Clients::default());
-        assert!(empty.is_empty());
-        assert!(empty.specs().is_empty());
+    fn registry_gates_read_tools_on_planes_but_always_offers_propose_tools() {
+        // No connector clients -> no READ tools, but the propose tools (C2) are
+        // always available (a proposal is a descriptor, not a plane read).
+        let reg = ToolRegistry::new(Clients::default());
+        let names = reg.tool_names();
+        assert!(!names.contains(&"money_summary")); // no cloud -> no read tools
+        assert!(!names.contains(&"memory_recall"));
+        assert!(names.contains(&"propose_kill")); // propose tools always present
+        assert!(names.contains(&"propose_budget"));
+        assert!(reg.is_propose_tool("propose_kill"));
+        assert!(!reg.is_propose_tool("money_summary"));
+        assert!(!reg.is_propose_tool("does_not_exist"));
     }
 
     #[tokio::test]

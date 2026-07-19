@@ -34,12 +34,55 @@ export interface CopilotToolInvocation {
   result_preview: string;
 }
 
+/** Mirrors `genaryx_copilot::action::ActionKind` (`#[serde(rename_all =
+ * "snake_case")]`) - the four kinds of action Felyx may PROPOSE (C2,
+ * docs/PHASE6-C2.md). Each maps to an EXISTING human-signed mutation the
+ * shell already implements; the copilot crate holds no signer and never
+ * calls those paths itself - see `ProposedAction`'s doc comment and
+ * `CopilotView.tsx`'s `runApproval`. */
+export type ProposedActionKind = "kill" | "budget" | "grant_deny" | "rescan";
+
+/** Mirrors `genaryx_copilot::action::ProposedAction` (already `Serialize`) -
+ * a recommendation with its evidence, never an executed mutation
+ * (`crates/copilot/src/action.rs`'s own doc comment: "There is deliberately
+ * no `Act` here"). The shell renders this as an approve/dismiss card
+ * (`CopilotView.tsx`'s `ProposalCard`); clicking Approve routes into the
+ * SAME signed ceremony a manual click on the Money/Policy/Identity panel
+ * already triggers - this type is display data until then. */
+export interface ProposedAction {
+  kind: ProposedActionKind;
+  /** The subject: a run id, approval id, agent id, etc. - `""` for a
+   * fleet-wide `rescan` proposal with no specific target. */
+  target: string;
+  /** Action parameters: `{"usd_cap": number}` for `budget`,
+   * `{"verdict": "grant"|"deny"}` for `grant_deny`, `{}` otherwise. Typed
+   * loosely (mirrors the Rust side's own untyped `serde_json::Value`) - read
+   * via the kind-specific accessors in `CopilotView.tsx` rather than assumed
+   * shape-checked here. */
+  params: Record<string, unknown>;
+  /** Why the copilot proposes this, in one or two sentences. */
+  rationale: string;
+  /** The model's self-reported confidence in `[0, 1]`. */
+  confidence: number;
+  /** Source row ids backing the rationale, rendered verbatim (run ids,
+   * incident ids, store event ids) so a claim is always checkable. */
+  evidence_refs: string[];
+  /** C2 Wardryx pre-check (side-effect-free): governing policy targets, read
+   * from `list_policies` when Wardryx is configured. Empty when Wardryx is
+   * absent or nothing matched - render nothing, never a fabricated "no
+   * policy" claim. */
+  policy_context: string[];
+}
+
 /** Mirrors `genaryx_copilot::agent::Answer` (already `Serialize`) - the
  * finished answer `copilot_ask` returns on success: the model's text, every
- * tool it ran along the way, and accumulated token usage. */
+ * tool it ran along the way, any actions it PROPOSED (C2 - rendered as
+ * approve/dismiss cards, nothing has happened yet), and accumulated token
+ * usage. */
 export interface CopilotAnswer {
   text: string;
   tool_trace: CopilotToolInvocation[];
+  proposals: ProposedAction[];
   usage: CopilotUsage;
 }
 

@@ -20,6 +20,9 @@ pub struct OpenAiCompat {
     model: String,
     api_key: Option<String>,
     local: bool,
+    /// C2 self-budget: sent as `x-fuse-run-id` so a TokenFuse gateway meters the
+    /// copilot's own inference spend (harmless against a raw endpoint).
+    run_id: String,
     http: reqwest::Client,
 }
 
@@ -30,6 +33,7 @@ impl OpenAiCompat {
         model: String,
         api_key: Option<String>,
         allow_non_local_endpoints: bool,
+        run_id: String,
     ) -> Result<Self, ProviderError> {
         let local = is_local_endpoint(&base_url);
         if !local && !allow_non_local_endpoints {
@@ -44,6 +48,7 @@ impl OpenAiCompat {
             model,
             api_key,
             local,
+            run_id,
             http,
         })
     }
@@ -90,7 +95,11 @@ impl LlmProvider for OpenAiCompat {
             body["tool_choice"] = json!("auto");
         }
 
-        let mut request = self.http.post(self.endpoint()).json(&body);
+        let mut request = self
+            .http
+            .post(self.endpoint())
+            .header("x-fuse-run-id", &self.run_id)
+            .json(&body);
         if let Some(key) = &self.api_key {
             request = request.bearer_auth(key);
         }
@@ -239,6 +248,7 @@ mod tests {
             "x".into(),
             Some("k".into()),
             false,
+            "genaryx-copilot".into(),
         )
         .unwrap_err();
         assert!(matches!(err, ProviderError::NonLocalEndpointRefused { .. }));
@@ -252,6 +262,7 @@ mod tests {
             "x".into(),
             Some("k".into()),
             true,
+            "genaryx-copilot".into(),
         )
         .unwrap();
         assert!(!p.descriptor().local);
@@ -265,6 +276,7 @@ mod tests {
             "qwen3:8b".into(),
             None,
             false,
+            "genaryx-copilot".into(),
         )
         .unwrap();
         assert!(p.descriptor().local);

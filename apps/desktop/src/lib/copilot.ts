@@ -70,3 +70,49 @@ export function describeCopilotError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
+
+/** What `copilot_log_proposal_approved` reports back - mirrors
+ * `evidence::commands::EvidenceBuildDto`'s `journaled`/`journal_error`
+ * pairing (`src-tauri/src/evidence/commands.rs`): whether the audit link
+ * itself got journaled is reported honestly, never thrown, so a journaling
+ * hiccup can never make an already-successful, already-signed mutation look
+ * like it failed. */
+export interface ProposalApprovedOutcome {
+  journaled: boolean;
+  journal_error: string | null;
+}
+
+/** C2's audit link (docs/PHASE6-C2.md "Audit metadata"): called by
+ * `CopilotView.tsx`'s `handleApproveProposal` right AFTER a proposal card's
+ * Approve action has already completed the real signed mutation through its
+ * own existing command (`killRun`/`setBudget`/`decideApproval`/`rescan`) -
+ * never before, and never in place of it. Journals one
+ * `console.copilot_proposal_approved` `CommandRecord` on the Rust side
+ * (`src-tauri/src/copilot/commands.rs::copilot_log_proposal_approved`), so
+ * the audit trail reads "human X approved copilot proposal Y", never
+ * "copilot did Z" - see `crates/copilot/src/action.rs`'s doc comment: the
+ * copilot crate holds no signer and never calls this (or any mutation) path
+ * itself.
+ *
+ * Never throws: outside Tauri, or on any IPC failure, this resolves to an
+ * honest `{journaled: false, journal_error: ...}` rather than rejecting -
+ * the underlying mutation already succeeded by the time this is called, so a
+ * transport hiccup here must never read as the approval itself having
+ * failed. Mirrors `fetchCopilotStatus`'s identical never-throws contract. */
+export async function logProposalApproved(
+  kind: string,
+  target: string,
+  params: unknown,
+): Promise<ProposalApprovedOutcome> {
+  if (!isTauri()) {
+    return { journaled: false, journal_error: "No Tauri runtime to talk to." };
+  }
+  try {
+    return await invoke<ProposalApprovedOutcome>("copilot_log_proposal_approved", { kind, target, params });
+  } catch (err) {
+    return {
+      journaled: false,
+      journal_error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}

@@ -41,11 +41,14 @@ pub struct ToolInvocation {
     pub result_preview: String,
 }
 
-/// The finished answer: the model's text, the tools it ran, and total usage.
+/// The finished answer: the model's text, the tools it ran, any actions it
+/// PROPOSED (C2 - render as approve/reject cards; nothing has happened yet), and
+/// total usage.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Answer {
     pub text: String,
     pub tool_trace: Vec<ToolInvocation>,
+    pub proposals: Vec<crate::action::ProposedAction>,
     pub usage: Usage,
 }
 
@@ -107,6 +110,7 @@ impl Felyx {
         let tools = self.registry.specs();
         let mut messages = vec![Message::user(question)];
         let mut trace: Vec<ToolInvocation> = Vec::new();
+        let mut proposals: Vec<crate::action::ProposedAction> = Vec::new();
         let mut usage = Usage::default();
 
         for _ in 0..self.max_iterations {
@@ -126,6 +130,7 @@ impl Felyx {
                 return Ok(Answer {
                     text: turn.content.unwrap_or_default(),
                     tool_trace: trace,
+                    proposals,
                     usage,
                 });
             }
@@ -148,6 +153,16 @@ impl Felyx {
                     ok,
                     result_preview: preview(&value),
                 });
+                // A propose tool's result IS a ProposedAction: collect it for the
+                // shell to render as an approve/reject card (C2). It still goes
+                // back to the model as data, so the model knows it is queued.
+                if ok
+                    && self.registry.is_propose_tool(&call.name)
+                    && let Ok(action) =
+                        serde_json::from_value::<crate::action::ProposedAction>(value.clone())
+                {
+                    proposals.push(action);
+                }
                 messages.push(Message::tool_result(&call.id, &call.name, &value));
             }
         }
@@ -365,5 +380,49 @@ mod tests {
                 .result_preview
                 .contains("does not exist")
         );
+    }
+
+    // C2: a propose tool's result is collected into Answer.proposals (the shell
+    // renders it as an approve/reject card). The copilot recommends; it never
+    // acts (no signer). Propose tools are available even with no connectors.
+    #[tokio::test]
+    async fn loop_collects_a_proposed_action_into_answer_proposals() {
+        let provider = crate::provider::mock::MockProvider::new(vec![
+            ChatTurn {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "p1".into(),
+                    name: "propose_kill".into(),
+                    arguments: serde_json::json!({
+                        "run_id": "reconciliation-batch",
+                        "reason": "4350 calls, confirmed runaway",
+                        "confidence": 0.82
+                    }),
+                }],
+                usage: Usage::default(),
+            },
+            ChatTurn {
+                content: Some("I've proposed killing that run for your approval.".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            },
+        ]);
+        let felyx = Felyx::new(
+            Box::new(provider),
+            ToolRegistry::new(Clients::default()),
+            6,
+            512,
+        );
+        let answer = felyx
+            .answer("the reconciliation run looks like a runaway")
+            .await
+            .unwrap();
+        assert_eq!(answer.proposals.len(), 1);
+        assert_eq!(answer.proposals[0].kind, crate::action::ActionKind::Kill);
+        assert_eq!(answer.proposals[0].target, "reconciliation-batch");
+        assert_eq!(answer.proposals[0].confidence, 0.82);
+        // The propose tool also shows in the trace, and it succeeded.
+        assert_eq!(answer.tool_trace[0].name, "propose_kill");
+        assert!(answer.tool_trace[0].ok);
     }
 }

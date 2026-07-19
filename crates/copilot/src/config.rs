@@ -74,6 +74,12 @@ pub struct CopilotConfig {
     pub max_iterations: u32,
     /// Per-turn output budget handed to the provider.
     pub max_tokens: u32,
+    /// The run id the copilot tags its OWN LLM calls with (C2, D13.3 self-budget):
+    /// sent as an `x-fuse-run-id` header so a local TokenFuse gateway attributes
+    /// and caps the copilot's inference spend like any other agent (the Breaker's
+    /// 402 stops a runaway copilot). Harmless against a raw Ollama/Anthropic
+    /// endpoint, which just ignores the header. Defaults to `genaryx-copilot`.
+    pub run_id: String,
 }
 
 impl Default for CopilotConfig {
@@ -87,6 +93,7 @@ impl Default for CopilotConfig {
             max_usd_per_day: 5.0,
             max_iterations: 6,
             max_tokens: 1024,
+            run_id: "genaryx-copilot".to_string(),
         }
     }
 }

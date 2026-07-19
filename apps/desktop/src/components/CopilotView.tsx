@@ -4,9 +4,25 @@ import type {
   CopilotExplainRequest,
   CopilotStatus,
   CopilotToolInvocation,
+  ProposedAction,
+  ProposedActionKind,
 } from "../copilotTypes";
-import { askCopilot, describeCopilotError, explainIncident, fetchCopilotStatus } from "../lib/copilot";
+import {
+  askCopilot,
+  describeCopilotError,
+  explainIncident,
+  fetchCopilotStatus,
+  logProposalApproved,
+} from "../lib/copilot";
 import { cssVar } from "../lib/cssVars";
+import { formatUsd } from "../lib/format";
+import { describeIdentityError, rescan } from "../lib/identity";
+import { describeMoneyError, killRun, setBudget } from "../lib/money";
+import { decideApproval, describePolicyError } from "../lib/policy";
+import type { IdentityError } from "../identityTypes";
+import type { MoneyError } from "../moneyTypes";
+import type { Decision, PolicyError } from "../policyTypes";
+import { ConfirmButton } from "./ConfirmButton";
 
 const FIELD_STYLE = {
   background: "var(--panel)",
@@ -17,6 +33,18 @@ const FIELD_STYLE = {
   color: "var(--fg)",
 } as const;
 
+/** One proposal card's local lifecycle (C2, docs/PHASE6-C2.md) - `action` is
+ * exactly what the crate proposed; `status` starts `"pending"` and moves to
+ * `"approved"`/`"dismissed"` once the operator acts on THIS card, so a
+ * decided card never re-shows its Approve/Dismiss buttons even though the
+ * rest of the transcript (and this message's OTHER proposals, if any) stay
+ * put. Local-only, like the rest of this panel's state - there is no
+ * `copilot_history` command (see this file's own module doc comment below). */
+interface ProposalState {
+  action: ProposedAction;
+  status: "pending" | "approved" | "dismissed";
+}
+
 interface ChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -26,10 +54,155 @@ interface ChatMessage {
    * message or an error note, so the collapsible section never appears on
    * either. */
   toolTrace?: CopilotToolInvocation[];
+  /** Present only on a successful assistant answer that PROPOSED at least
+   * one action (C2) - `ProposalCard` renders each as an approve/dismiss
+   * card. `undefined` (not an empty array), same convention as `toolTrace`
+   * (see [`toProposalState`]). */
+  proposals?: ProposalState[];
   /** Set when this "assistant" message is actually `copilot_ask`'s
    * rejection rendered inline (e.g. `CopilotError::NoProvider`'s message) -
    * an honest note, never a crash, styled distinctly from a real answer. */
   isNote?: boolean;
+}
+
+/** `answer.proposals` -> this view's own per-card `ProposalState[]`, or
+ * `undefined` for an answer that proposed nothing - same "`undefined`, not
+ * an empty array" convention `ChatMessage.toolTrace` already follows, so
+ * `MessageBubble`'s own `.length > 0` guard never has to special-case an
+ * empty array either. Every proposal starts `"pending"`. */
+function toProposalState(proposals: ProposedAction[]): ProposalState[] | undefined {
+  return proposals.length > 0 ? proposals.map((action) => ({ action, status: "pending" as const })) : undefined;
+}
+
+/** `action.target` rendered for display: a `rescan` proposal may carry no
+ * specific target (`propose_rescan`'s `target` argument is optional on the
+ * crate side - `crates/copilot/src/action.rs`), which still round-trips as
+ * `""` here (the field itself is a plain `String`, never `Option`) rather
+ * than being omitted. */
+function proposalTargetLabel(action: ProposedAction): string {
+  return action.target.trim().length > 0 ? action.target : "(fleet-wide)";
+}
+
+/** `"Kill run"` / `"Cap budget"` / `"Grant approval"` / `"Deny approval"` /
+ * `"Rescan"` - the clear-verb label a proposal card's header uses (spec:
+ * "the kind (as a clear verb)"). `grant_deny` reads its own `params.verdict`
+ * rather than one generic label for both directions, since granting and
+ * denying are opposite operator decisions and must never look the same at a
+ * glance. */
+function proposalVerb(action: ProposedAction): string {
+  switch (action.kind) {
+    case "kill":
+      return "Kill run";
+    case "budget":
+      return "Cap budget";
+    case "grant_deny":
+      return action.params.verdict === "deny" ? "Deny approval" : "Grant approval";
+    case "rescan":
+      return "Rescan";
+  }
+}
+
+/** A short "$5 cap" / "verdict: deny" line under a card's header, or `null`
+ * when this kind's params have nothing worth a dedicated summary line
+ * (`kill`/`rescan` - the target and rationale already say everything). */
+function proposalParamsSummary(action: ProposedAction): string | null {
+  if (action.kind === "budget") {
+    const usdCap = Number(action.params.usd_cap);
+    return Number.isFinite(usdCap) ? `${formatUsd(usdCap)} cap` : null;
+  }
+  if (action.kind === "grant_deny") {
+    const verdict = action.params.verdict;
+    return typeof verdict === "string" ? `verdict: ${verdict}` : null;
+  }
+  return null;
+}
+
+/** Detail line inside the BREAK-GLASS OVERRIDE modal `ConfirmButton` opens
+ * for `kill`/`budget` - mirrors `RunsBoard.tsx`/`BudgetEditor.tsx`'s own
+ * `breakGlassDetail` strings exactly, so approving a proposal's ceremony
+ * reads identically to a manual click's. `undefined` for `grant_deny`/
+ * `rescan`, which never open that modal at all (see `ProposalCard`). */
+function breakGlassDetailFor(action: ProposedAction): string | undefined {
+  if (action.kind === "kill") return `run ${proposalTargetLabel(action)}`;
+  if (action.kind === "budget") {
+    const usdCap = Number(action.params.usd_cap);
+    return Number.isFinite(usdCap)
+      ? `run ${proposalTargetLabel(action)} -> ${formatUsd(usdCap)}`
+      : `run ${proposalTargetLabel(action)}`;
+  }
+  return undefined;
+}
+
+/** Human-readable text for whatever `runApproval` rejected with. Each kind
+ * routes through a DIFFERENT existing command with its own structured error
+ * type (`MoneyError` for kill/budget, `PolicyError` for grant_deny,
+ * `IdentityError` for rescan) - `killRun`/`setBudget`/`decideApproval`/
+ * `rescan` all normalize a rejection into that exact shape before it ever
+ * reaches here (e.g. `lib/money.ts`'s `toMoneyError`), so branching on
+ * `kind` to pick the matching `describeXError` is always correct. The one
+ * exception is `runApproval`'s own pre-flight `usd_cap` validation, which
+ * throws a plain `Error` - `instanceof Error` catches that uniformly before
+ * the kind-specific branches ever run. */
+function describeApprovalError(kind: ProposedActionKind, err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (kind === "kill" || kind === "budget") return describeMoneyError(err as MoneyError);
+  if (kind === "grant_deny") return describePolicyError(err as PolicyError);
+  return describeIdentityError(err as IdentityError);
+}
+
+/**
+ * Route an approved proposal into the EXISTING signed mutation its `kind`
+ * maps to (C2, docs/PHASE6-C2.md: "Approve routes into the EXISTING signed
+ * ceremony... REUSE that code - do not reimplement signing") and return a
+ * one-line summary for the transcript. The copilot crate never calls any of
+ * these itself (`crates/copilot/src/action.rs`'s doc comment: "There is
+ * deliberately no `Act` here") - this is the ONE place in the shell that
+ * turns a `ProposedAction` into a real call, and it is always the exact SAME
+ * call a manual click elsewhere in this app already makes:
+ * - `kill` -> [`killRun`] (`src/lib/money.ts`) -> `money_kill_run`
+ *   (`src-tauri/src/money/commands.rs`), the signed `POST /v1/runs/{id}/kill`
+ *   `RunsBoard.tsx`'s own Kill button already triggers.
+ * - `budget` -> [`setBudget`] -> `money_set_budget`, the same signed
+ *   `POST /v1/runs/{id}/budget` `BudgetEditor.tsx` already triggers.
+ * - `grant_deny` -> [`decideApproval`] -> `policy_decide_approval`, the same
+ *   Wardryx decide call `ApprovalsInbox.tsx`'s Grant/Deny buttons already
+ *   trigger.
+ * - `rescan` -> [`rescan`] -> `identity_rescan`, the same `idryx detect`
+ *   batch call `IdentityView.tsx`'s Rescan button already triggers.
+ *
+ * `reason` is the break-glass justification `ProposalCard`'s `ConfirmButton`
+ * collects for `kill`/`budget` only (`""` for `grant_deny`/`rescan`, which
+ * use the non-break-glass ceremony and ignore it, exactly like
+ * `ApprovalsInbox.tsx`'s Grant/Deny buttons already do).
+ */
+async function runApproval(action: ProposedAction, reason: string): Promise<string> {
+  switch (action.kind) {
+    case "kill": {
+      const outcome = await killRun(action.target, reason);
+      return outcome.summary;
+    }
+    case "budget": {
+      const usdCap = Number(action.params.usd_cap);
+      if (!Number.isFinite(usdCap)) {
+        throw new Error(`proposal has no usable "usd_cap" in params (got ${JSON.stringify(action.params)})`);
+      }
+      const outcome = await setBudget(action.target, usdCap, reason);
+      return outcome.summary;
+    }
+    case "grant_deny": {
+      const decision: Decision = action.params.verdict === "deny" ? "deny" : "grant";
+      const outcome = await decideApproval(action.target, decision);
+      return outcome.summary;
+    }
+    case "rescan": {
+      const alerts = await rescan();
+      return `rescan complete - ${alerts.length} alert${alerts.length === 1 ? "" : "s"} found`;
+    }
+    default: {
+      const exhaustive: never = action.kind;
+      throw new Error(`unknown proposal kind: ${exhaustive}`);
+    }
+  }
 }
 
 /**
@@ -129,7 +302,157 @@ function ToolTraceSection({ trace }: { trace: CopilotToolInvocation[] }) {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+/** `NN% confidence` badge, toned mint/amber/faint by how confident the model
+ * claims to be - never a bare number with no visual weight, so a
+ * low-confidence proposal reads as less certain at a glance, not just as a
+ * smaller digit. */
+function ConfidenceChip({ confidence }: { confidence: number }) {
+  const pct = Math.round(Math.max(0, Math.min(1, confidence)) * 100);
+  const tone = pct >= 75 ? "var(--mint)" : pct >= 45 ? "var(--amber)" : "var(--faint)";
+  return (
+    <span className="badge" style={cssVar("tone", tone)}>
+      {pct}% confidence
+    </span>
+  );
+}
+
+/**
+ * One `ProposedAction` rendered as an approve/dismiss card (C2,
+ * docs/PHASE6-C2.md): the kind as a clear verb, the target, a short params
+ * summary, the rationale, a confidence chip, the evidence refs (monospace,
+ * verbatim - the anti-hallucination surface D13.6 calls for), and - only
+ * when Wardryx's C2 pre-check actually found one - a muted "Governed by
+ * policy" line.
+ *
+ * Approve reuses `ConfirmButton` exactly as the panel this proposal targets
+ * already does: `breakGlass` for `kill`/`budget` (the two
+ * genuinely-privileged Cloud-state overrides, same modal ceremony
+ * `RunsBoard.tsx`/`BudgetEditor.tsx` already use, right down to the
+ * justification it collects), the plain inline confirm for `grant_deny`/
+ * `rescan` (same ceremony `ApprovalsInbox.tsx`'s Grant/Deny buttons already
+ * use). Dismiss never calls anything at all - it only drops this card's own
+ * local state (`onDismiss`); the copilot only proposed, so there is no
+ * queued action anywhere to cancel.
+ */
+function ProposalCard({
+  proposal,
+  onApprove,
+  onDismiss,
+}: {
+  proposal: ProposalState;
+  onApprove: (reason: string) => Promise<void>;
+  onDismiss: () => void;
+}) {
+  const { action, status } = proposal;
+  const breakGlass = action.kind === "kill" || action.kind === "budget";
+  const confirmLabel =
+    action.kind === "kill" ? "Confirm kill" : action.kind === "budget" ? "Confirm budget" : "Confirm approve";
+  const paramsSummary = proposalParamsSummary(action);
+
+  return (
+    <div
+      className="d-card px-3.5 py-3 flex flex-col gap-2"
+      style={{
+        marginTop: 8,
+        background: "var(--panel-2)",
+        borderColor: "color-mix(in srgb, var(--iris) 30%, var(--line))",
+      }}
+    >
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="badge" style={cssVar("tone", "var(--iris)")}>
+          proposal
+        </span>
+        <span style={{ fontSize: 12.5, color: "var(--fg)", fontWeight: 600 }}>{proposalVerb(action)}</span>
+        <span className="mono truncate" style={{ fontSize: 11.5, color: "var(--dim)" }} title={action.target}>
+          {proposalTargetLabel(action)}
+        </span>
+        <div className="flex-1" />
+        <ConfidenceChip confidence={action.confidence} />
+      </div>
+
+      {paramsSummary && (
+        <span className="mono" style={{ fontSize: 12, color: "var(--fg)" }}>
+          {paramsSummary}
+        </span>
+      )}
+
+      <span style={{ fontSize: 12, color: "var(--dim)", lineHeight: 1.55 }}>{action.rationale}</span>
+
+      {action.evidence_refs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span
+            className="mono"
+            style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--faint)" }}
+          >
+            evidence
+          </span>
+          {action.evidence_refs.map((ref) => (
+            <span
+              key={ref}
+              className="mono"
+              style={{
+                fontSize: 11,
+                color: "var(--dim)",
+                background: "var(--panel)",
+                border: "1px solid var(--line-2)",
+                borderRadius: 5,
+                padding: "1.5px 6px",
+              }}
+            >
+              {ref}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {action.policy_context.length > 0 && (
+        <span className="text-[11px]" style={{ color: "var(--amber)" }}>
+          Governed by policy: {action.policy_context.join(", ")}
+        </span>
+      )}
+
+      <div className="flex items-center justify-end gap-2 mt-1">
+        {status === "pending" ? (
+          <>
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 10px", fontSize: 11 }}
+              onClick={onDismiss}
+            >
+              Dismiss
+            </button>
+            <ConfirmButton
+              label="Approve"
+              confirmLabel={confirmLabel}
+              tone="var(--mint)"
+              breakGlass={breakGlass}
+              breakGlassDetail={breakGlassDetailFor(action)}
+              onConfirm={onApprove}
+            />
+          </>
+        ) : (
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: status === "approved" ? "var(--mint)" : "var(--faint)" }}
+          >
+            {status === "approved" ? "approved" : "dismissed"}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({
+  message,
+  onApproveProposal,
+  onDismissProposal,
+}: {
+  message: ChatMessage;
+  onApproveProposal: (messageId: number, index: number, reason: string) => Promise<void>;
+  onDismissProposal: (messageId: number, index: number) => void;
+}) {
   const isUser = message.role === "user";
   return (
     <div className="flex" style={{ justifyContent: isUser ? "flex-end" : "flex-start" }}>
@@ -151,6 +474,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         >
           {message.text}
         </span>
+        {!isUser && message.proposals && message.proposals.length > 0 && (
+          <div className="flex flex-col">
+            {message.proposals.map((proposal, index) => (
+              <ProposalCard
+                key={index}
+                proposal={proposal}
+                onApprove={(reason) => onApproveProposal(message.id, index, reason)}
+                onDismiss={() => onDismissProposal(message.id, index)}
+              />
+            ))}
+          </div>
+        )}
         {!isUser && message.toolTrace && <ToolTraceSection trace={message.toolTrace} />}
       </div>
     </div>
@@ -163,8 +498,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
  * (pinned, [`ResidencyBanner`]) always tells the operator where inference
  * runs before they type anything; a scrollable transcript below holds every
  * question and answer for this session (in-memory only - there is no
- * `copilot_history` command, and there should not be one until this crate's
- * "propose" tier lands, C2); a pinned composer at the bottom sends one
+ * `copilot_history` command); a pinned composer at the bottom sends one
  * question at a time through [`askCopilot`].
  *
  * C0 ships the read path only (`crates/copilot/src/lib.rs`'s own doc
@@ -181,6 +515,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
  * operator navigates away (`AppShell` only renders it while
  * `view === "copilot"`), so a pending request is simply picked up by the
  * effect below the moment this component (re)mounts.
+ *
+ * C2 (docs/PHASE6-C2.md, "Felyx propose-and-confirm") adds `proposals`: when
+ * an `Answer` PROPOSES at least one action, `MessageBubble` renders each as
+ * a [`ProposalCard`] below the message text - display data only, the crate
+ * holds no signer (`crates/copilot/src/action.rs`'s own doc comment).
+ * Approve ([`handleApproveProposal`]) never invents a new mutation path: it
+ * calls [`runApproval`], which routes straight into the SAME signed command
+ * a manual click on the Money/Policy/Identity panel already triggers, then
+ * journals the proposal -> approval audit link via
+ * [`logProposalApproved`](../lib/copilot). Dismiss
+ * ([`handleDismissProposal`]) only drops the card's own local state - the
+ * copilot never queued anything to cancel.
  */
 export function CopilotView({
   explainRequest,
@@ -237,7 +583,13 @@ export function CopilotView({
         if (!cancelled) {
           setMessages((m) => [
             ...m,
-            { id: nextId.current++, role: "assistant", text: answer.text, toolTrace: answer.tool_trace },
+            {
+              id: nextId.current++,
+              role: "assistant",
+              text: answer.text,
+              toolTrace: answer.tool_trace,
+              proposals: toProposalState(answer.proposals),
+            },
           ]);
         }
       } catch (err) {
@@ -269,7 +621,13 @@ export function CopilotView({
       const answer: CopilotAnswer = await askCopilot(question);
       setMessages((m) => [
         ...m,
-        { id: nextId.current++, role: "assistant", text: answer.text, toolTrace: answer.tool_trace },
+        {
+          id: nextId.current++,
+          role: "assistant",
+          text: answer.text,
+          toolTrace: answer.tool_trace,
+          proposals: toProposalState(answer.proposals),
+        },
       ]);
     } catch (err) {
       // e.g. CopilotError::NoProvider's message with today's default config
@@ -282,6 +640,82 @@ export function CopilotView({
       setSending(false);
     }
   }, [input, sending]);
+
+  // Drop a card's local state to "dismissed" - never calls anything else.
+  // The copilot only proposed; there is no queued action anywhere to cancel
+  // (C2, docs/PHASE6-C2.md: "A Reject/dismiss simply drops the card").
+  const handleDismissProposal = useCallback((messageId: number, index: number) => {
+    setMessages((m) =>
+      m.map((msg) =>
+        msg.id === messageId
+          ? {
+              ...msg,
+              proposals: msg.proposals?.map((p, i) => (i === index ? { ...p, status: "dismissed" as const } : p)),
+            }
+          : msg,
+      ),
+    );
+  }, []);
+
+  // Approve one proposal card: run the SAME signed mutation a manual click
+  // elsewhere in this app already runs (`runApproval`), mark the card
+  // "approved" only once that call has actually succeeded (never
+  // optimistically - a rejected mutation must never look approved), then
+  // journal the proposal -> approval audit link (`logProposalApproved`, C2's
+  // "Audit metadata") and append one transcript note reporting both outcomes
+  // honestly. A failed mutation leaves the card "pending" so the operator
+  // can retry - mirrors `BudgetEditor.tsx`'s "left open on failure so the
+  // operator can retry" contract - and appends its own note instead
+  // (`describeApprovalError`), never a crash.
+  const handleApproveProposal = useCallback(
+    async (messageId: number, index: number, reason: string) => {
+      const proposal = messages.find((m) => m.id === messageId)?.proposals?.[index];
+      if (!proposal || proposal.status !== "pending") return;
+      const { action } = proposal;
+
+      let summary: string;
+      try {
+        summary = await runApproval(action, reason);
+      } catch (err) {
+        setMessages((m) => [
+          ...m,
+          {
+            id: nextId.current++,
+            role: "assistant",
+            text: `Could not approve "${proposalVerb(action)}" on ${proposalTargetLabel(action)}: ${describeApprovalError(action.kind, err)}`,
+            isNote: true,
+          },
+        ]);
+        return;
+      }
+
+      setMessages((m) =>
+        m.map((msg) =>
+          msg.id === messageId
+            ? {
+                ...msg,
+                proposals: msg.proposals?.map((p, i) => (i === index ? { ...p, status: "approved" as const } : p)),
+              }
+            : msg,
+        ),
+      );
+
+      const { journaled, journal_error } = await logProposalApproved(action.kind, action.target, action.params);
+
+      setMessages((m) => [
+        ...m,
+        {
+          id: nextId.current++,
+          role: "assistant",
+          text: journaled
+            ? `Approved: ${summary} - a human approved Felyx's proposal; the signed mutation and the audit link are both recorded.`
+            : `Approved: ${summary} (the proposal-approval audit link was not journaled: ${journal_error ?? "unknown reason"})`,
+          isNote: true,
+        },
+      ]);
+    },
+    [messages],
+  );
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -298,7 +732,14 @@ export function CopilotView({
             </span>
           </div>
         ) : (
-          messages.map((m) => <MessageBubble key={m.id} message={m} />)
+          messages.map((m) => (
+            <MessageBubble
+              key={m.id}
+              message={m}
+              onApproveProposal={handleApproveProposal}
+              onDismissProposal={handleDismissProposal}
+            />
+          ))
         )}
       </div>
 
