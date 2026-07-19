@@ -28,7 +28,7 @@ pub mod residency;
 pub mod service;
 pub mod tools;
 
-pub use action::{ActionKind, ProposedAction};
+pub use action::{ActionKind, CopilotAnnotation, ProposedAction};
 pub use agent::{Answer, CopilotError, Felyx, ToolInvocation};
 pub use config::{ConfigError, CopilotConfig, ProviderKind, SecretRef};
 pub use provider::{

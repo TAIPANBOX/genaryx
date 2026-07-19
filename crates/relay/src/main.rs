@@ -27,6 +27,7 @@ mod push;
 mod ratelimit;
 mod registry;
 mod tls;
+mod triage;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -175,12 +176,19 @@ async fn run() -> Result<(), RelayError> {
     let sse = CloudSse::spawn("relay", sse_config).map_err(|e| RelayError::Sse(e.to_string()))?;
 
     let sweep_client = CloudClient::new(&config.cloud_base_url, &config.cloud_viewer_key)?;
-    tokio::spawn(exceptions::run_event_loop(
+    // C3 (docs/PHASE6-C3.md): the triage stage in front of the push path. HARD
+    // events push immediately (deterministic floor); an optional, budgeted Felyx
+    // annotation enriches the polled snapshot; SOFT events batch into a digest.
+    // Copilot is off unless a provider is configured (GENARYX_RELAY_COPILOT_*),
+    // so by default the relay pages exactly as before C3.
+    let triage = Arc::new(triage::Triage::new(
         engine.clone(),
-        sse,
         registry.clone(),
         push_sender.clone(),
+        triage::build_copilot_from_env(),
+        triage::TriageConfig::from_env(),
     ));
+    tokio::spawn(exceptions::run_event_loop(triage, sse));
     tokio::spawn(exceptions::run_reconcile_sweep(
         engine.clone(),
         sweep_client,

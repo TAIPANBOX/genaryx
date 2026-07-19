@@ -169,6 +169,36 @@ impl Felyx {
 
         Err(CopilotError::IterationLimit(self.max_iterations))
     }
+
+    /// A FAST, single-turn, tool-free summary of one event, for the C3 relay's
+    /// push-annotation budget (docs/PHASE6-C3.md, D13.4). Deliberately NOT the
+    /// tool loop: an annotation must fit a ~3 s budget, so it is one provider
+    /// call, no tools, small output. Enriches a HARD event; it can never
+    /// suppress the deterministic push (the relay dispatches that first).
+    pub async fn annotate(
+        &self,
+        event: &str,
+    ) -> Result<crate::action::CopilotAnnotation, CopilotError> {
+        const ANNOTATE_SYSTEM: &str = "You are Felyx, an on-call copilot. In ONE short \
+            sentence, summarize this agent-fleet event for an operator's pager: what happened \
+            and why it matters. No preamble, no markdown, just the sentence.";
+        let turn = self
+            .provider
+            .chat(ChatRequest {
+                system: ANNOTATE_SYSTEM.to_string(),
+                messages: vec![Message::user(event)],
+                tools: Vec::new(),
+                max_tokens: 120,
+                temperature: 0.2,
+            })
+            .await?;
+        Ok(crate::action::CopilotAnnotation {
+            summary: turn.content.unwrap_or_default().trim().to_string(),
+            recommended_action: None,
+            confidence: 0.6,
+            chain: Vec::new(),
+        })
+    }
 }
 
 /// Truncate a JSON value to a short one-line preview for the transcript.
@@ -424,5 +454,31 @@ mod tests {
         // The propose tool also shows in the trace, and it succeeded.
         assert_eq!(answer.tool_trace[0].name, "propose_kill");
         assert!(answer.tool_trace[0].ok);
+    }
+
+    // C3: annotate is a single tool-free turn producing a one-line summary (the
+    // relay's fast push-annotation path), distinct from the multi-tool loop.
+    #[tokio::test]
+    async fn annotate_produces_a_one_line_summary_without_tools() {
+        let provider = crate::provider::mock::MockProvider::new(vec![ChatTurn {
+            content: Some("treasury-bot-4 tripled its burn after a policy hold.".into()),
+            tool_calls: vec![],
+            usage: Usage::default(),
+        }]);
+        let felyx = Felyx::new(
+            Box::new(provider),
+            ToolRegistry::new(Clients::default()),
+            6,
+            512,
+        );
+        let ann = felyx
+            .annotate("run treasury-bot-4 is over cap at 140% of budget")
+            .await
+            .unwrap();
+        assert_eq!(
+            ann.summary,
+            "treasury-bot-4 tripled its burn after a policy hold."
+        );
+        assert!(ann.recommended_action.is_none());
     }
 }

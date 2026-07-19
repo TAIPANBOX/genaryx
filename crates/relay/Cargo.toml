@@ -19,6 +19,11 @@ path = "src/main.rs"
 genaryx-core = { path = "../core" }
 genaryx-connectors = { path = "../connectors" }
 genaryx-signing = { path = "../signing" }
+# Phase 6 C3 (the D12 tie): the relay embeds Felyx as a headless second host -
+# a budgeted, best-effort annotation on HARD pager events + soft-event triage.
+# The copilot can only ADD; the deterministic HARD-push floor is code here, and
+# the copilot holds no signer (genaryx-copilot has no genaryx-signing dep).
+genaryx-copilot = { path = "../copilot" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

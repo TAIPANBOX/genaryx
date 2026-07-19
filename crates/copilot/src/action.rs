@@ -56,6 +56,21 @@ pub struct ProposedAction {
     pub policy_context: Vec<String>,
 }
 
+/// The optional `copilot` block a C3 relay attaches to a HARD pager event
+/// (docs/PHASE6-C3.md, itrat-console/13 D13.4): a one-line summary, an optional
+/// recommended action, a confidence, and the cross-plane chain. It ENRICHES a
+/// pushed/polled exception; it can never suppress or delay the deterministic
+/// HARD push (that floor is code in the relay, not this data).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CopilotAnnotation {
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_action: Option<ProposedAction>,
+    pub confidence: f32,
+    #[serde(default)]
+    pub chain: Vec<String>,
+}
+
 impl ProposedAction {
     /// Build a proposal with an empty `policy_context` (the propose tool fills it
     /// in from a `list_policies` read when Wardryx is available).

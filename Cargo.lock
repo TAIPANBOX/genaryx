@@ -1021,6 +1021,7 @@ dependencies = [
  "axum-server",
  "base64",
  "genaryx-connectors",
+ "genaryx-copilot",
  "genaryx-core",
  "genaryx-signing",
  "getrandom 0.2.17",

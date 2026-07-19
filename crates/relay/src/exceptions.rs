@@ -91,6 +91,12 @@ pub struct ExceptionItem {
     pub last_seen_unix: i64,
     pub acknowledged: bool,
     pub killed: bool,
+    /// C3 (docs/PHASE6-C3.md): a best-effort Felyx annotation, attached AFTER
+    /// the deterministic push for a HARD event (or omitted). Enriches what the
+    /// phone's poll shows; never gates the push. Omitted from the wire when
+    /// absent so the phone's decoder (serde default) stays backward-compatible.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copilot: Option<genaryx_copilot::CopilotAnnotation>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
@@ -303,6 +309,30 @@ impl ExceptionEngine {
         }
     }
 
+    /// C3 (docs/PHASE6-C3.md): attach a Felyx annotation to a queued item, if it
+    /// is still present. The triage stage's spawned, budgeted task calls this
+    /// AFTER the deterministic HARD push has already gone out, so it only ever
+    /// ENRICHES what the phone's next poll shows and can never gate the push.
+    /// Returns whether an item was found (it may have been reconciled away
+    /// between the push and the annotation completing).
+    pub fn annotate_item(&self, key: &str, annotation: genaryx_copilot::CopilotAnnotation) -> bool {
+        let mut st = self.state.lock().expect("exception engine mutex poisoned");
+        if let Some(item) = st.items.get_mut(key) {
+            item.copilot = Some(annotation);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Test-only: seed a queue item directly (the triage/annotation tests need a
+    /// known item without replaying a full SSE record).
+    #[cfg(test)]
+    pub(crate) fn seed_item_for_test(&self, item: ExceptionItem) {
+        let mut st = self.state.lock().expect("exception engine mutex poisoned");
+        st.items.insert(item.key.clone(), item);
+    }
+
     /// Full resync against the Cloud's own authoritative reads: `/v1/summary`
     /// (aggregate spend), `/v1/alerts` (near/over-cap runs + their budgets),
     /// `/v1/incidents` (open, unacknowledged incidents). Replaces the queue
@@ -389,6 +419,7 @@ impl ExceptionEngine {
                 last_seen_unix: now,
                 acknowledged: false,
                 killed: was_killed || run.killed,
+                copilot: None,
             },
         );
         if !should_notify(
@@ -439,6 +470,7 @@ impl ExceptionEngine {
                         last_seen_unix: now,
                         acknowledged: false,
                         killed: true,
+                        copilot: None,
                     },
                 );
             }
@@ -509,6 +541,7 @@ fn alert_item(key: &str, a: &Alert, first_seen_unix: i64, now: i64) -> Exception
         last_seen_unix: now,
         acknowledged: false,
         killed: a.killed,
+        copilot: None,
     }
 }
 
@@ -530,6 +563,7 @@ fn incident_item(key: &str, inc: &Incident) -> ExceptionItem {
         last_seen_unix: inc.last_seen_millis / 1000,
         acknowledged: inc.acknowledged,
         killed: false,
+        copilot: None,
     }
 }
 
@@ -571,20 +605,23 @@ pub async fn exceptions_handler(
 /// operation `poll()` only ever returns `Ok`, `Err` means the background
 /// loop was told to stop.
 pub async fn run_event_loop(
-    engine: std::sync::Arc<ExceptionEngine>,
+    triage: std::sync::Arc<crate::triage::Triage>,
     mut sse: genaryx_connectors::CloudSse,
-    registry: std::sync::Arc<crate::registry::Registry>,
-    push: std::sync::Arc<dyn crate::push::ApnsSender>,
 ) {
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+    let mut last_soft_flush = now_unix();
     loop {
         interval.tick().await;
         match sse.poll() {
             Ok(records) => {
                 for record in &records {
                     let now = now_unix();
-                    if let Some(intent) = engine.handle_raw_record(record, now) {
-                        dispatch_push(&registry, push.as_ref(), intent);
+                    if let Some(intent) = triage.engine().handle_raw_record(record, now) {
+                        // C3: the triage stage decides HARD (push now, annotate
+                        // best-effort) vs SOFT (hold for the digest). In W1 this
+                        // was a direct dispatch_push; the deterministic floor is
+                        // preserved inside Triage::on_intent.
+                        triage.on_intent(intent);
                     }
                 }
             }
@@ -593,10 +630,16 @@ pub async fn run_event_loop(
                 return;
             }
         }
+        // C3: flush the soft-event digest on its own cadence (batch / hold).
+        let now = now_unix();
+        if now - last_soft_flush >= triage.soft_flush_secs() {
+            triage.flush_soft();
+            last_soft_flush = now;
+        }
     }
 }
 
-fn dispatch_push(
+pub(crate) fn dispatch_push(
     registry: &crate::registry::Registry,
     push: &dyn crate::push::ApnsSender,
     intent: PushIntent,
