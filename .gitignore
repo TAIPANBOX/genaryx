@@ -30,3 +30,4 @@ apps/desktop/src-tauri/target
 *.p8
 *.key
 !**/testdata/**/*.pem
+.claude/
