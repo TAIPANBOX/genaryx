@@ -171,6 +171,12 @@ async fn annotate_hard(
     let event = format!("{}: {}", intent.title, intent.body);
     match tokio::time::timeout(budget, copilot.annotate(&event)).await {
         Ok(Ok(Some(annotation))) => {
+            // Observability symmetry with the failure arms below: record the
+            // enrichment we attached (the floor push has already gone out).
+            eprintln!(
+                "genaryx-relay: triage: attached copilot annotation to {key}: {}",
+                annotation.summary
+            );
             engine.annotate_item(key, annotation);
         }
         Ok(Ok(None)) => {} // copilot disabled -> plain push already delivered

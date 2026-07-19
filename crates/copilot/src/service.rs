@@ -164,4 +164,115 @@ mod tests {
         // it never yields a usable non-local service by default.
         assert!(CopilotService::from_config_and_clients(&cfg, Clients::default()).is_err());
     }
+
+    /// LIVE demo-runner (docs/PHASE6-C*): drives Felyx against a REAL provider
+    /// and REAL planes, printing the transcript. Ignored by default; run with a
+    /// configured provider + reachable planes, e.g.:
+    ///   GENARYX_COPILOT_PROVIDER=anthropic GENARYX_COPILOT_MODEL=claude-sonnet-5 \
+    ///   GENARYX_COPILOT_API_KEY_REF=file:/path/key GENARYX_COPILOT_ALLOW_REMOTE=1 \
+    ///   GENARYX_DEMO_CLOUD_URL=http://127.0.0.1:8080 GENARYX_DEMO_CLOUD_KEY=devkey \
+    ///   cargo test -p genaryx-copilot live_felyx_demo -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "live: needs a real provider (GENARYX_COPILOT_*) + reachable planes"]
+    async fn live_felyx_demo() {
+        use genaryx_connectors::{CloudClient, IdryxClient, WardryxClient};
+
+        let provider = match std::env::var("GENARYX_COPILOT_PROVIDER")
+            .unwrap_or_default()
+            .as_str()
+        {
+            "anthropic" => ProviderKind::Anthropic,
+            "ollama" => ProviderKind::Ollama,
+            "openrouter" => ProviderKind::OpenRouter,
+            "openai_compat" => ProviderKind::OpenAiCompat,
+            "lmstudio" => ProviderKind::LmStudio,
+            _ => {
+                eprintln!("SKIP live_felyx_demo: set GENARYX_COPILOT_PROVIDER");
+                return;
+            }
+        };
+        let cfg = CopilotConfig {
+            provider,
+            base_url: std::env::var("GENARYX_COPILOT_BASE_URL").ok(),
+            model: std::env::var("GENARYX_COPILOT_MODEL").ok(),
+            api_key_ref: std::env::var("GENARYX_COPILOT_API_KEY_REF").ok(),
+            allow_non_local_endpoints: std::env::var("GENARYX_COPILOT_ALLOW_REMOTE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            // A real fleet needs more room than the conservative defaults: enough
+            // iterations to gather across several planes THEN propose, and enough
+            // output that the final synthesis turn is never cut mid-answer (a
+            // `stop_reason=max_tokens` on the LAST turn is what yields a blank
+            // reply, so give the answer generous headroom).
+            max_iterations: 8,
+            max_tokens: 4096,
+            ..Default::default()
+        };
+        let cloud = std::env::var("GENARYX_DEMO_CLOUD_URL")
+            .ok()
+            .zip(std::env::var("GENARYX_DEMO_CLOUD_KEY").ok())
+            .and_then(|(u, k)| CloudClient::new(u, k).ok());
+        let idryx = std::env::var("GENARYX_DEMO_IDRYX_URL")
+            .ok()
+            .and_then(|u| IdryxClient::new(u).ok());
+        let wardryx = std::env::var("GENARYX_DEMO_WARDRYX_URL")
+            .ok()
+            .zip(std::env::var("GENARYX_DEMO_WARDRYX_KEY").ok())
+            .and_then(|(u, k)| WardryxClient::new(u, k).ok());
+        let clients = Clients {
+            cloud,
+            idryx,
+            wardryx,
+            ..Default::default()
+        };
+        let svc = CopilotService::from_config_and_clients(&cfg, clients)
+            .expect("service must build for the live demo");
+        assert!(
+            svc.is_enabled(),
+            "provider must be enabled for the live demo"
+        );
+        eprintln!("=== Felyx live: {:?}\n", svc.descriptor());
+
+        // A small printer so each cut (C0 Q&A, C1 explain, C2 propose) reports
+        // the answer, the REAL tools the model called, any proposals, and usage.
+        let show = |label: &str, r: Result<Answer, CopilotError>| match r {
+            Ok(a) => {
+                eprintln!("--- [{label}] answer:\n{}", a.text);
+                let tools: Vec<&str> = a.tool_trace.iter().map(|t| t.name.as_str()).collect();
+                eprintln!("--- tools called: {tools:?}");
+                for p in &a.proposals {
+                    eprintln!(
+                        "--- PROPOSAL: {:?} target={} confidence={:.2}\n    rationale: {}\n    evidence: {:?}",
+                        p.kind, p.target, p.confidence, p.rationale, p.evidence_refs
+                    );
+                }
+                eprintln!(
+                    "--- usage: {}+{} tokens\n",
+                    a.usage.prompt_tokens, a.usage.completion_tokens
+                );
+            }
+            Err(e) => eprintln!("!!! [{label}] error: {e}\n"),
+        };
+
+        // C0 - money Q&A: the over-budget / runaway signal for a batch-ingested
+        // fleet lives in `incidents` (live burn-rate `alerts` may be empty), so
+        // the prompt lets Felyx consult both and cite ids from the real data.
+        let q0 = "Which agents or runs have blown their budget or look runaway (stuck loops, \
+                  fan-out, repeated budget breaks)? Check `alerts` and `incidents`, and use \
+                  `list_runs` for the biggest spenders. Be brief and cite specific ids.";
+        eprintln!(">>> [C0 money Q&A] {q0}");
+        show("C0", svc.ask(q0).await);
+
+        // C1 - cross-plane explain on a REAL incident id from this dataset.
+        let incident = "budget_exhausted:kyc-intake-agent-loop-00";
+        eprintln!(">>> [C1 explain_incident] {incident}");
+        show("C1", svc.explain_incident(incident).await);
+
+        // C2 - propose (recommend, never act): expect a ProposedAction in
+        // `proposals`, which the shell would render as an approve/sign card.
+        let q2 = "Given the runaway spend you found, which single run or agent would you \
+                  recommend killing to stop the bleed, and why? Propose it with evidence.";
+        eprintln!(">>> [C2 propose] {q2}");
+        show("C2", svc.ask(q2).await);
+    }
 }
