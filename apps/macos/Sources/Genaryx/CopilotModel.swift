@@ -121,6 +121,43 @@ final class CopilotModel {
         }
     }
 
+    // MARK: - explain (C1 "Explain with Felyx" affordance)
+
+    /// Ask Felyx to explain one incident (docs/PHASE6-C1.md): seeds the
+    /// transcript with a synthetic user-role question naming the incident,
+    /// then runs `CopilotHandle.explain` (the focused `explain_incident`
+    /// flow over the money/policy/identity planes plus memory) and appends
+    /// the reply - mirrors `send(_:)` exactly (same detached-task bridge,
+    /// same "handle unavailable" / thrown-error handling) so a click from
+    /// the Incidents rail lands in the Copilot tab looking like a normal
+    /// conversation turn, not a bespoke one-off rendering. The caller (see
+    /// `GenaryxApp.explainIncident(_:)`) is expected to switch to the
+    /// Copilot tab alongside calling this.
+    func explain(incidentId: String) async {
+        guard let handle else {
+            messages.append(
+                CopilotMessage(
+                    role: .assistant,
+                    text: bannerMessage.map { "Felyx is not available: \($0)" }
+                        ?? "Felyx is not available right now."))
+            return
+        }
+
+        messages.append(CopilotMessage(role: .user, text: "Explain incident \(incidentId)"))
+        isSending = true
+        defer { isSending = false }
+
+        do {
+            let answer = try await Task.detached { try handle.explain(incidentId: incidentId) }.value
+            messages.append(
+                CopilotMessage(
+                    role: .assistant, text: answer.text, toolTrace: answer.toolTrace,
+                    promptTokens: answer.promptTokens, completionTokens: answer.completionTokens))
+        } catch {
+            messages.append(CopilotMessage(role: .assistant, text: describe(error)))
+        }
+    }
+
     // MARK: - error presentation
 
     /// Fold any thrown error into display text. `.NoProvider` prefers the

@@ -141,6 +141,14 @@ import SwiftUI
 /// the read path and a chat pane only, no proposals yet, so `CopilotView`
 /// needs no wiring into `notifications`/`focusedApprovalId` either, exactly
 /// like the other read-only panels above.
+///
+/// Phase-6 C1 (docs/PHASE6-C1.md) adds `explainIncident(_:)`: the "Explain
+/// with Felyx" deep link from the Money panel's Incidents rail
+/// (`MoneyView`'s `onExplainIncident`) into `copilotModel`, one more instance
+/// of the same "a deep link is just a piece of state/closure another view
+/// reacts to" idiom `openReplay`/`wireNotifications` already established -
+/// switches `tab` to `.copilot` and starts `CopilotModel.explain(incidentId:)`
+/// there, rather than `MoneyView` owning `copilotModel` itself.
 @main
 struct GenaryxApp: App {
     @State private var model = FleetModel()
@@ -181,7 +189,8 @@ struct GenaryxApp: App {
                     case .money:
                         MoneyView(
                             model: cloudModel, onOpenReplay: openReplay,
-                            onOpenAgent: { agentFocus = AgentFocus(agentId: $0) })
+                            onOpenAgent: { agentFocus = AgentFocus(agentId: $0) },
+                            onExplainIncident: explainIncident)
                     case .policy:
                         PolicyView(
                             model: policyModel, busEvents: model.events, notifications: notifications,
@@ -297,6 +306,17 @@ struct GenaryxApp: App {
         tab = .replay
         focusedRunId = runId
         agentFocus = nil
+    }
+
+    /// C1's "Explain with Felyx" deep link (docs/PHASE6-C1.md): switches to
+    /// the Copilot tab and kicks off `copilotModel.explain(incidentId:)`
+    /// there, the same "a deep link is just a piece of state/closure another
+    /// view reacts to" idiom `openReplay`/`wireNotifications` already use -
+    /// `MoneyView`'s `IncidentFeed` calls this via `onExplainIncident` rather
+    /// than owning `copilotModel` itself.
+    private func explainIncident(_ incidentId: String) {
+        tab = .copilot
+        Task { await copilotModel.explain(incidentId: incidentId) }
     }
 }
 

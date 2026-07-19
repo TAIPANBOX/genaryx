@@ -12,6 +12,12 @@ struct MoneyView: View {
     let onOpenReplay: (String) -> Void
     /// Opens the agent's Agent 360 card in place (a sheet), never a tab switch.
     var onOpenAgent: (String) -> Void = { _ in }
+    /// C1 "Explain with Felyx" (docs/PHASE6-C1.md): switches to the Copilot
+    /// tab and runs `CopilotModel.explain(incidentId:)` there - mirrors
+    /// `onOpenReplay`/`onOpenAgent`'s own "a deep link is just a closure this
+    /// view calls" idiom, so `MoneyView` stays decoupled from `CopilotModel`
+    /// itself (see `GenaryxApp.explainIncident(_:)`).
+    var onExplainIncident: (String) -> Void = { _ in }
 
     private static let refreshInterval: Duration = .seconds(20)
     private static let runsShown = 18
@@ -121,7 +127,9 @@ struct MoneyView: View {
                     }
                 }
                 DashSection(title: "Incidents", right: "worst first") {
-                    IncidentFeed(incidents: Array(topIncidents), onAck: { await model.ackIncident($0) })
+                    IncidentFeed(
+                        incidents: Array(topIncidents), onAck: { await model.ackIncident($0) },
+                        onExplain: onExplainIncident)
                 }
             }
         }
@@ -319,11 +327,14 @@ private struct RunsBoard: View {
 // MARK: - IncidentFeed
 
 /// The incidents rail: severity dot + kind + sub + occurrences, with an inline
-/// ack ceremony (reusing `ConfirmButton`).
+/// ack ceremony (reusing `ConfirmButton`) and, alongside it, an "Explain with
+/// Felyx" affordance (docs/PHASE6-C1.md) that routes to the Copilot pane for
+/// a cross-plane root-cause chain on this one incident.
 @MainActor
 private struct IncidentFeed: View {
     let incidents: [Incident]
     let onAck: (String) async -> Bool
+    var onExplain: (String) -> Void = { _ in }
 
     var body: some View {
         if incidents.isEmpty {
@@ -351,6 +362,7 @@ private struct IncidentFeed: View {
                     .font(Theme.mono(10.5)).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.tail)
             }
             Spacer(minLength: 8)
+            explainButton(inc)
             if inc.acknowledged {
                 Text("acked").font(Theme.mono(10, weight: .semibold)).foregroundStyle(Theme.mint)
                     .padding(.horizontal, 8).padding(.vertical, 3)
@@ -360,5 +372,25 @@ private struct IncidentFeed: View {
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
+    }
+
+    /// "Explain with Felyx": a small, non-destructive affordance (no confirm
+    /// ceremony - unlike Ack, this reads and recommends, it never mutates
+    /// anything), tinted with the same `Theme.iris` the Copilot tab itself
+    /// uses throughout (`CopilotView`'s tool-trace/hero styling) so it reads
+    /// as "this goes to Felyx" at a glance.
+    private func explainButton(_ inc: Incident) -> some View {
+        Button {
+            onExplain(inc.id)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.system(size: 9, weight: .bold))
+                Text("Explain")
+            }
+            .font(Theme.mono(11, weight: .semibold))
+            .foregroundStyle(Theme.iris)
+        }
+        .buttonStyle(.plain)
+        .help("Explain this incident with Felyx")
     }
 }

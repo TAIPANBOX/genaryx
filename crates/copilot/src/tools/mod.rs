@@ -4,18 +4,25 @@
 //! shell, no URL fetch, so the worst a prompt injection can do is trigger a
 //! read the operator could already run (D13.3).
 //!
-//! C0 ships the 10 read tools that are all `async` over Cloud / Idryx / Wardryx.
-//! The sync connectors (Qryx, Verdryx, Engram) and Wardryx's `decide` (a POST)
-//! arrive in C1/C2, where the registry grows a `spawn_blocking` bridge.
+//! C0 shipped 10 async read tools over Cloud / Idryx / Wardryx. C1 adds the sync
+//! connectors (Qryx, Verdryx, Engram) via a `spawn_blocking` bridge: memory
+//! recall/why, quality, and `crypto_scan` (the first parameterized tool).
+//! Wardryx's `decide` (a POST that can create a hold) is still C2.
 
 mod cloud;
+mod crypto;
 mod idryx;
+mod memory;
+mod quality;
 mod wardryx;
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use genaryx_connectors::{CloudClient, IdryxClient, WardryxClient};
+use genaryx_connectors::{CloudClient, EngramClient, IdryxClient, WardryxClient};
 
 use crate::provider::ToolSpec;
 
@@ -27,6 +34,16 @@ pub struct Clients {
     pub cloud: Option<CloudClient>,
     pub idryx: Option<IdryxClient>,
     pub wardryx: Option<WardryxClient>,
+    /// The Engram MCP client is long-lived (one stdio child + handshake) and
+    /// `&mut self`, so it is shared behind a Mutex and its calls serialize
+    /// (docs/PHASE6-C1.md, the sync-tool bridge).
+    pub engram: Option<Arc<Mutex<EngramClient>>>,
+    /// The `qryx` binary path; `crypto_scan` shells it fresh inside a blocking
+    /// task (Qryx is a CLI, no long-lived state to hold).
+    pub qryx_bin: Option<PathBuf>,
+    /// The `verdryx.db` path; `quality_latest` opens it read-only inside a
+    /// blocking task (a rusqlite Connection is `!Sync`, never shared).
+    pub verdryx_db: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +52,8 @@ pub enum ToolError {
     Unknown(String),
     #[error("tool `{0}` is unavailable: its backing plane is not configured")]
     Unavailable(&'static str),
+    #[error("tool `{tool}`: bad arguments: {detail}")]
+    BadArgs { tool: &'static str, detail: String },
     #[error("tool `{tool}` failed: {detail}")]
     Connector { tool: &'static str, detail: String },
     #[error("could not serialize `{tool}` result: {source}")]
@@ -77,6 +96,15 @@ impl ToolRegistry {
         }
         if clients.wardryx.is_some() {
             tools.extend(wardryx::tools());
+        }
+        if clients.engram.is_some() {
+            tools.extend(memory::tools());
+        }
+        if clients.qryx_bin.is_some() {
+            tools.extend(crypto::tools());
+        }
+        if clients.verdryx_db.is_some() {
+            tools.extend(quality::tools());
         }
         Self { clients, tools }
     }
@@ -138,5 +166,28 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ToolError::Unknown(_)));
+    }
+
+    #[test]
+    fn c1_sync_tools_register_from_their_paths() {
+        // qryx / verdryx are backed by a path in Clients (no live client to
+        // construct), so registration is testable without their binaries/data.
+        let reg = ToolRegistry::new(Clients {
+            qryx_bin: Some(PathBuf::from("/x/qryx")),
+            verdryx_db: Some(PathBuf::from("/x/verdryx.db")),
+            ..Default::default()
+        });
+        let names = reg.tool_names();
+        assert!(names.contains(&"crypto_scan"));
+        assert!(names.contains(&"quality_latest"));
+        // Engram not configured -> its memory tools are not advertised.
+        assert!(!names.contains(&"memory_recall"));
+        // And its params_schema is advertised for the parameterized tool.
+        let crypto = reg
+            .specs()
+            .into_iter()
+            .find(|s| s.name == "crypto_scan")
+            .expect("crypto_scan advertised");
+        assert_eq!(crypto.params_schema["required"][0], "path");
     }
 }

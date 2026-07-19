@@ -24,9 +24,15 @@ const RUNS_SHOWN = 18;
 export function MoneyView({
   onOpenAgent,
   onOpenReplay,
+  onExplainIncident,
 }: {
   onOpenAgent: (agentId: string) => void;
   onOpenReplay: (runId: string) => void;
+  /** "Explain with Felyx" (C1, docs/PHASE6-C1.md): hands the incident id up
+   * to `AppShell`, which switches to the Copilot pane and seeds it with a
+   * `copilot_explain` round trip - this view never calls the copilot itself,
+   * see `AppShell.tsx`'s `onExplainIncident` doc comment. */
+  onExplainIncident: (incidentId: string) => void;
 }) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
@@ -133,18 +139,34 @@ export function MoneyView({
     title: inc.kind.replace(/_/g, " "),
     sub: `${inc.run_id ?? inc.agent_id ?? "fleet"} · ${inc.occurrences}×`,
     onClick: inc.agent_id ? () => onOpenAgent(inc.agent_id as string) : undefined,
-    action: inc.acknowledged ? (
-      <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>ack'd</span>
-    ) : (
-      <button
-        type="button"
-        className="icon-btn"
-        style={{ width: "auto", padding: "0 9px", fontSize: 11 }}
-        title="Acknowledge incident"
-        onClick={() => void handleAck(inc.id)}
-      >
-        Ack
-      </button>
+    // "Explain with Felyx" (C1, docs/PHASE6-C1.md) sits beside the existing
+    // Ack control rather than replacing it - explaining and acknowledging
+    // are independent operator actions, so both stay reachable per row.
+    action: (
+      <span className="flex items-center gap-1.5">
+        <button
+          type="button"
+          className="icon-btn"
+          style={{ width: "auto", padding: "0 9px", fontSize: 11, color: "var(--iris)" }}
+          title="Explain this incident with Felyx"
+          onClick={() => onExplainIncident(inc.id)}
+        >
+          Explain
+        </button>
+        {inc.acknowledged ? (
+          <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>ack'd</span>
+        ) : (
+          <button
+            type="button"
+            className="icon-btn"
+            style={{ width: "auto", padding: "0 9px", fontSize: 11 }}
+            title="Acknowledge incident"
+            onClick={() => void handleAck(inc.id)}
+          >
+            Ack
+          </button>
+        )}
+      </span>
     ),
   }));
 

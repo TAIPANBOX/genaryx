@@ -42,3 +42,17 @@ export interface CopilotAnswer {
   tool_trace: CopilotToolInvocation[];
   usage: CopilotUsage;
 }
+
+/** A pending "Explain with Felyx" hand-off (C1, docs/PHASE6-C1.md) from a
+ * sibling view - e.g. the Money panel's Incidents feed - into the Copilot
+ * pane. Not a Rust-side mirror: this is pure frontend plumbing, owned by
+ * `AppShell` and consumed by `CopilotView.tsx`'s effect, the "shared prop"
+ * hand-off the C1 contract calls for. `nonce` exists purely so two requests
+ * for the SAME incident (the operator re-clicks "Explain" after already
+ * reading the first answer) still register as a new request - a React
+ * effect dependency compares by value, so an unchanged `incidentId` alone
+ * would not re-fire. */
+export interface CopilotExplainRequest {
+  nonce: number;
+  incidentId: string;
+}

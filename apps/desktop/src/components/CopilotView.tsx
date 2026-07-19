@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CopilotAnswer, CopilotStatus, CopilotToolInvocation } from "../copilotTypes";
-import { askCopilot, describeCopilotError, fetchCopilotStatus } from "../lib/copilot";
+import type {
+  CopilotAnswer,
+  CopilotExplainRequest,
+  CopilotStatus,
+  CopilotToolInvocation,
+} from "../copilotTypes";
+import { askCopilot, describeCopilotError, explainIncident, fetchCopilotStatus } from "../lib/copilot";
 import { cssVar } from "../lib/cssVars";
 
 const FIELD_STYLE = {
@@ -168,8 +173,22 @@ function MessageBubble({ message }: { message: ChatMessage }) {
  * rendered here as an assistant note rather than a toast or a crash - the
  * panel is fully usable and honest about its own C0 state without a real
  * provider ever being configured.
+ *
+ * C1 (docs/PHASE6-C1.md) adds `explainRequest`: an "Explain with Felyx"
+ * hand-off from a sibling view (the Money panel's Incidents feed), threaded
+ * down from `AppShell`'s own state - see `copilotTypes.ts`'s
+ * `CopilotExplainRequest` doc comment. This view is unmounted whenever the
+ * operator navigates away (`AppShell` only renders it while
+ * `view === "copilot"`), so a pending request is simply picked up by the
+ * effect below the moment this component (re)mounts.
  */
-export function CopilotView() {
+export function CopilotView({
+  explainRequest,
+  onExplainRequestHandled,
+}: {
+  explainRequest: CopilotExplainRequest | null;
+  onExplainRequestHandled: () => void;
+}) {
   const [status, setStatus] = useState<CopilotStatus | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -188,6 +207,56 @@ export function CopilotView() {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // "Explain with Felyx" hand-off (C1): fires once per `explainRequest.nonce`
+  // - which in practice means once per mount, since the button that sets it
+  // lives on a different view this component is never simultaneously
+  // rendered alongside (see this component's own doc comment). Appends the
+  // synthetic question first (so the transcript reads like the operator
+  // asked it), then runs the exact same fetch/append/error-note shape
+  // `send()` below uses, sharing `sending` so the composer disables the same
+  // way for either kind of request. `cancelled` guards the state updates (not
+  // the `onExplainRequestHandled()` call itself, which must always fire so a
+  // later, unrelated remount of this view never re-triggers the same
+  // request) in case the operator navigates away before the round trip
+  // finishes.
+  useEffect(() => {
+    if (!explainRequest) return;
+    const { incidentId } = explainRequest;
+    let cancelled = false;
+
+    setMessages((m) => [
+      ...m,
+      { id: nextId.current++, role: "user", text: `Explain incident \`${incidentId}\`` },
+    ]);
+    setSending(true);
+
+    void (async () => {
+      try {
+        const answer: CopilotAnswer = await explainIncident(incidentId);
+        if (!cancelled) {
+          setMessages((m) => [
+            ...m,
+            { id: nextId.current++, role: "assistant", text: answer.text, toolTrace: answer.tool_trace },
+          ]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setMessages((m) => [
+            ...m,
+            { id: nextId.current++, role: "assistant", text: describeCopilotError(err), isNote: true },
+          ]);
+        }
+      } finally {
+        if (!cancelled) setSending(false);
+        onExplainRequestHandled();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [explainRequest, onExplainRequestHandled]);
 
   const send = useCallback(async () => {
     const question = input.trim();

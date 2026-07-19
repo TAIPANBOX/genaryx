@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CopilotExplainRequest } from "../copilotTypes";
 import type { ApprovalAlert } from "../lib/notifications";
 import { muteKey } from "../lib/notifications";
 import { useApprovalNotifications } from "../lib/useApprovalNotifications";
@@ -59,6 +60,13 @@ const FOCUS_HIGHLIGHT_MS = 6_000;
  *   `focusApprovalId` clears itself after [`FOCUS_HIGHLIGHT_MS`] regardless
  *   of view, so the highlight always fades even if the operator was already
  *   on Policy when it was set.
+ *
+ * C1 addition (docs/PHASE6-C1.md): `explainRequest` is the same "seed state
+ * here, hand it down as a prop" shape as `replayRunId`, for the "Explain
+ * with Felyx" affordance - a sibling view (the Money panel's Incidents feed)
+ * calls `onExplainIncident(incidentId)`, which switches to the Copilot view
+ * AND seeds it with the incident to explain; `CopilotView` itself runs the
+ * actual `copilot_explain` round trip and clears the seed when done.
  */
 export function AppShell() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -106,6 +114,29 @@ export function AppShell() {
     // RunsTable), mirroring `onNavigateFromAgent360`'s identical double duty.
     setFocusedAgentId(null);
   }, []);
+
+  // "Explain with Felyx" (C1, docs/PHASE6-C1.md): the Incidents surface (the
+  // Money panel today) hands an incident id here rather than calling
+  // `copilot_explain` itself, so the Copilot pane stays the one place that
+  // owns a Felyx round trip and its transcript - mirrors `onOpenReplay`'s
+  // "seed state here, read it as a prop on the target view" shape, except
+  // `CopilotView` fully unmounts/remounts on every view switch (unlike
+  // `RunReplayView`, no `key={...}` trick is needed to force a fresh look at
+  // a new request). `explainNonce` is a plain ever-increasing counter (never
+  // reset) rather than a timestamp, so two requests fired within the same
+  // millisecond can never collide.
+  const explainNonce = useRef(0);
+  const [explainRequest, setExplainRequest] = useState<CopilotExplainRequest | null>(null);
+  const onExplainIncident = useCallback((incidentId: string) => {
+    setExplainRequest({ nonce: explainNonce.current++, incidentId });
+    setView("copilot");
+  }, []);
+  // Passed to `CopilotView` as `onExplainRequestHandled`: called once the
+  // request's round trip finishes (success or error), so a later, unrelated
+  // remount of the Copilot view never re-fires the same explain call. Stable
+  // across renders (`setExplainRequest` is itself a stable setter), which
+  // `CopilotView`'s own effect relies on - see its doc comment.
+  const onExplainRequestHandled = useCallback(() => setExplainRequest(null), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -186,7 +217,9 @@ export function AppShell() {
         policyAlertCount={unseenAlerts.length}
       />
       {view === "overview" && <OverviewView onOpenAgent={onOpenAgent} />}
-      {view === "money" && <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} />}
+      {view === "money" && (
+        <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} onExplainIncident={onExplainIncident} />
+      )}
       {view === "policy" && (
         <PolicyView
           focusApprovalId={focusApprovalId}
@@ -213,7 +246,9 @@ export function AppShell() {
       )}
       {view === "posture" && <PostureView />}
       {view === "bus" && <BusExplorer />}
-      {view === "copilot" && <CopilotView />}
+      {view === "copilot" && (
+        <CopilotView explainRequest={explainRequest} onExplainRequestHandled={onExplainRequestHandled} />
+      )}
 
       {focusedAgentId && (
         <Agent360

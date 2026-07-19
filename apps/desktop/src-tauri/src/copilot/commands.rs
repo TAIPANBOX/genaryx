@@ -20,6 +20,13 @@
 //! `CopilotError::NoProvider`'s "no copilot provider is configured; set
 //! [copilot].provider (local by default)" - IS the error, not a code the
 //! frontend has to translate.
+//!
+//! C1 (docs/PHASE6-C1.md) adds [`copilot_explain`]: the same one-round-trip
+//! shape as [`copilot_ask`], just seeded with `CopilotService::explain_incident`'s
+//! fixed, incident-focused prompt instead of an operator-typed question - the
+//! "Explain with Felyx" affordance on the Incidents surface calls this
+//! directly rather than composing the prompt itself, so the prompt stays one
+//! reviewable thing on the Rust side.
 
 use std::sync::Arc;
 
@@ -120,9 +127,7 @@ async fn ready_service(
 /// [`CopilotInner`] shape (including `Bootstrapping`/`Failed`) maps onto a
 /// renderable [`CopilotStatusDto`].
 #[tauri::command]
-pub async fn copilot_status(
-    state: tauri::State<'_, CopilotState>,
-) -> Result<CopilotStatusDto, ()> {
+pub async fn copilot_status(state: tauri::State<'_, CopilotState>) -> Result<CopilotStatusDto, ()> {
     let guard = state.inner.lock().await;
     Ok(match &*guard {
         CopilotInner::Bootstrapping => CopilotStatusDto::disabled("Copilot is still starting up."),
@@ -150,6 +155,32 @@ pub async fn copilot_ask(
 ) -> Result<Answer, String> {
     let service = ready_service(&state).await?;
     service.ask(&question).await.map_err(|e| e.to_string())
+}
+
+/// "Explain with Felyx" on an incident (docs/PHASE6-C1.md, itrat-console/13
+/// D13.7 C1): mirrors [`copilot_ask`] field-for-field, running
+/// `CopilotService::explain_incident` instead of a free-form `ask` - the
+/// cross-plane root-cause chain over money/policy/identity/memory tools,
+/// whichever of those are actually wired for this box (see `state.rs`'s
+/// `resolve_clients`). Same disabled/not-ready/error contract as
+/// `copilot_ask`: `Err` is always operator-readable text, rendered as an
+/// assistant note by the frontend rather than a crash.
+///
+/// `rename_all = "snake_case"` (unlike `copilot_ask`'s single-word
+/// `question`): `incident_id` has an underscore, and this app's IPC
+/// convention keeps every argument key snake_case rather than Tauri's
+/// camelCase default (mirrors `money::commands::money_kill_run`'s identical
+/// pin and rationale).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn copilot_explain(
+    state: tauri::State<'_, CopilotState>,
+    incident_id: String,
+) -> Result<Answer, String> {
+    let service = ready_service(&state).await?;
+    service
+        .explain_incident(&incident_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

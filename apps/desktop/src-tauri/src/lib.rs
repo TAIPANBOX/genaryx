@@ -89,11 +89,15 @@
 //! per call. See `pocket::commands`'s module doc for the full mint-code /
 //! arm-window / render-QR / show-device flow.
 //!
-//! The Copilot panel's state (see `copilot/`, docs/PHASE6.md C0) is managed
-//! the same non-blocking way once more, simplest of all: there is no
-//! environment to discover (see `copilot::state`'s module doc) - `bootstrap`
-//! just builds a disabled-by-default `CopilotService` and the panel is
-//! `Ready` almost immediately either way.
+//! The Copilot panel's state (see `copilot/`, docs/PHASE6.md C0 /
+//! docs/PHASE6-C1.md C1) is managed the same non-blocking way once more:
+//! `bootstrap` always builds a `CopilotConfig::default()` (still
+//! disabled-by-default - this shell has no `[copilot]` config source yet)
+//! `CopilotService`, but since C1 it is built over a REAL `Clients` that
+//! reuses every other panel's own `env::discover()` (see
+//! `copilot::state`'s module doc) rather than C0's empty `Clients::default()`,
+//! so Felyx's tools are already wired to whatever planes this box resolves
+//! the day a provider is configured.
 
 mod copilot;
 mod crypto;
@@ -376,6 +380,7 @@ pub fn run() {
             replay::run_events,
             copilot::commands::copilot_status,
             copilot::commands::copilot_ask,
+            copilot::commands::copilot_explain,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

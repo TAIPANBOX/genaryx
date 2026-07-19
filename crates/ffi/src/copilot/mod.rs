@@ -5,42 +5,56 @@
 //! `#[tauri::command]` pair (`copilot_descriptor`/`copilot_ask`, the sibling
 //! Track A).
 //!
-//! ## Simpler than every other handle: no environment to discover
+//! ## Simpler than every other handle: no environment of ITS OWN to discover
 //!
 //! Every other Object in this crate resolves an external plane first
 //! (`taipan up`, an env var, a well-known binary path) because it talks to a
-//! service that lives somewhere else. Felyx has no such plane in C0: the
-//! service is built once, locally, from `CopilotConfig::default()`
-//! (`provider = "none"`) and `Clients::default()` (see "No connectors wired
-//! in C0" below). So [`CopilotHandle::create`] is a single, always-succeeding
-//! constructor (bar a local runtime-allocation failure) - there is no
-//! `discover()`/`connect()` split, no `EnvSource` enum, and no
-//! `NoEnvironment` variant anywhere in this module: an unconfigured copilot
-//! is not an absent plane, it is a normal, fully-constructed, honestly
-//! *disabled* [`CopilotService`] (see that type's own doc comment), which
-//! [`CopilotHandle::status`] reports directly rather than refusing to build
-//! at all.
+//! service that lives somewhere else. Felyx has no such plane: the service
+//! itself is built once, locally, from `CopilotConfig::default()`
+//! (`provider = "none"`) - only the tools it may call, wired in
+//! [`build_clients`] (see "C1: real `Clients`, still no environment of
+//! Felyx's own" below), reach out to other planes. So
+//! [`CopilotHandle::create`] is a single, always-succeeding constructor (bar
+//! a local runtime-allocation failure) - there is no `discover()`/`connect()`
+//! split, no `EnvSource` enum, and no `NoEnvironment` variant anywhere in
+//! this module: an unconfigured copilot is not an absent plane, it is a
+//! normal, fully-constructed, honestly *disabled* [`CopilotService`] (see
+//! that type's own doc comment), which [`CopilotHandle::status`] reports
+//! directly rather than refusing to build at all.
 //!
 //! ## Owns a runtime for the same reason Wardryx/Idryx/Cloud do
 //!
-//! `CopilotService::ask` is `async` (it may run a provider HTTP round trip
-//! plus any tool calls), but every UniFFI-exported method on this crate's
-//! Objects is synchronous. So, exactly like [`crate::wardryx::WardryxHandle`]
-//! and [`crate::idryx::IdryxHandle`], this handle owns one
-//! `tokio::runtime::Runtime` (built once, in [`CopilotHandle::create`]) and
-//! bridges with `self.runtime.block_on(...)` per call - see those modules'
-//! own doc comments for the fuller rationale (identical shape, not repeated
-//! here).
+//! `CopilotService::ask`/`explain_incident` are `async` (each may run a
+//! provider HTTP round trip plus any tool calls), but every UniFFI-exported
+//! method on this crate's Objects is synchronous. So, exactly like
+//! [`crate::wardryx::WardryxHandle`] and [`crate::idryx::IdryxHandle`], this
+//! handle owns one `tokio::runtime::Runtime` (built once, in
+//! [`CopilotHandle::create`]) and bridges with `self.runtime.block_on(...)`
+//! per call - see those modules' own doc comments for the fuller rationale
+//! (identical shape, not repeated here).
 //!
-//! ## No connectors wired in C0
+//! ## C1: real `Clients`, still no environment of Felyx's own
 //!
-//! [`CopilotHandle::create`] passes `Clients::default()` (every connector
-//! client field `None`), so [`CopilotService::ask`] has no read tool to call
-//! even once a provider IS configured - matching this crate's own C0 scope
-//! (docs/PHASE6.md: "Desktop-only, read-only, no proposals, no relay").
-//! Wiring the existing `CloudHandle`/`IdryxHandle`/`WardryxHandle` connector
-//! clients into `genaryx_copilot::Clients` (so Felyx's read tools have real
-//! data to call) is later-wave work, not this one's.
+//! [`CopilotHandle::create`] now builds [`build_clients`] instead of
+//! `Clients::default()` (docs/PHASE6-C1.md C1-W2: "Wire real `Clients` at
+//! copilot bootstrap by REUSING each shell's existing env discovery"), so
+//! once an operator DOES configure a provider, Felyx's read tools have real
+//! data to call. "No environment of Felyx's own" (the section above) still
+//! holds: [`build_clients`] invents nothing new - it calls the exact same
+//! [`crate::cloud::env`]/[`crate::idryx::env`]/[`crate::wardryx::env`]/
+//! [`crate::crypto::env`]/[`crate::quality::env`] discovery the
+//! Money/Identity/Policy/Crypto/Quality panels already resolve their own
+//! handles from, so Felyx's tools see exactly the stack the operator is
+//! already looking at elsewhere in this console, never a second,
+//! independently-resolved environment. Every plane is independently
+//! best-effort (`cloud`/`idryx`/`wardryx` are the explain backbone;
+//! `qryx_bin`/`verdryx_db` are cheap-and-nice): one plane failing to
+//! resolve, or its connector failing to construct, only removes THAT
+//! plane's tools (`ToolRegistry::new`'s own "only tools whose backing client
+//! is present" contract) - it never fails this constructor, which still
+//! only fails on a genuine local runtime-allocation problem, exactly as
+//! before C1. `engram` is deliberately left `None` here - see
+//! [`build_clients`]'s own doc for why.
 //!
 //! Fail-closed at the boundary (06 §0.5): nothing here panics across FFI;
 //! [`CopilotHandle::ask`] against a disabled service returns the honest
@@ -52,6 +66,17 @@ pub use dto::{CopilotAnswerDto, CopilotFfiError, CopilotStatusDto, CopilotToolDt
 
 use genaryx_copilot::{Clients, CopilotConfig, CopilotService};
 
+// C1 (docs/PHASE6-C1.md C1-W2): the connector clients `build_clients` wires,
+// plus the SAME per-plane environment discovery every sibling handle in this
+// crate already uses for that plane - see `build_clients`'s own doc.
+use genaryx_connectors::{CloudClient, IdryxClient, WardryxClient};
+
+use crate::cloud::env as cloud_env;
+use crate::crypto::env as crypto_env;
+use crate::idryx::env as idryx_env;
+use crate::quality::env as quality_env;
+use crate::wardryx::env as wardryx_env;
+
 /// The Copilot UniFFI Object: an owned async runtime plus a ready
 /// [`CopilotService`] (enabled or honestly disabled - see the module doc).
 #[derive(uniffi::Object)]
@@ -62,14 +87,16 @@ pub struct CopilotHandle {
 
 #[uniffi::export]
 impl CopilotHandle {
-    /// Build the C0 copilot: `CopilotConfig::default()` (`provider = "none"`)
-    /// plus `Clients::default()` (no connector clients - see the module
-    /// doc's "No connectors wired in C0"). Fails only on a local
-    /// runtime-allocation problem ([`CopilotFfiError::Failed`]) or, once a
-    /// future wave lets an operator configure a real provider here, a bad
-    /// config ([`CopilotFfiError::Config`]) - never on "no provider set",
-    /// which is the normal disabled state [`Self::status`] reports instead
-    /// of a construction failure.
+    /// Build the copilot: `CopilotConfig::default()` (`provider = "none"`)
+    /// plus [`build_clients`] (C1: the real connector clients this box's
+    /// environment resolves - see the module doc's "C1: real `Clients`"
+    /// section). Fails only on a local runtime-allocation problem
+    /// ([`CopilotFfiError::Failed`]) or, once a future wave lets an operator
+    /// configure a real provider here, a bad config
+    /// ([`CopilotFfiError::Config`]) - never on "no provider set", which is
+    /// the normal disabled state [`Self::status`] reports instead of a
+    /// construction failure, and never on a plane this box simply does not
+    /// have running (that plane's tools are just not advertised).
     #[uniffi::constructor]
     pub fn create() -> Result<Self, CopilotFfiError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -81,7 +108,7 @@ impl CopilotHandle {
             })?;
 
         let service =
-            CopilotService::from_config_and_clients(&CopilotConfig::default(), Clients::default())?;
+            CopilotService::from_config_and_clients(&CopilotConfig::default(), build_clients())?;
 
         Ok(Self { runtime, service })
     }
@@ -104,6 +131,133 @@ impl CopilotHandle {
     pub fn ask(&self, question: String) -> Result<CopilotAnswerDto, CopilotFfiError> {
         let answer = self.runtime.block_on(self.service.ask(&question))?;
         Ok(CopilotAnswerDto::from(answer))
+    }
+
+    /// The C1 "Explain with Felyx" affordance (docs/PHASE6-C1.md): a focused
+    /// `ask` that seeds the loop with `incident_id` and asks for a
+    /// cross-plane root-cause chain (the run's spend trajectory, the agent's
+    /// identity posture, any governing policy, and prior memory rulings),
+    /// citing the specific row ids relied on - see
+    /// `genaryx_copilot::CopilotService::explain_incident`'s own doc for the
+    /// exact seeded prompt. Blocks on the owned runtime exactly like
+    /// [`Self::ask`] (which this simply wraps with a different prompt) and
+    /// fails the same way - [`CopilotFfiError::NoProvider`] when disabled,
+    /// never a fabricated chain.
+    pub fn explain(&self, incident_id: String) -> Result<CopilotAnswerDto, CopilotFfiError> {
+        let answer = self
+            .runtime
+            .block_on(self.service.explain_incident(&incident_id))?;
+        Ok(CopilotAnswerDto::from(answer))
+    }
+}
+
+// ---- private helpers (not exported over FFI) -------------------------------
+
+/// Build the real connector [`Clients`] for [`CopilotHandle::create`] (C1,
+/// docs/PHASE6-C1.md C1-W2) - see the module doc's "C1: real `Clients`"
+/// section for the high-level contract. Each plane is resolved and built
+/// independently; a `None` from that plane's own `env::discover()`, or a
+/// `Result::Err` from its connector's own `::new`, both simply leave that
+/// field `None` (logged to stderr so a genuinely surprising failure is at
+/// least visible, never silently swallowed) - this function itself is
+/// infallible, matching [`CopilotHandle::create`]'s own "never fails over an
+/// absent plane" contract.
+///
+/// `cloud`/`idryx`/`wardryx` are the explain backbone (money spend, identity
+/// posture, governing policy - the three planes
+/// `CopilotService::explain_incident`'s own seeded prompt names by tool).
+/// `qryx_bin`/`verdryx_db` are cheap-and-nice: both are plain path
+/// resolution (`crypto::env`/`quality::env` never touch the network or spawn
+/// anything - see each module's own doc), so there is no reason not to wire
+/// them too.
+///
+/// `engram` stays `None`. `crates/copilot`'s `Clients` shape carries a slot
+/// for it (C1-W1's sync-tool bridge already handles a configured one), but
+/// wiring it here is a fundamentally heavier step than the other five
+/// fields: [`genaryx_connectors::EngramClient`] has no unconnected
+/// "just build a client" constructor the way `CloudClient`/`IdryxClient`/
+/// `WardryxClient` do - the only way to get one is
+/// `genaryx_connectors::EngramClient::spawn`, a REAL `engram-mcp` child
+/// process plus an MCP handshake (see [`crate::memory::MemoryHandle`]'s own
+/// module doc: "spawn happens IN THE CONSTRUCTOR"). `CopilotHandle::create`
+/// runs eagerly at app launch (`GenaryxApp`'s `@State private var
+/// copilotModel = CopilotModel()`, constructed alongside every other model),
+/// and `CopilotConfig::default()` (`provider = "none"`) is the honest
+/// out-of-the-box state on a box with no local model configured yet - in
+/// which `CopilotService::from_config_and_clients`'s disabled arm never even
+/// builds a `ToolRegistry` (it never touches `clients` at all, so whatever
+/// this function built is simply dropped). Spawning a real subprocess on
+/// every single launch, in the common case only to drop (and kill) it
+/// unused a moment later, is not the "trivial" wiring this wave asks for -
+/// see docs/PHASE6-C1.md C1-W2: "`engram` is OPTIONAL (spawns a child) -
+/// wire only if `crates/ffi/src/memory` env makes it trivial, else `None`".
+/// A follow-up wave that makes this construction lazier (only spawn once a
+/// provider is actually configured), or that shares `MemoryModel`'s own
+/// already-spawned handle instead of a redundant second child, can revisit
+/// this.
+fn build_clients() -> Clients {
+    Clients {
+        cloud: build_cloud_client(),
+        idryx: build_idryx_client(),
+        wardryx: build_wardryx_client(),
+        engram: None,
+        qryx_bin: crypto_env::discover().map(|resolved| resolved.qryx_bin),
+        verdryx_db: quality_env::discover().map(|resolved| resolved.db_path),
+    }
+}
+
+/// Resolve + build the money plane's [`CloudClient`], exactly the same
+/// [`crate::cloud::env::discover`] the Money/Overview panel's own
+/// `CloudHandle::discover` calls. UNLIKE `CloudHandle::build`, this never
+/// pairs a device (`CloudClient::new` alone never touches the network - its
+/// own doc comment): every Cloud tool Felyx has is a read
+/// (`crates/copilot/src/tools/cloud.rs`), so there is nothing here that
+/// needs a signer.
+fn build_cloud_client() -> Option<CloudClient> {
+    let resolved = cloud_env::discover()?;
+    match CloudClient::new(resolved.cloud_url, resolved.admin_bearer) {
+        Ok(client) => Some(client),
+        Err(e) => {
+            eprintln!(
+                "genaryx-ffi copilot: cloud plane resolved but CloudClient::new failed, \
+                 leaving its tools unavailable: {e}"
+            );
+            None
+        }
+    }
+}
+
+/// Resolve + build the identity plane's [`IdryxClient`], exactly the same
+/// [`crate::idryx::env::discover`] the Identity panel's own
+/// `IdryxHandle::discover` calls.
+fn build_idryx_client() -> Option<IdryxClient> {
+    let resolved = idryx_env::discover()?;
+    match IdryxClient::new(resolved.idryx_url) {
+        Ok(client) => Some(client),
+        Err(e) => {
+            eprintln!(
+                "genaryx-ffi copilot: idryx plane resolved but IdryxClient::new failed, \
+                 leaving its tools unavailable: {e}"
+            );
+            None
+        }
+    }
+}
+
+/// Resolve + build the policy plane's [`WardryxClient`], exactly the same
+/// [`crate::wardryx::env::discover`] the Policy panel's own
+/// `WardryxHandle::discover` calls.
+fn build_wardryx_client() -> Option<WardryxClient> {
+    let resolved = wardryx_env::discover()?;
+    match WardryxClient::new(resolved.wardryx_url, resolved.admin_bearer) {
+        Ok(client) => Some(client),
+        Err(e) => {
+            eprintln!(
+                "genaryx-ffi copilot: wardryx plane resolved but WardryxClient::new failed, \
+                 leaving its tools unavailable: {e}"
+            );
+            None
+        }
     }
 }
 
@@ -141,6 +295,36 @@ mod tests {
             Err(CopilotFfiError::NoProvider) => {}
             other => panic!("expected CopilotFfiError::NoProvider, got {other:?}"),
         }
+    }
+
+    /// `explain()` against the disabled default must also fail closed with
+    /// `NoProvider`, never panic and never fabricate a root-cause chain -
+    /// `explain_incident` is just a focused `ask`
+    /// (`genaryx_copilot::CopilotService::explain_incident`'s own doc), so it
+    /// inherits `ask`'s identical disabled behavior, mirrored here at the FFI
+    /// boundary exactly like the test above.
+    #[test]
+    fn explain_against_a_disabled_handle_is_no_provider_not_a_panic() {
+        let handle = CopilotHandle::create().expect("create() must succeed");
+        match handle.explain("budget_exhausted:reconciliation-batch".to_string()) {
+            Err(CopilotFfiError::NoProvider) => {}
+            other => panic!("expected CopilotFfiError::NoProvider, got {other:?}"),
+        }
+    }
+
+    /// `build_clients` must never panic regardless of this box's actual
+    /// environment (a real `~/.taipan` descriptor, none at all, a qryx/
+    /// verdryx path that does or does not exist, ...) - proven directly here
+    /// rather than only indirectly through `create()`, since a future change
+    /// to this function is far more likely to be exercised by a test that
+    /// names it than one that only exercises `CopilotHandle::create` as a
+    /// whole. Every field is independently `Option`-shaped by construction
+    /// (see the type's own fields), so there is nothing to assert about
+    /// WHICH planes resolved on whatever box happens to run this - only that
+    /// building the value at all completes.
+    #[test]
+    fn build_clients_never_panics_regardless_of_this_boxs_environment() {
+        let _ = build_clients();
     }
 
     /// `status()` is callable repeatedly and agrees with itself - a cheap

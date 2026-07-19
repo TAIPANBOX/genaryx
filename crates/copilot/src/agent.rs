@@ -325,4 +325,45 @@ mod tests {
             answer.tool_trace[0].result_preview
         );
     }
+
+    // C1: the loop parses + FORWARDS a tool argument. The MockProvider asks for
+    // `crypto_scan` with a {path} arg; the registry has a qryx_bin so the tool
+    // is available; the path does not exist, so the tool returns error-as-data.
+    // The point is the ARGUMENT round-trips (C0's tools were all parameterless).
+    #[tokio::test]
+    async fn loop_forwards_a_parameterized_tool_argument() {
+        use std::path::PathBuf;
+        let provider = crate::provider::mock::MockProvider::new(vec![
+            ChatTurn {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "c1".into(),
+                    name: "crypto_scan".into(),
+                    arguments: serde_json::json!({"path": "/definitely/not/here"}),
+                }],
+                usage: Usage::default(),
+            },
+            ChatTurn {
+                content: Some("Checked the crypto posture.".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            },
+        ]);
+        let registry = ToolRegistry::new(Clients {
+            qryx_bin: Some(PathBuf::from("/x/qryx")),
+            ..Default::default()
+        });
+        let felyx = Felyx::new(Box::new(provider), registry, 6, 512);
+        let answer = felyx.answer("is this code quantum-safe?").await.unwrap();
+        assert_eq!(answer.tool_trace.len(), 1);
+        assert_eq!(answer.tool_trace[0].name, "crypto_scan");
+        // error-as-data is still an Ok tool result; the preview proves the path
+        // argument reached the tool and was validated.
+        assert!(answer.tool_trace[0].ok);
+        assert!(
+            answer.tool_trace[0]
+                .result_preview
+                .contains("does not exist")
+        );
+    }
 }
