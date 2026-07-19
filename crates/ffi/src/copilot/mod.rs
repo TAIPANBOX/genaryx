@@ -87,13 +87,14 @@ pub struct CopilotHandle {
 
 #[uniffi::export]
 impl CopilotHandle {
-    /// Build the copilot: `CopilotConfig::default()` (`provider = "none"`)
-    /// plus [`build_clients`] (C1: the real connector clients this box's
+    /// Build the copilot: [`config_from_env`] (the operator's
+    /// `GENARYX_COPILOT_*` config, or `provider = "none"` when unset) plus
+    /// [`build_clients`] (C1: the real connector clients this box's
     /// environment resolves - see the module doc's "C1: real `Clients`"
     /// section). Fails only on a local runtime-allocation problem
-    /// ([`CopilotFfiError::Failed`]) or, once a future wave lets an operator
-    /// configure a real provider here, a bad config
-    /// ([`CopilotFfiError::Config`]) - never on "no provider set", which is
+    /// ([`CopilotFfiError::Failed`]) or a bad provider config
+    /// ([`CopilotFfiError::Config`], e.g. a non-local endpoint without the
+    /// remote opt-in) - never on "no provider set", which is
     /// the normal disabled state [`Self::status`] reports instead of a
     /// construction failure, and never on a plane this box simply does not
     /// have running (that plane's tools are just not advertised).
@@ -107,8 +108,7 @@ impl CopilotHandle {
                 reason: format!("could not start async runtime: {e}"),
             })?;
 
-        let service =
-            CopilotService::from_config_and_clients(&CopilotConfig::default(), build_clients())?;
+        let service = CopilotService::from_config_and_clients(&config_from_env(), build_clients())?;
 
         Ok(Self { runtime, service })
     }
@@ -195,6 +195,48 @@ impl CopilotHandle {
 /// provider is actually configured), or that shares `MemoryModel`'s own
 /// already-spawned handle instead of a redundant second child, can revisit
 /// this.
+/// The operator's copilot config, from the `GENARYX_COPILOT_*` environment
+/// (the same names the relay's `copilot_config_from_env` and the
+/// `live_felyx_demo` runner use), falling back to `CopilotConfig::default()`
+/// (`provider = "none"`, the honest disabled state) when no provider is set.
+///
+/// This is the wiring the module doc's "once a future wave lets an operator
+/// configure a real provider here" anticipated. The residency gate still runs
+/// at construction in `CopilotService::from_config_and_clients`, so a non-local
+/// endpoint without `GENARYX_COPILOT_ALLOW_REMOTE=1` fails closed there, not
+/// here. Local providers (Ollama / LM Studio) keep inference on the machine and
+/// need no opt-in; a BYO-cloud provider needs the explicit remote opt-in.
+fn config_from_env() -> CopilotConfig {
+    use genaryx_copilot::ProviderKind;
+    let provider = match std::env::var("GENARYX_COPILOT_PROVIDER")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "ollama" => ProviderKind::Ollama,
+        "lmstudio" => ProviderKind::LmStudio,
+        "openai_compat" => ProviderKind::OpenAiCompat,
+        "anthropic" => ProviderKind::Anthropic,
+        "openrouter" => ProviderKind::OpenRouter,
+        // Unset or unrecognized: the honest disabled default (provider = none).
+        _ => return CopilotConfig::default(),
+    };
+    CopilotConfig {
+        provider,
+        base_url: std::env::var("GENARYX_COPILOT_BASE_URL").ok(),
+        model: std::env::var("GENARYX_COPILOT_MODEL").ok(),
+        api_key_ref: std::env::var("GENARYX_COPILOT_API_KEY_REF").ok(),
+        allow_non_local_endpoints: std::env::var("GENARYX_COPILOT_ALLOW_REMOTE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false),
+        // Enough room to gather across planes then answer without truncating the
+        // final turn (a `max_tokens`-cut last turn reads as a blank reply).
+        max_iterations: 8,
+        max_tokens: 2048,
+        ..CopilotConfig::default()
+    }
+}
+
 fn build_clients() -> Clients {
     Clients {
         cloud: build_cloud_client(),
