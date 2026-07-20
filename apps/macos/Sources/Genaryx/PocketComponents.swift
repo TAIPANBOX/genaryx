@@ -85,12 +85,21 @@ enum PocketStatusFormat {
         }
     }
 
+    /// `.paired` now carries BOTH slots independently (`phone`/`watch`, each
+    /// `nil` for an empty slot) - mirrors
+    /// `apps/desktop/src/components/PocketView.tsx`'s `statusLabel` exactly:
+    /// list whichever of the two are actually paired, since at least one
+    /// always is in this case (that is what makes it `.paired` rather than
+    /// `.idle`).
     static func label(_ status: PocketStatusRecord?) -> String {
         switch status {
-        case .idle(let cloudReady):
-            return cloudReady ? "no phone paired" : "no phone paired · Cloud not resolvable"
-        case .paired(_, let name, _, _, _):
-            return "paired · \(name.isEmpty ? "(unnamed device)" : name)"
+        case .idle(let cloudReady, _, _):
+            return cloudReady ? "no devices paired" : "no devices paired · Cloud not resolvable"
+        case .paired(let phone, let watch, _, _):
+            var parts: [String] = []
+            if let phone { parts.append("phone: \(phone.name.isEmpty ? phone.deviceId : phone.name)") }
+            if let watch { parts.append("watch: \(watch.name.isEmpty ? watch.deviceId : watch.name)") }
+            return "paired · \(parts.joined(separator: ", "))"
         case .relayUnreachable:
             return "relay unreachable"
         case .none:

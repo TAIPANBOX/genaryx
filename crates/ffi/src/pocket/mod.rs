@@ -2,12 +2,16 @@
 //! flow (docs/PHASE5.md W2, itrat-console/13 D12.2a) for the SwiftUI shell -
 //! at parity with the Tauri shell's `pocket` module
 //! (`apps/desktop/src-tauri/src/pocket/`, see that module's own doc for the
-//! full flow this mirrors). "Connect TokenFuse Pocket": mint a code at the
-//! Cloud (admin key, [`crate::cloud::env::discover`] - the SAME two-tier
-//! discovery [`crate::cloud::CloudHandle`]'s own device pairing uses), arm
-//! the relay's pairing window, and return the exact QR content string to
-//! render; [`PocketHandle::status`]/[`PocketHandle::disconnect`] read/clear
-//! the paired-device row.
+//! full flow this mirrors). "Connect TokenFuse Pocket": mint a pairing code
+//! for the phone AND one for the watch at the Cloud (admin key,
+//! [`crate::cloud::env::discover`] - the SAME two-tier discovery
+//! [`crate::cloud::CloudHandle`]'s own device pairing uses), arm the relay's
+//! pairing window for each, and return the exact QR content string to
+//! render - one QR, both codes; the phone scans it, and is the one that
+//! hands the watch its own code over WatchConnectivity
+//! (`crates/relay/src/registry.rs`'s own doc on the phone's role).
+//! [`PocketHandle::status`]/[`PocketHandle::disconnect`] read/clear the two
+//! paired-device rows.
 //!
 //! ## Async-to-sync: one owned `tokio::runtime::Runtime`
 //!
@@ -32,24 +36,29 @@
 //! the pairing attempt itself is [`PocketHandle::connect`], a regular
 //! method, callable any time after construction.
 //!
-//! ## Fail-closed: a half-armed window never survives a later failure
+//! ## Fail-closed: a half-armed relay never survives a later failure
 //!
-//! See [`PocketHandle::connect`]'s own doc comment - mirrors
+//! See [`connect_impl`]'s own doc comment - mirrors
 //! `pocket::commands::pocket_connect`'s identical disarm-on-failure body,
-//! including WHY the relay's own armed-window expiry (not the Cloud code's
-//! longer TTL) is what [`dto::PocketQrRecord::expires_unix`] carries.
+//! including WHY the relay's own armed-window expiry (not either Cloud
+//! code's longer TTL) is what [`dto::PocketQrRecord::expires_unix`] carries,
+//! and why it is now the EARLIER of the phone's and the watch's window
+//! expiries.
 //!
 //! Fail-closed at the boundary (06 §0.5): nothing here panics across FFI.
 
 pub mod dto;
 pub mod env;
 
-pub use dto::{PocketError, PocketQrRecord, PocketStatusRecord};
+pub use dto::{PocketDeviceRecord, PocketError, PocketQrRecord, PocketStatusRecord, PocketWindowRecord};
 
-use genaryx_connectors::{CloudClient, PairNewResponse, RelayAdminClient, RelayPairingInfo};
+use genaryx_connectors::{
+    CloudClient, PairNewResponse, RelayAdminClient, RelayDeviceKind, RelayDeviceView,
+    RelayPairingInfo, RelayWindowView,
+};
 
 /// See `pocket::commands`'s identical constant and doc comment (D12.2 step
-/// 2's `ttl: 300`).
+/// 2's `ttl: 300`). Applied to both the phone's and the watch's windows.
 const PAIRING_WINDOW_TTL_SECS: i64 = 300;
 
 /// The Pocket UniFFI Object. See the module doc for the async bridge and why
@@ -92,107 +101,204 @@ impl PocketHandle {
         self.runtime.block_on(build_status(&relay))
     }
 
-    /// "Connect TokenFuse Pocket" (docs/PHASE5.md W2) - see this module's
-    /// doc comment for the full three-step flow. Fail-closed: once the
-    /// pairing window is armed (step 2), any later failure disarms it via
-    /// `RelayAdminClient::disconnect` before returning the error, rather
-    /// than leaving a QR-less armed window silently open.
+    /// "Connect TokenFuse Pocket" (docs/PHASE5.md W2) - see [`connect_impl`]'s
+    /// own doc comment for the full flow. Fail-closed: once either window is
+    /// armed, any later failure disarms whatever THIS call itself just
+    /// armed, rather than leaving a half-paired relay silently open.
     pub fn connect(&self) -> Result<PocketQrRecord, PocketError> {
         self.runtime.block_on(connect_impl())
     }
 
-    /// Disconnect the paired phone (always safe to call, even with nothing
-    /// paired). Returns the fresh status so the panel flips back to Idle
-    /// without a second call.
+    /// Disconnect both the paired phone and watch (always safe to call,
+    /// even with nothing paired in either slot). Returns the fresh status so
+    /// the panel flips back to Idle without a second call.
     pub fn disconnect(&self) -> Result<PocketStatusRecord, PocketError> {
         self.runtime.block_on(disconnect_impl())
     }
 }
 
-/// Read the relay's current device view and fold it into a
-/// [`PocketStatusRecord`] - shared by [`PocketHandle::status`] and
-/// [`disconnect_impl`] so a Disconnect never needs a second call. A relay
-/// admin call failure here becomes `RelayUnreachable`, never a thrown error:
-/// this is a STATUS read, and "the relay is down" is itself a normal,
-/// renderable status, not a command failure.
+/// Read the relay's current two-slot device view (plus any currently armed
+/// windows) and fold it into a [`PocketStatusRecord`] - shared by
+/// [`PocketHandle::status`] and [`disconnect_impl`] so a Disconnect never
+/// needs a second call. A relay admin call failure here becomes
+/// `RelayUnreachable`, never a thrown error: this is a STATUS read, and "the
+/// relay is down" is itself a normal, renderable status, not a command
+/// failure.
 async fn build_status(relay: &RelayAdminClient) -> PocketStatusRecord {
-    match relay.device().await {
-        Ok(view) if view.paired => PocketStatusRecord::Paired {
-            device_id: view.device_id.unwrap_or_default(),
-            name: view.name.unwrap_or_default(),
-            platform: view.platform.unwrap_or_default(),
-            paired_at_unix: view.paired_at_unix.unwrap_or_default(),
-            last_seen_unix: view.last_seen_unix.unwrap_or_default(),
-        },
-        Ok(_) => PocketStatusRecord::Idle {
-            cloud_ready: crate::cloud::env::discover().is_some(),
-        },
+    match relay.devices().await {
+        Ok(resp) => {
+            let phone = resp
+                .slot(RelayDeviceKind::Phone)
+                .cloned()
+                .filter(|d| d.paired)
+                .map(to_device_record);
+            let watch = resp
+                .slot(RelayDeviceKind::Watch)
+                .cloned()
+                .filter(|d| d.paired)
+                .map(to_device_record);
+            let phone_window = resp.window(RelayDeviceKind::Phone).cloned().map(to_window_record);
+            let watch_window = resp.window(RelayDeviceKind::Watch).cloned().map(to_window_record);
+            if phone.is_none() && watch.is_none() {
+                PocketStatusRecord::Idle {
+                    cloud_ready: crate::cloud::env::discover().is_some(),
+                    phone_window,
+                    watch_window,
+                }
+            } else {
+                PocketStatusRecord::Paired {
+                    phone,
+                    watch,
+                    phone_window,
+                    watch_window,
+                }
+            }
+        }
         Err(e) => PocketStatusRecord::RelayUnreachable {
             message: e.to_string(),
         },
     }
 }
 
-/// Build the exact QR content string (D12.2 step 3) from the relay's
-/// `pairing-info` plus the just-minted Cloud code. `window_expires_unix`
-/// MUST be the RELAY's own armed-window expiry (`arm_pairing_window`'s
-/// response), not the Cloud code's own (longer, currently 600s) TTL: the
-/// relay's pairing route goes dark the moment ITS window closes (D12.3,
-/// `registry.rs::check_pairing_code`), so a countdown built from the Cloud's
-/// TTL would tell the operator the QR is good for longer than it actually
-/// is - mirrors `pocket::commands::build_qr`'s identical reasoning.
+/// A paired [`RelayDeviceView`] into the smaller [`PocketDeviceRecord`]
+/// shown per slot - drops `kind`/`paired`, which [`build_status`] already
+/// consumed to decide whether to call this at all.
+fn to_device_record(view: RelayDeviceView) -> PocketDeviceRecord {
+    PocketDeviceRecord {
+        device_id: view.device_id.unwrap_or_default(),
+        name: view.name.unwrap_or_default(),
+        platform: view.platform.unwrap_or_default(),
+        paired_at_unix: view.paired_at_unix.unwrap_or_default(),
+        last_seen_unix: view.last_seen_unix.unwrap_or_default(),
+    }
+}
+
+/// An armed [`RelayWindowView`] into the smaller [`PocketWindowRecord`]
+/// shown per slot - drops `kind`, which [`build_status`] already consumed to
+/// decide whether this is the phone's or the watch's window.
+fn to_window_record(view: RelayWindowView) -> PocketWindowRecord {
+    PocketWindowRecord {
+        expires_unix: view.expires_unix,
+        failed_attempts: view.failed_attempts,
+    }
+}
+
+/// Build the exact QR content string (D12.2 step 3, now carrying both
+/// codes) from the relay's `pairing-info` plus the just-minted phone and
+/// watch codes. `window_expires_unix` MUST be the EARLIER of the two
+/// windows' own armed-window expiries (`arm_pairing_window`'s response),
+/// never either Cloud code's own (longer, currently 600s) TTL: the relay's
+/// pairing route for a kind goes dark the moment THAT kind's window closes
+/// (D12.3, `registry.rs::check_pairing_code`), so a countdown built from
+/// anything longer would tell the operator the QR is good for longer than
+/// the SOONER of the two slots actually stays open - mirrors
+/// `pocket::commands::build_qr`'s identical reasoning, extended from one
+/// window to the earlier of two (see [`connect_impl`] for where the `min`
+/// is taken).
 ///
 /// ## Why the QR fields are NOT percent-encoded
 ///
 /// docs/PHASE5.md W2 pins the QR content to be "EXACTLY" the literal
 /// template `genaryx-pocket://pair/v1?relay=<public_advertise_url>&pin=<b64
-/// SPKI-SHA256>&code=<8-char>&org=<org>` "so W3's scanner parses it" - W3
-/// (the mobile QR scanner) is a later wave and does not exist yet in this
-/// build, so this is a pinned contract, not a free choice to percent-encode
-/// against. Checked to still be safe: `relay_url` (`https://host:port`) has
-/// no `&`/`=`; standard base64's alphabet (`A-Za-z0-9+/=`) has no `&`
-/// either, so a naive split-on-`&`-then-first-`=` parser (or Swift's own
+/// SPKI-SHA256>&code=<8-char>&code_watch=<8-char>&org=<org>` "so W3's
+/// scanner parses it" - W3 (the mobile QR scanner) is a later wave and does
+/// not exist yet in this build, so this is a pinned contract, not a free
+/// choice to percent-encode against. `code` stays the PHONE's code (so a
+/// scanner that only reads `code` keeps working unmodified); `code_watch` is
+/// additive, inserted before `org` per the pinned field order. Checked to
+/// still be safe: `relay_url` (`https://host:port`) has no `&`/`=`; standard
+/// base64's alphabet (`A-Za-z0-9+/=`) has no `&` either; and `code_watch`,
+/// like `code` before it, is an 8-char unambiguous-alphabet code
+/// (`devices::pairing_code()` upstream) that contains no `&` or `=` of its
+/// own - so a naive split-on-`&`-then-first-`=` parser (or Swift's own
 /// `URLComponents.queryItems`, which does NOT apply
 /// `application/x-www-form-urlencoded` `+`-as-space decoding - only
-/// percent-decoding, per RFC 3986) both isolate every field correctly
-/// without corruption.
+/// percent-decoding, per RFC 3986) isolates every field correctly without
+/// corruption.
 async fn build_qr(
     relay: &RelayAdminClient,
-    minted: &PairNewResponse,
+    minted_phone: &PairNewResponse,
+    minted_watch: &PairNewResponse,
     window_expires_unix: i64,
 ) -> Result<PocketQrRecord, PocketError> {
     let info: RelayPairingInfo = relay.pairing_info().await?;
     Ok(PocketQrRecord {
         qr_content: format!(
-            "genaryx-pocket://pair/v1?relay={}&pin={}&code={}&org={}",
-            info.relay_url, info.pin, minted.code, info.org
+            "genaryx-pocket://pair/v1?relay={}&pin={}&code={}&code_watch={}&org={}",
+            info.relay_url, info.pin, minted_phone.code, minted_watch.code, info.org
         ),
         expires_unix: window_expires_unix,
     })
 }
 
+/// The full "Connect TokenFuse Pocket" flow (D12.2a steps 1-3, 10, extended
+/// to two devices):
+///
+/// 1. Mint TWO codes at the Cloud (`POST /v1/pair/new`, once for the phone
+///    and once for the watch) - nothing is armed at the relay yet, so a mint
+///    failure for either code leaves the relay untouched.
+/// 2. Arm the relay's pairing window for the phone's code, then for the
+///    watch's. If arming the watch's window fails after the phone's already
+///    succeeded, disarm the phone's window before returning the error
+///    ([`RelayAdminClient::disconnect`] with `Some(Phone)`, never `None`:
+///    `None` would also clear a phone or watch pairing that predates this
+///    call, which is not this failure's to touch) - it will still close on
+///    its own after `PAIRING_WINDOW_TTL_SECS`, but a failed Connect should
+///    not leave a stray window armed for that long regardless.
+/// 3. Read the relay's `pairing-info` and build the QR content carrying both
+///    codes (see [`build_qr`]'s doc). If THIS step fails, both windows are
+///    armed (we only reach it once both arms above succeeded), so both are
+///    disarmed the same way.
 async fn connect_impl() -> Result<PocketQrRecord, PocketError> {
     let resolved = crate::cloud::env::discover().ok_or(PocketError::NoCloudEnvironment)?;
 
     let cloud = CloudClient::new(resolved.cloud_url.clone(), resolved.admin_bearer.clone())?;
-    let minted = cloud.pair_new(&resolved.admin_bearer).await?;
+    let minted_phone = cloud.pair_new(&resolved.admin_bearer).await?;
+    let minted_watch = cloud.pair_new(&resolved.admin_bearer).await?;
 
     let admin_url = env::relay_admin_url();
     let relay = RelayAdminClient::new(&admin_url).map_err(PocketError::from)?;
-    let code_sha256 = genaryx_signing::body_sha256_hex(minted.code.as_bytes());
-    let armed = relay
-        .arm_pairing_window(&code_sha256, PAIRING_WINDOW_TTL_SECS)
+
+    let phone_code_sha256 = genaryx_signing::body_sha256_hex(minted_phone.code.as_bytes());
+    let armed_phone = relay
+        .arm_pairing_window(RelayDeviceKind::Phone, &phone_code_sha256, PAIRING_WINDOW_TTL_SECS)
         .await?;
 
-    match build_qr(&relay, &minted, armed.expires_unix).await {
+    let watch_code_sha256 = genaryx_signing::body_sha256_hex(minted_watch.code.as_bytes());
+    let armed_watch = match relay
+        .arm_pairing_window(RelayDeviceKind::Watch, &watch_code_sha256, PAIRING_WINDOW_TTL_SECS)
+        .await
+    {
+        Ok(armed) => armed,
+        Err(e) => {
+            if let Err(disarm_err) = relay.disconnect(Some(RelayDeviceKind::Phone)).await {
+                eprintln!(
+                    "genaryx-ffi pocket: connect: failed to disarm the phone pairing window \
+                     after the watch window failed to arm (it will still close on its own \
+                     {PAIRING_WINDOW_TTL_SECS}s TTL): {disarm_err}"
+                );
+            }
+            return Err(e.into());
+        }
+    };
+
+    // The QR must never promise longer validity than the soonest window to
+    // go dark: use the EARLIER of the two expiries (see build_qr's doc).
+    let expires_unix = armed_phone.expires_unix.min(armed_watch.expires_unix);
+
+    match build_qr(&relay, &minted_phone, &minted_watch, expires_unix).await {
         Ok(qr) => Ok(qr),
         Err(e) => {
-            if let Err(disarm_err) = relay.disconnect().await {
-                eprintln!(
-                    "genaryx-ffi pocket: connect: failed to disarm the just-opened pairing window \
-                     after a pairing-info failure (it will still close on its own {PAIRING_WINDOW_TTL_SECS}s TTL): \
-                     {disarm_err}"
-                );
+            // Both windows are armed at this point, so both need disarming.
+            for kind in RelayDeviceKind::ALL {
+                if let Err(disarm_err) = relay.disconnect(Some(kind)).await {
+                    eprintln!(
+                        "genaryx-ffi pocket: connect: failed to disarm the {} pairing window \
+                         after a pairing-info failure (it will still close on its own \
+                         {PAIRING_WINDOW_TTL_SECS}s TTL): {disarm_err}",
+                        kind.as_str()
+                    );
+                }
             }
             Err(e)
         }
@@ -202,7 +308,7 @@ async fn connect_impl() -> Result<PocketQrRecord, PocketError> {
 async fn disconnect_impl() -> Result<PocketStatusRecord, PocketError> {
     let admin_url = env::relay_admin_url();
     let relay = RelayAdminClient::new(&admin_url).map_err(PocketError::from)?;
-    relay.disconnect().await?;
+    relay.disconnect(None).await?;
     Ok(build_status(&relay).await)
 }
 
@@ -218,9 +324,16 @@ mod tests {
         }
     }
 
-    fn sample_minted() -> PairNewResponse {
+    fn sample_minted_phone() -> PairNewResponse {
         PairNewResponse {
             code: "ABCD1234".to_string(),
+            expires_unix: 1_758_000_600,
+        }
+    }
+
+    fn sample_minted_watch() -> PairNewResponse {
+        PairNewResponse {
+            code: "WXYZ9876".to_string(),
             expires_unix: 1_758_000_600,
         }
     }
@@ -230,20 +343,54 @@ mod tests {
         let _handle = PocketHandle::new().expect("construct PocketHandle");
     }
 
+    // ---- field-mapping helpers: build_status's only non-trivial logic -----
+
+    #[test]
+    fn to_device_record_maps_every_field() {
+        let view = RelayDeviceView {
+            kind: "phone".to_string(),
+            paired: true,
+            device_id: Some("d1".to_string()),
+            name: Some("Yurii's iPhone".to_string()),
+            platform: Some("ios".to_string()),
+            paired_at_unix: Some(1_000),
+            last_seen_unix: Some(2_000),
+        };
+        let record = to_device_record(view);
+        assert_eq!(record.device_id, "d1");
+        assert_eq!(record.name, "Yurii's iPhone");
+        assert_eq!(record.platform, "ios");
+        assert_eq!(record.paired_at_unix, 1_000);
+        assert_eq!(record.last_seen_unix, 2_000);
+    }
+
+    #[test]
+    fn to_window_record_maps_every_field() {
+        let view = RelayWindowView {
+            kind: "watch".to_string(),
+            expires_unix: 1_758_000_900,
+            failed_attempts: 5,
+        };
+        let record = to_window_record(view);
+        assert_eq!(record.expires_unix, 1_758_000_900);
+        assert_eq!(record.failed_attempts, 5);
+    }
+
     // ---- QR content shape: the load-bearing contract W3 depends on --------
 
     #[test]
     fn qr_content_matches_the_exact_pinned_template() {
         let info = sample_info();
-        let minted = sample_minted();
+        let phone = sample_minted_phone();
+        let watch = sample_minted_watch();
         let qr_content = format!(
-            "genaryx-pocket://pair/v1?relay={}&pin={}&code={}&org={}",
-            info.relay_url, info.pin, minted.code, info.org
+            "genaryx-pocket://pair/v1?relay={}&pin={}&code={}&code_watch={}&org={}",
+            info.relay_url, info.pin, phone.code, watch.code, info.org
         );
         assert_eq!(
             qr_content,
             "genaryx-pocket://pair/v1?relay=https://198.51.100.7:8443&pin=dGVzdC1zcGtpLXBpbi1iYXNlNjQ=\
-&code=ABCD1234&org=acme"
+&code=ABCD1234&code_watch=WXYZ9876&org=acme"
         );
     }
 
@@ -264,13 +411,18 @@ mod tests {
     #[tokio::test]
     async fn build_qr_against_no_live_relay_is_a_relay_error() {
         let relay = RelayAdminClient::new("http://127.0.0.1:1").expect("client construction");
-        // A window_expires_unix deliberately DIFFERENT from
-        // sample_minted().expires_unix (1_758_000_600): proves at the call
-        // site that build_qr takes the relay's own window expiry as an
-        // independent argument, not derived from the Cloud code's own TTL.
-        let err = build_qr(&relay, &sample_minted(), 1_758_000_300)
-            .await
-            .expect_err("no relay is listening on port 1");
+        // A window_expires_unix deliberately DIFFERENT from either sample's
+        // own expires_unix (1_758_000_600): proves at the call site that
+        // build_qr takes the relay's own window expiry as an independent
+        // argument, not derived from either Cloud code's own TTL.
+        let err = build_qr(
+            &relay,
+            &sample_minted_phone(),
+            &sample_minted_watch(),
+            1_758_000_300,
+        )
+        .await
+        .expect_err("no relay is listening on port 1");
         assert!(matches!(err, PocketError::Relay { .. }));
     }
 

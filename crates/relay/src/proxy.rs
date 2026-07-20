@@ -34,6 +34,10 @@ use axum::response::{IntoResponse, Response};
 pub enum ProxyError {
     #[error("unauthorized")]
     Unauthorized,
+    /// The device is genuinely paired, but this mutation is not one its
+    /// surface may perform. See [`kind_may_mutate`].
+    #[error("this device may not perform that action")]
+    Forbidden,
     #[error("rate limit exceeded")]
     RateLimited,
     #[error("internal: {0}")]
@@ -44,10 +48,51 @@ impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
         let (status, code) = match &self {
             ProxyError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            ProxyError::Forbidden => (StatusCode::FORBIDDEN, "forbidden_for_device"),
             ProxyError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             ProxyError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };
         (status, Json(serde_json::json!({ "error": code }))).into_response()
+    }
+}
+
+/// May a device of this kind perform the mutation at `path`?
+///
+/// ## Why the wrist is narrower than the pocket
+///
+/// Both devices are admitted by the same operator and both sign with their own
+/// key, so this is not about trusting one less. It is about what each surface
+/// is FOR, and about what a 40mm screen under time pressure is a good place to
+/// decide.
+///
+/// - **kill** is the whole reason the watch exists: something is burning, stop
+///   it now. Allowed on both.
+/// - **incident ack** is a pager-native action, "I have seen this, stop paging
+///   me". Allowed on both.
+/// - **budget** is a decision to SPEND MORE MONEY. It wants context, a bigger
+///   screen and a moment's thought, none of which a wrist has. Phone only.
+///
+/// ## What this is and is not
+///
+/// This is enforced HERE, at the relay, not at the Cloud. The Cloud's own role
+/// model is only `admin` or `viewer` (`tokenfuse/crates/cloud/src/keys.rs`),
+/// and neither expresses "may kill but may not re-budget", so the Cloud cannot
+/// carry this distinction today. The relay is the only door to the Cloud (which
+/// is bound to loopback), so this is a real boundary in the deployed shape, but
+/// it is a relay-enforced one. Say exactly that in any writeup: do not claim
+/// the watch's credential is intrinsically weaker at the Cloud, because it is
+/// not. Making it intrinsically weaker needs a Cloud-side capability grant,
+/// which is a separate change.
+pub fn kind_may_mutate(kind: crate::registry::DeviceKind, path: &str) -> bool {
+    use crate::registry::DeviceKind;
+    // Match on the concrete path shape rather than a prefix, so a future route
+    // added to the router is denied by default until it is listed here.
+    let is_kill = path.starts_with("/v1/runs/") && path.ends_with("/kill");
+    let is_budget = path.starts_with("/v1/runs/") && path.ends_with("/budget");
+    let is_ack = path.starts_with("/v1/incidents/") && path.ends_with("/ack");
+    match kind {
+        DeviceKind::Phone => is_kill || is_budget || is_ack,
+        DeviceKind::Watch => is_kill || is_ack,
     }
 }
 
@@ -100,6 +145,21 @@ pub async fn mutation_passthrough(
         .verify_bearer(token)
         .map_err(|e| ProxyError::Internal(e.to_string()))?
         .ok_or(ProxyError::Unauthorized)?;
+
+    // What this surface is allowed to do, before spending any rate-limit
+    // budget or touching the Cloud. A denial here is a 403 and is deliberately
+    // distinguishable from a 401: the device IS paired, it just may not do
+    // this, and telling it so plainly is what lets the app hide the control
+    // rather than offer a button that always fails.
+    if !kind_may_mutate(device.kind, uri.path()) {
+        eprintln!(
+            "genaryx-relay: proxy: refused {} on {} (paired {} may not perform it)",
+            device.device_id,
+            uri.path(),
+            device.kind.as_str()
+        );
+        return Err(ProxyError::Forbidden);
+    }
 
     if !state.mutation_rate_limiter.check(&device.device_id) {
         return Err(ProxyError::RateLimited);
@@ -251,15 +311,18 @@ mod tests {
     fn state_with_paired_device(cloud_base_url: String) -> crate::PublicState {
         let registry = std::sync::Arc::new(crate::registry::Registry::open_in_memory().unwrap());
         registry
-            .insert_paired_device(crate::registry::NewDevice {
-                device_id: "dev-1".to_string(),
-                name: "iPhone".to_string(),
-                platform: "ios".to_string(),
-                org: "acme".to_string(),
-                role: "admin".to_string(),
-                device_token: "tok-1".to_string(),
-                paired_at_unix: 1000,
-            })
+            .insert_paired_device(
+                crate::registry::DeviceKind::Phone,
+                crate::registry::NewDevice {
+                    device_id: "dev-1".to_string(),
+                    name: "iPhone".to_string(),
+                    platform: "ios".to_string(),
+                    org: "acme".to_string(),
+                    role: "admin".to_string(),
+                    device_token: "tok-1".to_string(),
+                    paired_at_unix: 1000,
+                },
+            )
             .unwrap();
         crate::PublicState {
             registry,
@@ -347,6 +410,123 @@ mod tests {
             captured.lock().unwrap().is_none(),
             "the relay must reject BEFORE forwarding anything to the Cloud"
         );
+    }
+
+    /// The same state, plus a paired WATCH whose token is `tok-w`.
+    fn state_with_phone_and_watch(cloud_base_url: String) -> crate::PublicState {
+        let state = state_with_paired_device(cloud_base_url);
+        state
+            .registry
+            .insert_paired_device(
+                crate::registry::DeviceKind::Watch,
+                crate::registry::NewDevice {
+                    device_id: "dev-w".to_string(),
+                    name: "Apple Watch".to_string(),
+                    platform: "watchos".to_string(),
+                    org: "acme".to_string(),
+                    role: "admin".to_string(),
+                    device_token: "tok-w".to_string(),
+                    paired_at_unix: 1000,
+                },
+            )
+            .unwrap();
+        state
+    }
+
+    fn signed_headers(token: &str, device: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        headers.insert("x-fuse-device", device.parse().unwrap());
+        headers
+    }
+
+    #[test]
+    fn the_wrist_may_stop_things_but_may_not_authorize_more_spend() {
+        use crate::registry::DeviceKind::{Phone, Watch};
+        // Kill and ack: both surfaces. Budget: the pocket only.
+        assert!(kind_may_mutate(Watch, "/v1/runs/r1/kill"));
+        assert!(kind_may_mutate(Watch, "/v1/incidents/i1/ack"));
+        assert!(!kind_may_mutate(Watch, "/v1/runs/r1/budget"));
+
+        assert!(kind_may_mutate(Phone, "/v1/runs/r1/kill"));
+        assert!(kind_may_mutate(Phone, "/v1/incidents/i1/ack"));
+        assert!(kind_may_mutate(Phone, "/v1/runs/r1/budget"));
+
+        // Anything not explicitly listed is denied for BOTH, so a route added
+        // to the router later cannot quietly inherit authority.
+        for path in [
+            "/v1/runs/r1/resume",
+            "/v1/policies/p1/approve",
+            "/v1/summary",
+            "/",
+        ] {
+            assert!(!kind_may_mutate(Phone, path), "phone: {path}");
+            assert!(!kind_may_mutate(Watch, path), "watch: {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_watch_budget_change_is_refused_before_ever_reaching_the_cloud() {
+        let (cloud_base_url, captured) = spawn_fake_cloud().await;
+        let state = state_with_phone_and_watch(cloud_base_url);
+
+        let err = mutation_passthrough(
+            State(state),
+            signed_headers("tok-w", "dev-w"),
+            "/v1/runs/r1/budget".parse().unwrap(),
+            Bytes::from_static(b"{\"budget_usd\":999.0}"),
+        )
+        .await
+        .expect_err("the watch must not be able to raise a budget");
+        assert!(matches!(err, ProxyError::Forbidden));
+        assert!(
+            captured.lock().unwrap().is_none(),
+            "the refusal must happen at the relay, not by asking the Cloud"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_watch_kill_is_forwarded_like_any_other() {
+        let (cloud_base_url, captured) = spawn_fake_cloud().await;
+        let state = state_with_phone_and_watch(cloud_base_url);
+
+        let resp = mutation_passthrough(
+            State(state),
+            signed_headers("tok-w", "dev-w"),
+            "/v1/runs/reconciliation-batch-eod-002-LIVE/kill".parse().unwrap(),
+            Bytes::new(),
+        )
+        .await
+        .expect("a kill from the wrist is the whole point");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let got = captured.lock().unwrap().clone().expect("Cloud was called");
+        assert_eq!(got.path, "/v1/runs/reconciliation-batch-eod-002-LIVE/kill");
+        assert_eq!(
+            got.headers.get("x-fuse-device").unwrap(),
+            "dev-w",
+            "the watch's own signature identity must survive the hop"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_phone_may_still_change_a_budget() {
+        let (cloud_base_url, captured) = spawn_fake_cloud().await;
+        let state = state_with_phone_and_watch(cloud_base_url);
+
+        let resp = mutation_passthrough(
+            State(state),
+            signed_headers("tok-1", "dev-1"),
+            "/v1/runs/r1/budget".parse().unwrap(),
+            Bytes::from_static(b"{\"budget_usd\":10.0}"),
+        )
+        .await
+        .expect("the phone keeps the full mutation set");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(captured.lock().unwrap().is_some());
     }
 
     #[tokio::test]

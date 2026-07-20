@@ -138,12 +138,24 @@ async fn run() -> Result<(), RelayError> {
     let rustls_config = identity.rustls_config().await?;
 
     let registry = Arc::new(registry::Registry::open(&config.db_path)?);
-    match registry.current_device()? {
-        Some(d) => eprintln!(
-            "genaryx-relay: registry: device already paired ({})",
-            d.device_id
-        ),
-        None => eprintln!("genaryx-relay: registry: no device paired yet"),
+    {
+        let paired = registry.devices()?;
+        if paired.is_empty() {
+            eprintln!("genaryx-relay: registry: no device paired yet (phone and watch slots free)");
+        } else {
+            for d in &paired {
+                eprintln!(
+                    "genaryx-relay: registry: {} already paired ({})",
+                    d.kind.as_str(),
+                    d.device_id
+                );
+            }
+            for kind in registry::DeviceKind::ALL {
+                if !paired.iter().any(|d| d.kind == kind) {
+                    eprintln!("genaryx-relay: registry: {} slot free", kind.as_str());
+                }
+            }
+        }
     }
 
     let engine = Arc::new(exceptions::ExceptionEngine::new(
@@ -245,7 +257,7 @@ async fn run() -> Result<(), RelayError> {
             "/admin/pairing-window",
             axum::routing::post(admin::arm_pairing_window),
         )
-        .route("/admin/device", axum::routing::get(admin::get_device))
+        .route("/admin/devices", axum::routing::get(admin::get_devices))
         .route("/admin/disconnect", axum::routing::post(admin::disconnect))
         .with_state(admin_state);
 

@@ -10,6 +10,47 @@ from anywhere; every mutation stays human-initiated and hardware-signed. The rel
 least-privilege pipe (viewer key), it cannot kill or mutate on its own (Cloud 403s a viewer,
 `tokenfuse http.rs:276-277`).
 
+> ## AMENDMENT, 2026-07-20: the single-device rule is superseded
+>
+> **Everything below that says the relay accepts exactly ONE device is a historical
+> record of Ф5 as it shipped and PASSED. It is no longer how the relay behaves.**
+> Read this box before quoting any of it, and especially before writing anything
+> public from it.
+>
+> The relay now accepts exactly **one phone AND one watch**. The Apple Watch became a
+> second pager surface for the same operator, which the one-row rule made impossible.
+> What changed, precisely:
+>
+> - `device` gained a `kind` column (`CHECK (kind IN ('phone','watch'))`) plus a
+>   `UNIQUE INDEX device_kind_unique`, so "at most one per kind" is now enforced by the
+>   SCHEMA, not only by the application checks that guard the races. That is stricter
+>   than the V1 arrangement it replaces.
+> - `pairing_window` is rekeyed from a singleton `id = 1` row to one row PER KIND.
+> - **The kind is bound to the CODE, never claimed by the device.** The desktop declares
+>   which slot a code admits when it arms the window; the redeeming device's self-reported
+>   `platform` string is never consulted when choosing a slot. A device cannot take the
+>   watch slot by calling itself a watch.
+> - One QR now carries TWO codes (`code` = phone, `code_watch` = watch). The phone scans
+>   it, pairs itself, and forwards the watch its own code over WatchConnectivity, because
+>   the watch has no camera and watchOS has no CoreImage to render a QR back.
+> - `POST /relay/v1/pair` accepts an optional `expect_kind` and refuses a crossed code
+>   BEFORE redeeming it at the Cloud, so a mis-built QR cannot strand a slot.
+> - Revocation is per slot: losing the watch does not force the phone to re-pair.
+> - `GET /admin/device` is replaced by `GET /admin/devices` (one entry per slot). The path
+>   was renamed deliberately so a stale desktop gets a loud 404 instead of mis-parsing a
+>   changed body.
+> - **The wrist is a narrower surface than the pocket.** Both may kill and acknowledge;
+>   only the phone may change a budget (`proxy.rs::kind_may_mutate`, 403
+>   `forbidden_for_device`). Note this is enforced AT THE RELAY: the Cloud's role model is
+>   only `admin` or `viewer` and cannot express "may kill but may not re-budget", so the
+>   watch's credential is not intrinsically weaker at the Cloud. Do not write that it is.
+> - `ttl_secs` on a pairing window is now capped at 900s (`MAX_PAIRING_WINDOW_SECS`).
+>
+> Two things a writer must NOT carry over from the text below:
+> the phrase "single-device" as a current property, and the claim that a second pair
+> attempt is refused outright. A second attempt is refused only for a slot that is
+> already filled.
+
 ## Sim-first deltas (no Apple Developer account yet)
 
 The whole D12 dataflow is built and proven on the iOS Simulator + a LOCAL TokenFuse Cloud.

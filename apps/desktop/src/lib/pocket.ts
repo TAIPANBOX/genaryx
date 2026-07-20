@@ -5,8 +5,15 @@ import type { PocketError, PocketQr, PocketStatus } from "../pocketTypes";
  * mirrors `lib/remote.ts`'s `REMOTE_UNAVAILABLE`/`lib/evidence.ts`'s
  * `EVIDENCE_UNAVAILABLE`: a real, renderable "nothing configured" state
  * (Connect would have nothing to resolve either, so `cloud_ready: false` is
- * accurate, not a guess) rather than a stuck "loading" placeholder. */
-const POCKET_UNAVAILABLE_NO_TAURI: PocketStatus = { state: "idle", cloud_ready: false };
+ * accurate, not a guess) rather than a stuck "loading" placeholder. No Tauri
+ * runtime also means no relay to have armed a window, so both windows are
+ * honestly `null` here too. */
+const POCKET_UNAVAILABLE_NO_TAURI: PocketStatus = {
+  state: "idle",
+  cloud_ready: false,
+  phone_window: null,
+  watch_window: null,
+};
 
 /** Thrown by `pocketConnect`/`pocketDisconnect` when there is no Tauri
  * runtime to talk to - mirrors `lib/remote.ts`'s `NO_TAURI_ERROR`. */

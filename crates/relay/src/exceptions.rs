@@ -110,7 +110,56 @@ pub struct Aggregates {
 #[derive(Debug, Clone, Serialize)]
 pub struct ExceptionSnapshot {
     pub aggregates: Aggregates,
+    /// What the operator can still act on: runs with a known budget position,
+    /// plus detections of behaviour that is still happening. Killable.
     pub queue: Vec<ExceptionItem>,
+    /// What already happened and was already contained, counted by kind rather
+    /// than listed. See [`DigestRow`].
+    #[serde(default)]
+    pub digest: Vec<DigestRow>,
+    /// How many actionable items did not fit in `queue`. Zero in every normal
+    /// case. Present so a truncation is never silent on a governance surface:
+    /// if this is nonzero the operator is being shown less than there is, and
+    /// has to be told.
+    #[serde(default)]
+    pub queue_truncated: usize,
+}
+
+/// One rolled-up line of "this already happened, and the guardrail held".
+///
+/// ## Why this exists
+///
+/// Measured against a real fleet, the queue came back with 189 rows: 9 budget
+/// alerts and 180 open incidents, of which about 150 were one `budget_exhausted`
+/// per shard of a single fanned-out batch. That is not a pager, it is the fleet
+/// browser this whole design exists to avoid, and it is unreadable on a 40mm
+/// watch face.
+///
+/// The fix is not a smaller cap, it is noticing that the list was conflating
+/// two different things. A run over its cap that is still spending is an
+/// ACTION: you can kill it. A `budget_exhausted` incident is a REPORT that the
+/// breaker already tripped and the spending already stopped. Both matter, but
+/// only one of them is something to do, and 150 copies of "we stopped it" belong
+/// on one line with a number, not on 150.
+///
+/// Nothing is hidden: the count is exact, and the kind is preserved, which is
+/// the only place `fanout_explosion` is distinguished from `budget_exhausted`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DigestRow {
+    /// The incident kind, verbatim from the Cloud.
+    pub kind: String,
+    /// Which agent these belong to, when the Cloud told us. Grouping by
+    /// (kind, agent) rather than kind alone is what turns an unreadable "171
+    /// budget_exhausted" into "reconciliation-batch: 171 runs hit their
+    /// ceiling", which is the sentence an operator actually needs. Costs
+    /// nothing: `Incident` already carries `agent_id`.
+    pub agent_id: Option<String>,
+    /// Exactly how many were folded in. Never approximate, never capped.
+    pub count: usize,
+    /// The highest severity seen in the group.
+    pub severity: Option<String>,
+    /// The most recent occurrence in the group.
+    pub last_seen_unix: i64,
 }
 
 /// What the caller (main's event loop) should hand to an [`crate::push::ApnsSender`],
@@ -214,6 +263,28 @@ fn headroom_from_alerts(alerts: &[Alert]) -> i64 {
 }
 
 fn push_burn_sample(samples: &mut VecDeque<(i64, i64)>, now: i64, spend_microusd: i64) {
+    // Cumulative spend can only go UP while the Cloud keeps running. If it
+    // comes back lower, the Cloud restarted (its store is in-memory) and the
+    // counter began again from zero, so every sample before this point belongs
+    // to a different epoch and describes spending that is no longer being
+    // counted. Keeping them produced a NEGATIVE burn rate on the phone and the
+    // watch, which is not a smaller number, it is a nonsense one.
+    //
+    // Clamping the rate at zero would have hidden it; dropping the stale epoch
+    // is the honest fix, and it means the rate simply rebuilds from the restart
+    // rather than lying in either direction.
+    if samples
+        .back()
+        .is_some_and(|&(_, last)| spend_microusd < last)
+    {
+        eprintln!(
+            "genaryx-relay: burn: spend went backwards ({} -> {}), the Cloud restarted;              discarding {} sample(s) from the previous epoch",
+            samples.back().map(|s| s.1).unwrap_or(0),
+            spend_microusd,
+            samples.len()
+        );
+        samples.clear();
+    }
     samples.push_back((now, spend_microusd));
     let cutoff = now - BURN_WINDOW_SECS;
     while samples.len() > 1 && samples.front().is_some_and(|&(t, _)| t < cutoff) {
@@ -263,6 +334,11 @@ enum RelayStreamEvent {
 struct EngineState {
     aggregates: Aggregates,
     items: HashMap<String, ExceptionItem>,
+    /// Already-contained incidents, rolled up by kind. Rebuilt wholesale by
+    /// each reconcile: unlike `items` there is no per-entry lifecycle to
+    /// preserve, a digest row is just a count of what the Cloud currently
+    /// reports open.
+    digest: Vec<DigestRow>,
     /// Live-updated from `Budget` stream events, seeded/corrected from
     /// `/v1/alerts` at each reconcile: the only way this relay learns a
     /// run's central-budget override without a `/v1/budgets` read (not one
@@ -292,20 +368,41 @@ impl ExceptionEngine {
         }
     }
 
+    /// Every tracked item, unfiltered, for tests that are about the engine's
+    /// bookkeeping (classification, dedup) rather than about what a pager
+    /// chooses to display. Production code goes through `snapshot`.
+    #[cfg(test)]
+    fn tracked_items(&self) -> Vec<ExceptionItem> {
+        let st = self.state.lock().expect("exception engine mutex poisoned");
+        st.items.values().cloned().collect()
+    }
+
     /// The current bounded, pre-computed snapshot `GET /relay/v1/exceptions`
     /// serves. HARD items sort first, then most-recently-seen first.
     pub fn snapshot(&self) -> ExceptionSnapshot {
         let st = self.state.lock().expect("exception engine mutex poisoned");
-        let mut queue: Vec<ExceptionItem> = st.items.values().cloned().collect();
-        queue.sort_by(|a, b| {
-            is_hard(b.class)
-                .cmp(&is_hard(a.class))
-                .then(b.last_seen_unix.cmp(&a.last_seen_unix))
-        });
+        // The pager shows ONLY what the operator can still act on, and only
+        // what has actually crossed a line. Everything filtered here is still
+        // fully visible in Genaryx on the desktop, which reads the Cloud
+        // directly and never sees this queue: the reduction is the wrist's and
+        // the pocket's, not the fleet record's.
+        let mut queue: Vec<ExceptionItem> = st
+            .items
+            .values()
+            .filter(|i| !i.killed && shows_on_a_pager(i.class))
+            .cloned()
+            .collect();
+        queue.sort_by(queue_order);
+        // Report what we cut rather than quietly serving a shorter list. A
+        // governance surface that silently truncates is telling the operator
+        // "this is everything" when it is not.
+        let queue_truncated = queue.len().saturating_sub(MAX_QUEUE_LEN);
         queue.truncate(MAX_QUEUE_LEN);
         ExceptionSnapshot {
             aggregates: st.aggregates,
             queue,
+            digest: st.digest.clone(),
+            queue_truncated,
         }
     }
 
@@ -354,11 +451,40 @@ impl ExceptionEngine {
             items.insert(key.clone(), alert_item(&key, a, first_seen, now));
             st.budgets.insert(a.run_id.clone(), a.budget_micros);
         }
+
+        // Incidents fall into three cases, and getting them into ONE list keyed
+        // by run is what stops the same run appearing twice with different
+        // numbers (measured: the protagonist run showed once with its real
+        // $6.91/$5.57 and again with $0.00/$0.00, because alerts keyed on
+        // `run:` and incidents on `incident:`).
+        let mut digest: HashMap<String, DigestRow> = HashMap::new();
         for inc in incidents.iter().filter(|i| !i.acknowledged) {
-            let key = format!("incident:{}", inc.id);
-            items.insert(key.clone(), incident_item(&key, inc));
+            match inc.run_id.as_ref().map(|r| format!("run:{r}")) {
+                // 1. About a run we are already showing: MERGE, never add a
+                //    row. The alert owns the money, the incident owns the kind.
+                Some(key) if items.contains_key(&key) => {
+                    if let Some(item) = items.get_mut(&key) {
+                        merge_incident(item, inc);
+                    }
+                }
+                // 2. Already contained: the breaker tripped and the spending
+                //    stopped, so this is a report, not a task. Counted.
+                _ if incident_is_already_contained(&inc.kind) => {
+                    fold_into_digest(&mut digest, inc);
+                }
+                // 3. Still happening, and not attached to a run we are already
+                //    showing: it earns its own row.
+                _ => {
+                    let key = format!("incident:{}", inc.id);
+                    items.insert(key.clone(), incident_item(&key, inc));
+                }
+            }
         }
+
         st.items = items;
+        let mut digest: Vec<DigestRow> = digest.into_values().collect();
+        digest.sort_by(|a, b| b.count.cmp(&a.count).then(a.kind.cmp(&b.kind)));
+        st.digest = digest;
         push_burn_sample(&mut st.burn_samples, now, summary.spent_microusd);
         st.aggregates = Aggregates {
             spend_microusd: summary.spent_microusd,
@@ -502,7 +628,11 @@ impl ExceptionEngine {
             return None;
         }
         let class = classify_incident(&inc.kind, inc.severity);
-        let run_label = inc.run_id.clone().unwrap_or_else(|| inc.id.clone());
+        // The subject is the run when there is one, otherwise the AGENT. Never the
+    // incident id: for a runaway that id is literally
+    // `fanout_explosion:agent://meridian.example/kyc-aml/sanctions-screener`,
+    // which produced the headline "Agent/run fanout_explosion:agent://... running
+    // hot - fanout_explosion", naming the kind twice around a raw URI.
         st.items.insert(key.clone(), incident_item(&key, &inc));
 
         let now_ms = now * 1000;
@@ -513,14 +643,74 @@ impl ExceptionEngine {
         Some(PushIntent {
             title: "Agent running hot".to_string(),
             body: format!(
-                "Agent/run {run_label} running hot - {}. Tap to review and kill.",
-                inc.kind
+                "{} on {}. Tap to review and kill.",
+                humanise_kind(&inc.kind),
+                inc.run_id
+                    .clone()
+                    .or_else(|| inc.agent_id.as_deref().map(short_agent))
+                    .unwrap_or_else(|| "the fleet".to_string())
             ),
             run_id: inc.run_id,
             incident_id: Some(inc.id),
             kind: inc.kind,
             hard: is_hard(class),
         })
+    }
+}
+
+/// Does this class belong on a wrist or in a pocket at all?
+///
+/// Only things that have crossed a line: over the cap, a detection of something
+/// still running away, or past the 80% alert threshold. Anything below that is
+/// ordinary operation, and the operator was explicit that it does not interest
+/// them on a pager. `PendingApproval` is governance queueing, not a burning
+/// budget, so it is desktop work.
+///
+/// This is a display filter, never a data filter: Genaryx reads the Cloud
+/// directly and still shows every run, every incident and every kill.
+fn shows_on_a_pager(class: ExceptionClass) -> bool {
+    matches!(
+        class,
+        ExceptionClass::OverCap | ExceptionClass::Runaway | ExceptionClass::NearCap
+    )
+}
+
+/// The one definition of queue order, owned by the SERVER so the phone and the
+/// watch cannot disagree. They used to: this sorted hard-class-first here while
+/// the watch re-sorted by its own rule, so one fleet read two different ways on
+/// two surfaces of the same product.
+///
+/// 1. Killed items are filtered out upstream and never reach here; the clause
+///    is kept as a backstop so a future caller that skips the filter still
+///    cannot put history above work.
+/// 2. Then urgency class, most urgent first: over the limit, then a detection
+///    of something still running, then approaching the limit.
+/// 3. Then how far past the line, worst first.
+/// 4. Then most recently seen.
+fn queue_order(a: &ExceptionItem, b: &ExceptionItem) -> std::cmp::Ordering {
+    a.killed
+        .cmp(&b.killed)
+        .then(class_rank(a.class).cmp(&class_rank(b.class)))
+        .then(
+            b.fraction
+                .unwrap_or(-1.0)
+                .partial_cmp(&a.fraction.unwrap_or(-1.0))
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+        .then(b.last_seen_unix.cmp(&a.last_seen_unix))
+}
+
+/// Urgency order for the queue, lowest first. Explicit rather than derived from
+/// [`is_hard`] because the operator's rule is about the LIMIT, not about the
+/// hard/soft push distinction: something over its cap outranks something merely
+/// detected, which outranks something approaching its cap.
+fn class_rank(class: ExceptionClass) -> u8 {
+    match class {
+        ExceptionClass::OverCap => 0,
+        ExceptionClass::Runaway => 1,
+        ExceptionClass::NearCap => 2,
+        ExceptionClass::AtRisk => 3,
+        ExceptionClass::PendingApproval => 4,
     }
 }
 
@@ -533,7 +723,10 @@ fn alert_item(key: &str, a: &Alert, first_seen_unix: i64, now: i64) -> Exception
         kind: "budget".to_string(),
         class,
         severity: None,
-        headline: format!("Run {} at {:.0}% of budget", a.run_id, a.fraction * 100.0),
+        // Deliberately does NOT name the run: every row already renders
+        // `run_id` on its own line, and repeating it here cost three wrapped
+        // lines on the phone and left nothing but "reconcil..." on the wrist.
+        headline: format!("At {:.0}% of its budget", a.fraction * 100.0),
         spent_microusd: a.spent_microusd,
         budget_micros: Some(a.budget_micros),
         fraction: Some(a.fraction),
@@ -545,9 +738,131 @@ fn alert_item(key: &str, a: &Alert, first_seen_unix: i64, now: i64) -> Exception
     }
 }
 
+/// Is this incident kind a report that the guardrail ALREADY stopped the
+/// spending, rather than a detection of something still going on?
+///
+/// `budget_exhausted` is the breaker tripping: by the time we see it, the call
+/// was refused and nothing more is being spent on that run. There is no action
+/// left to take, so 150 of them belong on one counted line.
+///
+/// The others are live signals. `sustained_loop` means it is still looping,
+/// `spend_spike` that it is still spiking, `fanout_explosion` that the fan-out
+/// is still widening. Those keep their own row, because the operator may still
+/// want to reach for the kill.
+///
+/// Unknown kinds are treated as NOT contained, deliberately: a kind this build
+/// has never heard of gets a visible row rather than being quietly folded into
+/// a number.
+fn incident_is_already_contained(kind: &str) -> bool {
+    matches!(kind, "budget_exhausted")
+}
+
+/// Fold an incident into its kind's digest row, keeping the exact count, the
+/// highest severity seen and the most recent occurrence.
+fn fold_into_digest(digest: &mut HashMap<String, DigestRow>, inc: &Incident) {
+    let last_seen = inc.last_seen_millis / 1000;
+    let sev = severity_str(inc.severity).to_string();
+    let group = format!("{}|{}", inc.kind, inc.agent_id.as_deref().unwrap_or(""));
+    digest
+        .entry(group)
+        .and_modify(|row| {
+            row.count += 1;
+            row.last_seen_unix = row.last_seen_unix.max(last_seen);
+            if severity_rank(&sev) > row.severity.as_deref().map_or(0, severity_rank) {
+                row.severity = Some(sev.clone());
+            }
+        })
+        .or_insert_with(|| DigestRow {
+            kind: inc.kind.clone(),
+            agent_id: inc.agent_id.clone(),
+            count: 1,
+            severity: Some(sev),
+            last_seen_unix: last_seen,
+        });
+}
+
+/// Ordering over the severity spellings, so "highest seen" is well defined.
+fn severity_rank(s: &str) -> u8 {
+    match s {
+        "critical" => 4,
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
+}
+
+/// Fold an incident INTO the run item an alert already produced. The alert is
+/// authoritative for money (it is the only source with spend and budget); the
+/// incident contributes what the alert cannot know: that there is an open
+/// incident, its kind, its severity, and how recently it fired.
+///
+/// The class is widened, never narrowed: an incident that classifies harder
+/// than the budget fraction did wins, so a run that is only at 84% of budget
+/// but is in a fan-out explosion does not read as a mild "near cap".
+fn merge_incident(item: &mut ExceptionItem, inc: &Incident) {
+    item.incident_id = Some(inc.id.clone());
+    item.kind = inc.kind.clone();
+    item.severity = Some(severity_str(inc.severity).to_string());
+    item.last_seen_unix = item.last_seen_unix.max(inc.last_seen_millis / 1000);
+    item.first_seen_unix = item.first_seen_unix.min(inc.first_seen_millis / 1000);
+    let incident_class = classify_incident(&inc.kind, inc.severity);
+    if is_hard(incident_class) && !is_hard(item.class) {
+        item.class = incident_class;
+    }
+    if let Some(fraction) = item.fraction {
+        item.headline = format!(
+            "At {:.0}% of its budget - {}",
+            fraction * 100.0,
+            humanise_kind(&inc.kind).to_lowercase()
+        );
+    }
+}
+
+/// The readable tail of an agent URI: `agent://meridian.example/kyc-aml/
+/// sanctions-screener` becomes `sanctions-screener`. What a person calls it.
+fn short_agent(agent_id: &str) -> String {
+    agent_id.rsplit('/').next().unwrap_or(agent_id).to_string()
+}
+
+/// `budget_exhausted` becomes `Budget exhausted`. The wire keeps snake_case,
+/// which is right for a protocol and wrong for a sentence a human reads on a
+/// watch face.
+fn humanise_kind(kind: &str) -> String {
+    match kind {
+        "budget_exhausted" => "Budget exhausted".to_string(),
+        "sustained_loop" => "Sustained loop".to_string(),
+        "spend_spike" => "Spend spike".to_string(),
+        "fanout_explosion" => "Fan-out explosion".to_string(),
+        other => {
+            let mut words = other.split('_');
+            match words.next() {
+                Some(first) if !first.is_empty() => {
+                    let mut s = first[..1].to_uppercase() + &first[1..];
+                    for w in words {
+                        s.push(' ');
+                        s.push_str(w);
+                    }
+                    s
+                }
+                _ => other.to_string(),
+            }
+        }
+    }
+}
+
 fn incident_item(key: &str, inc: &Incident) -> ExceptionItem {
     let class = classify_incident(&inc.kind, inc.severity);
-    let run_label = inc.run_id.clone().unwrap_or_else(|| inc.id.clone());
+    // The subject is the run when there is one, otherwise the AGENT. Never the
+    // incident id: for a runaway that id is literally
+    // `fanout_explosion:agent://meridian.example/kyc-aml/sanctions-screener`,
+    // which produced the headline "Agent/run fanout_explosion:agent://...
+    // running hot - fanout_explosion", naming the kind twice around a raw URI.
+    let subject = inc
+        .run_id
+        .clone()
+        .or_else(|| inc.agent_id.as_deref().map(short_agent))
+        .unwrap_or_else(|| "the fleet".to_string());
     ExceptionItem {
         key: key.to_string(),
         run_id: inc.run_id.clone(),
@@ -555,7 +870,7 @@ fn incident_item(key: &str, inc: &Incident) -> ExceptionItem {
         kind: inc.kind.clone(),
         class,
         severity: Some(severity_str(inc.severity).to_string()),
-        headline: format!("Agent/run {run_label} running hot - {}", inc.kind),
+        headline: format!("{} on {subject}", humanise_kind(&inc.kind)),
         spent_microusd: 0,
         budget_micros: None,
         fraction: None,
@@ -644,17 +959,20 @@ pub(crate) fn dispatch_push(
     push: &dyn crate::push::ApnsSender,
     intent: PushIntent,
 ) {
-    let apns_token = match registry.current_device() {
-        Ok(Some(device)) => device.apns_token,
-        Ok(None) => None,
+    // Fan out to every paired surface that has registered for push. Phone and
+    // watch each hold their own APNs token, so an exception that matters
+    // reaches both; a device that has not registered is skipped rather than
+    // holding the others back.
+    let tokens: Vec<String> = match registry.devices() {
+        Ok(devices) => devices.into_iter().filter_map(|d| d.apns_token).collect(),
         Err(e) => {
             eprintln!("genaryx-relay: exceptions: registry read failed, dropping push: {e}");
-            None
+            return;
         }
     };
-    let Some(apns_token) = apns_token else {
+    if tokens.is_empty() {
         // Sim phase: no APNs registration path is wired (docs/PHASE5.md
-        // defers real APNs to R1); the phone polls `/relay/v1/exceptions`
+        // defers real APNs to R1); the devices poll `/relay/v1/exceptions`
         // instead, so a push is a nice-to-have wake, never the source of
         // truth. Still log the would-be push for visibility.
         eprintln!(
@@ -662,15 +980,17 @@ pub(crate) fn dispatch_push(
             intent.title, intent.body
         );
         return;
-    };
-    push.send(crate::push::Notification {
-        apns_token,
-        title: intent.title,
-        body: intent.body,
-        run_id: intent.run_id,
-        incident_id: intent.incident_id,
-        kind: intent.kind,
-    });
+    }
+    for apns_token in tokens {
+        push.send(crate::push::Notification {
+            apns_token,
+            title: intent.title.clone(),
+            body: intent.body.clone(),
+            run_id: intent.run_id.clone(),
+            incident_id: intent.incident_id.clone(),
+            kind: intent.kind.clone(),
+        });
+    }
 }
 
 /// Periodic belt-and-braces reconcile sweep (D12.6 R6). Runs forever;
@@ -802,6 +1122,170 @@ mod tests {
         ));
     }
 
+    // ---- queue shape: action versus report --------------------------------
+    //
+    // Measured against a real 9,288-run fleet, the queue came back with 189
+    // rows (9 alerts + 180 incidents, ~150 of them one budget_exhausted per
+    // shard of a single batch), and the protagonist run appeared TWICE, once
+    // with its real money and once with zeros. These lock in the fix.
+
+    fn alert(run: &str, spent: i64, budget: i64) -> Alert {
+        Alert {
+            run_id: run.into(),
+            spent_microusd: spent,
+            budget_micros: budget,
+            fraction: spent as f64 / budget as f64,
+            killed: false,
+        }
+    }
+
+    fn incident(id: &str, kind: &str, run: Option<&str>, agent: Option<&str>) -> Incident {
+        Incident {
+            id: id.into(),
+            org: "default".into(),
+            run_id: run.map(str::to_string),
+            agent_id: agent.map(str::to_string),
+            kind: kind.into(),
+            severity: Severity::High,
+            first_seen_millis: 1_000_000,
+            last_seen_millis: 2_000_000,
+            occurrences: 7,
+            acknowledged: false,
+            last_notified_millis: 0,
+        }
+    }
+
+    /// Drive the same classification `reconcile` does, without a live Cloud.
+    fn shape(alerts: &[Alert], incidents: &[Incident]) -> (Vec<ExceptionItem>, Vec<DigestRow>) {
+        let mut items: HashMap<String, ExceptionItem> = HashMap::new();
+        for a in alerts {
+            let key = format!("run:{}", a.run_id);
+            items.insert(key.clone(), alert_item(&key, a, 0, 0));
+        }
+        let mut digest: HashMap<String, DigestRow> = HashMap::new();
+        for inc in incidents.iter().filter(|i| !i.acknowledged) {
+            match inc.run_id.as_ref().map(|r| format!("run:{r}")) {
+                Some(key) if items.contains_key(&key) => {
+                    if let Some(item) = items.get_mut(&key) {
+                        merge_incident(item, inc);
+                    }
+                }
+                _ if incident_is_already_contained(&inc.kind) => fold_into_digest(&mut digest, inc),
+                _ => {
+                    let key = format!("incident:{}", inc.id);
+                    items.insert(key.clone(), incident_item(&key, inc));
+                }
+            }
+        }
+        (items.into_values().collect(), digest.into_values().collect())
+    }
+
+    #[test]
+    fn an_incident_about_an_alerted_run_merges_instead_of_adding_a_second_row() {
+        let alerts = vec![alert("reconciliation-batch-eod-002-LIVE", 6_910_000, 5_570_000)];
+        let incidents = vec![incident(
+            "inc-1",
+            "budget_exhausted",
+            Some("reconciliation-batch-eod-002-LIVE"),
+            Some("agent://meridian.example/treasury/reconciliation-batch"),
+        )];
+        let (queue, digest) = shape(&alerts, &incidents);
+
+        assert_eq!(queue.len(), 1, "one run must produce exactly one row");
+        assert!(digest.is_empty(), "it merged, so nothing to digest");
+        let item = &queue[0];
+        // The alert keeps the money: this is the half that was showing $0.00.
+        assert_eq!(item.spent_microusd, 6_910_000);
+        assert_eq!(item.budget_micros, Some(5_570_000));
+        // The incident keeps its identity and kind: this is the half that
+        // would otherwise be lost by naive dedup.
+        assert_eq!(item.incident_id.as_deref(), Some("inc-1"));
+        assert_eq!(item.kind, "budget_exhausted");
+        assert_eq!(item.severity.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn a_shard_storm_becomes_one_counted_line_not_a_hundred_and_fifty_rows() {
+        let agent = "agent://meridian.example/treasury/reconciliation-batch";
+        let incidents: Vec<Incident> = (0..150)
+            .map(|i| {
+                incident(
+                    &format!("inc-{i}"),
+                    "budget_exhausted",
+                    Some(&format!("reconciliation-batch-eod-002-s{i:03}")),
+                    Some(agent),
+                )
+            })
+            .collect();
+        let (queue, digest) = shape(&[], &incidents);
+
+        assert!(queue.is_empty(), "already-contained events are not tasks");
+        assert_eq!(digest.len(), 1, "one line, not 150");
+        assert_eq!(digest[0].count, 150, "the count is exact, never rounded");
+        assert_eq!(digest[0].kind, "budget_exhausted");
+        assert_eq!(
+            digest[0].agent_id.as_deref(),
+            Some(agent),
+            "naming the agent is what makes the line a sentence"
+        );
+    }
+
+    #[test]
+    fn live_signals_keep_their_own_row_even_without_an_alert() {
+        // budget_exhausted means the breaker already fired, so it digests.
+        // These three mean it is STILL happening, so they stay actionable.
+        for kind in ["sustained_loop", "spend_spike", "fanout_explosion"] {
+            let (queue, digest) = shape(&[], &[incident("i", kind, Some("r1"), None)]);
+            assert_eq!(queue.len(), 1, "{kind} must stay visible");
+            assert!(digest.is_empty(), "{kind} must not be digested");
+        }
+        let (queue, digest) = shape(&[], &[incident("i", "budget_exhausted", Some("r1"), None)]);
+        assert!(queue.is_empty());
+        assert_eq!(digest.len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_incident_kind_is_shown_not_quietly_counted() {
+        // Fail toward visibility: a kind this build has never heard of must
+        // not disappear into a number.
+        let (queue, digest) = shape(&[], &[incident("i", "some_future_kind", Some("r1"), None)]);
+        assert_eq!(queue.len(), 1);
+        assert!(digest.is_empty());
+    }
+
+    #[test]
+    fn merging_widens_the_class_and_never_narrows_it() {
+        // A run only 84% through its budget, but in a fan-out explosion, must
+        // not read as a mild "near cap".
+        let alerts = vec![alert("r1", 840, 1000)];
+        let (queue, _) = shape(
+            &alerts,
+            &[incident("i", "fanout_explosion", Some("r1"), None)],
+        );
+        assert_eq!(queue.len(), 1);
+        assert!(
+            is_hard(queue[0].class),
+            "an incident that classifies harder than the fraction must win"
+        );
+    }
+
+    #[test]
+    fn the_same_agent_with_two_kinds_gets_two_digest_lines() {
+        let agent = "agent://meridian.example/support/support-tier1-bot";
+        let (_, mut digest) = shape(
+            &[],
+            &[
+                incident("a", "budget_exhausted", Some("r1"), Some(agent)),
+                incident("b", "budget_exhausted", Some("r2"), Some(agent)),
+                incident("c", "budget_exhausted", Some("r3"), Some("agent://other")),
+            ],
+        );
+        digest.sort_by_key(|d| std::cmp::Reverse(d.count));
+        assert_eq!(digest.len(), 2, "grouped by (kind, agent), not kind alone");
+        assert_eq!(digest[0].count, 2);
+        assert_eq!(digest[1].count, 1);
+    }
+
     // ---- aggregates -------------------------------------------------------
 
     #[test]
@@ -839,6 +1323,27 @@ mod tests {
         assert_eq!(burn_rate_per_min(&samples), 0);
         push_burn_sample(&mut samples, 1000, 500);
         assert_eq!(burn_rate_per_min(&samples), 0);
+    }
+
+    #[test]
+    fn spend_going_backwards_discards_the_previous_epoch() {
+        // The Cloud keeps its store in memory, so a restart takes cumulative
+        // spend back to zero. Before this, the stale high samples stayed in the
+        // window and the phone and watch showed a NEGATIVE burn rate.
+        let mut samples = VecDeque::new();
+        push_burn_sample(&mut samples, 100, 4_700_000_000);
+        push_burn_sample(&mut samples, 160, 4_760_000_000);
+        assert!(burn_rate_per_min(&samples) > 0, "rising spend, positive rate");
+
+        push_burn_sample(&mut samples, 220, 4_255_000_000); // the Cloud restarted
+        assert_eq!(samples.len(), 1, "the previous epoch is discarded whole");
+        assert_eq!(burn_rate_per_min(&samples), 0, "not negative, just unknown yet");
+
+        push_burn_sample(&mut samples, 280, 4_300_000_000);
+        assert!(
+            burn_rate_per_min(&samples) > 0,
+            "and it rebuilds from the restart rather than lying in either direction"
+        );
     }
 
     #[test]
@@ -932,9 +1437,16 @@ mod tests {
             .expect("kill always pushes on first occurrence");
         assert!(intent.hard);
         assert_eq!(intent.kind, "kill");
-        let snap = eng.snapshot();
-        assert_eq!(snap.queue.len(), 1);
-        assert!(snap.queue[0].killed);
+        // Checked against the engine's own items: a killed run is deliberately
+        // absent from `snapshot()`, which is the pager's view.
+        let items = eng.tracked_items();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].killed);
+        assert!(is_hard(items[0].class));
+        assert!(
+            eng.snapshot().queue.is_empty(),
+            "and it does not reach the pager"
+        );
     }
 
     #[test]
@@ -949,9 +1461,9 @@ mod tests {
             1001,
         );
         eng.handle_raw_record(&record(r#"{"type":"kill","run":"r1"}"#), 1002);
-        let snap = eng.snapshot();
-        assert_eq!(snap.queue.len(), 1, "same run key, no duplicate row");
-        assert!(snap.queue[0].killed);
+        let items = eng.tracked_items();
+        assert_eq!(items.len(), 1, "same run key, no duplicate row");
+        assert!(items[0].killed);
     }
 
     #[test]
@@ -995,16 +1507,70 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_sorts_hard_first_then_most_recent() {
+    fn a_killed_run_disappears_from_the_pager_entirely() {
+        // The operator's rule: a killed run is done with, and the pager must
+        // not spend a row on it. It stays fully visible in Genaryx, which reads
+        // the Cloud directly and never sees this queue.
         let eng = engine();
-        eng.handle_raw_record(&record(r#"{"type":"kill","run":"soft-first"}"#), 1000); // hard
+        eng.handle_raw_record(&record(r#"{"type":"kill","run":"already-dead"}"#), 1000);
         eng.handle_raw_record(
-            &record(r#"{"type":"incident","id":"spike:r2","org":"acme","run_id":"r2","agent_id":null,"kind":"spend_spike","severity":"low","first_seen_millis":1000,"last_seen_millis":1000,"occurrences":1,"acknowledged":false,"last_notified_millis":0}"#),
+            &record(r#"{"type":"incident","id":"loop:r2","org":"acme","run_id":"r2","agent_id":null,"kind":"sustained_loop","severity":"high","first_seen_millis":1000,"last_seen_millis":1000,"occurrences":1,"acknowledged":false,"last_notified_millis":0}"#),
             1001,
-        ); // soft (at_risk)
+        );
         let snap = eng.snapshot();
-        assert_eq!(snap.queue.len(), 2);
-        assert!(is_hard(snap.queue[0].class), "hard item sorts first");
+        assert!(
+            snap.queue.iter().all(|i| !i.killed),
+            "no killed run may appear on the pager"
+        );
+        assert_eq!(snap.queue.len(), 1, "only the live detection remains");
+        assert_eq!(snap.queue[0].run_id.as_deref(), Some("r2"));
+    }
+
+    #[test]
+    fn anything_below_the_alert_threshold_is_not_a_pager_item() {
+        assert!(shows_on_a_pager(ExceptionClass::OverCap));
+        assert!(shows_on_a_pager(ExceptionClass::Runaway));
+        assert!(shows_on_a_pager(ExceptionClass::NearCap));
+        assert!(
+            !shows_on_a_pager(ExceptionClass::AtRisk),
+            "below 80% is ordinary operation, not something to wake someone for"
+        );
+        assert!(
+            !shows_on_a_pager(ExceptionClass::PendingApproval),
+            "governance queueing is desktop work"
+        );
+    }
+
+    #[test]
+    fn the_queue_is_ordered_by_how_far_past_the_limit() {
+        // Over the cap outranks a running detection, which outranks merely
+        // approaching the cap. Both clients render this order as given, so it
+        // is defined once and cannot drift between the two surfaces.
+        assert!(class_rank(ExceptionClass::OverCap) < class_rank(ExceptionClass::Runaway));
+        assert!(class_rank(ExceptionClass::Runaway) < class_rank(ExceptionClass::NearCap));
+        assert!(class_rank(ExceptionClass::NearCap) < class_rank(ExceptionClass::AtRisk));
+
+        fn item(run: &str, class: ExceptionClass, fraction: Option<f64>, killed: bool) -> ExceptionItem {
+            ExceptionItem {
+                key: format!("run:{run}"), run_id: Some(run.into()), incident_id: None,
+                kind: "budget".into(), class, severity: None, headline: String::new(),
+                spent_microusd: 0, budget_micros: None, fraction,
+                first_seen_unix: 0, last_seen_unix: 0, acknowledged: false, killed, copilot: None,
+            }
+        }
+        let mut q = [
+            item("near", ExceptionClass::NearCap, Some(0.85), false),
+            item("worst", ExceptionClass::OverCap, Some(1.40), false),
+            item("runaway", ExceptionClass::Runaway, None, false),
+            item("over", ExceptionClass::OverCap, Some(1.10), false),
+        ];
+        q.sort_by(queue_order);
+        let ids: Vec<&str> = q.iter().filter_map(|i| i.run_id.as_deref()).collect();
+        assert_eq!(
+            ids,
+            vec!["worst", "over", "runaway", "near"],
+            "over cap worst-first, then still-running, then near cap"
+        );
     }
 
     #[tokio::test]

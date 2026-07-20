@@ -376,7 +376,7 @@ mod tests {
             first_seen_unix: 0,
             last_seen_unix: 0,
             acknowledged: false,
-            killed: true,
+            killed: false, // live: a killed run is filtered off the pager
             copilot: None,
         });
         let ann = CopilotAnnotation {

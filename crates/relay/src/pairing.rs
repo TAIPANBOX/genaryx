@@ -44,6 +44,12 @@ pub enum PairingError {
     RateLimited,
     #[error("malformed request: {0}")]
     BadRequest(String),
+    /// The caller declared which slot it expected and the code admits the
+    /// other one. A distinct, loud error rather than a generic 400: it almost
+    /// always means the desktop built the QR with the two codes crossed, and
+    /// that is worth naming rather than leaving someone to guess.
+    #[error("this code is for the other device slot")]
+    KindMismatch,
     #[error("could not reach the Cloud to redeem the code: {0}")]
     UpstreamTransport(String),
     #[error("the Cloud rejected the code: {0}")]
@@ -69,6 +75,7 @@ impl IntoResponse for PairingError {
             PairingError::WindowNotOpen => (StatusCode::NOT_FOUND, "not_found"),
             PairingError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             PairingError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            PairingError::KindMismatch => (StatusCode::BAD_REQUEST, "kind_mismatch"),
             PairingError::UpstreamRejected(_) => {
                 (StatusCode::BAD_REQUEST, "invalid_or_expired_code")
             }
@@ -88,9 +95,29 @@ pub struct PairRequestIn {
     pub name: String,
     #[serde(default)]
     pub platform: String,
+    /// Which slot the CALLER believes this code is for.
+    ///
+    /// This never selects the slot: the code still does that, exactly as
+    /// before (`registry.rs`, "the kind is bound to the CODE"). It is only
+    /// ever used to REFUSE, which is a strictly weaker power and cannot be
+    /// abused to claim a slot.
+    ///
+    /// Why it matters: without it, a device handed the wrong half of a
+    /// two-code QR pairs successfully into the OTHER slot, notices only from
+    /// the response, and throws its credentials away. The slot is then
+    /// occupied forever by a device that cannot use it, and the rightful
+    /// device can never pair. Optional so an older client still works.
+    #[serde(default)]
+    pub expect_kind: Option<String>,
 }
 
-/// `POST /relay/v1/pair` response body (D12.2 step 8's literal shape).
+/// `POST /relay/v1/pair` response body (D12.2 step 8's literal shape, plus
+/// `kind`).
+///
+/// `kind` is additive and tells the device which slot it was actually admitted
+/// to. A client that asked for the watch slot and is handed `"phone"` knows the
+/// two codes in the QR were crossed and can refuse rather than quietly become
+/// the phone. Older clients that do not decode the field are unaffected.
 #[derive(Debug, Serialize)]
 pub struct PairResponseOut {
     pub plane_url: String,
@@ -98,6 +125,7 @@ pub struct PairResponseOut {
     pub device_token: String,
     pub org: String,
     pub role: String,
+    pub kind: String,
 }
 
 pub async fn pair_handler(
@@ -117,31 +145,91 @@ pub async fn pair_handler(
         ));
     }
 
-    // Single-device check first (a more specific, honest error than a bare
-    // "no window", D12.3): a window can never even be armed while paired
-    // (`registry.rs::arm_pairing_window`), but check explicitly anyway so a
-    // stray pre-existing window from a bug can never let a second device in.
-    if state.registry.has_device()? {
-        return Err(PairingError::DeviceExists);
+    // Resolve the code FIRST, because the code is what decides which slot is
+    // being claimed (registry.rs: "the kind is bound to the CODE, never
+    // claimed by the device"). `req.platform` is recorded for display only and
+    // is never consulted here, so a device cannot take the watch slot by
+    // calling itself a watch.
+    //
+    // This also makes the route darker than the V1 order did. Previously a
+    // paired relay answered 409 `device_exists` to any caller, which told an
+    // unauthenticated stranger that the relay was claimed; now an unknown code
+    // gets the same flat 404 `not_found` whether or not anything is paired.
+    // The only remaining 409 is a genuine race (see below).
+    let now = crate::exceptions::now_unix();
+    let kind = match state.registry.check_pairing_code(&req.code, now) {
+        Ok(kind) => kind,
+        Err(e) => {
+            // This route is silent in normal operation: nobody reaches it
+            // except the one device the operator is deliberately pairing, and
+            // that device presents a code that works. So a miss is worth a
+            // line with the source address. The per-IP limiter already caps
+            // this at 10/min/IP, so it cannot be turned into a log flood.
+            // Registry-side, the same miss bumps `failed_attempts` on every
+            // live window; neither the log nor the counter closes anything.
+            if matches!(e, RegistryError::WindowNotOpen) {
+                eprintln!(
+                    "genaryx-relay: pairing: invalid code presented from {} \
+                     (no matching open window)",
+                    peer.ip()
+                );
+            }
+            return Err(e.into());
+        }
+    };
+
+    // Refuse a crossed code BEFORE spending it upstream. Checking this after
+    // redemption (which is where the client used to catch it) is too late:
+    // the Cloud has already burned the code and the relay has already
+    // committed the row, so the device discovers the mistake holding
+    // credentials it will throw away, having permanently filled a slot the
+    // rightful device now cannot claim. Here it costs one comparison and the
+    // window survives for a correct retry.
+    if let Some(raw) = req.expect_kind.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        match crate::registry::DeviceKind::parse(raw) {
+            Some(expected) if expected == kind => {}
+            Some(expected) => {
+                eprintln!(
+                    "genaryx-relay: pairing: refusing a crossed code (caller expected {}, \
+                     the code admits {}); the pairing QR is likely built wrong",
+                    expected.as_str(),
+                    kind.as_str()
+                );
+                return Err(PairingError::KindMismatch);
+            }
+            None => {
+                return Err(PairingError::BadRequest(
+                    "expect_kind must be \"phone\" or \"watch\"".to_string(),
+                ));
+            }
+        }
     }
 
-    let now = crate::exceptions::now_unix();
-    state.registry.check_pairing_code(&req.code, now)?;
+    // Belt and braces, per slot: a window can never even be armed while that
+    // kind is paired (`registry.rs::arm_pairing_window`), but check explicitly
+    // anyway so a stray pre-existing window from a bug can never let a second
+    // device into an occupied slot.
+    if state.registry.has_device_of_kind(kind)? {
+        return Err(PairingError::DeviceExists);
+    }
 
     // Redeem the SAME code upstream. A rejection here (expired/invalid at
     // the Cloud's own clock, or a transport failure) leaves the relay's
     // window untouched, so the phone can simply retry within the TTL.
     let upstream = redeem_at_cloud(&state.http, &state.cloud_base_url, &req).await?;
 
-    match state.registry.insert_paired_device(NewDevice {
-        device_id: upstream.device_id.clone(),
-        name: req.name,
-        platform: req.platform,
-        org: upstream.org.clone(),
-        role: upstream.role.clone(),
-        device_token: upstream.device_token.clone(),
-        paired_at_unix: now,
-    }) {
+    match state.registry.insert_paired_device(
+        kind,
+        NewDevice {
+            device_id: upstream.device_id.clone(),
+            name: req.name,
+            platform: req.platform,
+            org: upstream.org.clone(),
+            role: upstream.role.clone(),
+            device_token: upstream.device_token.clone(),
+            paired_at_unix: now,
+        },
+    ) {
         Ok(()) => {}
         Err(RegistryError::DeviceExists) => {
             // Lost a race to a concurrent pairing attempt for the same
@@ -167,6 +255,7 @@ pub async fn pair_handler(
         device_token: upstream.device_token,
         org: upstream.org,
         role: upstream.role,
+        kind: kind.as_str().to_string(),
     }))
 }
 
@@ -235,6 +324,135 @@ mod tests {
         ));
     }
 
+    /// A relay whose Cloud address points at a closed port. Any code path
+    /// that reaches the Cloud therefore fails with `UpstreamTransport`, which
+    /// is what makes the test below able to prove ORDERING and not just the
+    /// final answer.
+    fn state_with_dead_cloud() -> crate::PublicState {
+        crate::PublicState {
+            registry: std::sync::Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
+            engine: std::sync::Arc::new(crate::exceptions::ExceptionEngine::new("acme", 0.8, 600)),
+            http: reqwest::Client::new(),
+            cloud_base_url: "http://127.0.0.1:1".to_string(),
+            public_advertise_url: "https://127.0.0.1:8443".to_string(),
+            mutation_rate_limiter: std::sync::Arc::new(crate::ratelimit::RateLimiter::new(
+                100,
+                std::time::Duration::from_secs(60),
+            )),
+            pairing_rate_limiter: std::sync::Arc::new(crate::ratelimit::RateLimiter::new(
+                100,
+                std::time::Duration::from_secs(60),
+            )),
+        }
+    }
+
+    fn pair_request(code: &str, expect_kind: Option<&str>) -> PairRequestIn {
+        PairRequestIn {
+            code: code.to_string(),
+            pubkey_x963_b64: "AAAA".to_string(),
+            name: "test".to_string(),
+            platform: "ios".to_string(),
+            expect_kind: expect_kind.map(str::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_crossed_code_is_refused_before_it_is_ever_spent_at_the_cloud() {
+        let state = state_with_dead_cloud();
+        // A window armed for the WATCH slot.
+        let code = "WATCHCODE";
+        state
+            .registry
+            .arm_pairing_window(
+                crate::registry::DeviceKind::Watch,
+                &genaryx_signing::body_sha256_hex(code.as_bytes()),
+                crate::exceptions::now_unix() + 300,
+            )
+            .unwrap();
+
+        // A caller presenting it while believing it is the PHONE's code: the
+        // shape a QR built with its two codes crossed produces.
+        let peer = std::net::SocketAddr::from(([127, 0, 0, 1], 40_000));
+        let err = pair_handler(
+            axum::extract::State(state.clone()),
+            axum::extract::ConnectInfo(peer),
+            axum::Json(pair_request(code, Some("phone"))),
+        )
+        .await
+        .expect_err("a crossed code must be refused");
+
+        // KindMismatch, NOT UpstreamTransport: reaching the Cloud at all would
+        // have produced the latter, since its address is a closed port. That
+        // is the whole point, the code is never spent.
+        assert!(
+            matches!(err, PairingError::KindMismatch),
+            "expected KindMismatch, got {err:?}"
+        );
+
+        // And the window is intact, so the RIGHT device can still use it.
+        assert_eq!(
+            state
+                .registry
+                .check_pairing_code(code, crate::exceptions::now_unix())
+                .unwrap(),
+            crate::registry::DeviceKind::Watch
+        );
+    }
+
+    #[tokio::test]
+    async fn a_matching_expectation_proceeds_to_the_cloud() {
+        // The mirror of the test above: when the declared kind agrees, the
+        // handler carries on and only then discovers the Cloud is unreachable.
+        // Proves `expect_kind` gates nothing it should not.
+        let state = state_with_dead_cloud();
+        let code = "WATCHCODE";
+        state
+            .registry
+            .arm_pairing_window(
+                crate::registry::DeviceKind::Watch,
+                &genaryx_signing::body_sha256_hex(code.as_bytes()),
+                crate::exceptions::now_unix() + 300,
+            )
+            .unwrap();
+
+        let peer = std::net::SocketAddr::from(([127, 0, 0, 1], 40_001));
+        let err = pair_handler(
+            axum::extract::State(state),
+            axum::extract::ConnectInfo(peer),
+            axum::Json(pair_request(code, Some("watch"))),
+        )
+        .await
+        .expect_err("the dead Cloud still fails it, just later");
+        assert!(
+            matches!(err, PairingError::UpstreamTransport(_)),
+            "expected to have reached the Cloud, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_expectation_is_a_bad_request_not_a_silent_pass() {
+        let state = state_with_dead_cloud();
+        let code = "PHONECODE";
+        state
+            .registry
+            .arm_pairing_window(
+                crate::registry::DeviceKind::Phone,
+                &genaryx_signing::body_sha256_hex(code.as_bytes()),
+                crate::exceptions::now_unix() + 300,
+            )
+            .unwrap();
+
+        let peer = std::net::SocketAddr::from(([127, 0, 0, 1], 40_002));
+        let err = pair_handler(
+            axum::extract::State(state),
+            axum::extract::ConnectInfo(peer),
+            axum::Json(pair_request(code, Some("laptop"))),
+        )
+        .await
+        .expect_err("an unknown expect_kind must not be ignored");
+        assert!(matches!(err, PairingError::BadRequest(_)), "got {err:?}");
+    }
+
     #[tokio::test]
     async fn redeem_against_no_live_cloud_is_a_transport_error() {
         // Skip-gracefully style (connectors crate's own live-test convention:
@@ -247,6 +465,7 @@ mod tests {
             pubkey_x963_b64: "AAAA".to_string(),
             name: "test".to_string(),
             platform: "ios".to_string(),
+            expect_kind: None,
         };
         match redeem_at_cloud(&http, "http://127.0.0.1:1", &req).await {
             Err(PairingError::UpstreamTransport(_)) => {

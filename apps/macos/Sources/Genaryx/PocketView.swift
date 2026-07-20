@@ -2,13 +2,14 @@ import GenaryxCoreFFI
 import SwiftUI
 
 /// The Pocket panel (docs/PHASE5.md W2, itrat-console/13 D12.2a): "Connect
-/// TokenFuse Pocket" mints a pairing code at the Cloud, arms the relay's
-/// pairing window, and renders the QR the phone scans - a later wave (W3)
-/// builds the scanner itself. Three states: idle (Connect button),
-/// showing-QR (an armed window, waiting for the phone), and paired (device
-/// details + Disconnect). Fed entirely by `PocketModel`, mirroring
-/// `RemoteView`'s "no bus-event filter section, every read/action here is
-/// explicit" shape.
+/// TokenFuse Pocket" mints a pairing code for the phone and one for the
+/// watch at the Cloud, arms both of the relay's pairing windows, and renders
+/// the QR (both codes) the phone scans - a later wave (W3) builds the
+/// scanner itself. Three states: idle (Connect button), showing-QR (both
+/// windows armed, waiting for the phone), and paired (each slot's device
+/// details, or "not paired", + Disconnect). Fed entirely by `PocketModel`,
+/// mirroring `RemoteView`'s "no bus-event filter section, every read/action
+/// here is explicit" shape.
 @MainActor
 struct PocketView: View {
     let model: PocketModel
@@ -71,16 +72,14 @@ struct PocketView: View {
                 switch model.status {
                 case .relayUnreachable(let message):
                     relayUnreachableNote(message)
-                case .idle:
+                case .idle(_, let phoneWindow, let watchWindow):
                     if let armedQr = model.armedQr {
-                        qrCard(armedQr)
+                        qrCard(armedQr, phoneWindow: phoneWindow, watchWindow: watchWindow)
                     } else {
                         connectCard
                     }
-                case .paired(let deviceId, let name, let platform, let pairedAtUnix, let lastSeenUnix):
-                    pairedCard(
-                        deviceId: deviceId, name: name, platform: platform, pairedAtUnix: pairedAtUnix,
-                        lastSeenUnix: lastSeenUnix)
+                case .paired(let phone, let watch, let phoneWindow, let watchWindow):
+                    pairedCard(phone: phone, watch: watch, phoneWindow: phoneWindow, watchWindow: watchWindow)
                 case .none:
                     EmptyView()
                 }
@@ -106,7 +105,7 @@ struct PocketView: View {
 
     private var explainer: some View {
         Text(
-            "Pair your phone (TokenFuse Pocket) to this box's relay so you can see the exception queue and slide-to-kill a runaway from anywhere. A QR carries the relay's pinned TLS identity plus a one-time code, scanned once, no manual entry."
+            "Pair your phone (TokenFuse Pocket) and its paired Watch to this box's relay so you can see the exception queue and slide-to-kill a runaway from anywhere. One QR carries the relay's pinned TLS identity plus a one-time code for each device, scanned once on the phone (which hands the Watch its own code), no manual entry."
         )
         .font(Theme.mono(10.5))
         .foregroundStyle(Theme.textTertiary)
@@ -132,7 +131,7 @@ struct PocketView: View {
 
     private var connectCard: some View {
         let cloudReady: Bool = {
-            if case .idle(let ready) = model.status { return ready }
+            if case .idle(let ready, _, _) = model.status { return ready }
             return false
         }()
         return VStack(alignment: .leading, spacing: 8) {
@@ -168,7 +167,9 @@ struct PocketView: View {
 
     // MARK: - showing-QR
 
-    private func qrCard(_ qr: PocketQrRecord) -> some View {
+    private func qrCard(
+        _ qr: PocketQrRecord, phoneWindow: PocketWindowRecord?, watchWindow: PocketWindowRecord?
+    ) -> some View {
         let remaining = max(0, qr.expiresUnix - Int64(now.timeIntervalSince1970))
         return VStack(alignment: .leading, spacing: 10) {
             if remaining > 0 {
@@ -177,6 +178,8 @@ struct PocketView: View {
                     Text("expires in \(remaining)s - scan with TokenFuse Pocket")
                         .font(Theme.mono(10.5))
                         .foregroundStyle(Theme.textTertiary)
+                    PairingProbeNote(label: "phone", pairingWindow: phoneWindow)
+                    PairingProbeNote(label: "watch", pairingWindow: watchWindow)
                     cancelButton
                 }
                 .frame(maxWidth: .infinity)
@@ -219,27 +222,23 @@ struct PocketView: View {
 
     // MARK: - paired
 
+    /// Both slots, independently: `Connect` always arms the phone's and the
+    /// watch's pairing windows together (see the type doc), so a partial
+    /// state here (one slot `nil`, the other set) means that device was
+    /// disconnected on its own, never that it was simply not offered a code
+    /// yet - `deviceRow` renders the honest "not paired" placeholder for it
+    /// rather than omitting the row. There is no per-slot re-Connect from
+    /// this state: Disconnect always frees BOTH slots at once, so resetting
+    /// either one to pair again also resets the other.
     private func pairedCard(
-        deviceId: String, name: String, platform: String, pairedAtUnix: Int64, lastSeenUnix: Int64
+        phone: PocketDeviceRecord?, watch: PocketDeviceRecord?, phoneWindow: PocketWindowRecord?,
+        watchWindow: PocketWindowRecord?
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(name.isEmpty ? "(unnamed device)" : name) · \(platform.isEmpty ? "unknown platform" : platform)")
-                    .font(Theme.mono(12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("device_id: \(deviceId)")
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textTertiary)
-                    .textSelection(.enabled)
-                Text("paired \(PocketTimeFormat.label(unixSeconds: pairedAtUnix))")
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textTertiary)
-                Text("last seen \(PocketTimeFormat.label(unixSeconds: lastSeenUnix))")
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textTertiary)
+            VStack(alignment: .leading, spacing: 8) {
+                deviceRow(label: "Phone", device: phone, pairingWindow: phoneWindow)
+                deviceRow(label: "Watch", device: watch, pairingWindow: watchWindow)
             }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous).fill(Theme.panelElevated))
 
             Button {
                 Task { await model.disconnectPocket() }
@@ -248,7 +247,7 @@ struct PocketView: View {
                     if model.isDisconnecting {
                         ProgressView().controlSize(.small)
                     }
-                    Text(model.isDisconnecting ? "Disconnecting..." : "Disconnect")
+                    Text(model.isDisconnecting ? "Disconnecting..." : "Disconnect all")
                 }
                 .font(Theme.mono(11, weight: .semibold))
                 .foregroundStyle(Theme.coral)
@@ -259,6 +258,78 @@ struct PocketView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isDisconnecting)
+        }
+    }
+
+    /// One device slot within the paired card - `device == nil` renders the
+    /// slot's honest "not paired" placeholder rather than being omitted, so
+    /// the operator always sees both the phone and the watch slots at a
+    /// glance (mirrors `PocketView.tsx`'s `PocketDeviceRow`). `pairingWindow`
+    /// is normally `nil` once `device` is set (a successful redemption
+    /// closes that slot's window at the relay) - it matters for the `device
+    /// == nil` case: the watch's window commonly outlives the phone's own
+    /// pairing while it waits on a WatchConnectivity handoff, so its probe
+    /// count needs to stay visible even after the phone row above already
+    /// shows paired.
+    private func deviceRow(
+        label: String, device: PocketDeviceRecord?, pairingWindow: PocketWindowRecord?
+    ) -> some View {
+        Group {
+            if let device {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(
+                        "\(label): \(device.name.isEmpty ? "(unnamed device)" : device.name) · \(device.platform.isEmpty ? "unknown platform" : device.platform)"
+                    )
+                    .font(Theme.mono(12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    Text("device_id: \(device.deviceId)")
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .textSelection(.enabled)
+                    Text("paired \(PocketTimeFormat.label(unixSeconds: device.pairedAtUnix))")
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                    Text("last seen \(PocketTimeFormat.label(unixSeconds: device.lastSeenUnix))")
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous).fill(Theme.panelElevated))
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(label): not paired")
+                        .font(Theme.mono(11, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                    PairingProbeNote(label: label, pairingWindow: pairingWindow)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous).fill(Theme.panelElevated))
+            }
+        }
+    }
+}
+
+/// A small warning line for one currently armed window's probing count -
+/// renders nothing at all while `failedAttempts` is 0 (the normal, quiet
+/// steady state). PURELY OBSERVATIONAL: the relay never closes a window
+/// over this (the pairing route is pre-auth, so it can't without letting an
+/// unauthenticated caller deny pairing at will), so the copy deliberately
+/// never implies blocking, lockout, or that the window will close itself -
+/// it is only ever "here is what happened, use Disconnect if you want to
+/// act on it" (mirrors `PocketView.tsx`'s `PairingProbeNote`).
+@MainActor
+private struct PairingProbeNote: View {
+    let label: String
+    let pairingWindow: PocketWindowRecord?
+
+    var body: some View {
+        if let pairingWindow, pairingWindow.failedAttempts > 0 {
+            let n = pairingWindow.failedAttempts
+            Text("\(label): \(n) invalid code\(n == 1 ? "" : "s") presented since arming")
+                .font(Theme.mono(10.5))
+                .foregroundStyle(Theme.amber)
         }
     }
 }

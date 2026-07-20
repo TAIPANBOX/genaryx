@@ -3,7 +3,7 @@ import { cssVar } from "../lib/cssVars";
 import { formatTimestamp } from "../lib/format";
 import { describePocketError, pocketConnect, pocketDisconnect } from "../lib/pocket";
 import { usePocketStatus } from "../lib/usePocketStatus";
-import type { PocketError, PocketQr, PocketStatus } from "../pocketTypes";
+import type { PocketDevice, PocketError, PocketQr, PocketStatus, PocketWindow } from "../pocketTypes";
 import { QrCode } from "./QrCode";
 
 const CARD_STYLE = { maxWidth: 480 } as const;
@@ -36,21 +36,97 @@ function statusDotColor(state: PocketStatus["state"]): string {
 function statusLabel(status: PocketStatus): string {
   switch (status.state) {
     case "idle":
-      return status.cloud_ready ? "no phone paired" : "no phone paired · Cloud not resolvable";
-    case "paired":
-      return `paired · ${status.name || status.device_id}`;
+      return status.cloud_ready ? "no devices paired" : "no devices paired · Cloud not resolvable";
+    case "paired": {
+      // At least one of the two is always set in this state (that is what
+      // makes it "paired" rather than "idle" - see `pocketTypes.ts`'s own
+      // doc), but a device can be disconnected on its own, so either can be
+      // null here independently.
+      const parts = [
+        status.phone && `phone: ${status.phone.name || status.phone.device_id}`,
+        status.watch && `watch: ${status.watch.name || status.watch.device_id}`,
+      ].filter(Boolean);
+      return `paired · ${parts.join(", ")}`;
+    }
     case "relay_unreachable":
       return "relay unreachable";
   }
 }
 
+/** A small warning line for one currently armed window's probing count -
+ * renders nothing at all while `failed_attempts` is 0 (the normal, quiet
+ * steady state). PURELY OBSERVATIONAL: the relay never closes a window over
+ * this (the pairing route is pre-auth, so it can't without letting an
+ * unauthenticated caller deny pairing at will), so the copy deliberately
+ * never implies blocking, lockout, or that the window will close itself -
+ * it is only ever "here is what happened, use Disconnect if you want to act
+ * on it". */
+function PairingProbeNote({ label, pairingWindow }: { label: string; pairingWindow: PocketWindow | null }) {
+  if (pairingWindow === null || pairingWindow.failed_attempts === 0) return null;
+  const n = pairingWindow.failed_attempts;
+  return (
+    <span className="mono text-[11px]" style={{ color: "var(--sev-medium)" }}>
+      {label}: {n} invalid code{n === 1 ? "" : "s"} presented since arming
+    </span>
+  );
+}
+
+/** Pulls `phone_window`/`watch_window` out of whichever `PocketStatus`
+ * variant is current - both `"idle"` and `"paired"` carry them (see
+ * `pocketTypes.ts`'s doc for why), only `"relay_unreachable"` has neither. */
+function windowsOf(status: PocketStatus): { phone: PocketWindow | null; watch: PocketWindow | null } {
+  if (status.state === "relay_unreachable") return { phone: null, watch: null };
+  return { phone: status.phone_window, watch: status.watch_window };
+}
+
+/** One device row within the paired card - `device === null` renders the
+ * slot's honest "not paired" placeholder rather than being omitted, so the
+ * operator always sees both the phone and the watch slots at a glance.
+ * `pairingWindow` is normally `null` once `device` is set (a successful
+ * redemption closes that slot's window at the relay) - it matters for the
+ * `device === null` case: the watch's window commonly outlives the phone's
+ * own pairing while it waits on a WatchConnectivity handoff, so its probe
+ * count needs to stay visible even after the phone row above already shows
+ * paired. */
+function PocketDeviceRow({
+  label,
+  device,
+  pairingWindow,
+}: {
+  label: string;
+  device: PocketDevice | null;
+  pairingWindow: PocketWindow | null;
+}) {
+  if (device === null) {
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="mono text-[11.5px]" style={{ color: "var(--faint)" }}>
+          {label}: not paired
+        </div>
+        <PairingProbeNote label={label} pairingWindow={pairingWindow} />
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1 mono text-[11.5px]" style={{ color: "var(--fg)" }}>
+      <span>
+        {label}: {device.name || "(unnamed device)"} · {device.platform || "unknown platform"}
+      </span>
+      <span style={{ color: "var(--dim)" }}>device_id: {device.device_id}</span>
+      <span style={{ color: "var(--dim)" }}>paired {unixToTimestamp(device.paired_at_unix)}</span>
+      <span style={{ color: "var(--dim)" }}>last seen {unixToTimestamp(device.last_seen_unix)}</span>
+    </div>
+  );
+}
+
 /**
  * The Pocket panel (docs/PHASE5.md W2, itrat-console/13 D12.2a): "Connect
- * TokenFuse Pocket" mints a pairing code at the Cloud, arms the relay's
- * pairing window, and renders the QR the phone scans - a later wave (W3)
- * builds the scanner itself. Three states: idle (Connect button),
- * showing-QR (an armed window, waiting for the phone), and paired (device
- * details + Disconnect).
+ * TokenFuse Pocket" mints a pairing code for the phone and one for the
+ * watch at the Cloud, arms both of the relay's pairing windows, and renders
+ * the QR (both codes) the phone scans - a later wave (W3) builds the
+ * scanner itself. Three states: idle (Connect button), showing-QR (both
+ * windows armed, waiting for the phone), and paired (each slot's device
+ * details, or "not paired", + Disconnect).
  *
  * The "showing-QR" step is tracked entirely in THIS component's own `qr`
  * state, not the backend (`usePocketStatus`'s doc comment explains why: the
@@ -69,6 +145,7 @@ export function PocketView() {
   const remaining = qr !== null ? secondsRemaining(qr.expires_unix, now) : 0;
   const watching = qr !== null && remaining > 0;
   const { status, refresh } = usePocketStatus(watching);
+  const windows = status !== null ? windowsOf(status) : { phone: null, watch: null };
 
   // Redraws the countdown every second while a QR is on screen - the QR
   // itself never re-renders (its `pathData` only depends on `qr.qr_content`,
@@ -109,13 +186,17 @@ export function PocketView() {
   }, [connecting, refresh]);
 
   const onCancel = useCallback(() => {
-    // "Cancel" reuses Disconnect: nothing is actually paired yet at this
-    // point in the flow, so it only closes the just-armed window
-    // (`RelayAdminClient::disconnect` clears the pairing-window row
-    // regardless of whether a device is paired, `registry.rs::disconnect`) -
-    // an operator-initiated version of docs/PHASE5.md W2's "do not leave a
-    // half-armed window silently" rule, not just the error-path cleanup
-    // `pocket_connect` itself already does server-side.
+    // "Cancel" reuses Disconnect (all slots): nothing is actually paired
+    // yet in the common case at this point in the flow, so this normally
+    // only closes the just-armed windows (`RelayAdminClient::disconnect`
+    // clears a pairing-window row regardless of whether a device is paired,
+    // `registry.rs::disconnect`) - an operator-initiated version of
+    // docs/PHASE5.md W2's "do not leave a half-armed window silently" rule,
+    // not just the error-path cleanup `pocket_connect` itself already does
+    // server-side. If one slot (say the watch, over WatchConnectivity)
+    // happened to pair before the operator cancelled, "all slots" is still
+    // the right scope: it leaves neither a half-paired relay nor an orphaned
+    // single device the panel has no view of.
     setQr(null);
     void pocketDisconnect()
       .catch(() => {
@@ -159,9 +240,10 @@ export function PocketView() {
 
       <div className="d-card px-4 py-3 flex flex-col gap-3" style={CARD_STYLE}>
         <span className="text-[11.5px]" style={{ color: "var(--dim)" }}>
-          Pair your phone (TokenFuse Pocket) to this box&apos;s relay so you can see the exception queue
-          and slide-to-kill a runaway from anywhere - a QR carries the relay&apos;s pinned TLS identity
-          plus a one-time code, scanned once, no manual entry.
+          Pair your phone (TokenFuse Pocket) and its paired Watch to this box&apos;s relay so you can see
+          the exception queue and slide-to-kill a runaway from anywhere - one QR carries the relay&apos;s
+          pinned TLS identity plus a one-time code for each device, scanned once on the phone (which hands
+          the Watch its own code), no manual entry.
         </span>
 
         {status.state === "relay_unreachable" && (
@@ -195,6 +277,8 @@ export function PocketView() {
             <span className="mono text-[11px]" style={{ color: "var(--faint)" }}>
               expires in {remaining}s - scan with TokenFuse Pocket
             </span>
+            <PairingProbeNote label="phone" pairingWindow={windows.phone} />
+            <PairingProbeNote label="watch" pairingWindow={windows.watch} />
             <button
               type="button"
               className="icon-btn"
@@ -223,17 +307,16 @@ export function PocketView() {
         )}
 
         {status.state === "paired" && (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-col gap-1 mono text-[11.5px]" style={{ color: "var(--fg)" }}>
-              <span>
-                {status.name || "(unnamed device)"} · {status.platform || "unknown platform"}
-              </span>
-              <span style={{ color: "var(--dim)" }}>device_id: {status.device_id}</span>
-              <span style={{ color: "var(--dim)" }}>paired {unixToTimestamp(status.paired_at_unix)}</span>
-              <span style={{ color: "var(--dim)" }}>
-                last seen {unixToTimestamp(status.last_seen_unix)}
-              </span>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <PocketDeviceRow label="Phone" device={status.phone} pairingWindow={status.phone_window} />
+              <PocketDeviceRow label="Watch" device={status.watch} pairingWindow={status.watch_window} />
             </div>
+            {/* Disconnect always frees BOTH slots at once (there is no
+                per-slot disconnect affordance): the two devices are paired
+                together by one Connect flow, so resetting either one to pair
+                again also resets the other, rather than leaving a stray
+                paired device the operator cannot see a fresh QR for. */}
             <button
               type="button"
               className="icon-btn"
@@ -241,7 +324,7 @@ export function PocketView() {
               onClick={() => void onDisconnect()}
               disabled={disconnecting}
             >
-              {disconnecting ? "Disconnecting..." : "Disconnect"}
+              {disconnecting ? "Disconnecting..." : "Disconnect all"}
             </button>
           </div>
         )}
