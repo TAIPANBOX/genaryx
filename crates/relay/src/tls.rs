@@ -53,6 +53,38 @@ impl RelayIdentity {
         Ok(identity)
     }
 
+    /// Load an already-persisted `{dir}/cert.pem` + `{dir}/key.pem`, erroring
+    /// if either is absent. PUBLIC-CA mode uses this (never
+    /// `load_or_generate`): a relay that is meant to serve a CA-signed cert
+    /// must NEVER silently fall back to a self-signed one, so "not there yet"
+    /// is an obtain trigger the caller handles, not a generate-in-place.
+    pub fn load_existing(dir: &Path) -> Result<Self, TlsError> {
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        if !cert_path.exists() || !key_path.exists() {
+            return Err(TlsError::LoadKey(format!(
+                "no persisted cert/key in {}",
+                dir.display()
+            )));
+        }
+        Self::load(&cert_path, &key_path)
+    }
+
+    /// Persist an externally obtained certificate + key (from ACME, `acme.rs`)
+    /// into `dir` as `cert.pem`/`key.pem` (key written owner-only on unix),
+    /// then load the resulting identity. The SPKI pin is re-derived from the
+    /// key exactly as [`RelayIdentity::load`] does, so a PUBLIC-CA relay still
+    /// has a valid pin available even though the phone trusts the hostname's
+    /// public chain instead of pinning.
+    pub fn install(dir: &Path, cert_pem: &[u8], key_pem: &[u8]) -> Result<Self, TlsError> {
+        std::fs::create_dir_all(dir)?;
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        write_private_pem(&key_path, key_pem)?;
+        std::fs::write(&cert_path, cert_pem)?;
+        Self::load(&cert_path, &key_path)
+    }
+
     fn load(cert_path: &Path, key_path: &Path) -> Result<Self, TlsError> {
         let cert_pem = std::fs::read(cert_path)?;
         let key_pem = std::fs::read(key_path)?;

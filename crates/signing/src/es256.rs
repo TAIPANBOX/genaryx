@@ -248,11 +248,28 @@ impl SoftwareSigner {
         ))
     }
 
-    /// Deterministic construction from raw scalar bytes - tests only.
+    /// Deterministic construction from raw scalar bytes (tests, and reloading
+    /// a persisted software key -- see [`SoftwareSigner::to_scalar_bytes`]).
     pub fn from_scalar(bytes: &[u8]) -> Result<Self, SigningError> {
         let key = SigningKey::from_slice(bytes)
             .map_err(|e| SigningError::KeyGeneration(e.to_string()))?;
         Ok(Self { key })
+    }
+
+    /// The raw 32-byte private scalar, so a software key can be PERSISTED and
+    /// reloaded across restarts (the relay's ACME account key: registering a
+    /// fresh ACME account on every boot would churn the CA's account store and
+    /// lose the key that authorizes its own orders). Round-trips through
+    /// [`SoftwareSigner::from_scalar`]. Deliberately only on the SOFTWARE
+    /// signer: a Secure Enclave key is non-extractable by construction, and its
+    /// [`Assurance`] says so. Callers MUST write the result with owner-only
+    /// permissions and never log it.
+    #[must_use]
+    pub fn to_scalar_bytes(&self) -> [u8; 32] {
+        let field = self.key.to_bytes();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&field);
+        out
     }
 }
 
@@ -460,6 +477,20 @@ mod tests {
             &a.sig_b64,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn scalar_bytes_round_trip_preserves_the_key() {
+        let a = SoftwareSigner::generate().unwrap();
+        let scalar = a.to_scalar_bytes();
+        let b = SoftwareSigner::from_scalar(&scalar).expect("reload from persisted scalar");
+        // Same key => same public point => a signature from one verifies under
+        // the other's public key.
+        let msg = b"acme account key persistence";
+        let sig = a.sign_raw(msg).unwrap();
+        verify_es256(&b.public_key_x963().unwrap(), msg, &sig)
+            .expect("reloaded key is the same key");
+        assert_eq!(a.public_key_x963().unwrap(), b.public_key_x963().unwrap());
     }
 
     #[test]

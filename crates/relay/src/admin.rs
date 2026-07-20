@@ -58,12 +58,22 @@ impl IntoResponse for AdminError {
 #[derive(Debug, Serialize)]
 pub struct PairingInfoResponse {
     /// The public listener's SPKI-SHA256 pin, base64 (`tls.rs::spki_sha256_b64`).
+    /// Always present (it is derivable from the key in either trust mode); the
+    /// phone USES it only in pinned mode (`hostname` absent).
     pub pin: String,
     /// `public_advertise_url` (`config.rs`) -- what the relay tells a pairing
-    /// phone its own base URL is; may differ from the raw bind address.
+    /// phone its own base URL is; may differ from the raw bind address. In
+    /// PUBLIC-CA mode this is `https://<hostname>`.
     pub relay_url: String,
     /// The org this relay serves (single-tenant per relay instance, `config.rs`).
     pub org: String,
+    /// Present ONLY in PUBLIC-CA trust mode (cert broker, design A): the
+    /// `<relay-id>.pocket.it-rat.com` hostname the phone connects to with
+    /// ordinary system trust. Its presence is the mode signal: when set, the
+    /// QR carries the hostname and the phone does NOT pin (no ATS exception);
+    /// when absent, the relay is self-signed and the phone pins `pin`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
 }
 
 /// Infallible: every field is a value the relay already resolved at startup
@@ -74,6 +84,7 @@ pub async fn pairing_info(State(state): State<crate::AdminState>) -> Json<Pairin
         pin: state.pin.clone(),
         relay_url: state.relay_url.clone(),
         org: state.org.clone(),
+        hostname: state.hostname.clone(),
     })
 }
 
@@ -336,6 +347,7 @@ mod tests {
             pin: pin.to_string(),
             relay_url: relay_url.to_string(),
             org: org.to_string(),
+            hostname: None,
         }
     }
 
@@ -399,6 +411,19 @@ mod tests {
         assert_eq!(resp.pin, "dGVzdC1zcGtpLXBpbi1iYXNlNjQ=");
         assert_eq!(resp.relay_url, "https://198.51.100.7:8443");
         assert_eq!(resp.org, "acme");
+        assert!(resp.hostname.is_none(), "no hostname => pinned mode");
+    }
+
+    #[tokio::test]
+    async fn pairing_info_carries_the_hostname_in_public_ca_mode() {
+        let mut state = test_state("pin", "https://abc123.pocket.it-rat.com", "acme");
+        state.hostname = Some("abc123.pocket.it-rat.com".to_string());
+        let Json(resp) = pairing_info(State(state)).await;
+        assert_eq!(resp.hostname.as_deref(), Some("abc123.pocket.it-rat.com"));
+        // The JSON omits `hostname` entirely in pinned mode (skip_if None), so
+        // an old desktop that never learned the field is unaffected there.
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("abc123.pocket.it-rat.com"));
     }
 
     #[tokio::test]
