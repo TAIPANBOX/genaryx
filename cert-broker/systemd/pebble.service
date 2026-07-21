@@ -1,0 +1,14 @@
+[Unit]
+Description=Pebble ACME test server (fake Let's Encrypt for the cert-broker testbed)
+After=challtestsrv.service
+Requires=challtestsrv.service
+
+[Service]
+# Validate challenges immediately instead of Pebble's random 0-15s sleep.
+Environment=PEBBLE_VA_NOSLEEP=1
+ExecStart=/usr/local/bin/pebble -config /root/broker/pebble-config.json -dnsserver 127.0.0.1:8053
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

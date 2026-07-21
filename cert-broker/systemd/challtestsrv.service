@@ -1,0 +1,11 @@
+[Unit]
+Description=pebble-challtestsrv (DNS-01 mock for the cert-broker testbed)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/pebble-challtestsrv -dnsserver :8053 -management :8055 -defaultIPv4 127.0.0.1
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
