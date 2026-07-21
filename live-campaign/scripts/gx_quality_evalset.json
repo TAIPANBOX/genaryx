@@ -1,0 +1,192 @@
+{
+  "id": "meridian-agent-quality-v1",
+  "cases": [
+    {
+      "id": "txn-anom-01",
+      "prompt": "A meridian.example retail customer who has averaged 3 debit transactions per week for two years suddenly initiates 14 wire transfers in one hour, each just under the $10,000 reporting threshold, to 14 different first-time payees. Classify this pattern for the fraud team. Respond with exactly one word, no punctuation: ANOMALOUS or NORMAL.",
+      "expected": "ANOMALOUS",
+      "grader": "exact"
+    },
+    {
+      "id": "txn-anom-02",
+      "prompt": "A meridian.example corporate payroll account sends its regular biweekly ACH batch of 412 employee salary payments, same payee list and similar amounts as the prior 25 pay cycles. Classify this pattern for the fraud team. Respond with exactly one word, no punctuation: ANOMALOUS or NORMAL.",
+      "expected": "NORMAL",
+      "grader": "exact"
+    },
+    {
+      "id": "txn-anom-03",
+      "prompt": "A dormant meridian.example account with a $40 balance and no activity for 18 months receives a $250,000 incoming wire, then immediately initiates three outgoing transfers to newly opened accounts at other institutions. Classify this pattern for the fraud team. Respond with exactly one word, no punctuation: ANOMALOUS or NORMAL.",
+      "expected": "ANOMALOUS",
+      "grader": "exact"
+    },
+    {
+      "id": "txn-anom-04",
+      "prompt": "A meridian.example small-business customer's card is used for its usual weekly inventory purchase at the same wholesaler it has used for three years, for an amount within 5 percent of its typical order. Classify this pattern for the fraud team. Respond with exactly one word, no punctuation: ANOMALOUS or NORMAL.",
+      "expected": "NORMAL",
+      "grader": "exact"
+    },
+    {
+      "id": "txn-anom-05",
+      "prompt": "A meridian.example customer's card, last used in Kyiv six hours ago, is used again now for an in-person purchase in Lagos, a distance impossible to travel in that time. Classify this pattern for the fraud team. Respond with exactly one word, no punctuation: ANOMALOUS or NORMAL.",
+      "expected": "ANOMALOUS",
+      "grader": "exact"
+    },
+    {
+      "id": "txn-anom-06",
+      "prompt": "A meridian.example customer withdraws their usual $200 from the same ATM they use every Friday on their way home from work. Classify this pattern for the fraud team. Respond with exactly one word, no punctuation: ANOMALOUS or NORMAL.",
+      "expected": "NORMAL",
+      "grader": "exact"
+    },
+    {
+      "id": "sanx-01",
+      "prompt": "Screen the name 'Aleksandr V. Petrov, DOB 1974-03-11' against a sanctions list that contains 'Petrov, Aleksandr Viktorovich, DOB 1974-03-11, designated 2022'. Respond with exactly one word, no punctuation: MATCH or NO_MATCH.",
+      "expected": "MATCH",
+      "grader": "exact"
+    },
+    {
+      "id": "sanx-02",
+      "prompt": "Screen the name 'Maria Santos' against a sanctions list that contains only 'Santos, Mariana Elena, DOB 1990-06-02' and no other Santos entries. Respond with exactly one word, no punctuation: MATCH or NO_MATCH.",
+      "expected": "NO_MATCH",
+      "grader": "exact"
+    },
+    {
+      "id": "sanx-03",
+      "prompt": "Screen the company 'Nordic Freight Solutions LLC' against a sanctions list that contains 'Nordic Freight Solutions LLC, also known as NFS Cargo, designated 2023 for sanctions evasion'. Respond with exactly one word, no punctuation: MATCH or NO_MATCH.",
+      "expected": "MATCH",
+      "grader": "exact"
+    },
+    {
+      "id": "sanx-04",
+      "prompt": "Screen the name 'John Smith' against a sanctions list that has no exact or close match to any 'Smith' entry. Respond with exactly one word, no punctuation: MATCH or NO_MATCH.",
+      "expected": "NO_MATCH",
+      "grader": "exact"
+    },
+    {
+      "id": "sanx-05",
+      "prompt": "Screen the name 'O. Ivanenko' against a sanctions list that contains 'Ivanenko, Oleh Dmytrovych, DOB 1968-11-30, designated 2024 for asset freeze', where the transliteration and initials plausibly match. Respond with exactly one word, no punctuation: MATCH or NO_MATCH.",
+      "expected": "MATCH",
+      "grader": "exact"
+    },
+    {
+      "id": "kyc-ext-01",
+      "prompt": "Extract the IBAN from this text and reply with only the IBAN: 'Please credit account IBAN UA213223130000026007233566001 for the onboarding deposit.'",
+      "expected": "UA213223130000026007233566001",
+      "grader": "regex"
+    },
+    {
+      "id": "kyc-ext-02",
+      "prompt": "Extract the passport number from this text and reply with only the passport number: 'Applicant presented passport number FF7291834, issued by Ukraine.'",
+      "expected": "FF7291834",
+      "grader": "regex"
+    },
+    {
+      "id": "kyc-ext-03",
+      "prompt": "Extract the date of birth in YYYY-MM-DD format from this text and reply with only the date: 'Full name Olena Kovalenko, born 14 May 1989, resident of Lviv.'",
+      "expected": "1989-05-14",
+      "grader": "regex"
+    },
+    {
+      "id": "kyc-ext-04",
+      "prompt": "Extract the tax identification number from this text and reply with only the number: 'Corporate applicant Meridian Logistics TOV, EDRPOU code 39481207, requesting a business account.'",
+      "expected": "39481207",
+      "grader": "regex"
+    },
+    {
+      "id": "kyc-ext-05",
+      "prompt": "Extract the country of citizenship as an ISO 3166-1 alpha-2 code from this text and reply with only the code: 'Applicant holds a Ukrainian passport and resides in Warsaw, Poland.'",
+      "expected": "\\bUA\\b",
+      "grader": "regex"
+    },
+    {
+      "id": "kyc-ext-06",
+      "prompt": "Extract the SWIFT/BIC code from this text and reply with only the code: 'Wire instructions: beneficiary bank SWIFT MERIUA2XXXX, account held at Meridian Bank Kyiv branch.'",
+      "expected": "MERIUA2XXXX",
+      "grader": "regex"
+    },
+    {
+      "id": "uw-rationale-01",
+      "prompt": "Write a one-paragraph credit rationale (max 3 sentences) for underwriting application UW-0231: applicant DTI 0.31, FICO 730, requested $180,000 mortgage, 20% down payment, stable 6-year employment history. State a clear approve or decline recommendation.",
+      "rubric": "Recommends approval (DTI 0.31 is well within policy, FICO 730 is good, stable employment, 20% down are all strong signals), and cites at least two of DTI/FICO/down-payment/employment by name. Score 1.0 if both hold, 0.5 if only one holds, 0.0 if neither or it recommends decline.",
+      "grader": "llm_judge"
+    },
+    {
+      "id": "uw-rationale-02",
+      "prompt": "Write a one-paragraph credit rationale (max 3 sentences) for underwriting application UW-0238: applicant DTI 0.52, FICO 615, requested $95,000 personal loan, no down payment, employment history under 6 months. State a clear approve or decline recommendation.",
+      "rubric": "Recommends decline or at minimum flags material risk (DTI 0.52 is well above typical policy limits, FICO 615 is subprime, employment history is short), and cites at least two of those risk factors by name. Score 1.0 if both hold, 0.5 if only one holds, 0.0 if it recommends approval without qualification.",
+      "grader": "llm_judge"
+    },
+    {
+      "id": "uw-rationale-03",
+      "prompt": "Write a one-paragraph explanation (max 3 sentences) of why underwriting-copilot's decision on application UW-0231 required human sign-off even though the model recommended approval, given meridian.example's underwriting-approval policy requires human review above $10.00 in estimated model cost and this evaluation cost $12.40.",
+      "rubric": "Correctly explains the hold is because the estimated cost ($12.40) exceeded the policy threshold ($10.00), not because of the applicant's creditworthiness. Score 1.0 if it clearly attributes the hold to the cost threshold, 0.5 if vague, 0.0 if it invents an unrelated reason.",
+      "grader": "llm_judge"
+    },
+    {
+      "id": "uw-rationale-04",
+      "prompt": "In two to three sentences, explain to a loan officer why underwriting-copilot's rationale should always cite DTI, FICO, and down payment explicitly rather than just giving a yes/no answer.",
+      "rubric": "Explains that citing the specific metrics makes the recommendation auditable/reviewable by a human, and/or lets a reviewer independently verify the reasoning rather than trusting a bare verdict. Score 1.0 if that reasoning is present, 0.5 if generic but not wrong, 0.0 if it does not address auditability or reviewability at all.",
+      "grader": "llm_judge"
+    },
+    {
+      "id": "uw-rationale-05",
+      "prompt": "Write a one-paragraph credit rationale (max 3 sentences) for underwriting application UW-0245: applicant DTI 0.29, FICO 780, requested $310,000 mortgage, 35% down payment, 12-year employment at the same employer. State a clear approve or decline recommendation.",
+      "rubric": "Recommends approval clearly, and cites at least two of the four strong metrics (DTI, FICO, down payment, employment tenure). Score 1.0 if both hold, 0.5 if only one holds, 0.0 if neither or it recommends decline.",
+      "grader": "llm_judge"
+    },
+    {
+      "id": "uw-rationale-06",
+      "prompt": "In two to three sentences, explain what could go wrong if underwriting-copilot's rationale generator quietly regressed and started approving applications with DTI above 0.50 without flagging them, from a bank's perspective.",
+      "rubric": "Identifies increased default risk/credit losses and/or a compliance or model-risk failure as the consequence. Score 1.0 if either risk is clearly named, 0.5 if it gestures at risk vaguely, 0.0 if it does not identify any real consequence.",
+      "grader": "llm_judge"
+    },
+    {
+      "id": "recon-cls-01",
+      "prompt": "Classify this ledger discrepancy: the sub-ledger shows a payment posted on 2026-06-30 but the general ledger shows the same payment posted on 2026-07-01, same amount, same counterparty. Reply with exactly one label, no punctuation: TIMING_DIFFERENCE, DUPLICATE_POSTING, FX_ROUNDING, or DATA_ENTRY_ERROR.",
+      "expected": "TIMING_DIFFERENCE",
+      "grader": "exact"
+    },
+    {
+      "id": "recon-cls-02",
+      "prompt": "Classify this ledger discrepancy: the same $18,420.00 vendor payment appears twice in the general ledger under two different transaction ids, one hour apart, otherwise identical. Reply with exactly one label, no punctuation: TIMING_DIFFERENCE, DUPLICATE_POSTING, FX_ROUNDING, or DATA_ENTRY_ERROR.",
+      "expected": "DUPLICATE_POSTING",
+      "grader": "exact"
+    },
+    {
+      "id": "recon-cls-03",
+      "prompt": "Classify this ledger discrepancy: a EUR 50,000.00 transfer converted to USD shows a 0.03 USD difference between the sub-ledger's and the general ledger's exchange-rate calculation, both using the same day's rate. Reply with exactly one label, no punctuation: TIMING_DIFFERENCE, DUPLICATE_POSTING, FX_ROUNDING, or DATA_ENTRY_ERROR.",
+      "expected": "FX_ROUNDING",
+      "grader": "exact"
+    },
+    {
+      "id": "recon-cls-04",
+      "prompt": "Classify this ledger discrepancy: a $4,250.00 payment was keyed into the sub-ledger as $2,450.00, transposed digits, no other explanation fits. Reply with exactly one label, no punctuation: TIMING_DIFFERENCE, DUPLICATE_POSTING, FX_ROUNDING, or DATA_ENTRY_ERROR.",
+      "expected": "DATA_ENTRY_ERROR",
+      "grader": "exact"
+    },
+    {
+      "id": "reconciliation-batch-eod-002-LIVE-outcome",
+      "prompt": "escalated",
+      "grader": "outcome_tag"
+    },
+    {
+      "id": "reconciliation-batch-eod-002-s007-outcome",
+      "prompt": "abandoned",
+      "grader": "outcome_tag"
+    },
+    {
+      "id": "reconciliation-batch-eod-002-s063-outcome",
+      "prompt": "abandoned",
+      "grader": "outcome_tag"
+    },
+    {
+      "id": "reconciliation-batch-eod-002-s128-outcome",
+      "prompt": "abandoned",
+      "grader": "outcome_tag"
+    },
+    {
+      "id": "reconciliation-batch-eod-001-clean-outcome",
+      "prompt": "case_resolved",
+      "grader": "outcome_tag"
+    }
+  ]
+}

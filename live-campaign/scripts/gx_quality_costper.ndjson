@@ -1,0 +1,14 @@
+{"run_id": "reconciliation-batch-eod-002-LIVE", "outcome": "escalated", "cost_usd": 7.02}
+{"run_id": "reconciliation-batch-eod-002-s007", "outcome": "abandoned", "cost_usd": 0.58}
+{"run_id": "reconciliation-batch-eod-002-s063", "outcome": "abandoned", "cost_usd": 0.57}
+{"run_id": "reconciliation-batch-eod-002-s128", "outcome": "abandoned", "cost_usd": 0.56}
+{"run_id": "reconciliation-batch-eod-002-s011", "outcome": "abandoned", "cost_usd": 0.59}
+{"run_id": "reconciliation-batch-eod-002-s084", "outcome": "abandoned", "cost_usd": 0.55}
+{"run_id": "reconciliation-batch-eod-002-s142", "outcome": "abandoned", "cost_usd": 0.6}
+{"run_id": "reconciliation-batch-eod-001-clean", "outcome": "case_resolved", "cost_usd": 0.61}
+{"run_id": "cashflow-forecaster-0180", "outcome": "case_resolved", "cost_usd": 4.05}
+{"run_id": "underwriting-copilot-0231", "outcome": "escalated", "cost_usd": 12.4}
+{"run_id": "underwriting-copilot-0090", "outcome": "case_resolved", "cost_usd": 1.35}
+{"run_id": "aml-case-copilot-0210", "outcome": "case_resolved", "cost_usd": 4.62}
+{"run_id": "support-tier2-bot-0310", "outcome": "case_resolved", "cost_usd": 0.94}
+{"run_id": "support-tier2-bot-0450", "outcome": "escalated", "cost_usd": 1.1}

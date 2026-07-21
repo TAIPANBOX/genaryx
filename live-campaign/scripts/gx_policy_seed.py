@@ -28,7 +28,10 @@ for pid, body in policies:
 
 # decides that trip require_human_above_usd -> create pending approvals (the inbox)
 decides = [
-    ("reconciliation-batch", "treasury", "reconciliation-batch-eod-001-s042", "v.koval", "gpt-4o", 48.0, ["ledger_read", "gl_post"]),
+    # The protagonist run, so the approval on the Policy tab names the same id
+    # the console, the phone, the watch and Felyx all point at. It referenced a
+    # previous generation's shard (eod-001-s042) until 2026-07-20.
+    ("reconciliation-batch", "treasury", "reconciliation-batch-eod-002-LIVE", "v.koval", "gpt-4o", 48.0, ["ledger_read", "gl_post"]),
     ("cashflow-forecaster", "treasury", "cashflow-forecaster-0180", "v.koval", "gpt-4o", 31.5, ["market_data"]),
     ("underwriting-copilot", "lending", "underwriting-copilot-0231", "s.tkachenko", "claude-sonnet-5", 12.4, ["credit_bureau"]),
     ("spend-optimizer", "treasury", "spend-optimizer-0044", "v.koval", "claude-sonnet-5", 27.0, ["vendor_api"]),

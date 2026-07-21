@@ -1,0 +1,627 @@
+{
+  "dataset": "meridian.example, seeded by gx_fleet_v3.py",
+  "box": "5.75.234.176 (Hetzner CPX62)",
+  "generated_local": "2026-07-20 19:29:48",
+  "epochs": [
+    {
+      "id": "e01",
+      "label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "opened_unix": 1784569142,
+      "opened_totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      },
+      "closed_unix": 1784570552,
+      "closed_totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    }
+  ],
+  "shots": [
+    {
+      "file": "ceremony/p2-faceid-prompt.png",
+      "captured_local": "2026-07-20 17:01:49",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "ceremony/p3-after-kill.png",
+      "captured_local": "2026-07-20 17:01:58",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "ceremony/p4-phone-after-kill.png",
+      "captured_local": "2026-07-20 17:09:59",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "ceremony/w2-watch-armed.png",
+      "captured_local": "2026-07-20 17:09:59",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "console/c01-overview.png",
+      "captured_local": "2026-07-20 18:43:25",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c02-money.png",
+      "captured_local": "2026-07-20 18:43:30",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c03-policy.png",
+      "captured_local": "2026-07-20 18:43:34",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c04-identity.png",
+      "captured_local": "2026-07-20 18:43:39",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c05-quality.png",
+      "captured_local": "2026-07-20 18:43:44",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c06-crypto.png",
+      "captured_local": "2026-07-20 18:43:49",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c07-memory.png",
+      "captured_local": "2026-07-20 18:43:53",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c08-drills.png",
+      "captured_local": "2026-07-20 18:43:58",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c09-evidence.png",
+      "captured_local": "2026-07-20 18:44:03",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c10-remote.png",
+      "captured_local": "2026-07-20 18:44:08",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c11-pocket.png",
+      "captured_local": "2026-07-20 18:44:13",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c12-copilot.png",
+      "captured_local": "2026-07-20 18:44:17",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c13-graph.png",
+      "captured_local": "2026-07-20 18:44:22",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c14-replay.png",
+      "captured_local": "2026-07-20 18:44:27",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c15-posture.png",
+      "captured_local": "2026-07-20 18:44:32",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c16-bus-explorer.png",
+      "captured_local": "2026-07-20 18:44:36",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "console/c17-menubar-bus.png",
+      "captured_local": "2026-07-20 18:44:51",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "mobile/m01-phone-exceptions.png",
+      "captured_local": "2026-07-20 17:11:31",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "mobile/m02-watch-exceptions.png",
+      "captured_local": "2026-07-20 17:11:32",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "pairing/q1-paired-before.png",
+      "captured_local": "2026-07-20 17:23:35",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "pairing/q3-console-qr-REDACT-BEFORE-PUBLISHING.png",
+      "captured_local": "2026-07-20 17:23:35",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "pairing/q4-phone-scan-screen.png",
+      "captured_local": "2026-07-20 17:23:35",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "pairing/q5-both-side-by-side-REDACT-BEFORE-PUBLISHING.png",
+      "captured_local": "2026-07-20 17:23:35",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "pairing/q6-console-paired-again.png",
+      "captured_local": "2026-07-20 17:27:57",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "pairing/q7-phone-paired.png",
+      "captured_local": "2026-07-20 17:27:58",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "pairing/q8-watch-paired.png",
+      "captured_local": "2026-07-20 17:27:58",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/gx-bus-in-context.png",
+      "captured_local": "2026-07-20 18:54:19",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/gx-bus-rounded.png",
+      "captured_local": "2026-07-20 18:59:04",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/gx-bus.png",
+      "captured_local": "2026-07-20 18:54:45",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-connect-rounded.png",
+      "captured_local": "2026-07-20 19:12:09",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/ph-connect.png",
+      "captured_local": "2026-07-20 18:24:27",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/ph-faceid-denied-rounded.png",
+      "captured_local": "2026-07-20 19:12:11",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/ph-faceid-denied.png",
+      "captured_local": "2026-07-20 18:54:05",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-faceid-rounded.png",
+      "captured_local": "2026-07-20 19:12:10",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/ph-faceid.png",
+      "captured_local": "2026-07-20 18:40:59",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-finops-rounded.png",
+      "captured_local": "2026-07-20 19:12:09",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/ph-finops.png",
+      "captured_local": "2026-07-20 18:46:35",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-incidents-rounded.png",
+      "captured_local": "2026-07-20 19:12:09",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/ph-incidents.png",
+      "captured_local": "2026-07-20 18:39:02",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-kill-arm-rounded.png",
+      "captured_local": "2026-07-20 19:12:10",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/ph-kill-arm.png",
+      "captured_local": "2026-07-20 18:40:41",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-pinned-card.png",
+      "captured_local": "2026-07-20 19:02:27",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-pinned-rounded.png",
+      "captured_local": "2026-07-20 19:00:47",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/ph-pinned.png",
+      "captured_local": "2026-07-20 19:00:46",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/watch-exceptions-rounded.png",
+      "captured_local": "2026-07-20 19:12:11",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/watch-exceptions.png",
+      "captured_local": "2026-07-20 18:39:02",
+      "epoch": "e01",
+      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
+      "totals": {
+        "runs": 9501,
+        "calls": 37596,
+        "spent_usd": 4671.02,
+        "killed": 15
+      }
+    },
+    {
+      "file": "site/watch-kill-rounded.png",
+      "captured_local": "2026-07-20 19:12:11",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/watch-kill.png",
+      "captured_local": "2026-07-20 18:24:27",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/watch-killed-rounded.png",
+      "captured_local": "2026-07-20 17:10:26",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "site/watch-killed.png",
+      "captured_local": "2026-07-20 17:10:26",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "w01-watch-exception-queue.png",
+      "captured_local": "2026-07-20 15:11:27",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "w02-watch-kill-unarmed.png",
+      "captured_local": "2026-07-20 15:12:55",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "watch-fix/f1-before-revocation.png",
+      "captured_local": "2026-07-20 17:42:17",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "watch-fix/f2-after-revocation-fixed.png",
+      "captured_local": "2026-07-20 17:42:17",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "watch-fix/f3-repaired-without-reinstall.png",
+      "captured_local": "2026-07-20 17:42:17",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "watch-fix/f4-revoked-after-review-fixes.png",
+      "captured_local": "2026-07-20 17:52:05",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "watch-fix/f5-expired-code-refused-locally.png",
+      "captured_local": "2026-07-20 17:52:05",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "workflow/k1-console-breakglass-reason.png",
+      "captured_local": "2026-07-20 14:42:23",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "workflow/k2-phone-kill-confirm.png",
+      "captured_local": "2026-07-20 14:44:20",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "workflow/k3-phone-faceid.png",
+      "captured_local": "2026-07-20 14:44:47",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    },
+    {
+      "file": "workflow/k4-watch-crown-unarmed.png",
+      "captured_local": "2026-07-20 15:41:10",
+      "epoch": null,
+      "epoch_label": "outside any recorded epoch",
+      "totals": null
+    }
+  ]
+}

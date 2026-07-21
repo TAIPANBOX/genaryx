@@ -1,0 +1,15 @@
+{
+  "run_id": "mockryx-1784554600409496000",
+  "gateway": "http://127.0.0.1:4100",
+  "generated_at": "2026-07-20T13:36:40.40969Z",
+  "results": [
+    {
+      "scenario": "runaway-budget",
+      "status": "passed",
+      "metrics": {
+        "calls": 2,
+        "budget_burned_usd": 0.0028
+      }
+    }
+  ]
+}
