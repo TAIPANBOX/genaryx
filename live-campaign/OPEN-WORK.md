@@ -59,6 +59,50 @@ render real content with no manual step. Seeding must be honest: an empty but
 correct plane beats fake data dressed as real, so decide deliberately whether
 seeding is default or flag-gated.
 
+**DONE 2026-07-21**, stack-up commit `0d13a8f`. Both unresolved questions are
+answered, and the answers are the load-bearing part:
+
+- **The two homes.** Binaries go to `$TAIPAN_HOME/bin` (default
+  `~/.taipan/bin`), the stack's published home; `~/.stack-up` keeps only logs,
+  pids, clones, staging and stamps. This is forced, not chosen: `qryx` is
+  looked up at exactly `~/.taipan/bin/qryx` with no env override and no PATH
+  tier (`crates/ffi/src/crypto/env.rs`, a deliberate documented asymmetry), so
+  an install anywhere else is invisible. Teaching the console a second
+  discovery tier was rejected: shipped consoles cannot be patched
+  retroactively, and the closed product must not track the open installer's
+  layout. Symlinking was rejected because `cp` writes THROUGH a symlink, so a
+  later `taipan up` would silently overwrite stack-up's own build output.
+- **The `.marker-*` files** were never a mystery: `stale_paths <marker> <src
+  roots>` rebuilds when any source is newer, and the marker is truncated after
+  a successful build. `taipan` uses the identical convention and filenames in
+  the same directory (`taipan/src/services/*.rs`), which is exactly why ours
+  moved to `~/.stack-up/markers/` - sharing the directory would have each
+  installer silently validating the other's build.
+- **Two writers, so provenance not mtime**: every installed file's checksum is
+  recorded; a file that does not match is another tool's and is left alone and
+  reported (`--force-install` overrides). Installs are temp-file + rename,
+  because `engram-mcp` may be running as the console's stdio child.
+- **Seeding: no.** Stores are created with each tool's own code, only when
+  absent, and empty. The money plane's demo dataset stays on because it lives
+  in a process that forgets it on exit; these are files the console reads as
+  ground truth, where demo rows would be indistinguishable from a customer's
+  own forever. The summary prints the store paths and the first-real-row
+  command instead.
+
+Verified on a clean scratch home, plus each path separately (foreign binary
+left intact then replaced under `--force-install`; a legacy `~/.stack-up/bin`
+install moved rather than rebuilt; a venv missing an extra repaired). One real
+bug fell out: engram's MCP server is an OPTIONAL extra, so a plain
+`pip install .` produced an `engram-mcp` that exists, is executable, answers
+`--help`, and dies on ImportError the first time anything speaks MCP to it. It
+now installs `[mcp]` and verifies the import, and the check is part of the
+up-to-date test so an already-broken venv repairs itself.
+
+**Left deliberately undone:** `down.sh --purge` (an uninstall that removes only
+files whose checksum matches our manifest, and never the stores) and recording
+each tool's `--version` in the manifest so open-repo-HEAD vs console-contract
+skew is diagnosable at a glance.
+
 ---
 
 ## 2. Provisioning must install and configure WireGuard on the box [#18]
@@ -158,6 +202,20 @@ root; relocate to `/opt`, PrivateTmp, RestrictAddressFamilies); and confirm the
 phone->relay HTTP/2 hop carries the encoded path unchanged in the next live run.
 
 ## 6. Genaryx desktop: percent-encode ids in signed mutation paths [#21]
+
+**DONE 2026-07-21**, genaryx commit `4ad8b83`. All three failure modes were
+observed against a live tokenfuse-cloud by keeping the raw interpolation:
+space + non-ASCII gave `403 signature_invalid` (the desync itself), a `#` made
+`url` treat the rest of the path as a fragment so `/kill` fell off entirely
+(404), and a `/` opened an extra segment and missed the route (404). New
+`crates/connectors/src/urlpath.rs` encodes one id as one segment with the same
+set Foundation uses on the phone, so console and phone produce identical paths;
+empty/`.`/`..` fail closed (encoding does not help, the URL Standard treats
+`%2e%2e` as a dot segment too), which also closes the mobile review's accepted
+LOW. Swept the same class in `wardryx.rs`. Also closed the deferred "phone ->
+relay hop" question without a live run: `crates/relay/src/proxy.rs` now proves
+over a real HTTP round trip that the relay forwards an encoded path byte for
+byte.
 
 **The desktop twin of mobile #15.** `crates/connectors/src/cloud_rest.rs`
 (~408/422/430) signs a mutation over a canonical path built by interpolating a
