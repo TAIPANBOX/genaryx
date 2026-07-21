@@ -8,6 +8,9 @@ import SwiftUI
 @MainActor
 struct BusExplorerView: View {
     let events: [UiEvent]
+    /// Live or demo, from `FleetModel.busMode`. `nil` only when the core
+    /// could not be reached at all, in which case no claim is made either way.
+    var busMode: BusMode?
 
     @State private var expandedKey: String?
 
@@ -43,6 +46,7 @@ struct BusExplorerView: View {
                 .tracking(1.6)
                 .foregroundStyle(Theme.textTertiary)
             Spacer()
+            busModeChip
             HStack(spacing: 7) {
                 Circle()
                     .fill(Theme.mint)
@@ -56,6 +60,43 @@ struct BusExplorerView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    /// Loud when the stream is generated, quiet when it is real.
+    ///
+    /// A fabricated stream shown without a warning is the failure worth
+    /// preventing; a correct live console should not shout about being
+    /// correct, it just names the environment so an operator with several can
+    /// see which one is on screen. Mirrors the Tauri shell's own chip.
+    @ViewBuilder
+    private var busModeChip: some View {
+        switch busMode {
+        case .live(let env, let dir):
+            chip(text: env, colour: Theme.textTertiary)
+                .help("Tailing the real event files of environment \"\(env)\" at \(dir).")
+        case .demo(let dir):
+            chip(text: "demo data", colour: Theme.amber)
+                .help(
+                    "No environment found under ~/.taipan/environments, so these events are generated, not real. Fixtures in \(dir)."
+                )
+        case .none:
+            EmptyView()
+        }
+    }
+
+    private func chip(text: String, colour: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(colour).frame(width: 6, height: 6)
+            Text(text)
+                .font(Theme.mono(11, weight: .semibold))
+                .foregroundStyle(colour)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(
+            Capsule().fill(colour.opacity(0.12))
+        )
+        .overlay(Capsule().stroke(colour.opacity(0.3), lineWidth: 1))
     }
 
     private func toggle(_ key: String) {

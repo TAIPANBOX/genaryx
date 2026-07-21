@@ -2,6 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState } from "react";
+import { fetchBusMode, type BusMode } from "../lib/busStatus";
 import { fetchRecentEvents, type EventsSource } from "../lib/recentEvents";
 import type { UiEvent } from "../types";
 import { EventRow } from "./EventRow";
@@ -29,6 +30,7 @@ const COLUMNS = "84px 108px 190px 1fr 108px 24px";
 export function BusExplorer() {
   const [events, setEvents] = useState<UiEvent[]>([]);
   const [source, setSource] = useState<EventsSource>("mock");
+  const [mode, setMode] = useState<BusMode | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const parentRef = useRef<HTMLDivElement>(null);
@@ -40,6 +42,18 @@ export function BusExplorer() {
       setEvents(res.events);
       setSource(res.source);
       setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Which bus these rows came from. Decided once at startup in the core and
+  // never changed after, so this is fetched once and not polled.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchBusMode().then((m) => {
+      if (!cancelled) setMode(m);
     });
     return () => {
       cancelled = true;
@@ -101,7 +115,7 @@ export function BusExplorer() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <BusStatusBar count={events.length} source={source} />
+      <BusStatusBar count={events.length} source={source} mode={mode} />
 
       <div
         className="grid gap-3 px-4 py-2 shrink-0"

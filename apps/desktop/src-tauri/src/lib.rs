@@ -158,6 +158,19 @@ fn recent_events(limit: usize, state: tauri::State<'_, AppState>) -> Vec<UiEvent
     events::mock_events(limit)
 }
 
+/// Where the Bus Explorer's events actually come from, so the UI can say so.
+///
+/// The frontend must never have to guess this. A console tailing a real
+/// environment and a console showing generated fixtures look identical on
+/// screen, and the difference is the whole credibility of the product: a
+/// screenshot of invented traffic presented as a customer's own is the exact
+/// failure the "no fabricated data" rule exists to prevent. Cheap to call and
+/// read-only, so a panel can re-read it whenever it likes.
+#[tauri::command]
+fn bus_status(state: tauri::State<'_, AppState>) -> live::BusMode {
+    state.mode.clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -168,13 +181,15 @@ pub fn run() {
         // (and is not) wired on desktop.
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            let events_dir = match live::bootstrap(app.handle().clone()) {
-                Ok(dir) => Some(dir),
+            let (events_dir, bus_mode) = match live::bootstrap(app.handle().clone()) {
+                Ok(bus) => (Some(bus.events_dir), bus.mode),
                 Err(e) => {
                     eprintln!(
-                        "genaryx: startup store seeding failed, Bus Explorer will use mock data: {e}"
+                        "genaryx: bus startup failed, Bus Explorer will use mock data: {e}"
                     );
-                    None
+                    (None, live::BusMode::Unavailable {
+                        reason: e.to_string(),
+                    })
                 }
             };
 
@@ -315,7 +330,10 @@ pub fn run() {
                 *state.inner.lock().await = resolved;
             });
 
-            app.manage(AppState { events_dir });
+            app.manage(AppState {
+                events_dir,
+                mode: bus_mode,
+            });
 
             // Menu-bar mini (docs/PHASE1.md wave 5): reuses the `MoneyState`
             // just managed above via the same `money::commands` functions
@@ -327,6 +345,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             recent_events,
+            bus_status,
             money::commands::money_status,
             money::commands::money_overview,
             money::commands::money_runs,

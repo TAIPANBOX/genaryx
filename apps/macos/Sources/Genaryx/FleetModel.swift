@@ -23,6 +23,17 @@ final class FleetModel {
     /// crates/ffi's own "nothing panics across FFI" contract.
     private(set) var unavailableMessage: String?
 
+    /// Whether these events are real, and from which environment.
+    ///
+    /// `nil` only when the handle could not be constructed at all. The core
+    /// decides this once at construction and never changes it, so it is read
+    /// once here rather than polled. The shell must show it: a console
+    /// tailing a real environment and one showing generated fixtures look
+    /// identical on screen, and presenting invented traffic as a customer's
+    /// own is the exact failure the "no fabricated data" rule exists to
+    /// prevent. Both shells carry this (the Tauri one as `bus_status`).
+    private(set) var busMode: BusMode?
+
     private static let capacity = 500
 
     /// Kept alive for the model's lifetime: dropping it would tear down the
@@ -55,6 +66,7 @@ final class FleetModel {
             self.handle = handle
             self.listener = listener
             self.events = seeded
+            self.busMode = handle.busMode()
         } catch let error as FfiError {
             switch error {
             case .Core(let msg):
