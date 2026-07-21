@@ -183,14 +183,28 @@ identity plus a live one-time code for each device, and the watch's code carries
 kill authority for the life of the window. A QR must never appear un-redacted in
 anything published.
 
-**Update 2026-07-21:** the box `5.75.234.176` named by that ATS exception is
-long gone, and `2.28.3.61` was torn down today too, so the exception now points
-at nothing. It survives ONLY on branch `watch-relay-client-and-revocation`
-(2 occurrences in `ios/project.yml`; `main` and `mobile-encode-path-segments`
-are clean), which means merging that branch would import a dead IP AND a
-disabled ATS trust check for an address a stranger could later be assigned.
-Strip it as part of the merge; if a future live batch needs it again it comes
-back with that batch's own IP.
+**DONE 2026-07-21**, tokenfuse-mobile `bfa1986` on branch
+`watch-relay-client-and-revocation` (pushed). All three branches now hold zero
+occurrences.
+
+Why it stopped being "must not ship" and became "remove now": the box it named
+was destroyed, so the entry granted the app nothing while still switching ATS's
+own trust check off for whoever is assigned that address next.
+`NSAllowsArbitraryLoads`/`NSAllowsLocalNetworking` stay, being the deliberate
+posture (the relay host is unknown until install, and PinnedTLS accepts exactly
+one certificate).
+
+The FINDING was kept in the file where the exception used to be, because it cost
+a live session: against a self-signed relay, pinning alone does not open the
+connection - `NSAllowsArbitraryLoads` relaxes only cipher/version
+(`enforce_ats(false) ... skip_ats_trust(false)`) and CFNetwork still fails with
+-9802 after the pin matched. A future live batch should expect -9802 and add a
+temporary exception for its OWN host, never merged.
+
+Verified past the source: `xcodegen generate` clean, both schemes BUILD
+SUCCEEDED (iOS + watchOS simulators), and the ATS block in each BUILT bundle's
+`Info.plist` holds only the two Allows keys, with no trace of the address in
+either `.app`.
 
 ## 5. Cert broker Step 4: real Let's Encrypt + Cloudflare [#14]
 
