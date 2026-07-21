@@ -138,3 +138,35 @@ itself, the phone scanning it, and both devices arriving paired.
 identity plus a live one-time code for each device, and the watch's code carries
 kill authority for the life of the window. A QR must never appear un-redacted in
 anything published.
+
+## 5. Cert broker Step 4: real Let's Encrypt + Cloudflare [#14]
+
+**Blocked on Yurii.** Steps 1-3 + the broker are DONE and scripted in
+`genaryx/cert-broker/` (design A, README there). The relay's ACME client is
+embedded (`crates/relay/src/acme.rs`); the broker has a pluggable DNS backend
+(challtestsrv test + cloudflare prod), proven end to end on box `2.28.3.61`.
+
+**Done looks like:** delegate `pocket.it-rat.com` to Cloudflare; mint a SCOPED
+token (`Zone.DNS:Edit` on that zone ONLY) + its zone id; set
+`BROKER_BACKEND=cloudflare` + the token in `/root/broker/broker.env`; on the
+relay set `acme_directory_url`=Let's Encrypt + `acme_hostname` + `broker_*`. No
+code change. Then the mobile `project.yml` ATS exception (`5.75.234.176`) goes
+away (item 3), because the relay now serves a real trusted cert.
+
+**Deferred (Fable review):** run the broker as a dedicated non-root user (not
+root; relocate to `/opt`, PrivateTmp, RestrictAddressFamilies); and confirm the
+phone->relay HTTP/2 hop carries the encoded path unchanged in the next live run.
+
+## 6. Genaryx desktop: percent-encode ids in signed mutation paths [#21]
+
+**The desktop twin of mobile #15.** `crates/connectors/src/cloud_rest.rs`
+(~408/422/430) signs a mutation over a canonical path built by interpolating a
+run/agent id RAW, then reqwest percent-encodes it AFTER signing -> signature
+desync for any id with a reserved char (space, `#`, `?`, non-ASCII); the Cloud
+verifies over `uri.path()`, the raw encoded path. Ids are customer-controlled,
+so this is realistic. Fable-confirmed with url 2.5.8.
+
+**Done looks like:** encode each dynamic segment as a single path segment
+(`utf8_percent_encode`, encoding `/`), build ONE path, sign THAT, send exactly
+those bytes; mirror the mobile fix (`asPathSegment`/`Account.mutationURL` in
+tokenfuse-mobile, commits `eac44ed` + `ed9c9de`). Add a test.
