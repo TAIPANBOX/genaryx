@@ -370,6 +370,8 @@ mod tests {
             kind: "kill".into(),
             class: ExceptionClass::OverCap,
             severity: None,
+            source: None,
+            summary: None,
             headline: "Agent run r-1 was killed".into(),
             spent_microusd: 0,
             budget_micros: None,

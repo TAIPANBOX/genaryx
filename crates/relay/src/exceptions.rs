@@ -19,7 +19,9 @@
 //! worst-case staleness after any gap -- reconnect or not -- rather than
 //! trying to hook a reconnect signal `CloudSse` does not expose.
 
-use genaryx_connectors::{AgentAgg, Alert, CloudClient, ConnectorError, Incident, RunAgg, Severity};
+use genaryx_connectors::{
+    AgentAgg, Alert, CloudClient, ConnectorError, Incident, RunAgg, Severity,
+};
 use genaryx_core::{EventSource, RawRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -99,6 +101,17 @@ pub struct ExceptionItem {
     pub kind: String,
     pub class: ExceptionClass,
     pub severity: Option<String>,
+    /// Who detected this, when the money plane did not (`Incident::source`).
+    /// Absent for everything TokenFuse measured itself, which is most of the
+    /// queue: the phone shows it precisely because an operator about to kill a
+    /// run should know whether the plane measured this or was told it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The reporting detector's own sentence, when it has one. Our thresholds
+    /// need none; a shadow-tool or exfiltration finding is unreadable without
+    /// it, since its kind alone says nothing an operator can act on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     pub headline: String,
     pub spent_microusd: i64,
     pub budget_micros: Option<i64>,
@@ -868,6 +881,8 @@ impl ExceptionEngine {
                 kind: "budget".to_string(),
                 class,
                 severity: None,
+                source: None,
+                summary: None,
                 headline: format!("Run {} at {:.0}% of budget", run.run_id, fraction * 100.0),
                 spent_microusd: run.spent_microusd,
                 budget_micros: Some(budget),
@@ -920,6 +935,8 @@ impl ExceptionEngine {
                         kind: "kill".to_string(),
                         class: ExceptionClass::OverCap,
                         severity: None,
+                        source: None,
+                        summary: None,
                         headline: format!("Agent run {run} was killed"),
                         spent_microusd: 0,
                         budget_micros: None,
@@ -961,10 +978,10 @@ impl ExceptionEngine {
         }
         let class = classify_incident(&inc.kind, inc.severity);
         // The subject is the run when there is one, otherwise the AGENT. Never the
-    // incident id: for a runaway that id is literally
-    // `fanout_explosion:agent://meridian.example/kyc-aml/sanctions-screener`,
-    // which produced the headline "Agent/run fanout_explosion:agent://... running
-    // hot - fanout_explosion", naming the kind twice around a raw URI.
+        // incident id: for a runaway that id is literally
+        // `fanout_explosion:agent://meridian.example/kyc-aml/sanctions-screener`,
+        // which produced the headline "Agent/run fanout_explosion:agent://... running
+        // hot - fanout_explosion", naming the kind twice around a raw URI.
         st.items.insert(key.clone(), incident_item(&key, &inc));
 
         let now_ms = now * 1000;
@@ -1056,6 +1073,8 @@ fn alert_item(key: &str, a: &Alert, first_seen_unix: i64, now: i64) -> Exception
         kind: "budget".to_string(),
         class,
         severity: None,
+        source: None,
+        summary: None,
         // Deliberately does NOT name the run: every row already renders
         // `run_id` on its own line, and repeating it here cost three wrapped
         // lines on the phone and left nothing but "reconcil..." on the wrist.
@@ -1169,6 +1188,11 @@ fn merge_incident(item: &mut ExceptionItem, inc: &Incident) {
     item.agent_id = inc.agent_id.clone();
     item.kind = inc.kind.clone();
     item.severity = Some(severity_str(inc.severity).to_string());
+    // A merged row takes the incident's provenance too. Without this, an
+    // over-cap run that an external detector ALSO flagged would reach the
+    // phone looking like something this plane measured end to end.
+    item.source = inc.source.clone();
+    item.summary = inc.summary.clone();
     item.last_seen_unix = item.last_seen_unix.max(inc.last_seen_millis / 1000);
     item.first_seen_unix = item.first_seen_unix.min(inc.first_seen_millis / 1000);
     let incident_class = classify_incident(&inc.kind, inc.severity);
@@ -1236,6 +1260,8 @@ fn incident_item(key: &str, inc: &Incident) -> ExceptionItem {
         kind: inc.kind.clone(),
         class,
         severity: Some(severity_str(inc.severity).to_string()),
+        source: inc.source.clone(),
+        summary: inc.summary.clone(),
         headline: format!("{} on {subject}", humanise_kind(&inc.kind)),
         spent_microusd: 0,
         budget_micros: None,
@@ -1542,6 +1568,8 @@ mod tests {
             agent_id: agent.map(str::to_string),
             kind: kind.into(),
             severity: Severity::High,
+            source: None,
+            summary: None,
             first_seen_millis: 1_000_000,
             last_seen_millis: 2_000_000,
             occurrences: 7,
@@ -1572,12 +1600,19 @@ mod tests {
                 }
             }
         }
-        (items.into_values().collect(), digest.into_values().collect())
+        (
+            items.into_values().collect(),
+            digest.into_values().collect(),
+        )
     }
 
     #[test]
     fn an_incident_about_an_alerted_run_merges_instead_of_adding_a_second_row() {
-        let alerts = vec![alert("reconciliation-batch-eod-002-LIVE", 6_910_000, 5_570_000)];
+        let alerts = vec![alert(
+            "reconciliation-batch-eod-002-LIVE",
+            6_910_000,
+            5_570_000,
+        )];
         let incidents = vec![incident(
             "inc-1",
             "budget_exhausted",
@@ -1597,6 +1632,69 @@ mod tests {
         assert_eq!(item.incident_id.as_deref(), Some("inc-1"));
         assert_eq!(item.kind, "budget_exhausted");
         assert_eq!(item.severity.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn a_borrowed_detection_reaches_the_phone_saying_who_made_it() {
+        // The operator about to kill a run is entitled to know whether this
+        // plane measured the thing or was told it. That answer only survives
+        // if BOTH paths carry it: a finding that earns its own row, and a
+        // finding about a run that already has one and therefore merges.
+        let mut standalone = incident(
+            "inc-idryx-1",
+            "agent_shadow_tool",
+            None,
+            Some("agent://meridian.example/support/support-tier2-bot"),
+        );
+        standalone.source = Some("idryx".into());
+        standalone.summary =
+            Some("agent uses tool(s) from an unsanctioned MCP server: notes_export".into());
+
+        let mut merged = incident(
+            "inc-idryx-2",
+            "runaway_agent",
+            Some("reconciliation-batch-eod-002-LIVE"),
+            Some("agent://meridian.example/treasury/reconciliation-batch"),
+        );
+        merged.source = Some("idryx".into());
+        merged.summary = Some("agent spend incident: budget_exhausted=40".into());
+
+        let alerts = vec![alert(
+            "reconciliation-batch-eod-002-LIVE",
+            6_910_000,
+            5_570_000,
+        )];
+        let (queue, _) = shape(&alerts, &[standalone, merged]);
+
+        for item in &queue {
+            assert_eq!(
+                item.source.as_deref(),
+                Some("idryx"),
+                "provenance must survive both the standalone and the merged path"
+            );
+            assert!(
+                item.summary.as_deref().is_some_and(|s| !s.is_empty()),
+                "for a borrowed finding the detector's sentence is usually the \
+                 only readable explanation there is"
+            );
+        }
+        assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn an_incident_this_plane_measured_itself_names_no_source() {
+        // If `source` were set on our own detections it would stop meaning
+        // anything, and the one row that was borrowed would read like the rest.
+        let incidents = vec![incident(
+            "inc-1",
+            "fanout_explosion",
+            None,
+            Some("agent://meridian.example/support/support-tier2-bot"),
+        )];
+        let (queue, _) = shape(&[], &incidents);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].source, None);
+        assert_eq!(queue[0].summary, None);
     }
 
     #[test]
@@ -1728,11 +1826,18 @@ mod tests {
         let mut samples = VecDeque::new();
         push_burn_sample(&mut samples, 100, 4_700_000_000);
         push_burn_sample(&mut samples, 160, 4_760_000_000);
-        assert!(burn_rate_per_min(&samples) > 0, "rising spend, positive rate");
+        assert!(
+            burn_rate_per_min(&samples) > 0,
+            "rising spend, positive rate"
+        );
 
         push_burn_sample(&mut samples, 220, 4_255_000_000); // the Cloud restarted
         assert_eq!(samples.len(), 1, "the previous epoch is discarded whole");
-        assert_eq!(burn_rate_per_min(&samples), 0, "not negative, just unknown yet");
+        assert_eq!(
+            burn_rate_per_min(&samples),
+            0,
+            "not negative, just unknown yet"
+        );
 
         push_burn_sample(&mut samples, 280, 4_300_000_000);
         assert!(
@@ -1945,13 +2050,31 @@ mod tests {
         assert!(class_rank(ExceptionClass::Runaway) < class_rank(ExceptionClass::NearCap));
         assert!(class_rank(ExceptionClass::NearCap) < class_rank(ExceptionClass::AtRisk));
 
-        fn item(run: &str, class: ExceptionClass, fraction: Option<f64>, killed: bool) -> ExceptionItem {
+        fn item(
+            run: &str,
+            class: ExceptionClass,
+            fraction: Option<f64>,
+            killed: bool,
+        ) -> ExceptionItem {
             ExceptionItem {
-                key: format!("run:{run}"), run_id: Some(run.into()), incident_id: None,
+                key: format!("run:{run}"),
+                run_id: Some(run.into()),
+                incident_id: None,
                 agent_id: None,
-                kind: "budget".into(), class, severity: None, headline: String::new(),
-                spent_microusd: 0, budget_micros: None, fraction,
-                first_seen_unix: 0, last_seen_unix: 0, acknowledged: false, killed, copilot: None,
+                kind: "budget".into(),
+                class,
+                severity: None,
+                source: None,
+                summary: None,
+                headline: String::new(),
+                spent_microusd: 0,
+                budget_micros: None,
+                fraction,
+                first_seen_unix: 0,
+                last_seen_unix: 0,
+                acknowledged: false,
+                killed,
+                copilot: None,
             }
         }
         let mut q = [
@@ -2028,6 +2151,8 @@ mod tests {
             kind: "sustained_loop".to_string(),
             class,
             severity: severity.map(str::to_string),
+            source: None,
+            summary: None,
             headline: String::new(),
             spent_microusd: 0,
             budget_micros: None,
@@ -2167,7 +2292,10 @@ mod tests {
         assert!(eng.snapshot().queue.is_empty());
 
         let st = eng.state.lock().unwrap();
-        assert_eq!(st.run_agents.get("r9").map(String::as_str), Some("agent-late"));
+        assert_eq!(
+            st.run_agents.get("r9").map(String::as_str),
+            Some("agent-late")
+        );
     }
 
     #[test]
@@ -2175,13 +2303,18 @@ mod tests {
         // An alert states no agent at all, so on its own it would reach the
         // phone anonymous and join nothing in the agents list.
         let mut items = HashMap::new();
-        let mut anonymous = exception_item_for_agent("run:r1", "", ExceptionClass::OverCap, Some("high"));
+        let mut anonymous =
+            exception_item_for_agent("run:r1", "", ExceptionClass::OverCap, Some("high"));
         anonymous.run_id = Some("r1".to_string());
         anonymous.agent_id = None;
         items.insert("run:r1".to_string(), anonymous);
 
-        let mut already_known =
-            exception_item_for_agent("run:r2", "agent-own", ExceptionClass::Runaway, Some("critical"));
+        let mut already_known = exception_item_for_agent(
+            "run:r2",
+            "agent-own",
+            ExceptionClass::Runaway,
+            Some("critical"),
+        );
         already_known.run_id = Some("r2".to_string());
         items.insert("run:r2".to_string(), already_known);
 
@@ -2208,7 +2341,10 @@ mod tests {
             !run_agents.contains_key("r-gone"),
             "a run neither queued nor budgeted is forgotten rather than kept forever"
         );
-        assert!(run_agents.contains_key("r1"), "a queued run is still worth remembering");
+        assert!(
+            run_agents.contains_key("r1"),
+            "a queued run is still worth remembering"
+        );
     }
 
     #[test]

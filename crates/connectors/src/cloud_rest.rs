@@ -603,6 +603,17 @@ pub struct Incident {
     pub occurrences: u64,
     pub acknowledged: bool,
     pub last_notified_millis: i64,
+    /// Who detected this, when the money plane did not. `None` means TokenFuse
+    /// tripped one of its own thresholds; `Some("idryx")` means another
+    /// service asserted the finding and the plane is carrying it
+    /// (`POST /v1/findings`). Defaulted because a plane older than that route
+    /// omits the key entirely.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// The detector's own sentence, when it has one. Our four thresholds need
+    /// none; an external finding usually carries the only readable explanation.
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 /// `GET /v1/audit/verify` body. Exact shape of `http.rs::AuditVerifyResponse`.
