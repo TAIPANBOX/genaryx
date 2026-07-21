@@ -183,12 +183,26 @@ identity plus a live one-time code for each device, and the watch's code carries
 kill authority for the life of the window. A QR must never appear un-redacted in
 anything published.
 
+**Update 2026-07-21:** the box `5.75.234.176` named by that ATS exception is
+long gone, and `2.28.3.61` was torn down today too, so the exception now points
+at nothing. It survives ONLY on branch `watch-relay-client-and-revocation`
+(2 occurrences in `ios/project.yml`; `main` and `mobile-encode-path-segments`
+are clean), which means merging that branch would import a dead IP AND a
+disabled ATS trust check for an address a stranger could later be assigned.
+Strip it as part of the merge; if a future live batch needs it again it comes
+back with that batch's own IP.
+
 ## 5. Cert broker Step 4: real Let's Encrypt + Cloudflare [#14]
 
 **Blocked on Yurii.** Steps 1-3 + the broker are DONE and scripted in
 `genaryx/cert-broker/` (design A, README there). The relay's ACME client is
 embedded (`crates/relay/src/acme.rs`); the broker has a pluggable DNS backend
-(challtestsrv test + cloudflare prod), proven end to end on box `2.28.3.61`.
+(challtestsrv test + cloudflare prod), proven end to end on box `2.28.3.61`
+(**that box was torn down 2026-07-21** and nothing of value was on it: the
+broker code, systemd units and provision scripts are all in this repo, and the
+rest was a self-signed Pebble CA plus a cert issued by it, worthless anywhere
+else. Step 4 needs A box, not THAT box: `provision-broker.sh` stands it up on a
+fresh one).
 
 **Done looks like:** delegate `pocket.it-rat.com` to Cloudflare; mint a SCOPED
 token (`Zone.DNS:Edit` on that zone ONLY) + its zone id; set
