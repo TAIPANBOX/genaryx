@@ -182,6 +182,21 @@ impl DrillsHandle {
 
 // ---- private helpers (not exported over FFI) -------------------------------
 
+/// Point a drill client at the environment's bus, when there is one.
+///
+/// A drill that leaves no trace is barely a drill: mockryx mints a fresh
+/// `run_id` per run and forgets it, and `--save` overwrites, so without this
+/// the Drills panel can only ever show the single most recent run and the
+/// Bus Explorer shows the rehearsal not happening at all. With no
+/// environment resolved (demo mode) nothing is set, and mockryx keeps its own
+/// default of emitting nothing.
+fn with_bus(client: MockryxClient) -> MockryxClient {
+    match genaryx_core::bus::discover().and_then(|bus| bus.writer_path("mockryx")) {
+        Some(path) => client.with_events_path(path),
+        None => client,
+    }
+}
+
 impl DrillsHandle {
     fn build(resolved: ResolvedBin) -> Self {
         Self {
@@ -191,7 +206,7 @@ impl DrillsHandle {
             default_gateway: env::default_gateway(),
             default_api_key: env::default_api_key(),
             default_save_path: env::default_save_path(),
-            client: MockryxClient::new(resolved.bin),
+            client: with_bus(MockryxClient::new(resolved.bin)),
         }
     }
 }

@@ -44,6 +44,42 @@ pub struct ResolvedBus {
     pub events_dir: PathBuf,
 }
 
+impl ResolvedBus {
+    /// Where one source's NDJSON lives inside this bus: `<dir>/<source>.ndjson`.
+    ///
+    /// One file per emitting product is the convention every writer already
+    /// follows (`demo::generate` writes exactly this shape, and the tailer
+    /// keys its offset journal off the file stem). Callers use it to point a
+    /// tool the console spawns at the right file, so its run lands on the
+    /// same bus the console reads rather than vanishing when the process
+    /// exits.
+    #[must_use]
+    pub fn source_path(&self, source: &str) -> PathBuf {
+        self.events_dir.join(format!("{source}.ndjson"))
+    }
+
+    /// Where a tool the console SPAWNS should append its events, or `None`
+    /// when the bus directory does not exist yet.
+    ///
+    /// Readers and writers fail differently, and conflating them costs a
+    /// working feature. The console's own tailer treats an absent directory
+    /// as an honestly empty bus and keeps watching. A spawned tool cannot:
+    /// mockryx opens its events file eagerly and exits 2 with
+    /// `open …/mockryx.ndjson: no such file or directory` if the parent
+    /// directory is missing, so handing it a not-yet-created bus turns a
+    /// drill that would have run into one that never starts.
+    ///
+    /// Creating the directory here was rejected. It belongs to whatever
+    /// brought the environment up, and a console that quietly materialises
+    /// parts of an environment it does not own makes "is this environment
+    /// actually running" unanswerable, which is the same class of dishonesty
+    /// as showing fabricated events.
+    #[must_use]
+    pub fn writer_path(&self, source: &str) -> Option<PathBuf> {
+        self.events_dir.is_dir().then(|| self.source_path(source))
+    }
+}
+
 /// Resolve the bus from the newest usable `taipan up` descriptor, or `None`
 /// when there is no environment on this machine.
 ///
@@ -251,6 +287,33 @@ mod tests {
 
         let resolved = discover_in(&dir).expect("one of them should resolve");
         assert_eq!(resolved.env_name, "new");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writer_path_refuses_a_directory_that_does_not_exist() {
+        // Regression: pointing a spawned mockryx at a not-yet-created bus
+        // made it exit 2 ("open …/mockryx.ndjson: no such file or
+        // directory") instead of running the drill at all.
+        let bus = ResolvedBus {
+            env_name: "e".into(),
+            events_dir: PathBuf::from("/definitely/not/here"),
+        };
+        assert_eq!(bus.writer_path("mockryx"), None);
+    }
+
+    #[test]
+    fn writer_path_yields_the_file_once_the_directory_is_there() {
+        let dir = scratch("writer");
+        let bus = ResolvedBus {
+            env_name: "e".into(),
+            events_dir: dir.clone(),
+        };
+        assert_eq!(
+            bus.writer_path("mockryx"),
+            Some(dir.join("mockryx.ndjson")),
+            "the file itself need not exist yet, only its directory"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
