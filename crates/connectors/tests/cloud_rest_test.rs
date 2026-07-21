@@ -257,6 +257,65 @@ async fn pair_read_signed_mutations_and_tamper_reject_against_live_cloud() {
     assert_eq!(budget.run, run_id);
     assert_eq!(budget.budget_micros, 12_500_000);
 
+    // ---- task #21: an id carrying reserved characters survives the round
+    // trip. This is the regression proof for the desktop twin of mobile #15:
+    // the client percent-encodes the id into ONE path segment, signs THAT
+    // path, and sends exactly those bytes, while the Cloud verifies the
+    // signature over `uri.path()` (the raw encoded path, `http.rs::kill`'s
+    // `authorize_mutation("POST", uri.path(), ...)`) and only then decodes the
+    // segment back via axum's `Path(run)`. Signing the raw id and letting
+    // `url` encode it afterwards - the old shape - desyncs the two and this
+    // call comes back 403 signature_invalid, i.e. a kill that does not kill.
+    //
+    // The echoed `killed` is the DECODED id, so asserting it equals the
+    // original proves both halves at once: the signature verified over the
+    // encoded path, and the server recovered the id byte for byte.
+    //
+    // Three ids on purpose: the old code broke differently for each, and only
+    // the first is the signature desync this task is named after. Each failure
+    // below was OBSERVED against this live Cloud by reintroducing the raw
+    // interpolation, not reasoned about:
+    //   - space + non-ASCII: the path still matched the route, so the request
+    //     reached signature verification and was rejected 403
+    //     signature_invalid. For `kill` that is a kill that does not kill.
+    //   - a `#`: `url` reads it as the start of the fragment, so everything
+    //     after it - including the `/kill` verb itself - falls off the path.
+    //     404.
+    //   - a `/`: the raw id opens an extra path segment, so the request misses
+    //     the route entirely. 404, a mutation that quietly hit nothing.
+    for nasty_run in [
+        format!("connectors-test-{} зупинка 7", std::process::id()),
+        format!("connectors-test-{}-зупинка #7 a b", std::process::id()),
+        format!("connectors-test-{}/зупинка #7 a b", std::process::id()),
+    ] {
+        let killed = client
+            .kill_run(&nasty_run)
+            .await
+            .unwrap_or_else(|e| panic!("a run id with reserved characters must verify: {e:?}"));
+        assert_eq!(
+            killed.killed, nasty_run,
+            "the Cloud must recover exactly the id that was sent"
+        );
+
+        let budget = client
+            .set_budget(&nasty_run, 3.25)
+            .await
+            .unwrap_or_else(|e| panic!("the same id must verify with a JSON body too: {e:?}"));
+        assert_eq!(budget.run, nasty_run);
+        assert_eq!(budget.budget_micros, 3_250_000);
+    }
+
+    // An id that cannot be a single path segment at all fails closed in the
+    // client, before any I/O - never a request against a different resource.
+    let err = client.kill_run("..").await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            genaryx_connectors::ConnectorError::InvalidPathSegment(_)
+        ),
+        "a `..` run id must fail closed, got: {err:?}"
+    );
+
     // ---- tamper: a genuine signature with one corrupted byte must be
     // rejected 403 signature_invalid. Sent with raw reqwest (bypassing
     // CloudClient on purpose): CloudClient's own public API has no way to

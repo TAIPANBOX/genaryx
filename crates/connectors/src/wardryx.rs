@@ -74,6 +74,7 @@
 //! # }
 //! ```
 
+use crate::urlpath::{PathSegmentError, path_segment};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::de::DeserializeOwned;
@@ -99,6 +100,17 @@ pub enum WardryxError {
     /// server sent something unexpected.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// An approval or policy id cannot be one URL path segment (empty, or
+    /// `.`/`..` - see [`crate::PathSegmentError`]). Returned before any
+    /// request is built or sent. Unlike [`crate::CloudClient`]'s mutations
+    /// nothing here is path-signed, so this is not a signature problem: it is
+    /// the routing one underneath it. An id containing a `/` addressed a
+    /// different route entirely (`/v1/policies/a/b` is not
+    /// `/v1/policies/{"a/b"}`), which reads as "no such policy" rather than
+    /// as the bug it is.
+    #[error("invalid id for a URL path segment: {0}")]
+    InvalidPathSegment(#[from] PathSegmentError),
 
     /// Any non-2xx response not classified as one of the more specific
     /// variants below: the status and raw body text (UTF-8 lossy). This is
@@ -354,9 +366,10 @@ impl WardryxClient {
             decision: verdict.as_wire(),
             decided_by: decided_by.to_string(),
         };
+        let approval = path_segment(id)?;
         self.send_json(
             reqwest::Method::POST,
-            &format!("/v1/approvals/{id}/decide"),
+            &format!("/v1/approvals/{approval}/decide"),
             &body,
         )
         .await
@@ -378,7 +391,8 @@ impl WardryxClient {
     /// why this is deliberately NOT that variant) means no policy is
     /// stored under `id`.
     pub async fn get_policy(&self, id: &str) -> Result<PolicyRecord, WardryxError> {
-        self.get_json(&format!("/v1/policies/{id}")).await
+        let policy = path_segment(id)?;
+        self.get_json(&format!("/v1/policies/{policy}")).await
     }
 
     /// `PUT /v1/policies/{id}` (admin) - create or replace the policy
@@ -402,6 +416,7 @@ impl WardryxClient {
         id: &str,
         policy: &Policy,
     ) -> Result<PolicyRecord, WardryxError> {
+        let id = path_segment(id)?;
         self.send_json(reqwest::Method::PUT, &format!("/v1/policies/{id}"), policy)
             .await
     }
@@ -413,6 +428,7 @@ impl WardryxClient {
     /// even `null`). A 404 ([`WardryxError::Api`], body `"policy not
     /// found"`) means no policy was stored under `id`.
     pub async fn delete_policy(&self, id: &str) -> Result<(), WardryxError> {
+        let id = path_segment(id)?;
         let resp = self
             .http
             .delete(format!("{}/v1/policies/{id}", self.base_url))

@@ -44,6 +44,14 @@
 //! With no device attached they return [`ConnectorError::NoDeviceSigner`]
 //! *before* building or sending any request - never a silent unsigned POST.
 //!
+//! All three also encode their dynamic id as one path segment
+//! (`crate::urlpath::path_segment`) before the path is built, because the
+//! signature covers the path and the Cloud verifies it over the raw encoded
+//! path it received: signing an unencoded id and sending an encoded one
+//! desyncs the two and gets the mutation rejected. An id that cannot be a
+//! single segment at all (empty, `.`, `..`) fails closed with
+//! [`ConnectorError::InvalidPathSegment`], again before any I/O.
+//!
 //! ## Typical flow
 //!
 //! ```no_run
@@ -67,6 +75,7 @@
 //! # }
 //! ```
 
+use crate::urlpath::{PathSegmentError, path_segment};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use genaryx_signing::{Es256Signer, SigningError, sign_mutation};
@@ -116,6 +125,14 @@ pub enum ConnectorError {
     /// built or sent - fail-closed, never an unsigned POST.
     #[error("mutation requires a paired device signer; call attach_device (or pair) first")]
     NoDeviceSigner,
+
+    /// A mutation's dynamic id cannot be one URL path segment (empty, or
+    /// `.`/`..` - see [`crate::PathSegmentError`]). Returned before anything
+    /// is signed or sent, for the same fail-closed reason as
+    /// [`ConnectorError::NoDeviceSigner`]: an id that cannot address a
+    /// resource must not silently address a different one.
+    #[error("invalid id for a URL path segment: {0}")]
+    InvalidPathSegment(#[from] PathSegmentError),
 
     /// Signing the mutation itself failed (entropy, clock, or key export -
     /// see `genaryx_signing::SigningError`). Distinct from a rejection BY the
@@ -378,6 +395,14 @@ impl CloudClient {
     /// re-serializing between signing and sending would desync the two and
     /// make every signature invalid.
     ///
+    /// The same rule applies to `path`, and is why callers pass one that is
+    /// ALREADY percent-encoded (`crate::urlpath::path_segment`): the Cloud
+    /// verifies over `uri.path()`, the raw encoded path, so the bytes signed
+    /// here must be the bytes sent. `url` (which `reqwest` parses the URL
+    /// with) leaves an encoded path untouched, so `format!` below carries it
+    /// through verbatim - asserted, not assumed, by
+    /// `urlpath::tests::path_segment_survives_url_parsing`.
+    ///
     /// Fails closed with [`ConnectorError::NoDeviceSigner`] before building
     /// or sending anything when no device is attached.
     async fn signed_post<T: DeserializeOwned>(
@@ -404,8 +429,15 @@ impl CloudClient {
 
     /// `POST /v1/runs/{run_id}/kill` (admin, ES256 device-signed, empty body)
     /// - `http.rs::kill`. Gateways poll `/v1/kills` and hard-stop the run.
+    ///
+    /// `run_id` is percent-encoded as one path segment before the path is
+    /// built, so the signature covers exactly the bytes the request carries
+    /// (see [`crate::urlpath`]); a run id that cannot be a segment at all
+    /// fails closed with [`ConnectorError::InvalidPathSegment`] rather than
+    /// killing something else.
     pub async fn kill_run(&self, run_id: &str) -> Result<KillResponse, ConnectorError> {
-        self.signed_post(format!("/v1/runs/{run_id}/kill"), Vec::new())
+        let run = path_segment(run_id)?;
+        self.signed_post(format!("/v1/runs/{run}/kill"), Vec::new())
             .await
     }
 
@@ -418,8 +450,9 @@ impl CloudClient {
         run_id: &str,
         budget_usd: f64,
     ) -> Result<BudgetResponse, ConnectorError> {
+        let run = path_segment(run_id)?;
         let body = serde_json::to_vec(&BudgetBody { budget_usd })?;
-        self.signed_post(format!("/v1/runs/{run_id}/budget"), body)
+        self.signed_post(format!("/v1/runs/{run}/budget"), body)
             .await
     }
 
@@ -427,7 +460,8 @@ impl CloudClient {
     /// empty body) - `http.rs::ack_incident`. `404` (surfaced as
     /// [`ConnectorError::Api`] with `status: 404`) for an unknown incident id.
     pub async fn ack_incident(&self, incident_id: &str) -> Result<AckResponse, ConnectorError> {
-        self.signed_post(format!("/v1/incidents/{incident_id}/ack"), Vec::new())
+        let incident = path_segment(incident_id)?;
+        self.signed_post(format!("/v1/incidents/{incident}/ack"), Vec::new())
             .await
     }
 }

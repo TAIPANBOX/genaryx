@@ -84,6 +84,7 @@ mod relay_admin;
 mod sse_decoder;
 mod ssh;
 mod tokenfuse;
+mod urlpath;
 mod verdryx;
 mod wardryx;
 mod wg;
@@ -122,6 +123,7 @@ pub use relay_admin::{
 pub use sse_decoder::{SseDecoder, SseEvent};
 pub use ssh::{SshClient, SshError, SshTarget};
 pub use tokenfuse::{TokenfuseClient, TokenfuseError};
+pub use urlpath::PathSegmentError;
 pub use verdryx::{
     Baseline as VerdryxBaseline, EvalRun as VerdryxEvalRun, RunSummary as VerdryxRunSummary,
     Score as VerdryxScore, VerdryxClient, VerdryxError,

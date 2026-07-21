@@ -265,6 +265,13 @@ impl From<ConnWardryxError> for WardryxError {
                 status: None,
                 message: format!("unexpected response shape from Wardryx: {err}"),
             },
+            // Refused client-side, before the request was built: an id that
+            // cannot be one URL path segment would otherwise address a
+            // different route and read as a plain "not found".
+            ConnWardryxError::InvalidPathSegment(err) => WardryxError::Api {
+                status: None,
+                message: format!("this id cannot be used in a request path: {err}"),
+            },
         }
     }
 }
@@ -285,6 +292,7 @@ pub(super) fn status_of(e: &ConnWardryxError) -> u16 {
         ConnWardryxError::NoApprovalSecret => 500,
         ConnWardryxError::Transport(_)
         | ConnWardryxError::Json(_)
+        | ConnWardryxError::InvalidPathSegment(_)
         | ConnWardryxError::BadToken(_) => 0,
     }
 }

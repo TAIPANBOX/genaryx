@@ -392,6 +392,49 @@ mod tests {
         );
     }
 
+    /// The hop the phone's signature depends on and that no review could
+    /// observe until now: a percent-encoded id must reach the Cloud with the
+    /// SAME bytes it left the phone with.
+    ///
+    /// The phone signs the encoded path (`String.asPathSegment`, mobile #15)
+    /// and the Cloud verifies over `uri.path()`, the raw encoded path
+    /// (`http.rs::kill`). The relay sits between them, so if it decoded,
+    /// re-encoded, or normalized that path by even one byte, every mutation
+    /// on an id with a reserved character would come back
+    /// `403 signature_invalid` - and the affected mutation is `kill`.
+    /// `Uri::path()` hands back the raw path and `url` never re-encodes an
+    /// existing `%`, so the forward is verbatim; this asserts it against a
+    /// real HTTP round trip instead of leaving it to the next live run.
+    #[tokio::test]
+    async fn mutation_passthrough_forwards_a_percent_encoded_id_byte_for_byte() {
+        let (cloud_base_url, captured) = spawn_fake_cloud().await;
+        let state = state_with_paired_device(cloud_base_url);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer tok-1".parse().unwrap());
+        headers.insert("x-fuse-device", "dev-1".parse().unwrap());
+
+        // `зупинка #7 a/b`, encoded exactly as the phone and the desktop
+        // console both encode one path segment.
+        let signed_path = "/v1/runs/%D0%B7%D1%83%D0%BF%D0%B8%D0%BD%D0%BA%D0%B0%20%237%20a%2Fb/kill";
+        let uri: Uri = signed_path.parse().unwrap();
+
+        let response = mutation_passthrough(State(state), headers, uri, Bytes::new())
+            .await
+            .expect("forwards successfully");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let cap = captured
+            .lock()
+            .unwrap()
+            .take()
+            .expect("the fake Cloud received exactly one request");
+        assert_eq!(
+            cap.path, signed_path,
+            "the encoded path must arrive unchanged, or the phone's signature no longer verifies"
+        );
+    }
+
     #[tokio::test]
     async fn mutation_passthrough_rejects_wrong_bearer_before_ever_reaching_the_cloud() {
         let (cloud_base_url, captured) = spawn_fake_cloud().await;
