@@ -19,7 +19,7 @@
 //! worst-case staleness after any gap -- reconnect or not -- rather than
 //! trying to hook a reconnect signal `CloudSse` does not expose.
 
-use genaryx_connectors::{Alert, CloudClient, ConnectorError, Incident, RunAgg, Severity};
+use genaryx_connectors::{AgentAgg, Alert, CloudClient, ConnectorError, Incident, RunAgg, Severity};
 use genaryx_core::{EventSource, RawRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -31,6 +31,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// far smaller than the 9k-run list the phone never pulls; this is a
 /// defensive ceiling, not a normal-case limit.
 const MAX_QUEUE_LEN: usize = 500;
+
+/// Bound on the agent rollup `GET /relay/v1/money` returns, for the same
+/// "bounded, pre-computed" reason `MAX_QUEUE_LEN` bounds the exception queue:
+/// a real org's `/v1/agents` can run well past what a phone screen has any
+/// use for, and the point of this whole surface is that the phone never has
+/// to browse that list itself. `agents_truncated`/`others_spent_microusd`
+/// account for whatever this cuts, so a cut fleet is never silent about it.
+const MAX_AGENTS_ON_THE_WIRE: usize = 200;
 
 /// How much burn-rate history to keep (10 minutes is enough for a
 /// per-minute rate without growing unboundedly on a long-lived relay).
@@ -78,6 +86,14 @@ pub struct ExceptionItem {
     pub key: String,
     pub run_id: Option<String>,
     pub incident_id: Option<String>,
+    /// Which agent this item belongs to, when something told us: an
+    /// incident's own `agent_id`, or a `run_update` event's `RunAgg::agent_id`.
+    /// `None` when nothing has -- `/v1/alerts` carries no agent info at all,
+    /// so an alert-only item (no incident ever merged into it) genuinely has
+    /// no signal to report, rather than a guessed one. Added so `GET
+    /// /relay/v1/money` can join open exceptions back onto the agent rollup
+    /// without a second, `/v1/runs`-shaped fetch just to learn this.
+    pub agent_id: Option<String>,
     /// `"budget"` | `"kill"` | the incident kind (`budget_exhausted` |
     /// `sustained_loop` | `spend_spike` | `fanout_explosion`).
     pub kind: String,
@@ -160,6 +176,79 @@ pub struct DigestRow {
     pub severity: Option<String>,
     /// The most recent occurrence in the group.
     pub last_seen_unix: i64,
+}
+
+/// `GET /relay/v1/money`: what a paired phone needs to see the money and the
+/// agents without ever browsing the fleet -- a second bounded, pre-computed
+/// read surface alongside [`ExceptionSnapshot`], not a doorway to
+/// `/v1/agents` or `/v1/runs` (`proxy.rs`'s module docs: the read-proxy
+/// allowlist stays at exactly one path, `/v1/summary`, for the identical
+/// reason this stays pre-computed instead of a pass-through).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MoneySnapshot {
+    pub aggregates: Aggregates,
+    pub savings: SavingsRollup,
+    /// Highest spend first, capped at [`MAX_AGENTS_ON_THE_WIRE`]; see
+    /// `agents_truncated`/`others_spent_microusd` for what did not fit.
+    pub agents: Vec<AgentRollup>,
+    /// How many agents did NOT fit in `agents`. Zero in the normal case;
+    /// present so a cut fleet is never silent, the same rule
+    /// `ExceptionSnapshot::queue_truncated` already applies to the queue.
+    pub agents_truncated: usize,
+    /// The combined spend of every agent `agents_truncated` cut, so
+    /// `agents`'s own spend plus this always equals the fleet total: a phone
+    /// shown only the top [`MAX_AGENTS_ON_THE_WIRE`] can still say the rest
+    /// of the fleet exists, and how much it spent.
+    pub others_spent_microusd: i64,
+    /// Short fleet-level burn history for a sparkline, one point per
+    /// reconcile, bounded the same way the underlying burn samples are.
+    pub burn_series: Vec<BurnPoint>,
+}
+
+/// `GET /relay/v1/money`'s FinOps rollup: a field-for-field mirror of
+/// Cloud's own `/v1/savings` shape (`genaryx_connectors::SavingsSummary`),
+/// kept as this crate's own type rather than re-exporting the connectors DTO
+/// directly so the relay's wire contract cannot silently change shape if the
+/// connectors one ever does.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct SavingsRollup {
+    pub blocked_spend_microusd: i64,
+    pub cache_saved_microusd: i64,
+    pub router_saved_microusd: i64,
+    pub budget_breaks: u64,
+    pub total_saved_microusd: i64,
+}
+
+/// One row of `GET /relay/v1/money`'s agent rollup: Cloud's own per-agent
+/// totals (from `CloudClient::agents()`) plus what only the relay can add, a
+/// rolling burn rate computed the same way the fleet aggregate already is,
+/// and how many of this agent's own items are open on the exception queue
+/// right now.
+///
+/// `open_exceptions`/`worst_severity` are joined by `agent_id` against the
+/// live queue at snapshot time (see `money_snapshot`), not stored here: the
+/// queue is already the one place that bookkeeping lives, and copying it into
+/// a second place a reconcile might forget to update is exactly the kind of
+/// drift `merge_incident`'s own doc describes paying for once already.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AgentRollup {
+    /// `""` is the unattributed bucket -- Cloud's own `AgentAgg` convention,
+    /// kept rather than renamed so the phone's decoder needs no special case.
+    pub agent_id: String,
+    pub spent_microusd: i64,
+    pub calls: u64,
+    pub runs: u64,
+    pub burn_rate_microusd_per_min: i64,
+    pub last_seen_unix: i64,
+    pub open_exceptions: usize,
+    pub worst_severity: Option<String>,
+}
+
+/// One point of a short burn-rate history, for a phone-side sparkline.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct BurnPoint {
+    pub t_unix: i64,
+    pub microusd_per_min: i64,
 }
 
 /// What the caller (main's event loop) should hand to an [`crate::push::ApnsSender`],
@@ -344,9 +433,128 @@ struct EngineState {
     /// run's central-budget override without a `/v1/budgets` read (not one
     /// of `CloudClient`'s seven read methods).
     budgets: HashMap<String, i64>,
+    /// Which agent a run belongs to, learned from the only two sources that
+    /// carry it: `run_update` stream events and incidents. `/v1/alerts` does
+    /// not, and alerts are what most of the queue is built from, so without
+    /// this an over-cap run with no open incident reaches the phone with no
+    /// agent on it and joins nothing in the agents list. Keyed by run like
+    /// `budgets` above and kept the same way.
+    run_agents: HashMap<String, String>,
     burn_samples: VecDeque<(i64, i64)>,
     push_dedup: HashMap<(String, String, String), i64>,
     incident_last_notified: HashMap<String, i64>,
+    /// FinOps totals from `/v1/savings`, replaced wholesale each reconcile.
+    /// See [`MoneySnapshot::savings`].
+    savings: SavingsRollup,
+    /// Per-agent cumulative figures + burn history from `/v1/agents`, keyed
+    /// by `agent_id` (`""` is the unattributed bucket, same convention Cloud
+    /// itself uses). Rebuilt by [`rebuild_agents`] each reconcile: an agent
+    /// Cloud stops reporting is dropped rather than left to linger forever,
+    /// the same rule `items` already follows for alerts.
+    agents: HashMap<String, AgentState>,
+    /// Fleet-level burn-rate HISTORY, one point per reconcile, for
+    /// [`MoneySnapshot::burn_series`]'s sparkline. Distinct from
+    /// `burn_samples` above: `burn_samples` holds raw cumulative-spend
+    /// readings used to COMPUTE a rate; this holds the already-computed
+    /// rates themselves, over time.
+    burn_series: VecDeque<BurnPoint>,
+}
+
+/// Per-agent bookkeeping behind `EngineState::agents`: the cumulative
+/// figures `/v1/agents` reports for one agent, plus that agent's OWN
+/// burn-sample history. Kept separate from the fleet's `burn_samples`: an
+/// agent's burn rate is that agent's own spend over time, not a slice of the
+/// fleet total, so it needs its own window rather than sharing one.
+#[derive(Default)]
+struct AgentState {
+    spent_microusd: i64,
+    calls: u64,
+    runs: u64,
+    last_seen_unix: i64,
+    burn_samples: VecDeque<(i64, i64)>,
+}
+
+/// Rebuild the per-agent map from a fresh `/v1/agents` read: each reported
+/// agent's cumulative figures are replaced and a new burn sample pushed
+/// (`push_burn_sample` reused verbatim, so the exact same Cloud-restarted
+/// handling applies per agent as already applies fleet-wide); an agent this
+/// read no longer reports is simply not carried into the result, the same
+/// wholesale-replace rule `items` already follows for alerts each reconcile.
+///
+/// A free function over plain data (not a method on `EngineState`) so it can
+/// be driven directly by a test with no live Cloud and no engine at all, the
+/// same reason `alert_item`/`incident_item`/`merge_incident` are free
+/// functions rather than being inlined into `reconcile`.
+/// Give every queue item the agent it belongs to, then forget the runs that
+/// no longer matter.
+///
+/// `/v1/alerts` states no agent, and alerts are what most of the queue is
+/// rebuilt from, so without this an over-cap run with no open incident reaches
+/// the phone anonymous and joins nothing in the agents list: the money axis
+/// would be populated and the behaviour axis empty for almost every agent.
+/// Only items that state no agent of their own are touched, so an incident's
+/// own attribution always wins over a remembered one.
+///
+/// The map is then pruned, because every run the stream mentions teaches it
+/// something and it would otherwise grow with the fleet forever. A run worth
+/// remembering is one the queue is showing or one carrying a budget, which is
+/// the same pair of sets the rest of this engine already bounds itself by.
+///
+/// Free function over plain data for the same reason as [`rebuild_agents`]:
+/// a test can drive it with no live Cloud and no engine at all.
+fn attach_known_agents(
+    items: &mut HashMap<String, ExceptionItem>,
+    run_agents: &mut HashMap<String, String>,
+    budgets: &HashMap<String, i64>,
+) {
+    for item in items.values_mut() {
+        if item.agent_id.is_none()
+            && let Some(run) = item.run_id.as_ref()
+        {
+            item.agent_id = run_agents.get(run).cloned();
+        }
+    }
+    run_agents.retain(|run, _| {
+        budgets.contains_key(run)
+            || items
+                .values()
+                .any(|i| i.run_id.as_deref() == Some(run.as_str()))
+    });
+}
+
+fn rebuild_agents(
+    existing: &mut HashMap<String, AgentState>,
+    agents: &[AgentAgg],
+    now: i64,
+) -> HashMap<String, AgentState> {
+    let mut next = HashMap::with_capacity(agents.len());
+    for a in agents {
+        let mut agent_state = existing.remove(&a.agent_id).unwrap_or_default();
+        agent_state.spent_microusd = a.spent_microusd;
+        agent_state.calls = a.calls;
+        agent_state.runs = a.runs;
+        agent_state.last_seen_unix = a.last_seen_millis / 1000;
+        push_burn_sample(&mut agent_state.burn_samples, now, a.spent_microusd);
+        next.insert(a.agent_id.clone(), agent_state);
+    }
+    next
+}
+
+/// Append one fleet-level burn point and drop whatever falls outside the
+/// same window/count `push_burn_sample` enforces on the underlying spend
+/// samples -- a separate, smaller cap here, not a shared one, because a
+/// `BurnPoint` is already a computed rate rather than a cumulative counter,
+/// so there is no "Cloud restarted" case to detect the way `push_burn_sample`
+/// has to.
+fn push_burn_point(series: &mut VecDeque<BurnPoint>, point: BurnPoint) {
+    series.push_back(point);
+    let cutoff = point.t_unix - BURN_WINDOW_SECS;
+    while series.len() > 1 && series.front().is_some_and(|p| p.t_unix < cutoff) {
+        series.pop_front();
+    }
+    while series.len() > MAX_BURN_SAMPLES {
+        series.pop_front();
+    }
 }
 
 /// The phone-facing exception state, fed by `CloudSse` + periodic
@@ -406,6 +614,62 @@ impl ExceptionEngine {
         }
     }
 
+    /// The current bounded, pre-computed snapshot `GET /relay/v1/money`
+    /// serves: what a paired phone needs to see the money and the agents
+    /// without ever browsing the fleet (see the module docs' proxy-allowlist
+    /// rule this stays inside of). Agents sort by spend descending, tie-broken
+    /// by `agent_id` ascending so two agents with identical spend still come
+    /// back in the same order on every poll, rather than however `HashMap`
+    /// iteration happened to land this time.
+    pub fn money_snapshot(&self) -> MoneySnapshot {
+        let st = self.state.lock().expect("exception engine mutex poisoned");
+
+        let mut agents: Vec<AgentRollup> = st
+            .agents
+            .iter()
+            .map(|(agent_id, agent)| {
+                let (open_exceptions, worst_severity) =
+                    agent_exception_summary(&st.items, agent_id);
+                AgentRollup {
+                    agent_id: agent_id.clone(),
+                    spent_microusd: agent.spent_microusd,
+                    calls: agent.calls,
+                    runs: agent.runs,
+                    burn_rate_microusd_per_min: burn_rate_per_min(&agent.burn_samples),
+                    last_seen_unix: agent.last_seen_unix,
+                    open_exceptions,
+                    worst_severity,
+                }
+            })
+            .collect();
+        agents.sort_by(|a, b| {
+            b.spent_microusd
+                .cmp(&a.spent_microusd)
+                .then(a.agent_id.cmp(&b.agent_id))
+        });
+
+        // Same "never silent" rule `queue_truncated` already applies to the
+        // exception queue: a phone shown only the top MAX_AGENTS_ON_THE_WIRE
+        // must still be told the rest of the fleet exists, and how much it
+        // spent, not just that some was cut.
+        let agents_truncated = agents.len().saturating_sub(MAX_AGENTS_ON_THE_WIRE);
+        let others_spent_microusd: i64 = agents
+            .iter()
+            .skip(MAX_AGENTS_ON_THE_WIRE)
+            .map(|a| a.spent_microusd)
+            .sum();
+        agents.truncate(MAX_AGENTS_ON_THE_WIRE);
+
+        MoneySnapshot {
+            aggregates: st.aggregates,
+            savings: st.savings,
+            agents,
+            agents_truncated,
+            others_spent_microusd,
+            burn_series: st.burn_series.iter().copied().collect(),
+        }
+    }
+
     /// C3 (docs/PHASE6-C3.md): attach a Felyx annotation to a queued item, if it
     /// is still present. The triage stage's spawned, budgeted task calls this
     /// AFTER the deterministic HARD push has already gone out, so it only ever
@@ -430,16 +694,33 @@ impl ExceptionEngine {
         st.items.insert(item.key.clone(), item);
     }
 
+    /// Test-only: seed one agent's bookkeeping directly (the money-snapshot
+    /// tests need known agent figures and burn history without a live
+    /// Cloud's `/v1/agents` to reconcile against, the same reason
+    /// `seed_item_for_test` exists for the exception queue). Private rather
+    /// than `pub(crate)` like its sibling: unlike `seed_item_for_test`
+    /// (called from `triage.rs`'s tests too), only this module's own tests
+    /// use this one, and `AgentState` itself is private to this module.
+    #[cfg(test)]
+    fn seed_agent_for_test(&self, agent_id: &str, agent: AgentState) {
+        let mut st = self.state.lock().expect("exception engine mutex poisoned");
+        st.agents.insert(agent_id.to_string(), agent);
+    }
+
     /// Full resync against the Cloud's own authoritative reads: `/v1/summary`
     /// (aggregate spend), `/v1/alerts` (near/over-cap runs + their budgets),
-    /// `/v1/incidents` (open, unacknowledged incidents). Replaces the queue
-    /// wholesale but preserves each surviving item's `first_seen_unix` (the
-    /// one thing Cloud doesn't hand back for alerts) rather than resetting
-    /// it every sweep.
+    /// `/v1/incidents` (open, unacknowledged incidents), `/v1/agents`
+    /// (per-agent spend rollup) and `/v1/savings` (FinOps totals) -- the last
+    /// two feed `money_snapshot` exactly the way the first three feed
+    /// `snapshot`. Replaces the queue wholesale but preserves each surviving
+    /// item's `first_seen_unix` (the one thing Cloud doesn't hand back for
+    /// alerts) rather than resetting it every sweep.
     pub async fn reconcile(&self, cloud: &CloudClient) -> Result<(), ConnectorError> {
         let summary = cloud.summary().await?;
         let alerts = cloud.alerts().await?;
         let incidents = cloud.incidents().await?;
+        let agents = cloud.agents().await?;
+        let savings = cloud.savings().await?;
         let now = now_unix();
 
         let mut st = self.state.lock().expect("exception engine mutex poisoned");
@@ -459,6 +740,12 @@ impl ExceptionEngine {
         // `run:` and incidents on `incident:`).
         let mut digest: HashMap<String, DigestRow> = HashMap::new();
         for inc in incidents.iter().filter(|i| !i.acknowledged) {
+            // An incident is one of only two places a run's agent is ever
+            // stated, so learn it here whether or not this incident earns a
+            // row of its own.
+            if let (Some(run), Some(agent)) = (inc.run_id.as_ref(), inc.agent_id.as_ref()) {
+                st.run_agents.insert(run.clone(), agent.clone());
+            }
             match inc.run_id.as_ref().map(|r| format!("run:{r}")) {
                 // 1. About a run we are already showing: MERGE, never add a
                 //    row. The alert owns the money, the incident owns the kind.
@@ -482,16 +769,50 @@ impl ExceptionEngine {
         }
 
         st.items = items;
+        // Alerts carry no agent, so most of the queue arrives anonymous and
+        // would join nothing in the agents list. Anything already known about
+        // the run, from a stream update or an incident, is filled in here.
+        {
+            let EngineState {
+                items,
+                run_agents,
+                budgets,
+                ..
+            } = &mut *st;
+            attach_known_agents(items, run_agents, budgets);
+        }
         let mut digest: Vec<DigestRow> = digest.into_values().collect();
         digest.sort_by(|a, b| b.count.cmp(&a.count).then(a.kind.cmp(&b.kind)));
         st.digest = digest;
+
+        let next_agents = rebuild_agents(&mut st.agents, &agents, now);
+        st.agents = next_agents;
+        st.savings = SavingsRollup {
+            blocked_spend_microusd: savings.blocked_spend_microusd,
+            cache_saved_microusd: savings.cache_saved_microusd,
+            router_saved_microusd: savings.router_saved_microusd,
+            budget_breaks: savings.budget_breaks,
+            total_saved_microusd: savings.total_saved_microusd,
+        };
+
         push_burn_sample(&mut st.burn_samples, now, summary.spent_microusd);
+        let fleet_burn_rate = burn_rate_per_min(&st.burn_samples);
         st.aggregates = Aggregates {
             spend_microusd: summary.spent_microusd,
             headroom_microusd: headroom_from_alerts(&alerts),
-            burn_rate_microusd_per_min: burn_rate_per_min(&st.burn_samples),
+            burn_rate_microusd_per_min: fleet_burn_rate,
             updated_at_unix: now,
         };
+        // One fleet-level burn point per reconcile, from the rate just
+        // computed above -- see `EngineState::burn_series`'s doc for how this
+        // differs from `burn_samples`.
+        push_burn_point(
+            &mut st.burn_series,
+            BurnPoint {
+                t_unix: now,
+                microusd_per_min: fleet_burn_rate,
+            },
+        );
         Ok(())
     }
 
@@ -516,6 +837,11 @@ impl ExceptionEngine {
     }
 
     fn handle_run_update(&self, st: &mut EngineState, run: RunAgg, now: i64) -> Option<PushIntent> {
+        // Learned before any of the gates below, because a run that is calm now
+        // is exactly the one whose agent we will want if it goes over its cap
+        // later and arrives as an alert, which carries no agent at all.
+        st.run_agents
+            .insert(run.run_id.clone(), run.agent_id.clone());
         let budget = *st.budgets.get(&run.run_id)?;
         if budget <= 0 {
             return None;
@@ -534,6 +860,11 @@ impl ExceptionEngine {
                 key,
                 run_id: Some(run.run_id.clone()),
                 incident_id: None,
+                // `RunAgg::agent_id` is a plain String ("" = unattributed,
+                // but still KNOWN), unlike the total absence of agent info
+                // `/v1/alerts` carries -- keep it as-is, never collapsed to
+                // `None`, so it still joins the unattributed bucket correctly.
+                agent_id: Some(run.agent_id.clone()),
                 kind: "budget".to_string(),
                 class,
                 severity: None,
@@ -585,6 +916,7 @@ impl ExceptionEngine {
                         key,
                         run_id: Some(run.clone()),
                         incident_id: None,
+                        agent_id: None, // a bare kill event carries no agent info
                         kind: "kill".to_string(),
                         class: ExceptionClass::OverCap,
                         severity: None,
@@ -720,6 +1052,7 @@ fn alert_item(key: &str, a: &Alert, first_seen_unix: i64, now: i64) -> Exception
         key: key.to_string(),
         run_id: Some(a.run_id.clone()),
         incident_id: None,
+        agent_id: None, // `Alert` (`/v1/alerts`) carries no agent info at all
         kind: "budget".to_string(),
         class,
         severity: None,
@@ -792,6 +1125,37 @@ fn severity_rank(s: &str) -> u8 {
     }
 }
 
+/// `open_exceptions`/`worst_severity` for one agent, joined against the SAME
+/// pager-visible slice `snapshot()` serves as `queue` (`!killed &&
+/// shows_on_a_pager`, not the raw tracked-items map) -- so a phone drilling
+/// from the money view into one agent sees a count consistent with what the
+/// pager itself would show for that agent, not a second, differently-filtered
+/// number. Ranks severity with `severity_rank`, the one ordering this file
+/// already defines for "highest seen" (`fold_into_digest` uses the same
+/// function), rather than inventing a second one.
+fn agent_exception_summary(
+    items: &HashMap<String, ExceptionItem>,
+    agent_id: &str,
+) -> (usize, Option<String>) {
+    let mut count = 0usize;
+    let mut worst: Option<String> = None;
+    for item in items.values() {
+        if item.killed || !shows_on_a_pager(item.class) {
+            continue;
+        }
+        if item.agent_id.as_deref() != Some(agent_id) {
+            continue;
+        }
+        count += 1;
+        if let Some(sev) = &item.severity
+            && severity_rank(sev) > worst.as_deref().map_or(0, severity_rank)
+        {
+            worst = Some(sev.clone());
+        }
+    }
+    (count, worst)
+}
+
 /// Fold an incident INTO the run item an alert already produced. The alert is
 /// authoritative for money (it is the only source with spend and budget); the
 /// incident contributes what the alert cannot know: that there is an open
@@ -802,6 +1166,7 @@ fn severity_rank(s: &str) -> u8 {
 /// but is in a fan-out explosion does not read as a mild "near cap".
 fn merge_incident(item: &mut ExceptionItem, inc: &Incident) {
     item.incident_id = Some(inc.id.clone());
+    item.agent_id = inc.agent_id.clone();
     item.kind = inc.kind.clone();
     item.severity = Some(severity_str(inc.severity).to_string());
     item.last_seen_unix = item.last_seen_unix.max(inc.last_seen_millis / 1000);
@@ -867,6 +1232,7 @@ fn incident_item(key: &str, inc: &Incident) -> ExceptionItem {
         key: key.to_string(),
         run_id: inc.run_id.clone(),
         incident_id: Some(inc.id.clone()),
+        agent_id: inc.agent_id.clone(),
         kind: inc.kind.clone(),
         class,
         severity: Some(severity_str(inc.severity).to_string()),
@@ -908,6 +1274,35 @@ pub async fn exceptions_handler(
         eprintln!("genaryx-relay: exceptions: touch_last_seen failed (non-fatal): {e}");
     }
     Ok(axum::Json(state.engine.snapshot()))
+}
+
+// ---- GET /relay/v1/money (public, authenticated) ----------------------------
+
+/// `GET /relay/v1/money`: the phone's money + agents view, bounded and
+/// pre-computed for the same reason [`exceptions_handler`] is (see the module
+/// docs, and `proxy.rs`'s own module docs for the read-proxy side of the
+/// identical rule): a second allowlisted read surface, never a doorway to
+/// `/v1/agents` or `/v1/runs`. Same auth shape as `exceptions_handler`: bearer
+/// against the registry's own stored device token, since this data never
+/// round-trips the Cloud per request either.
+pub async fn money_handler(
+    axum::extract::State(state): axum::extract::State<crate::PublicState>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::Json<MoneySnapshot>, crate::proxy::ProxyError> {
+    let token =
+        crate::proxy::bearer_token(&headers).ok_or(crate::proxy::ProxyError::Unauthorized)?;
+    let device = state
+        .registry
+        .verify_bearer(token)
+        .map_err(|e| crate::proxy::ProxyError::Internal(e.to_string()))?
+        .ok_or(crate::proxy::ProxyError::Unauthorized)?;
+    if let Err(e) = state
+        .registry
+        .touch_last_seen(&device.device_id, now_unix())
+    {
+        eprintln!("genaryx-relay: money: touch_last_seen failed (non-fatal): {e}");
+    }
+    Ok(axum::Json(state.engine.money_snapshot()))
 }
 
 // ---- background drivers (wired from main.rs) --------------------------------
@@ -1553,6 +1948,7 @@ mod tests {
         fn item(run: &str, class: ExceptionClass, fraction: Option<f64>, killed: bool) -> ExceptionItem {
             ExceptionItem {
                 key: format!("run:{run}"), run_id: Some(run.into()), incident_id: None,
+                agent_id: None,
                 kind: "budget".into(), class, severity: None, headline: String::new(),
                 spent_microusd: 0, budget_micros: None, fraction,
                 first_seen_unix: 0, last_seen_unix: 0, acknowledged: false, killed, copilot: None,
@@ -1588,5 +1984,278 @@ mod tests {
                 "SKIP: reconcile_against_a_live_cloud_is_skipped_without_one (no live Cloud)"
             ),
         }
+    }
+
+    // ---- money snapshot (GET /relay/v1/money) ------------------------------
+
+    fn agent_state(spent_microusd: i64) -> AgentState {
+        AgentState {
+            spent_microusd,
+            ..Default::default()
+        }
+    }
+
+    fn agent_agg(
+        agent_id: &str,
+        spent_microusd: i64,
+        calls: u64,
+        runs: u64,
+        last_seen_millis: i64,
+    ) -> AgentAgg {
+        AgentAgg {
+            agent_id: agent_id.to_string(),
+            spent_microusd,
+            calls,
+            runs,
+            last_seen_millis,
+        }
+    }
+
+    /// A minimal pager-visible item attributed to `agent_id`, for the
+    /// money-snapshot join tests. `class`/`severity` are the only things
+    /// those tests vary; everything else is a zeroed placeholder.
+    fn exception_item_for_agent(
+        key: &str,
+        agent_id: &str,
+        class: ExceptionClass,
+        severity: Option<&str>,
+    ) -> ExceptionItem {
+        ExceptionItem {
+            key: key.to_string(),
+            run_id: None,
+            incident_id: None,
+            agent_id: Some(agent_id.to_string()),
+            kind: "sustained_loop".to_string(),
+            class,
+            severity: severity.map(str::to_string),
+            headline: String::new(),
+            spent_microusd: 0,
+            budget_micros: None,
+            fraction: None,
+            first_seen_unix: 0,
+            last_seen_unix: 0,
+            acknowledged: false,
+            killed: false,
+            copilot: None,
+        }
+    }
+
+    fn find_agent<'a>(snap: &'a MoneySnapshot, agent_id: &str) -> &'a AgentRollup {
+        snap.agents
+            .iter()
+            .find(|a| a.agent_id == agent_id)
+            .unwrap_or_else(|| panic!("agent {agent_id} missing from the snapshot"))
+    }
+
+    #[test]
+    fn agents_are_sorted_by_spend_descending_and_capped_at_the_constant() {
+        let eng = engine();
+        // A few more than the cap, so the cap is genuinely exercised rather
+        // than happening to equal the input size.
+        let total = MAX_AGENTS_ON_THE_WIRE + 3;
+        for i in 0..total {
+            eng.seed_agent_for_test(&format!("agent-{i:04}"), agent_state(i as i64));
+        }
+
+        let snap = eng.money_snapshot();
+        assert_eq!(
+            snap.agents.len(),
+            MAX_AGENTS_ON_THE_WIRE,
+            "capped at the constant"
+        );
+        for pair in snap.agents.windows(2) {
+            assert!(
+                pair[0].spent_microusd >= pair[1].spent_microusd,
+                "must sort highest spend first"
+            );
+        }
+        assert_eq!(
+            snap.agents[0].spent_microusd,
+            (total - 1) as i64,
+            "the single highest spender leads"
+        );
+    }
+
+    #[test]
+    fn truncated_agents_are_accounted_for_and_the_total_still_adds_up() {
+        let eng = engine();
+        let extra = 7;
+        let total_agents = MAX_AGENTS_ON_THE_WIRE + extra;
+        let mut total_spend: i64 = 0;
+        for i in 0..total_agents {
+            let spend = (i + 1) as i64; // 1..=total_agents, all distinct and nonzero
+            total_spend += spend;
+            eng.seed_agent_for_test(&format!("agent-{i:04}"), agent_state(spend));
+        }
+
+        let snap = eng.money_snapshot();
+        assert_eq!(snap.agents.len(), MAX_AGENTS_ON_THE_WIRE);
+        assert_eq!(snap.agents_truncated, extra, "exactly the ones cut");
+        let shown_spend: i64 = snap.agents.iter().map(|a| a.spent_microusd).sum();
+        assert_eq!(
+            shown_spend + snap.others_spent_microusd,
+            total_spend,
+            "shown spend plus others must equal the fleet total"
+        );
+    }
+
+    #[test]
+    fn a_per_agent_burn_rate_is_computed_from_two_reconciles() {
+        let mut agents_map: HashMap<String, AgentState> = HashMap::new();
+        agents_map = rebuild_agents(
+            &mut agents_map,
+            &[agent_agg("a1", 10_000, 1, 1, 1_000_000)],
+            1000,
+        );
+        agents_map = rebuild_agents(
+            &mut agents_map,
+            &[agent_agg("a1", 22_000, 2, 1, 1_060_000)],
+            1060,
+        );
+
+        // +12,000 over 60s = 12,000/min: the exact fleet-level case
+        // `burn_rate_from_two_samples` already proves, now proven per agent.
+        let rate = burn_rate_per_min(&agents_map["a1"].burn_samples);
+        assert_eq!(rate, 12_000);
+    }
+
+    #[test]
+    fn a_per_agent_counter_going_backwards_does_not_produce_a_negative_rate() {
+        let mut agents_map: HashMap<String, AgentState> = HashMap::new();
+        agents_map = rebuild_agents(
+            &mut agents_map,
+            &[agent_agg("a1", 4_700_000_000, 1, 1, 100_000)],
+            100,
+        );
+        agents_map = rebuild_agents(
+            &mut agents_map,
+            &[agent_agg("a1", 4_760_000_000, 2, 1, 160_000)],
+            160,
+        );
+        assert!(
+            burn_rate_per_min(&agents_map["a1"].burn_samples) > 0,
+            "rising spend, positive rate"
+        );
+
+        // The Cloud restarted: agent a1's cumulative spend resets lower.
+        agents_map = rebuild_agents(
+            &mut agents_map,
+            &[agent_agg("a1", 4_255_000_000, 3, 1, 220_000)],
+            220,
+        );
+        assert_eq!(
+            burn_rate_per_min(&agents_map["a1"].burn_samples),
+            0,
+            "not negative, the previous epoch was discarded"
+        );
+    }
+
+    #[test]
+    fn a_run_update_teaches_the_agent_even_when_the_run_earns_no_row() {
+        // The gates in `handle_run_update` return early for a run with no
+        // budget, but the agent it named is exactly what an alert for that same
+        // run will be missing later, so it has to be learned before them.
+        let eng = engine();
+        assert!(
+            eng.handle_raw_record(
+                &record(r#"{"type":"run_update","run":{"run_id":"r9","model":"gpt","agent_id":"agent-late","spent_microusd":10,"calls":1,"cache_hits":0,"steps":1,"last_seen_millis":1,"killed":false}}"#),
+                1000
+            )
+            .is_none(),
+            "no budget, so no queue row and no push"
+        );
+        assert!(eng.snapshot().queue.is_empty());
+
+        let st = eng.state.lock().unwrap();
+        assert_eq!(st.run_agents.get("r9").map(String::as_str), Some("agent-late"));
+    }
+
+    #[test]
+    fn an_alert_only_item_is_given_the_agent_learned_elsewhere() {
+        // An alert states no agent at all, so on its own it would reach the
+        // phone anonymous and join nothing in the agents list.
+        let mut items = HashMap::new();
+        let mut anonymous = exception_item_for_agent("run:r1", "", ExceptionClass::OverCap, Some("high"));
+        anonymous.run_id = Some("r1".to_string());
+        anonymous.agent_id = None;
+        items.insert("run:r1".to_string(), anonymous);
+
+        let mut already_known =
+            exception_item_for_agent("run:r2", "agent-own", ExceptionClass::Runaway, Some("critical"));
+        already_known.run_id = Some("r2".to_string());
+        items.insert("run:r2".to_string(), already_known);
+
+        let mut run_agents = HashMap::from([
+            ("r1".to_string(), "agent-x".to_string()),
+            ("r2".to_string(), "agent-should-not-win".to_string()),
+            ("r-gone".to_string(), "agent-stale".to_string()),
+        ]);
+        let budgets = HashMap::new();
+
+        attach_known_agents(&mut items, &mut run_agents, &budgets);
+
+        assert_eq!(
+            items["run:r1"].agent_id.as_deref(),
+            Some("agent-x"),
+            "the anonymous alert item gets the agent learned from the stream"
+        );
+        assert_eq!(
+            items["run:r2"].agent_id.as_deref(),
+            Some("agent-own"),
+            "an item that states its own agent is never overwritten"
+        );
+        assert!(
+            !run_agents.contains_key("r-gone"),
+            "a run neither queued nor budgeted is forgotten rather than kept forever"
+        );
+        assert!(run_agents.contains_key("r1"), "a queued run is still worth remembering");
+    }
+
+    #[test]
+    fn open_exceptions_and_worst_severity_are_joined_by_agent() {
+        let eng = engine();
+        eng.seed_agent_for_test("agent-a", agent_state(1_000));
+        eng.seed_agent_for_test("agent-b", agent_state(500));
+
+        eng.seed_item_for_test(exception_item_for_agent(
+            "run:a1",
+            "agent-a",
+            ExceptionClass::NearCap,
+            Some("medium"),
+        ));
+        eng.seed_item_for_test(exception_item_for_agent(
+            "run:a2",
+            "agent-a",
+            ExceptionClass::Runaway,
+            Some("critical"),
+        ));
+        // A killed item for the same agent must not count as open.
+        let mut killed_item =
+            exception_item_for_agent("run:a3", "agent-a", ExceptionClass::OverCap, Some("high"));
+        killed_item.killed = true;
+        eng.seed_item_for_test(killed_item);
+
+        let snap = eng.money_snapshot();
+        let a = find_agent(&snap, "agent-a");
+        assert_eq!(a.open_exceptions, 2, "the killed item must not count");
+        assert_eq!(a.worst_severity.as_deref(), Some("critical"));
+
+        let b = find_agent(&snap, "agent-b");
+        assert_eq!(b.open_exceptions, 0);
+        assert_eq!(b.worst_severity, None);
+    }
+
+    #[test]
+    fn an_agent_cloud_stops_reporting_disappears_from_the_next_rebuild() {
+        let mut existing: HashMap<String, AgentState> = HashMap::new();
+        existing.insert("agent-a".to_string(), agent_state(100));
+        existing.insert("agent-b".to_string(), agent_state(200));
+
+        // Cloud's next `/v1/agents` read no longer mentions agent-b.
+        let next = rebuild_agents(&mut existing, &[agent_agg("agent-a", 150, 3, 1, 5000)], 5);
+
+        assert_eq!(next.len(), 1, "agent-b is gone, Cloud no longer reports it");
+        assert!(next.contains_key("agent-a"));
+        assert!(!next.contains_key("agent-b"));
     }
 }

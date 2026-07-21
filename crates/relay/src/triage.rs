@@ -366,6 +366,7 @@ mod tests {
             key: "run:r-1".into(),
             run_id: Some("r-1".into()),
             incident_id: None,
+            agent_id: None,
             kind: "kill".into(),
             class: ExceptionClass::OverCap,
             severity: None,

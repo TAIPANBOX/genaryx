@@ -258,6 +258,10 @@ async fn run() -> Result<(), RelayError> {
             "/relay/v1/exceptions",
             axum::routing::get(exceptions::exceptions_handler),
         )
+        .route(
+            "/relay/v1/money",
+            axum::routing::get(exceptions::money_handler),
+        )
         .route("/v1/summary", axum::routing::get(proxy::summary_handler))
         .route(
             "/v1/runs/{run}/kill",
