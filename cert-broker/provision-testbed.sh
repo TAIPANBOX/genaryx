@@ -13,22 +13,27 @@ BROKER_DIR="${BROKER_DIR:-/root/broker}"
 mkdir -p "$BROKER_DIR"
 
 echo "== 1. binaries (pebble, pebble-challtestsrv) =="
-install_release() {  # $1 = asset-name-substring  $2 = dest
-  local sub="$1" dest="$2"
+# Pebble releases ship the binary inside a .tar.gz as
+# <tool>-linux-amd64/linux/amd64/<tool>, NOT as a raw asset, so download and
+# EXTRACT (a plain `curl -o` leaves a gzip file marked +x -> "Exec format
+# error"). Pinned rather than `releases/latest` so a future asset-layout change
+# cannot silently break a fresh box.
+PEBBLE_VER="${PEBBLE_VER:-v2.10.1}"
+install_pebble() {  # $1 = binary name (pebble | pebble-challtestsrv)  $2 = dest
+  local tool="$1" dest="$2"
   [ -x "$dest" ] && { echo "   $dest present"; return; }
-  local url
-  url=$(curl -sSL https://api.github.com/repos/letsencrypt/pebble/releases/latest \
-        | grep -oE '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 \
-        | grep -E "$sub" | grep -E 'linux-amd64|linux_amd64' | head -1)
-  [ -n "$url" ] || { echo "   !! no release asset matching $sub"; exit 1; }
-  echo "   downloading $(basename "$url")"
-  curl -sSL "$url" -o "$dest"
-  chmod +x "$dest"
+  local url="https://github.com/letsencrypt/pebble/releases/download/${PEBBLE_VER}/${tool}-linux-amd64.tar.gz"
+  local tmp; tmp=$(mktemp -d)
+  echo "   downloading ${tool} ${PEBBLE_VER}"
+  curl -fsSL "$url" | tar xz -C "$tmp" \
+    || { echo "   !! download/extract failed: $url"; rm -rf "$tmp"; exit 1; }
+  local bin; bin=$(find "$tmp" -type f -name "$tool" | head -1)
+  [ -n "$bin" ] || { echo "   !! ${tool} binary not found in the archive"; rm -rf "$tmp"; exit 1; }
+  install -m 0755 "$bin" "$dest"
+  rm -rf "$tmp"
 }
-install_release 'pebble-challtestsrv|pebble_challtestsrv' /usr/local/bin/pebble-challtestsrv
-install_release 'pebble[-_]linux|/pebble-linux|pebble-v' /usr/local/bin/pebble
-# Fallback: some release layouts name the main binary just "pebble-linux-amd64".
-[ -x /usr/local/bin/pebble ] || install_release 'pebble' /usr/local/bin/pebble
+install_pebble pebble-challtestsrv /usr/local/bin/pebble-challtestsrv
+install_pebble pebble /usr/local/bin/pebble
 
 echo "== 2. lego (the relay's ACME-client stand-in for the proof) =="
 if [ ! -x "$BROKER_DIR/lego" ]; then
@@ -69,8 +74,8 @@ echo "== 4. pebble config =="
 cat > "$BROKER_DIR/pebble-config.json" <<EOF
 {
   "pebble": {
-    "listenAddress": "0.0.0.0:14000",
-    "managementListenAddress": "0.0.0.0:15000",
+    "listenAddress": "127.0.0.1:14000",
+    "managementListenAddress": "127.0.0.1:15000",
     "certificate": "$BROKER_DIR/pebble-cert.pem",
     "privateKey": "$BROKER_DIR/pebble-key.pem",
     "httpPort": 5002,
@@ -85,7 +90,8 @@ echo "== 5. systemd units =="
 cp "$DIR/systemd/challtestsrv.service" "$DIR/systemd/pebble.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl reset-failed challtestsrv pebble 2>/dev/null || true
-systemctl enable --now challtestsrv pebble >/dev/null 2>&1
+systemctl enable challtestsrv pebble >/dev/null 2>&1
+systemctl restart challtestsrv pebble   # restart so a re-run applies unit/config changes
 sleep 3
 echo "   challtestsrv: $(systemctl is-active challtestsrv)   pebble: $(systemctl is-active pebble)"
 curl -sk -m5 https://127.0.0.1:14000/dir >/dev/null && echo "   Pebble ACME directory answers" || { echo "   !! Pebble not answering"; exit 1; }

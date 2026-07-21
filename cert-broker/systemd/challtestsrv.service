@@ -3,7 +3,10 @@ Description=pebble-challtestsrv (DNS-01 mock for the cert-broker testbed)
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/pebble-challtestsrv -dnsserver :8053 -management :8055 -defaultIPv4 127.0.0.1
+# Bound to loopback: the management API is an unauthenticated "set any DNS TXT"
+# control, and Pebble + the broker reach it over 127.0.0.1. Nothing here should
+# face the network (the testbed is reached over an SSH tunnel to loopback).
+ExecStart=/usr/local/bin/pebble-challtestsrv -dnsserver 127.0.0.1:8053 -management 127.0.0.1:8055 -defaultIPv4 127.0.0.1
 Restart=on-failure
 RestartSec=2
 

@@ -35,12 +35,22 @@ openssl x509 -in "$CRT" -noout -issuer -dates -ext subjectAltName 2>/dev/null | 
 openssl verify -CAfile <(cat "$BROKER_DIR/lego-data/certificates/${HOST}.issuer.crt" \
   <(curl -sk https://127.0.0.1:15000/roots/0)) "$CRT" 2>&1 | sed 's/^/   chain: /'
 
-echo "== ADVERSARIAL: $RELAY_USER must NOT get a cert for victim-relay.$ZONE =="
+echo "== ADVERSARIAL: assert the broker's gate DIRECTLY (specific codes) =="
+# 403: valid creds, but a name that is not this relay's own.
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$RELAY_USER:$RELAY_TOKEN" \
+  -d "{\"fqdn\":\"_acme-challenge.victim-relay.$ZONE\",\"value\":\"x\"}" "$BROKER/present" || true)
+[ "$code" = 403 ] && echo "   403 for a foreign name: subdomain gate held" \
+  || { echo "   !! expected 403 for a foreign name, got $code"; exit 1; }
+# 401: right relay id, wrong token.
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$RELAY_USER:wrong-token" \
+  -d "{\"fqdn\":\"_acme-challenge.$HOST\",\"value\":\"x\"}" "$BROKER/present" || true)
+[ "$code" = 401 ] && echo "   401 for a bad token: auth held" \
+  || { echo "   !! expected 401 for a bad token, got $code"; exit 1; }
+# And end to end: the relay (lego) cannot complete an order for a foreign name.
 rm -rf /tmp/cb-evil
 if run_lego "victim-relay.$ZONE" /tmp/cb-evil >/dev/null 2>&1 && [ -d /tmp/cb-evil/certificates ]; then
   echo "   !! GATE FAILED: a cert was issued for a name the relay does not own"; exit 1
-else
-  echo "   gate held: no certificate (the broker 403s a name that is not $RELAY_USER's own)"
 fi
+echo "   end to end: no certificate for a foreign name"
 
 echo "== cert broker verified end to end =="

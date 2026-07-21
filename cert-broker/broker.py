@@ -23,29 +23,29 @@ Two security properties this enforces:
   2. The relay's private key lives ONLY on the relay. The broker only ever
      handles the challenge token, never a CSR or a key.
 
+The broker also enforces that a relay may publish a challenge ONLY for its own
+subdomain (`_acme-challenge.<relay-id>.pocket.it-rat.com`), authenticated by a
+per-relay token; relay A cannot obtain relay B's certificate.
+
 The DNS backend is PLUGGABLE (BROKER_BACKEND):
   - `challtestsrv` : pebble-challtestsrv's REST API - the local proof/test path.
-  - `cloudflare`   : the real pocket.it-rat.com zone via the Cloudflare API,
-                     using a SCOPED token (Zone.DNS:Edit on that one zone only)
-                     that lives ONLY here. Switching Pebble -> Let's Encrypt is
-                     purely a relay-side directory URL; switching the mock ->
-                     Cloudflare is purely this backend flag. Nothing else moves.
+  - `cloudflare`   : the real pocket.it-rat.com zone via a SCOPED token
+                     (Zone.DNS:Edit on that one zone only) that lives ONLY here.
 
-Wire format is lego's `httpreq` provider (default mode): the client POSTs
-{fqdn, value} and the broker publishes a TXT at `fqdn` with contents `value`.
-genaryx-relay's own BrokerClient speaks the same shape, so one broker serves
-both the relay and lego (used to prove the flow during bring-up).
+Wire format is lego's `httpreq` provider (default mode) and genaryx-relay's own
+BrokerClient: POST {fqdn, value} -> publish a TXT at `fqdn` with contents `value`.
 
-Auth model: HTTP Basic, username = relay id, password = the relay's broker
-token. The broker maps the id to the ONE subdomain that relay may touch and
-refuses any other fqdn. Relays are loaded from BROKER_RELAYS_FILE (JSON:
-{"<relay-id>": "<token>"}); each relay gets its own token at provisioning.
+Auth: HTTP Basic, username = relay id, password = the relay's broker token.
+Relays are loaded from BROKER_RELAYS_FILE (JSON: {"<relay-id>": "<token>"}).
 """
 import base64
+import hmac
 import json
 import os
+import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -55,6 +55,12 @@ CHALLTESTSRV = os.environ.get("CHALLTESTSRV_URL", "http://127.0.0.1:8055")
 CF_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
 CF_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID", "")
 CF_API = "https://api.cloudflare.com/client/v4"
+
+# A relay id is one DNS label: it becomes `<id>.pocket.it-rat.com` and the Basic
+# auth username. Constrain it so a careless id cannot make a malformed challenge
+# name or an unauthenticatable user (a colon would break Basic auth).
+RELAY_ID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+MAX_BODY = 64 * 1024
 
 
 def _http(url, method="GET", body=None, headers=None, timeout=10):
@@ -66,8 +72,8 @@ def _http(url, method="GET", body=None, headers=None, timeout=10):
 
 
 # --- DNS backends -----------------------------------------------------------
-# Each backend implements set_txt(fqdn, value) and clear_txt(fqdn). The broker
-# never persists a key or a CSR; it only publishes/removes the challenge TXT.
+# Each backend implements set_txt(fqdn, value) and clear_txt(fqdn, value). The
+# broker never persists a key or a CSR; it only publishes/removes the TXT.
 
 
 class ChalltestsrvBackend:
@@ -78,7 +84,7 @@ class ChalltestsrvBackend:
               {"host": fqdn, "value": value},
               {"Content-Type": "application/json"})
 
-    def clear_txt(self, fqdn):
+    def clear_txt(self, fqdn, value):
         _http(f"{CHALLTESTSRV}/clear-txt", "POST",
               {"host": fqdn}, {"Content-Type": "application/json"})
 
@@ -98,27 +104,41 @@ class CloudflareBackend:
         self._auth = {"Authorization": f"Bearer {CF_TOKEN}",
                       "Content-Type": "application/json"}
 
+    def _call(self, path, method="GET", body=None):
+        """A Cloudflare API call that treats `success:false` (returned with
+        HTTP 200) as the error it is, surfacing the message instead of letting a
+        refused publish look like success."""
+        result = _http(f"{CF_API}/zones/{CF_ZONE_ID}{path}", method, body, self._auth)
+        if not result.get("success", True):
+            msgs = "; ".join(e.get("message", str(e)) for e in (result.get("errors") or []))
+            raise RuntimeError(f"cloudflare {method} {path}: {msgs or 'request failed'}")
+        return result
+
     def _records(self, fqdn):
-        # Cloudflare stores the name without the trailing dot.
-        name = fqdn.rstrip(".")
-        url = f"{CF_API}/zones/{CF_ZONE_ID}/dns_records?type=TXT&name={name}"
-        return _http(url, "GET", headers=self._auth).get("result", [])
+        name = urllib.parse.quote(fqdn.rstrip("."), safe="")
+        return self._call(f"/dns_records?type=TXT&name={name}").get("result") or []
 
     def set_txt(self, fqdn, value):
         name = fqdn.rstrip(".")
-        _http(f"{CF_API}/zones/{CF_ZONE_ID}/dns_records", "POST",
-              {"type": "TXT", "name": name, "content": value, "ttl": 60},
-              self._auth)
+        try:
+            self._call("/dns_records", "POST",
+                       {"type": "TXT", "name": name, "content": value, "ttl": 60})
+        except RuntimeError:
+            # Idempotent: if the exact record already exists (a retried present),
+            # that is success, not a failure.
+            if not any(r.get("content") == value for r in self._records(fqdn)):
+                raise
 
-    def clear_txt(self, fqdn):
+    def clear_txt(self, fqdn, value):
+        # Remove only OUR record (this name + this challenge value), never a
+        # concurrent order's live TXT at the same name. Best-effort: a stale
+        # challenge TXT is harmless.
         for rec in self._records(fqdn):
-            rid = rec.get("id")
-            if rid:
+            if rec.get("content") == value and rec.get("id"):
                 try:
-                    _http(f"{CF_API}/zones/{CF_ZONE_ID}/dns_records/{rid}",
-                          "DELETE", headers=self._auth)
-                except urllib.error.URLError:
-                    pass  # cleanup is best-effort; a stale TXT is harmless
+                    self._call(f"/dns_records/{rec['id']}", "DELETE")
+                except Exception:
+                    pass
 
 
 def load_backend():
@@ -131,12 +151,16 @@ def load_backend():
 
 def load_relays():
     """relay id -> token. From BROKER_RELAYS_FILE (JSON), else a single dev
-    relay so the proof flow can run out of the box."""
+    relay so the proof flow can run. Ids must be a single DNS label."""
     path = os.environ.get("BROKER_RELAYS_FILE", "")
+    relays = {"proof01": "proof-relay-token"}
     if path and os.path.exists(path):
         with open(path) as f:
-            return json.load(f)
-    return {"proof01": "proof-relay-token"}
+            relays = json.load(f)
+    for rid in relays:
+        if not RELAY_ID_RE.match(rid):
+            sys.exit(f"invalid relay id {rid!r}: must match {RELAY_ID_RE.pattern}")
+    return relays
 
 
 BACKEND_IMPL = load_backend()
@@ -154,7 +178,8 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("broker: " + (fmt % args) + "\n")
 
     def _relay_id(self):
-        """Authenticate the caller. Returns the relay id or None."""
+        """Authenticate the caller. Returns the relay id or None. The token is
+        compared in constant time so it cannot be recovered by timing."""
         h = self.headers.get("Authorization", "")
         if not h.startswith("Basic "):
             return None
@@ -162,7 +187,10 @@ class Handler(BaseHTTPRequestHandler):
             user, _, pw = base64.b64decode(h[6:]).decode().partition(":")
         except Exception:
             return None
-        return user if RELAYS.get(user) == pw else None
+        expected = RELAYS.get(user)
+        if expected is None:
+            return None
+        return user if hmac.compare_digest(expected, pw) else None
 
     def _allowed(self, relay_id, fqdn):
         """A relay may only touch the _acme-challenge for its OWN subdomain."""
@@ -173,11 +201,13 @@ class Handler(BaseHTTPRequestHandler):
         relay_id = self._relay_id()
         if not relay_id:
             return self._reply(401, "unknown relay")
-        n = int(self.headers.get("Content-Length", 0))
         try:
+            n = int(self.headers.get("Content-Length", 0))
+            if n < 0 or n > MAX_BODY:
+                return self._reply(400, "bad content-length")
             body = json.loads(self.rfile.read(n) or b"{}")
-        except Exception:
-            return self._reply(400, "bad json")
+        except (ValueError, json.JSONDecodeError):
+            return self._reply(400, "bad request")
         fqdn = body.get("fqdn", "")
         value = body.get("value", "")
         if not self._allowed(relay_id, fqdn):
@@ -187,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
                 BACKEND_IMPL.set_txt(fqdn, value)
                 return self._reply(200, f"set {fqdn}")
             if self.path == "/cleanup":
-                BACKEND_IMPL.clear_txt(fqdn)
+                BACKEND_IMPL.clear_txt(fqdn, value)
                 return self._reply(200, f"cleared {fqdn}")
         except Exception as e:
             return self._reply(502, f"dns backend: {e}")
