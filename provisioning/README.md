@@ -14,6 +14,7 @@ hostname. That is a mobile concern; the desktop console needs none of it.
 | script | what |
 |--------|------|
 | `provision-wireguard.sh` | install WireGuard, generate the server keypair (0600, never printed), write `wg0.conf` on `10.9.0.1/24 :51820` (the subnet/port the console defaults to, `crates/ffi/src/remote/env.rs`), lock the firewall to SSH + the one WG port + already-authenticated tunnel traffic, bring the interface up. Prints only the server public key and endpoint. |
+| `new-device.sh <name> [ip]` | issue a ready-to-import config for one more device: generate the peer keypair ON THE BOX, authorize the public half, pick the next free tunnel address, and print a complete `.conf` plus a scannable QR. For phones and laptops running the OFFICIAL WireGuard client, which cannot hand you a public key without a human copying it out of a UI. Also the way the FIRST device gets on: the console cannot issue that one, since reaching the console needs the tunnel it would be issuing. `AllowedIPs` is the tunnel subnet only, never `0.0.0.0/0`. The private key is printed, never written to disk. |
 | `add-peer.sh` | authorize one console's public key as a peer at `10.9.0.2/32`. |
 
 ## Flow
