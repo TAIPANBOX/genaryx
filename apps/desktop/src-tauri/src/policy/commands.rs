@@ -256,6 +256,13 @@ impl From<WardryxError> for PolicyError {
                 status: None,
                 message: format!("could not decode approval_token: {msg}"),
             },
+            // Refused client-side, before the request was built: an id that
+            // cannot be one URL path segment would otherwise address a
+            // different route and read as a plain "not found".
+            WardryxError::InvalidPathSegment(err) => PolicyError::Wardryx {
+                status: None,
+                message: format!("this id cannot be used in a request path: {err}"),
+            },
         }
     }
 }
@@ -288,6 +295,9 @@ pub struct DecideOutcome {
 /// 500" rule. [`WardryxError::BadToken`] is never returned by an HTTP call
 /// (`ApprovalTokenClaims::decode` is local, offline parsing - see its own
 /// doc comment), so it is grouped with the other no-HTTP-status variants.
+/// [`WardryxError::InvalidPathSegment`] is grouped there for the same
+/// reason: the id is rejected before the request is built, so no HTTP
+/// exchange ever happens.
 fn status_of(e: &WardryxError) -> u16 {
     match e {
         WardryxError::Api { status, .. } => *status,
@@ -295,7 +305,10 @@ fn status_of(e: &WardryxError) -> u16 {
         WardryxError::ApprovalAlreadyDecided => 409,
         WardryxError::Forbidden => 403,
         WardryxError::NoApprovalSecret => 500,
-        WardryxError::Transport(_) | WardryxError::Json(_) | WardryxError::BadToken(_) => 0,
+        WardryxError::Transport(_)
+        | WardryxError::Json(_)
+        | WardryxError::InvalidPathSegment(_)
+        | WardryxError::BadToken(_) => 0,
     }
 }
 

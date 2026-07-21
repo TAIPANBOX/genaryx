@@ -70,7 +70,19 @@ impl DrillsState {
 pub async fn bootstrap() -> DrillsInner {
     match env::discover() {
         Some(resolved) => DrillsInner::Ready(DrillsClient {
-            client: MockryxClient::new(resolved.mockryx_bin.clone()),
+            // Point the drill at the environment's bus when there is one, so
+            // a rehearsal leaves a trail. mockryx keeps no history of its own
+            // (fresh run_id per run, `--save` overwrites, no `list`
+            // subcommand), so the append-only event log is the only place a
+            // finished drill survives. Mirrors `crates/ffi/src/drills`.
+            client: match genaryx_core::bus::discover()
+                .and_then(|bus| bus.writer_path("mockryx"))
+            {
+                Some(path) => {
+                    MockryxClient::new(resolved.mockryx_bin.clone()).with_events_path(path)
+                }
+                None => MockryxClient::new(resolved.mockryx_bin.clone()),
+            },
             source: resolved.source,
             mockryx_bin: resolved.mockryx_bin,
             gateway_url: resolved.gateway_url,

@@ -174,12 +174,37 @@ pub struct MockryxMetrics {
 #[derive(Debug, Clone)]
 pub struct MockryxClient {
     bin: PathBuf,
+    events_path: Option<PathBuf>,
 }
 
 impl MockryxClient {
     /// Construct a client for a resolved `mockryx` binary path.
     pub fn new(bin: impl Into<PathBuf>) -> Self {
-        Self { bin: bin.into() }
+        Self {
+            bin: bin.into(),
+            events_path: None,
+        }
+    }
+
+    /// Also publish each run onto the environment's agent-event bus, by
+    /// pointing the child at `<events dir>/mockryx.ndjson`.
+    ///
+    /// Without this a drill is invisible the moment it finishes. mockryx has
+    /// no history of its own by construction: every run mints a fresh
+    /// `run_id` and forgets it, `--save` OVERWRITES its target so one path
+    /// keeps only the newest run, and there is no `list`/`history`
+    /// subcommand. The append-only event log is therefore the only place a
+    /// drill leaves a trail the console can show over time.
+    ///
+    /// mockryx already reads `$MOCKRYX_EVENTS_PATH` as the fallback for its
+    /// own `--events` flag (`cmd/mockryx/main.go:125,152`), so this is set as
+    /// an environment variable on the child rather than an argument: it stays
+    /// out of the visible command line, and an operator who has configured
+    /// the variable themselves keeps the same behaviour they already had.
+    #[must_use]
+    pub fn with_events_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.events_path = Some(path.into());
+        self
     }
 
     /// `mockryx run --gateway <gateway> --format json [--api-key K]
@@ -215,13 +240,15 @@ impl MockryxClient {
         }
         args.push(&dir);
 
-        let out = std::process::Command::new(&self.bin)
-            .args(&args)
-            .output()
-            .map_err(|source| MockryxError::Spawn {
-                bin: self.bin.display().to_string(),
-                source,
-            })?;
+        let mut cmd = std::process::Command::new(&self.bin);
+        cmd.args(&args);
+        if let Some(events) = &self.events_path {
+            cmd.env("MOCKRYX_EVENTS_PATH", events);
+        }
+        let out = cmd.output().map_err(|source| MockryxError::Spawn {
+            bin: self.bin.display().to_string(),
+            source,
+        })?;
 
         // Exit 0 (all held) and 1 (gaps found) both print the JSON report on
         // stdout; only 2/other means nothing ran.

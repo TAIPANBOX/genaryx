@@ -4,12 +4,17 @@
 //! Design, in one paragraph: proc-macro scaffolding (`setup_scaffolding!`, no
 //! UDL file) exports three things. [`UiEvent`] is a flat Record mirroring the
 //! UI-relevant fields of `genaryx_core::store::StoredEvent`. [`FleetHandle`]
-//! is an Object whose constructor seeds a throwaway on-disk demo world (temp
-//! dir, `demo::generate`, WAL Store, `IngestService` tailing the six demo
-//! NDJSON files) and spawns two plain threads: an ingest thread that owns the
-//! `Send`-but-not-`Sync` `IngestService` outright (no lock, single owner, per
-//! its own docs) and a feeder thread that appends one conforming line per
-//! second so the stream is visibly live. [`EventListener`] is a callback
+//! is an Object whose constructor opens the console's bus, in one of two
+//! modes (see [`BusMode`]): LIVE, tailing the `*.ndjson` files of the
+//! environment `genaryx_core::bus` resolved, or DEMO, seeding a throwaway
+//! on-disk world (temp dir, `demo::generate`, the six demo NDJSON files) when
+//! no environment exists on this machine. Either way it spawns an ingest
+//! thread that owns the `Send`-but-not-`Sync` `IngestService` outright (no
+//! lock, single owner, per its own docs); in demo mode ONLY it also spawns a
+//! feeder thread appending one conforming line per second so the stream is
+//! visibly live. A resolved environment never gets that feeder, and never
+//! falls back to fixtures: an empty real bus is information, a fabricated one
+//! in its place is not. [`EventListener`] is a callback
 //! interface; the ingest thread drains the core's broadcast receiver with the
 //! synchronous `try_recv` after each poll and pushes each event to every
 //! registered listener, so live push crosses the FFI without any async
@@ -196,6 +201,24 @@ const DEMO_SOURCES: [&str; 6] = [
     "mockryx",
     "qryx",
 ];
+
+/// Where this handle's events come from, surfaced to Swift so the shell can
+/// say so on screen.
+///
+/// The Tauri shell carries the same three states (`live::BusMode` there), and
+/// for the same reason: a console tailing a real environment and one showing
+/// generated fixtures look identical, and presenting invented traffic as a
+/// customer's own is exactly what the "no fabricated data" rule forbids.
+/// Until 2026-07-21 both shells were permanently in the demo state without
+/// saying so, because the Phase-0 scaffold was never replaced.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum BusMode {
+    /// Tailing a real environment's `events.dir`.
+    Live { env: String, dir: String },
+    /// No environment resolved: generated fixtures plus a synthetic feeder.
+    /// Everything visible under this mode is invented.
+    Demo { dir: String },
+}
 
 /// Errors crossing the FFI boundary. Deliberately one flat, message-carrying
 /// variant for the spike: Swift sees `FfiError.Core(msg:)` and can display or
@@ -459,32 +482,97 @@ pub struct FleetHandle {
     threads: Mutex<Vec<JoinHandle<()>>>,
     /// Temp world root, removed on drop (best effort).
     dir: PathBuf,
+    /// Live or demo, decided once at construction and never changed after.
+    mode: BusMode,
 }
 
 #[uniffi::export]
 impl FleetHandle {
-    /// Build the demo world and start the ingest + feeder threads.
+    /// Open the bus and start the background threads.
     ///
-    /// Steps: temp dir; `demo::generate` writes the six NDJSON files; an
-    /// `IngestService` (owning the writer Store) registers all six tails and
-    /// runs one priming `poll_once` so the full campaign is stored before
-    /// this returns; the primed broadcast backlog is drained so listeners
-    /// registered later see only genuinely new events; then the two threads
-    /// start and a reader Store opens on the same WAL file.
+    /// Live when an environment resolves through [`genaryx_core::bus`], demo
+    /// when none does, and never a mixture: a configured environment that has
+    /// produced nothing yet renders as an honest empty bus, never as
+    /// fixtures. See [`BusMode`].
+    ///
+    /// Steps, live: a console-owned temp dir for the database only (never the
+    /// environment's own `events.dir`, which belongs to `taipan up`); an
+    /// `IngestService` registers a tail per `*.ndjson` already present; one
+    /// priming `poll_once`; the primed backlog is drained so listeners
+    /// registered later see only genuinely new events; then the ingest thread
+    /// starts, rescanning the directory each cycle so a file that appears
+    /// later (there is no `qryx.ndjson` until something scans) is picked up
+    /// without a restart. No feeder thread exists in this mode, because
+    /// nothing here may write events.
+    ///
+    /// Steps, demo: as before. `demo::generate` writes the six NDJSON files,
+    /// all six tails are registered, and the feeder thread appends synthetic
+    /// lines to `tokenfuse.ndjson`.
     #[uniffi::constructor]
     pub fn new() -> Result<Self, FfiError> {
-        let dir = fresh_world_dir()?;
-        let events_dir = dir.join("events");
-        std::fs::create_dir_all(&events_dir)?;
-        demo::generate(&events_dir)?;
+        Self::open(genaryx_core::bus::discover())
+    }
 
+    /// Live or demo, so the Swift shell can label what it is showing.
+    pub fn bus_mode(&self) -> BusMode {
+        self.mode.clone()
+    }
+}
+
+impl FleetHandle {
+    /// Testable core of [`FleetHandle::new`]: the bus to open is passed in
+    /// rather than discovered.
+    ///
+    /// Not merely a convenience. `new()` reads the real
+    /// `~/.taipan/environments` of whatever machine it runs on, so a test
+    /// calling it would pass or fail depending on whether that developer
+    /// happens to have an environment configured, and would quietly stop
+    /// testing the demo path on any machine that does. Passing `None` here is
+    /// what keeps the demo-world tests hermetic.
+    fn open(resolved: Option<genaryx_core::bus::ResolvedBus>) -> Result<Self, FfiError> {
+        let dir = fresh_world_dir()?;
         let db = dir.join("genaryx.sqlite3");
-        let mut service = IngestService::new(Store::open(&db)?, "local")?;
-        for source in DEMO_SOURCES {
-            service.add_file_source(
-                format!("filetail:{source}"),
-                events_dir.join(format!("{source}.ndjson")),
-            )?;
+
+        // In demo mode the events live inside our own world dir; in live mode
+        // they live in the environment's directory and we only ever read them.
+        let (events_dir, mode) = match &resolved {
+            Some(bus) => (
+                bus.events_dir.clone(),
+                BusMode::Live {
+                    env: bus.env_name.clone(),
+                    dir: bus.events_dir.display().to_string(),
+                },
+            ),
+            None => {
+                let demo_dir = dir.join("events");
+                std::fs::create_dir_all(&demo_dir)?;
+                demo::generate(&demo_dir)?;
+                let mode = BusMode::Demo {
+                    dir: demo_dir.display().to_string(),
+                };
+                (demo_dir, mode)
+            }
+        };
+
+        let mut service = IngestService::new(Store::open(&db)?, env_label(&mode))?;
+        match &mode {
+            // Whatever the products have written so far. An absent directory
+            // is not an error here: the environment is configured, its tools
+            // simply have not run yet.
+            BusMode::Live { .. } => {
+                for path in ndjson_files_in(&events_dir) {
+                    add_file_tail(&mut service, &path)?;
+                }
+            }
+            // Exactly the six files `demo::generate` just wrote.
+            BusMode::Demo { .. } => {
+                for source in DEMO_SOURCES {
+                    service.add_file_source(
+                        format!("filetail:{source}"),
+                        events_dir.join(format!("{source}.ndjson")),
+                    )?;
+                }
+            }
         }
 
         let mut rx = service.subscribe();
@@ -493,18 +581,41 @@ impl FleetHandle {
 
         let listeners: Listeners = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let ingest = spawn_ingest(service, rx, Arc::clone(&listeners), Arc::clone(&stop))?;
-        let feeder = spawn_feeder(events_dir.join("tokenfuse.ndjson"), Arc::clone(&stop))?;
+        let watch = match &mode {
+            BusMode::Live { .. } => Some(events_dir.clone()),
+            BusMode::Demo { .. } => None,
+        };
+        let ingest = spawn_ingest(
+            service,
+            rx,
+            Arc::clone(&listeners),
+            Arc::clone(&stop),
+            watch,
+        )?;
+
+        let mut threads = vec![ingest];
+        if matches!(mode, BusMode::Demo { .. }) {
+            threads.push(spawn_feeder(
+                events_dir.join("tokenfuse.ndjson"),
+                Arc::clone(&stop),
+            )?);
+        }
+
+        eprintln!("genaryx-ffi: bus {}", describe(&mode));
 
         Ok(Self {
             reader: Mutex::new(Store::open(&db)?),
             listeners,
             stop,
-            threads: Mutex::new(vec![ingest, feeder]),
+            threads: Mutex::new(threads),
             dir,
+            mode,
         })
     }
+}
 
+#[uniffi::export]
+impl FleetHandle {
     /// The most recent `limit` stored events, newest first (rowid order),
     /// via this handle's own read connection.
     pub fn recent_events(&self, limit: u32) -> Result<Vec<UiEvent>, FfiError> {
@@ -632,6 +743,53 @@ fn fresh_world_dir() -> Result<PathBuf, FfiError> {
     Ok(dir)
 }
 
+/// The ingest env label: the environment's own name when live, so the
+/// journaled offsets and stored rows carry it, and a flat `"demo"` otherwise.
+fn env_label(mode: &BusMode) -> &str {
+    match mode {
+        BusMode::Live { env, .. } => env.as_str(),
+        BusMode::Demo { .. } => "demo",
+    }
+}
+
+/// One line for the startup log, so which mode is in force is visible in a
+/// terminal without opening the UI.
+fn describe(mode: &BusMode) -> String {
+    match mode {
+        BusMode::Live { env, dir } => format!("LIVE on environment {env:?} at {dir}"),
+        BusMode::Demo { dir } => {
+            format!("DEMO (no environment found under ~/.taipan/environments) at {dir}")
+        }
+    }
+}
+
+/// Every `*.ndjson` in `dir`, sorted, or none when the directory does not
+/// exist yet. Absence is a normal state in live mode: the environment is
+/// configured, its tools simply have not run.
+fn ndjson_files_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("ndjson"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Register one file as a tailed source, keyed by its stem so the id is
+/// stable across restarts and readable in the offset journal.
+fn add_file_tail(service: &mut IngestService, path: &Path) -> Result<(), FfiError> {
+    let id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    service.add_file_source(format!("filetail:{id}"), path)?;
+    Ok(())
+}
+
 /// Drain everything currently buffered on the broadcast receiver, invoking
 /// `each` per event. `Lagged` (receiver overrun) is survivable by design:
 /// the skipped events are already in the Store, so history stays complete
@@ -653,16 +811,44 @@ fn drain(rx: &mut broadcast::Receiver<ConsoleEvent>, each: &dyn Fn(&ConsoleEvent
 /// Each cycle: poll all sources, then synchronously forward every newly
 /// broadcast event to the registered listeners. A poll error is logged and
 /// the loop stays alive; it never panics and never goes silent.
+///
+/// `watch` is `Some(events_dir)` in live mode only. Each cycle the directory
+/// is re-listed and any newly appeared `*.ndjson` becomes a tailed source.
+/// Wave-2 tools create their file lazily, on their first run, so a listing
+/// taken once at construction would miss precisely the sources an operator is
+/// waiting for, and keep missing them until the app restarted.
 fn spawn_ingest(
     mut service: IngestService,
     mut rx: broadcast::Receiver<ConsoleEvent>,
     listeners: Listeners,
     stop: Arc<AtomicBool>,
+    watch: Option<PathBuf>,
 ) -> Result<JoinHandle<()>, FfiError> {
     let handle = std::thread::Builder::new()
         .name("genaryx-ffi-ingest".into())
         .spawn(move || {
+            let mut tailed: Vec<PathBuf> =
+                watch.as_deref().map(ndjson_files_in).unwrap_or_default();
             while !stop.load(Ordering::Relaxed) {
+                if let Some(dir) = watch.as_deref() {
+                    for path in ndjson_files_in(dir) {
+                        if tailed.contains(&path) {
+                            continue;
+                        }
+                        match add_file_tail(&mut service, &path) {
+                            Ok(()) => {
+                                eprintln!(
+                                    "genaryx-ffi: bus picked up a new source: {}",
+                                    path.display()
+                                );
+                                tailed.push(path);
+                            }
+                            Err(e) => {
+                                eprintln!("genaryx-ffi: could not tail {}: {e}", path.display())
+                            }
+                        }
+                    }
+                }
                 if let Err(e) = service.poll_once() {
                     eprintln!("genaryx-ffi: ingest poll error (loop kept alive): {e}");
                 }
@@ -753,7 +939,7 @@ mod tests {
 
     #[test]
     fn constructs_serves_history_and_pushes_live_events() {
-        let handle = FleetHandle::new().expect("construct demo world");
+        let handle = FleetHandle::open(None).expect("construct demo world");
 
         // History: the priming poll stored the full demo campaign (~179
         // events) before the constructor returned.
@@ -810,7 +996,7 @@ mod tests {
     /// a guessed one.
     #[test]
     fn agent_graph_agent_slice_and_events_for_agent_over_the_demo_campaign() {
-        let handle = FleetHandle::new().expect("construct demo world");
+        let handle = FleetHandle::open(None).expect("construct demo world");
 
         // agent_graph: a non-empty, internally coherent layout - every edge
         // endpoint is a known node, every position finite and in-bounds
@@ -931,7 +1117,7 @@ mod tests {
     /// guarantee.
     #[test]
     fn events_for_run_over_the_demo_campaign_is_oldest_first_by_id() {
-        let handle = FleetHandle::new().expect("construct demo world");
+        let handle = FleetHandle::open(None).expect("construct demo world");
 
         const RUN: &str = "demo-run-000";
         let events = handle

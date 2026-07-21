@@ -253,6 +253,13 @@ impl From<ConnectorError> for MoneyError {
                 status: None,
                 message: "no paired device signer attached (internal state error)".to_string(),
             },
+            // Refused client-side, before anything was signed or sent, like
+            // `NoDeviceSigner` above: an id that cannot be one URL path
+            // segment must not silently address a different resource.
+            ConnectorError::InvalidPathSegment(err) => MoneyError::Cloud {
+                status: None,
+                message: format!("this id cannot be used in a request path: {err}"),
+            },
             ConnectorError::Signing(err) => MoneyError::Cloud {
                 status: None,
                 message: format!("signing failed: {err}"),
@@ -319,6 +326,7 @@ fn status_of(e: &ConnectorError) -> u16 {
         ConnectorError::SignatureRejected => 403,
         ConnectorError::PlanRequired { .. } => 402,
         ConnectorError::NoDeviceSigner
+        | ConnectorError::InvalidPathSegment(_)
         | ConnectorError::Signing(_)
         | ConnectorError::Transport(_)
         | ConnectorError::Json(_) => 0,

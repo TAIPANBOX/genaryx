@@ -233,7 +233,7 @@ struct GenaryxApp: App {
                             if let message = model.unavailableMessage {
                                 CoreUnavailableBanner(message: message)
                             }
-                            BusExplorerView(events: model.events)
+                            BusExplorerView(events: model.events, busMode: model.busMode)
                         }
                     }
                 }

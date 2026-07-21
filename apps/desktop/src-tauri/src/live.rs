@@ -1,8 +1,27 @@
-//! The live path: seeds `genaryx-core`'s real `Store` at startup from the demo
-//! NDJSON fixtures, then keeps a single background thread feeding one new
-//! conforming event into that same bus every ~2s and forwarding it to the
-//! frontend, so the Bus Explorer updates without a reload (Phase-0 exit gate:
-//! "both shells show the same live event stream from the shared core").
+//! The live path: fills `genaryx-core`'s real `Store` at startup and keeps a
+//! background thread forwarding new events to the frontend, so the Bus
+//! Explorer updates without a reload (Phase-0 exit gate: "both shells show
+//! the same live event stream from the shared core").
+//!
+//! There are two ways that stream can be obtained, and which one is in use is
+//! never hidden from the operator (see [`BusMode`]):
+//!
+//! 1. **Live.** An environment resolved through [`genaryx_core::bus`], so the
+//!    `*.ndjson` files under its `events.dir` are tailed. Real events, real
+//!    timestamps, and an honest empty bus when nothing has happened yet.
+//! 2. **Demo.** No environment exists on this machine at all, so the fixtures
+//!    are generated and a synthetic feeder appends one conforming event every
+//!    ~2s. Useful for a first look and for screenshots, and labelled as demo
+//!    everywhere it surfaces.
+//!
+//! Until 2026-07-21 only path 2 existed, unconditionally, in both shells: the
+//! Phase-0 scaffold was never replaced, so every console on every machine
+//! showed a fabricated stream while the descriptor sitting in
+//! `~/.taipan/environments/` already carried the real `events.dir`. The rule
+//! that follows from fixing it is worth stating, because it is the whole
+//! point: **a resolved environment never falls back to demo**, not even when
+//! it has produced nothing yet. An empty real bus is information. A
+//! fabricated one presented in its place is not.
 //!
 //! Ownership: `Store`/`IngestService` wrap a `rusqlite::Connection`, which is
 //! `Send` but not `Sync` (see `genaryx_core::ingest` module docs). Rather than
@@ -23,39 +42,132 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 
-/// Tauri-managed state: where the seeded demo store lives, if startup
-/// succeeded. `None` means [`crate::recent_events`] falls back to
-/// `events::mock_events` (fail-closed: a seeding failure degrades the Bus
-/// Explorer to mock data; it never crashes the app or traps the UI).
+/// Where the Bus Explorer's stream comes from, and therefore what the UI must
+/// say about it. Serialized to the frontend by the `bus_status` command.
+///
+/// This is deliberately a first-class value rather than a boolean: "demo"
+/// and "the bus could not be opened at all" are different states with
+/// different meanings, and collapsing them is how a broken console ends up
+/// looking like a working one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BusMode {
+    /// Tailing a real environment's `events.dir`.
+    Live { env: String, dir: String },
+    /// No environment on this machine: generated fixtures plus a synthetic
+    /// feeder. Everything shown under this mode is invented.
+    Demo { dir: String },
+    /// Startup failed outright; `recent_events` serves `events::mock_events`.
+    Unavailable { reason: String },
+}
+
+/// Tauri-managed state: where the console's store lives (if startup
+/// succeeded) and how it is being fed. `events_dir: None` means
+/// [`crate::recent_events`] falls back to `events::mock_events` (fail-closed:
+/// a startup failure degrades the Bus Explorer; it never crashes the app or
+/// traps the UI).
 pub struct AppState {
     pub events_dir: Option<PathBuf>,
+    pub mode: BusMode,
+}
+
+/// What [`bootstrap`] resolved, handed back to `lib.rs`'s `setup` hook.
+pub struct BusBootstrap {
+    /// The directory holding `console.sqlite`. In demo mode that is the
+    /// generated fixture directory; in live mode it is a console-owned
+    /// scratch directory, NOT the environment's own `events.dir` (the console
+    /// must never write its database into a directory `taipan up` owns).
+    pub events_dir: PathBuf,
+    pub mode: BusMode,
 }
 
 /// Tauri event name the frontend `listen()`s for; payload is one [`UiEvent`].
 pub const LIVE_EVENT: &str = "bus:event";
 
-/// Cadence of the background feeder tick (spec: "every ~2s").
+/// Cadence of the background tick, for both the live tailer and the demo
+/// feeder (spec: "every ~2s").
 const FEEDER_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Seed the real store from the demo fixtures and start the live feeder.
-/// Returns the events directory (holding `console.sqlite` plus the six
-/// `<source>.ndjson` files) on success; the caller (`lib.rs`'s `setup` hook)
-/// degrades to mock data on error rather than failing app startup.
-pub fn bootstrap(app_handle: AppHandle) -> genaryx_core::Result<PathBuf> {
+/// Open the console's bus and start the background thread that feeds it.
+///
+/// Live if an environment resolves, demo if none does, and never a mixture:
+/// see this module's header for why a resolved-but-empty environment must not
+/// fall back to fixtures. The caller degrades to mock data on `Err` rather
+/// than failing app startup.
+pub fn bootstrap(app_handle: AppHandle) -> genaryx_core::Result<BusBootstrap> {
+    match genaryx_core::bus::discover() {
+        Some(resolved) => bootstrap_live(app_handle, resolved),
+        None => bootstrap_demo(app_handle),
+    }
+}
+
+/// Tail a real environment's event files.
+///
+/// The store is per-process scratch, exactly as in demo mode, and that is a
+/// deliberate limit of this slice rather than an oversight. A store that
+/// persisted across restarts is what turns this bus into history, but it also
+/// needs an answer for re-ingestion: `stack-up` truncates its event files on
+/// every start, `FileTail` correctly resets to offset 0 when it sees that,
+/// and with no dedupe key the whole file would then be inserted a second
+/// time. Durable history is its own piece of work (the `runs` table and
+/// retention); until then a fresh store per launch is the honest option,
+/// because it can only ever show what the files really contain.
+fn bootstrap_live(
+    app_handle: AppHandle,
+    resolved: genaryx_core::bus::ResolvedBus,
+) -> genaryx_core::Result<BusBootstrap> {
+    let store_dir = unique_events_dir();
+    std::fs::create_dir_all(&store_dir)?;
+
+    let db_path = store_dir.join("console.sqlite");
+    let store = Store::open(&db_path)?;
+    let mut ingest = IngestService::new(store, resolved.env_name.as_str())?;
+
+    // An events dir that does not exist yet is not an error: the environment
+    // is configured, the products that write into it simply have not run.
+    // `collect_ndjson_files` reports none, the tailer rescans every tick, and
+    // the Bus Explorer shows an honest empty bus until something arrives.
+    let mut tailed = Vec::new();
+    for path in collect_ndjson_files(&resolved.events_dir).unwrap_or_default() {
+        add_source(&mut ingest, &path)?;
+        tailed.push(path);
+    }
+
+    let receiver = ingest.subscribe();
+    let stats = ingest.poll_once()?;
+    eprintln!(
+        "genaryx: bus LIVE on environment {:?} at {} ({} file(s), {} event(s) ingested, {} quarantined)",
+        resolved.env_name,
+        resolved.events_dir.display(),
+        tailed.len(),
+        stats.inserted,
+        stats.quarantined
+    );
+
+    let events_dir = resolved.events_dir.clone();
+    std::thread::spawn(move || run_tailer(ingest, receiver, events_dir, tailed, app_handle));
+
+    Ok(BusBootstrap {
+        events_dir: store_dir,
+        mode: BusMode::Live {
+            env: resolved.env_name,
+            dir: resolved.events_dir.display().to_string(),
+        },
+    })
+}
+
+/// No environment: generate fixtures and run the synthetic feeder.
+fn bootstrap_demo(app_handle: AppHandle) -> genaryx_core::Result<BusBootstrap> {
     let events_dir = unique_events_dir();
     let generated = demo::generate(&events_dir)?;
 
     let db_path = events_dir.join("console.sqlite");
     let store = Store::open(&db_path)?;
-    let mut ingest = IngestService::new(store, "local")?;
+    let mut ingest = IngestService::new(store, "demo")?;
 
     let files = collect_ndjson_files(&events_dir)?;
     for path in &files {
-        let id = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        ingest.add_file_source(format!("filetail:{id}"), path)?;
+        add_source(&mut ingest, path)?;
     }
 
     // Subscribe before the first poll so no batch is missed (per the
@@ -66,7 +178,7 @@ pub fn bootstrap(app_handle: AppHandle) -> genaryx_core::Result<PathBuf> {
     let receiver = ingest.subscribe();
     let stats = ingest.poll_once()?;
     eprintln!(
-        "genaryx: seeded demo store at {} ({generated} generated, {} inserted, {} quarantined)",
+        "genaryx: bus DEMO (no environment found under ~/.taipan/environments) at {} ({generated} generated, {} inserted, {} quarantined)",
         events_dir.display(),
         stats.inserted,
         stats.quarantined
@@ -74,7 +186,22 @@ pub fn bootstrap(app_handle: AppHandle) -> genaryx_core::Result<PathBuf> {
 
     std::thread::spawn(move || run_feeder(ingest, receiver, files, app_handle));
 
-    Ok(events_dir)
+    Ok(BusBootstrap {
+        events_dir: events_dir.clone(),
+        mode: BusMode::Demo {
+            dir: events_dir.display().to_string(),
+        },
+    })
+}
+
+/// Register one `*.ndjson` file as a tailed source, keyed by its file stem so
+/// the id is stable across restarts and readable in the offset journal.
+fn add_source(ingest: &mut IngestService, path: &Path) -> genaryx_core::Result<()> {
+    let id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    ingest.add_file_source(format!("filetail:{id}"), path)
 }
 
 /// A fresh, distinct-per-process directory so a restart never reuses another
@@ -95,11 +222,16 @@ fn unique_events_dir() -> PathBuf {
     ))
 }
 
-/// Every `*.ndjson` file `demo::generate` just wrote, so the feeder can
-/// register a `FileTail` per source without hardcoding `demo`'s private
+/// Every `*.ndjson` file in `dir`, sorted.
+///
+/// In demo mode that is whatever `demo::generate` just wrote, so the feeder
+/// registers a `FileTail` per source without hardcoding `demo`'s private
 /// source list here (mirroring that private list, the way `events.rs`'s mock
 /// data mirrors `demo`'s topic/eval/scenario lists, would drift silently if
-/// `demo` ever added a source; reading the directory back cannot drift).
+/// `demo` ever added a source; reading the directory back cannot drift). In
+/// live mode it is whichever products have written into the environment's
+/// `events.dir` so far, which is why the tailer calls this every tick and not
+/// only at startup.
 fn collect_ndjson_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|entry| entry.ok())
@@ -110,13 +242,64 @@ fn collect_ndjson_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Owns the `IngestService` (and its `Store`) for the rest of the process:
-/// every ~2s, append one conforming demo-shaped line to one of the seeded
-/// NDJSON files, poll it into the Store like any other ingest cycle, then
-/// forward whatever that poll just broadcast to the frontend. Never panics on
-/// a transient failure; a bad tick is logged and the loop just tries again
-/// next tick (fail-closed: the live feed degrading is never the whole app
-/// crashing).
+/// Live mode's loop: every ~2s, pick up any event file that appeared since
+/// the last tick, poll every tailed file, and forward whatever arrived. It
+/// writes nothing, ever: the only source of events here is the products
+/// themselves.
+///
+/// The rescan matters more than it looks. Wave-2 tools create their event
+/// file lazily, on their first run: there is no `qryx.ndjson` until something
+/// scans, no `mockryx.ndjson` until a drill fires. A directory listing taken
+/// once at startup would miss precisely the sources an operator is most
+/// likely to be waiting for, and would keep missing them until the console
+/// was restarted. Re-listing one small directory every two seconds is a
+/// rounding error next to that.
+///
+/// Failures are logged and retried on the next tick rather than ending the
+/// loop, mirroring the demo feeder: a bus that stops reading is much worse
+/// than a bus that skips one cycle.
+fn run_tailer(
+    mut ingest: IngestService,
+    mut receiver: broadcast::Receiver<ConsoleEvent>,
+    events_dir: PathBuf,
+    mut tailed: Vec<PathBuf>,
+    app_handle: AppHandle,
+) {
+    loop {
+        std::thread::sleep(FEEDER_INTERVAL);
+
+        for path in collect_ndjson_files(&events_dir).unwrap_or_default() {
+            if tailed.contains(&path) {
+                continue;
+            }
+            match add_source(&mut ingest, &path) {
+                Ok(()) => {
+                    eprintln!("genaryx: bus picked up a new source: {}", path.display());
+                    tailed.push(path);
+                }
+                Err(e) => eprintln!("genaryx: bus could not tail {}: {e}", path.display()),
+            }
+        }
+
+        if let Err(e) = ingest.poll_once() {
+            eprintln!("genaryx: bus poll_once failed: {e}");
+            continue;
+        }
+
+        drain_and_emit(&mut receiver, &app_handle);
+    }
+}
+
+/// Demo mode's loop, and demo mode's only. Owns the `IngestService` (and its
+/// `Store`) for the rest of the process: every ~2s, append one conforming
+/// demo-shaped line to one of the seeded NDJSON files, poll it into the Store
+/// like any other ingest cycle, then forward whatever that poll just
+/// broadcast to the frontend. Never panics on a transient failure; a bad tick
+/// is logged and the loop just tries again next tick (fail-closed: the live
+/// feed degrading is never the whole app crashing).
+///
+/// This function fabricates events. It must never run for a resolved
+/// environment, which is why it is reachable only from [`bootstrap_demo`].
 fn run_feeder(
     mut ingest: IngestService,
     mut receiver: broadcast::Receiver<ConsoleEvent>,
