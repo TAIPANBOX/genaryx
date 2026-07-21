@@ -185,7 +185,12 @@ pub async fn pair_handler(
     // credentials it will throw away, having permanently filled a slot the
     // rightful device now cannot claim. Here it costs one comparison and the
     // window survives for a correct retry.
-    if let Some(raw) = req.expect_kind.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(raw) = req
+        .expect_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         match crate::registry::DeviceKind::parse(raw) {
             Some(expected) if expected == kind => {}
             Some(expected) => {

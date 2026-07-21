@@ -539,7 +539,9 @@ mod tests {
         let resp = mutation_passthrough(
             State(state),
             signed_headers("tok-w", "dev-w"),
-            "/v1/runs/reconciliation-batch-eod-002-LIVE/kill".parse().unwrap(),
+            "/v1/runs/reconciliation-batch-eod-002-LIVE/kill"
+                .parse()
+                .unwrap(),
             Bytes::new(),
         )
         .await

@@ -870,7 +870,10 @@ mod tests {
              VALUES ('x', 'laptop', 'l', 'macos', 'acme', 'admin', 't', 1, 1, NULL)",
             [],
         );
-        assert!(raw.is_err(), "CHECK (kind IN ('phone','watch')) must refuse");
+        assert!(
+            raw.is_err(),
+            "CHECK (kind IN ('phone','watch')) must refuse"
+        );
     }
 
     #[test]
@@ -948,7 +951,8 @@ mod tests {
         reg.arm_pairing_window(DeviceKind::Watch, &sha256_hex(b"AGAIN"), 9_999)
             .unwrap();
         let kind = reg.check_pairing_code("AGAIN", 1_000).unwrap();
-        reg.insert_paired_device(kind, new_device("watch-2")).unwrap();
+        reg.insert_paired_device(kind, new_device("watch-2"))
+            .unwrap();
         assert_eq!(
             reg.device_of_kind(DeviceKind::Watch)
                 .unwrap()
@@ -1040,7 +1044,8 @@ mod tests {
 
     #[test]
     fn migration_is_idempotent_across_reopens() {
-        let dir = std::env::temp_dir().join(format!("genaryx-registry-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("genaryx-registry-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("registry.sqlite3");
         let _ = std::fs::remove_file(&path);
@@ -1095,7 +1100,10 @@ mod tests {
 
         // Both devices survived, and the watch was NOT relabelled as a phone.
         assert_eq!(
-            reg.device_of_kind(DeviceKind::Phone).unwrap().unwrap().device_id,
+            reg.device_of_kind(DeviceKind::Phone)
+                .unwrap()
+                .unwrap()
+                .device_id,
             "p1"
         );
         let watch = reg.device_of_kind(DeviceKind::Watch).unwrap().unwrap();
@@ -1126,7 +1134,10 @@ mod tests {
             "the phone slot must stay empty"
         );
         assert_eq!(
-            reg.device_of_kind(DeviceKind::Watch).unwrap().unwrap().device_id,
+            reg.device_of_kind(DeviceKind::Watch)
+                .unwrap()
+                .unwrap()
+                .device_id,
             "w1"
         );
     }
@@ -1194,7 +1205,9 @@ mod tests {
             )
             .unwrap();
         }
-        let devices = reg.devices().expect("enumeration survives the unreadable row");
+        let devices = reg
+            .devices()
+            .expect("enumeration survives the unreadable row");
         assert_eq!(devices.len(), 1, "the tablet row is skipped, not fatal");
         assert!(reg.verify_bearer("token-phone-1").unwrap().is_some());
     }
@@ -1283,7 +1296,8 @@ mod tests {
         } = states[0].clone();
 
         let kind = reg.check_pairing_code("RIGHT", 1_000).unwrap();
-        reg.insert_paired_device(kind, new_device("phone-1")).unwrap();
+        reg.insert_paired_device(kind, new_device("phone-1"))
+            .unwrap();
         assert!(
             reg.pairing_window_states().unwrap().is_empty(),
             "a redeemed window is closed, so there is nothing left to report"

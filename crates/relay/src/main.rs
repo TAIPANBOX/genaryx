@@ -606,7 +606,10 @@ mod tests {
             .expect("first call must obtain a certificate");
         let cert = std::fs::read_to_string(dir.join("cert.pem")).unwrap();
         assert!(cert.contains("BEGIN CERTIFICATE"), "cert.pem installed");
-        assert!(dir.join("acme-account.key").exists(), "account key persisted");
+        assert!(
+            dir.join("acme-account.key").exists(),
+            "account key persisted"
+        );
         assert!(dir.join("acme-issued").exists(), "issued sidecar written");
         let pin1 = id1.spki_sha256_b64().to_string();
 

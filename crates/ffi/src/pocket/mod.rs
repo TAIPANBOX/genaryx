@@ -50,7 +50,9 @@
 pub mod dto;
 pub mod env;
 
-pub use dto::{PocketDeviceRecord, PocketError, PocketQrRecord, PocketStatusRecord, PocketWindowRecord};
+pub use dto::{
+    PocketDeviceRecord, PocketError, PocketQrRecord, PocketStatusRecord, PocketWindowRecord,
+};
 
 use genaryx_connectors::{
     CloudClient, PairNewResponse, RelayAdminClient, RelayDeviceKind, RelayDeviceView,
@@ -137,8 +139,14 @@ async fn build_status(relay: &RelayAdminClient) -> PocketStatusRecord {
                 .cloned()
                 .filter(|d| d.paired)
                 .map(to_device_record);
-            let phone_window = resp.window(RelayDeviceKind::Phone).cloned().map(to_window_record);
-            let watch_window = resp.window(RelayDeviceKind::Watch).cloned().map(to_window_record);
+            let phone_window = resp
+                .window(RelayDeviceKind::Phone)
+                .cloned()
+                .map(to_window_record);
+            let watch_window = resp
+                .window(RelayDeviceKind::Watch)
+                .cloned()
+                .map(to_window_record);
             if phone.is_none() && watch.is_none() {
                 PocketStatusRecord::Idle {
                     cloud_ready: crate::cloud::env::discover().is_some(),
@@ -261,12 +269,20 @@ async fn connect_impl() -> Result<PocketQrRecord, PocketError> {
 
     let phone_code_sha256 = genaryx_signing::body_sha256_hex(minted_phone.code.as_bytes());
     let armed_phone = relay
-        .arm_pairing_window(RelayDeviceKind::Phone, &phone_code_sha256, PAIRING_WINDOW_TTL_SECS)
+        .arm_pairing_window(
+            RelayDeviceKind::Phone,
+            &phone_code_sha256,
+            PAIRING_WINDOW_TTL_SECS,
+        )
         .await?;
 
     let watch_code_sha256 = genaryx_signing::body_sha256_hex(minted_watch.code.as_bytes());
     let armed_watch = match relay
-        .arm_pairing_window(RelayDeviceKind::Watch, &watch_code_sha256, PAIRING_WINDOW_TTL_SECS)
+        .arm_pairing_window(
+            RelayDeviceKind::Watch,
+            &watch_code_sha256,
+            PAIRING_WINDOW_TTL_SECS,
+        )
         .await
     {
         Ok(armed) => armed,

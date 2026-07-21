@@ -505,7 +505,10 @@ mod tests {
     #[test]
     fn no_acme_fields_means_pinned_mode() {
         let cfg = RelayConfig::from_raw(raw_ok()).expect("valid minimal config");
-        assert!(cfg.acme.is_none(), "absent acme config = self-signed/pinned mode");
+        assert!(
+            cfg.acme.is_none(),
+            "absent acme config = self-signed/pinned mode"
+        );
     }
 
     fn raw_with_full_acme() -> RawConfig {
@@ -536,7 +539,10 @@ mod tests {
         let err = RelayConfig::from_raw(raw).unwrap_err();
         match err {
             ConfigError::Invalid(msg) => {
-                assert!(msg.contains("acme_directory_url"), "names the missing field");
+                assert!(
+                    msg.contains("acme_directory_url"),
+                    "names the missing field"
+                );
                 assert!(msg.contains("broker_url"));
             }
             other => panic!("expected Invalid, got {other:?}"),
@@ -547,7 +553,10 @@ mod tests {
     fn acme_debug_never_prints_the_broker_token() {
         let cfg = RelayConfig::from_raw(raw_with_full_acme()).expect("valid config");
         let printed = format!("{cfg:?}");
-        assert!(!printed.contains("relay-secret"), "broker token must be redacted");
+        assert!(
+            !printed.contains("relay-secret"),
+            "broker token must be redacted"
+        );
         assert!(printed.contains("<redacted>"));
     }
 

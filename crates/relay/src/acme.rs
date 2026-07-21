@@ -151,7 +151,11 @@ impl BrokerClient {
 /// Every ACME request carries a User-Agent: RFC 8555 §6.1 says clients SHOULD,
 /// and both Pebble and Let's Encrypt REJECT requests without one (400
 /// `malformed`, "All requests MUST include a User-Agent header").
-const USER_AGENT: &str = concat!("genaryx-relay/", env!("CARGO_PKG_VERSION"), " (+acme-dns01)");
+const USER_AGENT: &str = concat!(
+    "genaryx-relay/",
+    env!("CARGO_PKG_VERSION"),
+    " (+acme-dns01)"
+);
 
 fn b64url(bytes: &[u8]) -> String {
     B64URL.encode(bytes)
@@ -317,10 +321,7 @@ impl Resp {
         };
         let location = header("location");
         let replay_nonce = header("replay-nonce");
-        let body = r
-            .text()
-            .await
-            .map_err(|e| AcmeError::Http(e.to_string()))?;
+        let body = r.text().await.map_err(|e| AcmeError::Http(e.to_string()))?;
         Ok(Self {
             status,
             location,
@@ -383,7 +384,13 @@ impl AcmeClient {
             serde_json::json!({ "termsOfServiceAgreed": true, "contact": [contact] }).to_string()
         };
         let acct = self
-            .post_signed(account, &dir.new_account, &acct_payload, jwk_key, &mut nonce)
+            .post_signed(
+                account,
+                &dir.new_account,
+                &acct_payload,
+                jwk_key,
+                &mut nonce,
+            )
             .await?;
         let kid = acct.location.clone().ok_or_else(|| {
             AcmeError::Protocol("newAccount returned no Location (account URL)".into())
@@ -430,7 +437,8 @@ impl AcmeClient {
             // Tell the CA to validate: POST the challenge URL with `{}`.
             self.post_signed(account, &challenge.url, "{}", kid_key, &mut nonce)
                 .await?;
-            self.poll_authz(account, authz_url, kid_key, &mut nonce).await?;
+            self.poll_authz(account, authz_url, kid_key, &mut nonce)
+                .await?;
         }
 
         // The TXT has done its job; pull it back down (best-effort).
@@ -441,8 +449,14 @@ impl AcmeClient {
         // Finalize with the CSR, then wait for the order to carry a cert URL.
         let csr = build_csr_der(&self.config.hostname, cert_key)?;
         let finalize_payload = serde_json::json!({ "csr": b64url(&csr) }).to_string();
-        self.post_signed(account, &order.finalize, &finalize_payload, kid_key, &mut nonce)
-            .await?;
+        self.post_signed(
+            account,
+            &order.finalize,
+            &finalize_payload,
+            kid_key,
+            &mut nonce,
+        )
+        .await?;
         let cert_url = self
             .poll_order_for_cert(account, &order_url, kid_key, &mut nonce)
             .await?;
@@ -551,9 +565,7 @@ impl AcmeClient {
     ) -> Result<(), AcmeError> {
         let attempts = self.max_polls();
         for _ in 0..attempts {
-            let resp = self
-                .post_signed(account, authz_url, "", key, nonce)
-                .await?;
+            let resp = self.post_signed(account, authz_url, "", key, nonce).await?;
             let authz: AuthzBody = serde_json::from_str(&resp.body)?;
             match authz.status.as_str() {
                 "valid" => return Ok(()),
@@ -580,9 +592,7 @@ impl AcmeClient {
     ) -> Result<String, AcmeError> {
         let attempts = self.max_polls();
         for _ in 0..attempts {
-            let resp = self
-                .post_signed(account, order_url, "", key, nonce)
-                .await?;
+            let resp = self.post_signed(account, order_url, "", key, nonce).await?;
             let order: OrderBody = serde_json::from_str(&resp.body)?;
             match order.status.as_str() {
                 "valid" => {
@@ -639,9 +649,7 @@ mod tests {
         let thumb = jwk_thumbprint(&x, &y);
         // Rebuild the RFC 7638 canonical form by hand and hash it: this pins
         // both the field ORDER (crv,kty,x,y) and the no-whitespace formatting.
-        let canonical = format!(
-            "{{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"{x}\",\"y\":\"{y}\"}}"
-        );
+        let canonical = format!("{{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"{x}\",\"y\":\"{y}\"}}");
         let expected = b64url(&Sha256::digest(canonical.as_bytes()));
         assert_eq!(thumb, expected);
         assert_eq!(thumb.len(), 43); // SHA-256 => 32 bytes => 43 b64url chars
@@ -676,8 +684,12 @@ mod tests {
         // The signature must verify over exactly `protected.payload`.
         let signing_input = format!("{protected_b64}.{payload_b64}");
         let sig = B64URL.decode(sig_b64).unwrap();
-        verify_es256(&signer.public_key_x963().unwrap(), signing_input.as_bytes(), &sig)
-            .expect("the JWS signature must verify under the account key");
+        verify_es256(
+            &signer.public_key_x963().unwrap(),
+            signing_input.as_bytes(),
+            &sig,
+        )
+        .expect("the JWS signature must verify under the account key");
 
         // The protected header must carry alg/nonce/url and the jwk.
         let protected: serde_json::Value =
@@ -701,12 +713,18 @@ mod tests {
         )
         .unwrap();
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(json["payload"], "", "POST-as-GET payload is the empty string");
+        assert_eq!(
+            json["payload"], "",
+            "POST-as-GET payload is the empty string"
+        );
         let protected: serde_json::Value =
             serde_json::from_slice(&B64URL.decode(json["protected"].as_str().unwrap()).unwrap())
                 .unwrap();
         assert_eq!(protected["kid"], "https://ca.example/acme/acct/7");
-        assert!(protected.get("jwk").is_none(), "kid and jwk are mutually exclusive");
+        assert!(
+            protected.get("jwk").is_none(),
+            "kid and jwk are mutually exclusive"
+        );
     }
 
     #[test]
@@ -765,7 +783,10 @@ mod tests {
             poll_timeout: Duration::from_secs(30),
             poll_interval: Duration::from_secs(2),
         };
-        assert_eq!(cfg.challenge_fqdn(), "_acme-challenge.relay01.pocket.it-rat.com");
+        assert_eq!(
+            cfg.challenge_fqdn(),
+            "_acme-challenge.relay01.pocket.it-rat.com"
+        );
     }
 
     /// End-to-end DNS-01 issuance against a REAL Pebble ACME server + the Pocket
@@ -815,8 +836,14 @@ mod tests {
             .await
             .expect("DNS-01 issuance against Pebble must succeed");
 
-        assert!(bundle.cert_pem.contains("BEGIN CERTIFICATE"), "got a cert chain");
-        assert!(bundle.key_pem.contains("BEGIN PRIVATE KEY"), "kept the cert key");
+        assert!(
+            bundle.cert_pem.contains("BEGIN CERTIFICATE"),
+            "got a cert chain"
+        );
+        assert!(
+            bundle.key_pem.contains("BEGIN PRIVATE KEY"),
+            "kept the cert key"
+        );
         // The leaf must actually certify our hostname: decode the first PEM
         // block to DER and find the SAN bytes.
         let leaf_der = first_pem_cert_der(&bundle.cert_pem);

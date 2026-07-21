@@ -502,9 +502,10 @@ mod tests {
 
     #[test]
     fn window_view_deserializes() {
-        let w: WindowView =
-            serde_json::from_str(r#"{"kind":"watch","expires_unix":1758000900,"failed_attempts":3}"#)
-                .expect("valid WindowView json");
+        let w: WindowView = serde_json::from_str(
+            r#"{"kind":"watch","expires_unix":1758000900,"failed_attempts":3}"#,
+        )
+        .expect("valid WindowView json");
         assert_eq!(w.kind, "watch");
         assert_eq!(w.expires_unix, 1_758_000_900);
         assert_eq!(w.failed_attempts, 3);
@@ -528,7 +529,9 @@ mod tests {
             resp.window(DeviceKind::Phone).is_none(),
             "phone has no armed window"
         );
-        let watch_window = resp.window(DeviceKind::Watch).expect("watch window present");
+        let watch_window = resp
+            .window(DeviceKind::Watch)
+            .expect("watch window present");
         assert_eq!(watch_window.expires_unix, 1_758_000_900);
         assert_eq!(watch_window.failed_attempts, 7);
     }

@@ -88,7 +88,11 @@ impl RateLimiter {
     /// sweep is that this does not grow without bound.
     #[cfg(test)]
     fn tracked_keys(&self) -> usize {
-        self.hits.lock().expect("rate limiter mutex poisoned").keys.len()
+        self.hits
+            .lock()
+            .expect("rate limiter mutex poisoned")
+            .keys
+            .len()
     }
 }
 
