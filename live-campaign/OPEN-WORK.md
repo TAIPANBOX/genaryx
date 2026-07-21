@@ -228,3 +228,114 @@ so this is realistic. Fable-confirmed with url 2.5.8.
 (`utf8_percent_encode`, encoding `/`), build ONE path, sign THAT, send exactly
 those bytes; mirror the mobile fix (`asPathSegment`/`Account.mutationURL` in
 tokenfuse-mobile, commits `eac44ed` + `ed9c9de`). Add a test.
+
+---
+
+## 7. Qryx: separate test-code findings from production [#12]
+
+**DONE 2026-07-21**, qryx commit `9d46d8b` (pushed, CI green).
+
+The problem was measured before it was fixed. Scanning qryx itself, **8 of 13
+crypto assets existed ONLY in test code** and 21 of 40 occurrences were test
+code; in tokenfuse a single `critical` "private key material embedded in
+source" finding reported three occurrences, two of them fixtures in
+`crates/cloud/tests/oidc.rs`. So the compliance number an operator drives to
+zero was inflated by code nobody ships, and the findings that actually need
+migrating were buried under it.
+
+Test code is classified at walk time (`internal/scan/testpath.go`) and stamped
+onto `model.Location.IsTest` by the WALKER, not by each detector, so no detector
+can forget. The split happens ONCE, in the shared tail of `cmd/qryx/main.go`,
+before the graph, `--save`, `--events`, the policy gate, the verdict and every
+`--format` read the findings, so none of them can disagree about what
+production means. Excluded by default (Yurii's call, 2026-07-21);
+`--include-tests` restores the old behaviour; one stderr line always reports how
+much was set aside and how many assets exist only there, leaving stdout clean.
+
+Deliberate: `examples/` is NOT test code (example code is shipped and copied),
+and the negative cases are pinned in tests (`attestation/`, `latest/`,
+`protest/`, `contest.py` must never match), because the two mistakes do not cost
+the same - calling production "test" hides real debt.
+
+Result with the real CLI: qryx 13 assets -> 5, 40 occurrences -> 19; tokenfuse's
+hardcoded-key finding 3 -> 1; verdryx unchanged, the right non-effect.
+
+---
+
+## 8. Budgets above the run: per agent / team / org [#16]
+
+**DESIGNED 2026-07-21, NOT BUILT.** Ground truth extracted from tokenfuse and
+the design settled with Fable. Recorded here so implementation can start cold.
+
+**What exists today:** budgets are per-run only. But `Ledger::reserve` ALREADY
+walks the run's ancestor chain (`RunState.parent`) and fails if any ancestor
+would exceed, and `settle` debits the whole chain.
+
+**Reuse the ancestor walk, do NOT reuse `RunState` as the node type.** Synthetic
+long-lived ancestors are a trap, and the property that breaks is specific:
+releasing `reserved` is tied to settle/run completion, so a scope node that
+never completes ratchets its available budget down to zero on every run that
+dies without settling (fail-closed drift). Two more: `spent` is monotonic with
+no window, so periods are unimplementable on it; and the map is in-process, so a
+gateway restart silently zeroes month-to-date (fail-open drift). Broken in both
+directions. Instead: a separate `ScopeState { limit, window_id, spent, reserved
+(TTL) }` map, resolved run -> agent(key) -> team -> org at run creation from the
+credential and cloud config, with reserve/settle walking both maps in one check.
+
+**Windows:** calendar `day`/`month` (UTC) plus `total`. No rolling windows in
+v1. The boundary is evaluated lazily at first touch, not by a cron: compare
+`window_id` against the one derived from now (or from `ts_millis` at cloud
+ingest), and on a mismatch emit a rollover record, zero `spent`, carry
+`reserved` over. No migration and no lost history, because the ledger never held
+history: the truth is the CallRecord stream, and the cloud keys accumulators by
+`(scope, window_id)` so a new window is simply a new key.
+
+**Enforcement is hybrid**: local synchronous admission against a cloud-published
+`remaining` snapshot (same existing 3s poll), cloud is accountant of record,
+kill-set is the backstop on exhaustion. The guarantee we may honestly advertise,
+verbatim: exact at admission on one gateway or within one raft cluster; across G
+independent gateways, overspend is bounded by what they admit within one sync
+interval; no hard real-time global cap is claimed.
+
+**Do NOT reverse the `agent_id` invariant.** It is a client-supplied header, so
+gating spend on it means a budget is bypassed by minting a fresh id, an
+unbounded-cardinality ledger map, and agent-id squatting to starve someone
+else's agent. Enforced budgets key on the server-resolved `key_id` instead. If
+per-client keys do not exist at the gateway yet, per-agent enforcement is
+blocked on introducing them, and that is slice 1.
+
+**Teams** are a cloud-held `key_id -> team` mapping, not a new end-to-end
+dimension: a `team` header would be manual config in every agent (the exact
+deployment-UX smell) and clients could lie about it. The only schema change
+anywhere is one server-stamped `key_id` on CallRecord.
+
+**Exhaustion:** in-flight reservations complete; the next reserve of an existing
+run and the first reserve of a new run get **429** with
+`{code, scope, scope_id, resets_at}` and a truthful `Retry-After` (the budget
+really does return at the window boundary, and SDKs already back off on 429).
+Grace is threshold alerts at 80/95% plus an opt-in bounded drain, default OFF:
+a product that sells a hard stop must stop by default.
+
+**The trap, named:** do NOT derive enforcement counters by folding `RunAgg`.
+Those live under `MAX_RUNS_PER_ORG = 50_000` with LRU eviction, so a fold-based
+spend figure silently DECREASES when a run is evicted - enforcement built on it
+fails open while advertising a guarantee it does not have. Enforcement
+accumulators must be first-class monotonic counters written at ingest. (Folding
+`AgentAgg` is fine precisely because it is read-only reporting.) Two smaller
+ones: `parent_run_id` is client input that becomes an edge of the money graph,
+so validate it at run creation (exists, same org/key, depth cap ~32, reject
+cycles); and decide the offline posture explicitly (enforce against last-known
+remaining, loud alert after T_stale) rather than inheriting it by accident.
+
+**Slices, smallest first**, each stated by what a customer can newly do:
+1. Key identity + attribution, no enforcement: per-client keys, server-stamped
+   `key_id`, cloud `key -> agent/team` map, first-class windowed accumulators at
+   ingest, threshold alerts, `parent_run_id` validation. New: unspoofable spend
+   by agent/team/key, and alerts on org/team budgets.
+2. Enforced scope budgets on one gateway: `ScopeState`, extended walk, 429
+   semantics, counter rehydration on boot. New: an org/agent cap that actually
+   stops spend.
+3. Fleet convergence: `remaining` snapshots on the 3s poll, local decrement,
+   kill backstop, the guarantee written into docs. New: one budget across the
+   fleet instead of N independent copies.
+4. Polish: drain mode, near-limit synchronous reserve, raft-exact documented.
