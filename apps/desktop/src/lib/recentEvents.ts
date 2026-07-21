@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import { MOCK_EVENTS } from "../mockData";
 import type { UiEvent } from "../types";
 
@@ -20,9 +20,9 @@ export interface RecentEventsResult {
  * data in `mockData.ts`, so a plain browser preview always renders.
  */
 export async function fetchRecentEvents(limit: number): Promise<RecentEventsResult> {
-  if (isTauri()) {
+  if (hasBackend()) {
     try {
-      const events = await invoke<UiEvent[]>("recent_events", { limit });
+      const events = await invokeBackend<UiEvent[]>("recent_events", { limit });
       return { events, source: "tauri" };
     } catch (err) {
       // eslint-disable-next-line no-console

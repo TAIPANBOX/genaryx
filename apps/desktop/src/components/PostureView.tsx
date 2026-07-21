@@ -1,5 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { hasBackend, subscribeBackend } from "../lib/transport";
 import { useEffect, useState } from "react";
 import type { IdentityStatus, IdryxAlert, IdryxIdentity } from "../identityTypes";
 import { cssVar } from "../lib/cssVars";
@@ -274,12 +273,12 @@ export function PostureView() {
   // subscribe to, folded into the running signals rather than kept as a
   // growing list (Posture never needs to render individual rows).
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!hasBackend()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    listen<UiEvent>(LIVE_EVENT, (event) => {
-      const e = event.payload;
+    subscribeBackend<UiEvent>(LIVE_EVENT, (payload) => {
+      const e = payload;
       setBusEventCount((n) => n + 1);
       setSchemasSeen((prev) => (prev.has(e.schema) ? prev : new Set(prev).add(e.schema)));
       const ms = parseTsMs(e.ts);
@@ -296,7 +295,7 @@ export function PostureView() {
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
-        console.error(`listen(${LIVE_EVENT}) failed (posture):`, err);
+        console.error(`subscribe(${LIVE_EVENT}) failed (posture):`, err);
       });
 
     return () => {

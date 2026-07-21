@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type {
   Incident,
   MoneyError,
@@ -11,7 +11,7 @@ import type {
 
 /** Thrown by every fetcher/mutator below when there is no Tauri runtime to
  * talk to (a plain `vite build`/browser preview) - mirrors
- * `lib/recentEvents.ts`'s `isTauri()` guard, except the Money panel has no
+ * `lib/recentEvents.ts`'s `hasBackend()` guard, except the Money panel has no
  * sensible mock data to fall back to (there is no mock Cloud), so it
  * surfaces the same "no environment" state a real no-descriptor box would
  * show rather than inventing fake numbers. */
@@ -31,9 +31,9 @@ function toMoneyError(err: unknown): MoneyError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw NO_ENVIRONMENT_ERROR;
+  if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
   try {
-    return await invoke<T>(command, args);
+    return await invokeBackend<T>(command, args);
   } catch (err) {
     throw toMoneyError(err);
   }
@@ -45,9 +45,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
  * unwrap since this is the command the UI uses to decide whether to call
  * the others at all. */
 export async function fetchMoneyStatus(): Promise<MoneyStatus> {
-  if (!isTauri()) return { state: "no_environment" };
+  if (!hasBackend()) return { state: "no_environment" };
   try {
-    return await invoke<MoneyStatus>("money_status");
+    return await invokeBackend<MoneyStatus>("money_status");
   } catch (err) {
     return {
       state: "pairing_failed",

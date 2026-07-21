@@ -1,0 +1,45 @@
+# The console's command layer, with no shell of its own.
+#
+# Everything the UI can ask for lives here as plain async Rust: the per-plane
+# clients (`MoneyState`, `PolicyState`, ...), the DTOs the frontend decodes,
+# and one function per command. It deliberately does NOT depend on `tauri`.
+#
+# Rule D2/06 §0.9 says all logic lives in the core and the shells stay thin.
+# The desktop shell had drifted from that (14k lines of command bodies inside
+# `src-tauri`), which is exactly what stopped the same commands being served
+# over HTTP. Both shells now wrap this crate instead of owning the logic:
+#
+#   apps/desktop/src-tauri  ->  #[tauri::command] wrappers  ->  genaryx-api
+#   crates/web (genaryx-web) ->  POST /api/command/<name>   ->  genaryx-api
+#
+# so a command cannot behave differently depending on which shell called it.
+[package]
+name = "genaryx-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Genaryx console command layer, shared by the desktop and web shells."
+
+[dependencies]
+genaryx-core = { path = "../core" }
+genaryx-connectors = { path = "../connectors" }
+genaryx-signing = { path = "../signing" }
+genaryx-copilot = { path = "../copilot" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# Both only for tests that moved here with their planes: money/state.rs's
+# gated live-e2e spawns a real tokenfuse-cloud and polls its /healthz, and
+# quality/state.rs seeds a genuine SQLite file to prove the read-only re-open
+# path. Each already reaches this build transitively through
+# genaryx-connectors, but a transitive dependency is not directly nameable.
+reqwest = { workspace = true }
+rusqlite = { workspace = true }

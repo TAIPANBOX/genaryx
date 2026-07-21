@@ -30,5 +30,14 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // 4. `npm run dev:web` develops the browser shell against a real
+    // genaryx-web. Proxying keeps it same-origin, so the session cookie and
+    // the SSE stream behave exactly as they do in production.
+    proxy: {
+      "/api": {
+        target: process.env.GENARYX_WEB_ORIGIN || "http://127.0.0.1:7420",
+        changeOrigin: false,
+      },
+    },
   },
 }));

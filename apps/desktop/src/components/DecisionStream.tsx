@@ -1,5 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { hasBackend, subscribeBackend } from "../lib/transport";
 import { useEffect, useState } from "react";
 import { fetchRecentEvents } from "../lib/recentEvents";
 import { formatTimestamp } from "../lib/format";
@@ -84,13 +83,13 @@ export function DecisionStream({ onOpenAgent }: { onOpenAgent: (agentId: string)
   }, []);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!hasBackend()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    listen<UiEvent>(LIVE_EVENT, (event) => {
-      if (!isWardryx(event.payload)) return;
-      setEvents((prev) => [event.payload, ...prev].slice(0, FETCH_LIMIT));
+    subscribeBackend<UiEvent>(LIVE_EVENT, (payload) => {
+      if (!isWardryx(payload)) return;
+      setEvents((prev) => [payload, ...prev].slice(0, FETCH_LIMIT));
     })
       .then((fn) => {
         if (cancelled) {
@@ -101,7 +100,7 @@ export function DecisionStream({ onOpenAgent }: { onOpenAgent: (agentId: string)
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
-        console.error(`listen(${LIVE_EVENT}) failed:`, err);
+        console.error(`subscribe(${LIVE_EVENT}) failed:`, err);
       });
 
     return () => {

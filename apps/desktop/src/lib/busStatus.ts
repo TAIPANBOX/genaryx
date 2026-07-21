@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 
 /**
  * Where the events on screen actually come from, as reported by the Rust
@@ -27,9 +27,9 @@ export type BusMode =
  * caller renders no claim at all rather than a wrong one.
  */
 export async function fetchBusMode(): Promise<BusMode | null> {
-  if (!isTauri()) return null;
+  if (!hasBackend()) return null;
   try {
-    return await invoke<BusMode>("bus_status");
+    return await invokeBackend<BusMode>("bus_status");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("bus_status invoke failed:", err);

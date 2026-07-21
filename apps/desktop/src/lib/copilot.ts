@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type { CopilotAnswer, CopilotStatus } from "../copilotTypes";
 
 /** The honest "nothing to talk to" status this module returns outside Tauri
@@ -17,9 +17,9 @@ const NO_TAURI_STATUS: CopilotStatus = {
  * (or on any IPC failure) it resolves to a renderable disabled status
  * instead - mirrors `lib/identity.ts`'s `fetchIdentityStatus`. */
 export async function fetchCopilotStatus(): Promise<CopilotStatus> {
-  if (!isTauri()) return NO_TAURI_STATUS;
+  if (!hasBackend()) return NO_TAURI_STATUS;
   try {
-    return await invoke<CopilotStatus>("copilot_status");
+    return await invokeBackend<CopilotStatus>("copilot_status");
   } catch (err) {
     return {
       enabled: false,
@@ -41,8 +41,8 @@ export async function fetchCopilotStatus(): Promise<CopilotStatus> {
  * nothing is set up), never as a crash - see `describeCopilotError` and
  * `CopilotView.tsx`. */
 export async function askCopilot(question: string): Promise<CopilotAnswer> {
-  if (!isTauri()) throw new Error("No Tauri runtime to talk to.");
-  return await invoke<CopilotAnswer>("copilot_ask", { question });
+  if (!hasBackend()) throw new Error("No Tauri runtime to talk to.");
+  return await invokeBackend<CopilotAnswer>("copilot_ask", { question });
 }
 
 /** The C1 "Explain with Felyx" cross-plane root-cause flow
@@ -57,8 +57,8 @@ export async function askCopilot(question: string): Promise<CopilotAnswer> {
  * a plain string/Error - callers render that rejection as an assistant note
  * via `describeCopilotError`, same as `askCopilot`. */
 export async function explainIncident(incidentId: string): Promise<CopilotAnswer> {
-  if (!isTauri()) throw new Error("No Tauri runtime to talk to.");
-  return await invoke<CopilotAnswer>("copilot_explain", { incident_id: incidentId });
+  if (!hasBackend()) throw new Error("No Tauri runtime to talk to.");
+  return await invokeBackend<CopilotAnswer>("copilot_explain", { incident_id: incidentId });
 }
 
 /** Human-readable text for whatever `askCopilot` rejected with. Tauri passes
@@ -104,11 +104,11 @@ export async function logProposalApproved(
   target: string,
   params: unknown,
 ): Promise<ProposalApprovedOutcome> {
-  if (!isTauri()) {
+  if (!hasBackend()) {
     return { journaled: false, journal_error: "No Tauri runtime to talk to." };
   }
   try {
-    return await invoke<ProposalApprovedOutcome>("copilot_log_proposal_approved", { kind, target, params });
+    return await invokeBackend<ProposalApprovedOutcome>("copilot_log_proposal_approved", { kind, target, params });
   } catch (err) {
     return {
       journaled: false,

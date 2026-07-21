@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type { UiEvent } from "../types";
 
 /**
@@ -13,9 +13,9 @@ import type { UiEvent } from "../types";
  * "empty" is the one honest fallback both inside and outside Tauri.
  */
 export async function fetchRunEvents(runId: string, limit: number): Promise<UiEvent[]> {
-  if (!isTauri()) return [];
+  if (!hasBackend()) return [];
   try {
-    return await invoke<UiEvent[]>("run_events", { run_id: runId, limit });
+    return await invokeBackend<UiEvent[]>("run_events", { run_id: runId, limit });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`run_events invoke failed for ${runId}, rendering no events:`, err);

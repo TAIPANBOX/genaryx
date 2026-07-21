@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type { AgentSlice, LayoutView } from "../graphTypes";
 import type { UiEvent } from "../types";
 
@@ -21,9 +21,9 @@ const EMPTY_SLICE: AgentSlice = { node: null, parents: [], children: [] };
  * `agent_graph`'s own "never an Err the UI traps on" contract on the Rust
  * side. */
 export async function fetchAgentGraph(): Promise<LayoutView> {
-  if (!isTauri()) return EMPTY_GRAPH;
+  if (!hasBackend()) return EMPTY_GRAPH;
   try {
-    return await invoke<LayoutView>("agent_graph");
+    return await invokeBackend<LayoutView>("agent_graph");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("agent_graph invoke failed, rendering an empty graph:", err);
@@ -34,9 +34,9 @@ export async function fetchAgentGraph(): Promise<LayoutView> {
 /** One agent's immediate delegation neighborhood (Agent 360's Delegation
  * section). Same never-throws contract as [`fetchAgentGraph`]. */
 export async function fetchAgentSlice(agentId: string): Promise<AgentSlice> {
-  if (!isTauri()) return EMPTY_SLICE;
+  if (!hasBackend()) return EMPTY_SLICE;
   try {
-    return await invoke<AgentSlice>("agent_slice", { agent_id: agentId });
+    return await invokeBackend<AgentSlice>("agent_slice", { agent_id: agentId });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`agent_slice invoke failed for ${agentId}, rendering an empty slice:`, err);
@@ -48,9 +48,9 @@ export async function fetchAgentSlice(agentId: string): Promise<AgentSlice> {
  * Events section, and - filtered client-side to `source === "wardryx"` - its
  * Policy section). Same never-throws contract as [`fetchAgentGraph`]. */
 export async function fetchAgentEvents(agentId: string, limit: number): Promise<UiEvent[]> {
-  if (!isTauri()) return [];
+  if (!hasBackend()) return [];
   try {
-    return await invoke<UiEvent[]>("agent_events", { agent_id: agentId, limit });
+    return await invokeBackend<UiEvent[]>("agent_events", { agent_id: agentId, limit });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`agent_events invoke failed for ${agentId}, rendering no events:`, err);

@@ -1571,6 +1571,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "genaryx-api"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "genaryx-connectors",
+ "genaryx-copilot",
+ "genaryx-core",
+ "genaryx-signing",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "genaryx-connectors"
 version = "0.0.0"
 dependencies = [
@@ -1626,6 +1642,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "genaryx-api",
  "genaryx-connectors",
  "genaryx-copilot",
  "genaryx-core",

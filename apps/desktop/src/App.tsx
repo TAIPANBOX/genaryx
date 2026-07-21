@@ -1,5 +1,10 @@
 import { AppShell } from "./components/AppShell";
+import { WebGate } from "./components/WebGate";
 
 export default function App() {
-  return <AppShell />;
+  return (
+    <WebGate>
+      <AppShell />
+    </WebGate>
+  );
 }

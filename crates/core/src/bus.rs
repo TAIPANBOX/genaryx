@@ -90,22 +90,7 @@ impl ResolvedBus {
 /// name happens to sort first.
 #[must_use]
 pub fn discover() -> Option<ResolvedBus> {
-    discover_in(&taipan_environments_dir()?)
-}
-
-/// `~/.taipan/environments`, honouring `TAIPAN_HOME` so an entire install can
-/// be pointed at a scratch directory (stack-up honours the same variable; a
-/// clean-machine test where the tools write to a scratch home and the console
-/// reads the real one proves nothing).
-///
-/// `None` when neither `TAIPAN_HOME` nor `HOME` is set, rather than a panic
-/// over a missing environment variable.
-fn taipan_environments_dir() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("TAIPAN_HOME") {
-        return Some(PathBuf::from(home).join("environments"));
-    }
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".taipan").join("environments"))
+    discover_in(&crate::taipan_home::environments_dir()?)
 }
 
 /// Testable core of [`discover`]: the first descriptor in `environments_dir`

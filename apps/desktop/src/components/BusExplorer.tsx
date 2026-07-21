@@ -1,5 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { hasBackend, subscribeBackend } from "../lib/transport";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState } from "react";
 import { fetchBusMode, type BusMode } from "../lib/busStatus";
@@ -67,12 +66,12 @@ export function BusExplorer() {
   // `listen()` calls into the IPC bridge unconditionally and would reject
   // with no `window.__TAURI_INTERNALS__` to answer it.
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!hasBackend()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    listen<UiEvent>(LIVE_EVENT, (event) => {
-      setEvents((prev) => [event.payload, ...prev].slice(0, FETCH_LIMIT));
+    subscribeBackend<UiEvent>(LIVE_EVENT, (payload) => {
+      setEvents((prev) => [payload, ...prev].slice(0, FETCH_LIMIT));
     })
       .then((fn) => {
         if (cancelled) {
@@ -83,7 +82,7 @@ export function BusExplorer() {
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
-        console.error(`listen(${LIVE_EVENT}) failed:`, err);
+        console.error(`subscribe(${LIVE_EVENT}) failed:`, err);
       });
 
     return () => {

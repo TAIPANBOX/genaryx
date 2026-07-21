@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type { PocketError, PocketQr, PocketStatus } from "../pocketTypes";
 
 /** The honest, SETTLED fallback shape for `fetchPocketStatus` outside Tauri -
@@ -31,9 +31,9 @@ function toPocketError(err: unknown): PocketError {
 }
 
 async function call<T>(command: string): Promise<T> {
-  if (!isTauri()) throw NO_TAURI_ERROR;
+  if (!hasBackend()) throw NO_TAURI_ERROR;
   try {
-    return await invoke<T>(command);
+    return await invokeBackend<T>(command);
   } catch (err) {
     throw toPocketError(err);
   }
@@ -45,9 +45,9 @@ async function call<T>(command: string): Promise<T> {
  * `pocket::commands::pocket_status`'s doc), so the catch branch only covers
  * a genuine transport-level IPC failure. */
 export async function fetchPocketStatus(): Promise<PocketStatus> {
-  if (!isTauri()) return POCKET_UNAVAILABLE_NO_TAURI;
+  if (!hasBackend()) return POCKET_UNAVAILABLE_NO_TAURI;
   try {
-    return await invoke<PocketStatus>("pocket_status");
+    return await invokeBackend<PocketStatus>("pocket_status");
   } catch (err) {
     return { state: "relay_unreachable", message: err instanceof Error ? err.message : String(err) };
   }

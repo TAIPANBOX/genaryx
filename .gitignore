@@ -31,3 +31,10 @@ apps/desktop/src-tauri/target
 *.key
 !**/testdata/**/*.pem
 .claude/
+
+# Built frontends. `npm run build:web` regenerates dist-web on demand, and the
+# filenames are content-hashed, so a committed copy is stale the next build and
+# conflicts on every one after that.
+apps/desktop/dist-web/
+apps/desktop/dist/
+node_modules/

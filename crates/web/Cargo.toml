@@ -1,0 +1,60 @@
+# genaryx-web: the console served over HTTP, ON THE CUSTOMER'S OWN BOX.
+#
+# This is the web shell of the same console the desktop app ships (D2, "one
+# core, two shells"). It holds no product logic of its own: every request it
+# answers is a call into `genaryx-api`, the exact functions the Tauri shell
+# wraps, so the two shells cannot drift.
+#
+# WHERE IT RUNS is the whole point of the web-first pivot. The server is
+# co-located with the customer's stack, inside their perimeter, reading the
+# same `~/.taipan/environments/` descriptors the desktop shell reads. Nothing
+# about a customer's runs, spend or identities leaves their network to render
+# this UI: it-rat.com never sees it and has no route to it. The browser
+# reaches this process the same way the desktop console does, over the
+# operator's own WireGuard tunnel (D11), which is why the default bind is
+# loopback and why binding wider is an explicit, logged decision.
+[package]
+name = "genaryx-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Genaryx web shell: the console served over HTTP from inside the customer's own perimeter."
+
+[[bin]]
+name = "genaryx-web"
+path = "src/main.rs"
+
+[dependencies]
+# The shared command layer. Every route below is a thin call into this.
+genaryx-api = { path = "../api" }
+genaryx-core = { path = "../core" }
+genaryx-connectors = { path = "../connectors" }
+genaryx-copilot = { path = "../copilot" }
+
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["fs", "set-header", "trace"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { workspace = true }
+chrono = { workspace = true }
+
+# Session cookies. `axum-extra`'s cookie jar is the same crate family axum
+# itself ships, so this adds no second HTTP stack.
+axum-extra = { version = "0.10", features = ["cookie"] }
+
+# Operator passwords are hashed with Argon2id, never stored or compared in
+# the clear. A security product that kept a plaintext console password would
+# be arguing against its own premise. `rand` supplies the per-password salt
+# and the session-id entropy, over the same getrandom 0.2 family the rest of
+# the workspace already pins.
+argon2 = "0.5.3"
+password-hash = { version = "0.5.0", features = ["std"] }
+rand = "0.8.5"
+
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

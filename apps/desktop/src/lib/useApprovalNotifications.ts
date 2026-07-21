@@ -1,5 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { hasBackend, subscribeBackend } from "./transport";
 import { useEffect, useRef } from "react";
 import type { UiEvent } from "../types";
 import {
@@ -84,7 +83,7 @@ export function useApprovalNotifications({
   // every other `isTauri()` guard in this app, e.g. `BusExplorer.tsx`'s
   // live-listener effect).
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!hasBackend()) return;
     void ensureNotificationPermission();
     void registerApprovalActions();
   }, []);
@@ -92,7 +91,7 @@ export function useApprovalNotifications({
   // Best-effort action-click subscription (see `subscribeApprovalActionClicks`'s
   // doc comment - inert on today's desktop plugin, kept for when it is not).
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!hasBackend()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
@@ -115,13 +114,13 @@ export function useApprovalNotifications({
   // subscription (so de-dupe survives exactly as long as the listener
   // does, with no separate ref/state needed for it).
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!hasBackend()) return;
     const seen = new Set<string>();
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    listen<UiEvent>(LIVE_EVENT, (event) => {
-      const alert = extractApprovalAlert(event.payload);
+    subscribeBackend<UiEvent>(LIVE_EVENT, (payload) => {
+      const alert = extractApprovalAlert(payload);
       if (!alert || seen.has(alert.approvalId)) return;
       seen.add(alert.approvalId);
       if (isMuted(alert, mutedRef.current)) return;
@@ -137,7 +136,7 @@ export function useApprovalNotifications({
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
-        console.error(`listen(${LIVE_EVENT}) failed (approval notifications):`, err);
+        console.error(`subscribe(${LIVE_EVENT}) failed (approval notifications):`, err);
       });
 
     return () => {

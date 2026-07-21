@@ -19,6 +19,7 @@ pub mod graph;
 pub mod ingest;
 pub mod layout;
 pub mod store;
+pub mod taipan_home;
 
 pub use bus::{ResolvedBus, discover as discover_bus};
 pub use command::{CommandRecord, console_command_line, record};

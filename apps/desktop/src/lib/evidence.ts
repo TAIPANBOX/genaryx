@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type {
   EvidenceBuildRequest,
   EvidenceBuildResult,
@@ -23,9 +23,9 @@ function toEvidenceError(err: unknown): EvidenceError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw NO_TAURI_ERROR;
+  if (!hasBackend()) throw NO_TAURI_ERROR;
   try {
-    return await invoke<T>(command, args);
+    return await invokeBackend<T>(command, args);
   } catch (err) {
     throw toEvidenceError(err);
   }
@@ -56,9 +56,9 @@ const EVIDENCE_UNAVAILABLE: EvidenceStatus = {
  * folded into the same honest "nothing resolved" shape a real fresh box with
  * no local tools would report, never a perpetual "resolving..." state. */
 export async function fetchEvidenceStatus(): Promise<EvidenceStatus> {
-  if (!isTauri()) return EVIDENCE_UNAVAILABLE;
+  if (!hasBackend()) return EVIDENCE_UNAVAILABLE;
   try {
-    return await invoke<EvidenceStatus>("evidence_status");
+    return await invokeBackend<EvidenceStatus>("evidence_status");
   } catch {
     return EVIDENCE_UNAVAILABLE;
   }

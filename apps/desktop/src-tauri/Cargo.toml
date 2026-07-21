@@ -37,16 +37,32 @@ tauri = { version = "2.11", features = ["tray-icon"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-# `genaryx-core::ingest::IngestService::subscribe()` returns a
-# `tokio::sync::broadcast::Receiver` (see src/live.rs); naming that type here
-# requires depending on tokio directly even though it already reaches this
-# build transitively through genaryx-core. Only the "sync" feature is used
-# directly (plain, non-async `try_recv`/`send`, no runtime required); "rt"/
-# "time"/etc. still get pulled in and unified via genaryx-core's own
-# dependency, not duplicated by this line.
+# `remote/state.rs`'s `use tokio::sync::Mutex as AsyncMutex`: the OUTER lock
+# around `RemoteInner`, taken with `.await` from async Tauri commands (Remote
+# is the last plane still living in this crate, because its SSH tail streams
+# by emitting Tauri events). Naming that type here requires depending on tokio
+# directly even though it already reaches this build transitively through
+# genaryx-core.
+#
+# That one lock is async on purpose, and it is the only one that is: the cells
+# INSIDE `RemoteClient` are plain `std::sync::Mutex`, because they are taken
+# only from a blocking OS thread and never held across an `.await`. See
+# `remote/state.rs`'s "Interior mutability, not outer-state replacement"
+# section; swapping either kind for the other would be wrong in both
+# directions.
+#
+# "sync" is the only feature this crate turns on directly. "rt"/"time"/etc.
+# still arrive transitively through genaryx-core's own tokio dependency and
+# are unified with it rather than duplicated by this line, which is also what
+# lets `tray.rs` name `tokio::time::sleep`.
 tokio = { version = "1.52", features = ["sync"] }
 # The frozen core (crates/core, HEAD 51ebbe3): Store + IngestService, see
 # src/live.rs for the wiring.
+# The shared command layer (crates/api). Every plane's logic used to live in
+# this crate; it now lives there so `genaryx-web` can serve the same commands
+# over HTTP. What is left here is the Tauri wiring: `#[tauri::command]`
+# wrappers, the live bus feeder, the tray, and the SSH tail's emitter.
+genaryx-api = { path = "../../../crates/api" }
 genaryx-core = { path = "../../../crates/core" }
 # Phase-1 wave 3 (docs/PHASE1.md): the Money + Overview panel's data spine -
 # typed reads plus ES256-signed mutations against TokenFuse Cloud. See

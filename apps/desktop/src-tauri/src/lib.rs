@@ -1,7 +1,7 @@
 //! Genaryx desktop shell (Tauri 2, decision D2): thin Rust side, all logic in
 //! `genaryx-core` (06 §0.9). `setup` seeds a real `genaryx-core` `Store` from
 //! the demo fixtures and starts the live feeder (see `live.rs`);
-//! `recent_events` reads that same Store. `events::mock_events` is now only
+//! `recent_events` reads that same Store. `genaryx_api::events::mock_events` is now only
 //! the fail-closed fallback for when startup seeding or a Store read fails.
 //!
 //! `setup` also manages the Money panel's state (see `money/`): a paired
@@ -50,7 +50,7 @@
 //! Policy panel's Decision Stream filters to `source == "wardryx"`.
 //!
 //! The Memory panel's state (see `memory/`, docs/PHASE4.md Wave 2) is the
-//! first STATEFUL connector this app manages: `memory::bootstrap` spawns and
+//! first STATEFUL connector this app manages: `genaryx_api::memory::bootstrap` spawns and
 //! keeps alive ONE long-lived `engram-mcp` process for the whole app
 //! lifetime (see `memory::state`'s module doc for why re-spawning per call
 //! is never acceptable). The Drills panel's state (see `drills/`,
@@ -73,14 +73,20 @@
 //! `events_dir` handle either - journaling reads `MoneyClient.bus` at build
 //! time, not a handle stored on `EvidenceState` itself.
 //!
-//! The Remote panel's state (see `remote/`, docs/PHASE4.md W4, "Distance")
-//! is managed the same non-blocking way once more, but resolves NOTHING
-//! auto-discovered beyond a best-effort `wireguard-go` default path: the WG
-//! peer, the SSH target, and even that binary path are 100%
-//! operator-defined (see `remote::state`'s module doc). It is the app's
-//! SECOND stateful-connector panel after Memory - it holds both a `WgTunnel`
-//! and an `SshClient` long-lived, each behind its own cell, for the app's
-//! whole life once the operator connects/pins them.
+//! The Remote panel's state (see `genaryx_api::remote`, docs/PHASE4.md W4,
+//! "Distance") is managed the same non-blocking way once more, but resolves
+//! NOTHING auto-discovered beyond a best-effort `wireguard-go` default path:
+//! the WG peer, the SSH target, and even that binary path are 100%
+//! operator-defined (see `genaryx_api::remote::state`'s module doc). It is
+//! the app's SECOND stateful-connector panel after Memory - it holds both a
+//! `WgTunnel` and an `SshClient` long-lived, each behind its own cell, for
+//! the app's whole life once the operator connects/pins them. Its SSH tail
+//! is the one piece of the shared command layer this shell must still
+//! supply the delivery for: `commands::remote::remote_ssh_tail_start` builds
+//! a `TauriTailSink` from the `AppHandle` and hands it to
+//! `genaryx_api::remote::commands::remote_ssh_tail_start` as the generic
+//! `TailSink` its reader thread streams through (see that function's own
+//! module doc, and `commands.rs`'s `remote` module).
 //!
 //! The Pocket panel's commands (see `pocket/`, docs/PHASE5.md W2) need NO
 //! managed state at all and so are never `app.manage`d in `setup` - every
@@ -99,63 +105,29 @@
 //! so Felyx's tools are already wired to whatever planes this box resolves
 //! the day a provider is configured.
 
-mod copilot;
-mod crypto;
-mod drills;
-mod events;
-mod evidence;
-mod graph;
-mod identity;
+mod commands;
 mod live;
-mod memory;
-mod money;
-mod pocket;
-mod policy;
-mod quality;
-mod remote;
-mod replay;
 mod tray;
 
-use copilot::CopilotState;
-use crypto::CryptoState;
-use drills::DrillsState;
-use events::UiEvent;
-use evidence::EvidenceState;
-use identity::IdentityState;
-use live::AppState;
-use memory::MemoryState;
-use money::MoneyState;
-use policy::PolicyState;
-use quality::QualityState;
-use remote::RemoteState;
+use genaryx_api::bus::AppState;
+use genaryx_api::copilot::CopilotState;
+use genaryx_api::crypto::CryptoState;
+use genaryx_api::drills::DrillsState;
+use genaryx_api::events::UiEvent;
+use genaryx_api::evidence::EvidenceState;
+use genaryx_api::identity::IdentityState;
+use genaryx_api::memory::MemoryState;
+use genaryx_api::money::MoneyState;
+use genaryx_api::policy::PolicyState;
+use genaryx_api::quality::QualityState;
+use genaryx_api::remote::RemoteState;
 use tauri::Manager;
 
-/// Recent events for the Bus Explorer, newest first, capped at `limit`.
-///
-/// Reads the real `genaryx-core` `Store` seeded at startup (see
-/// `live::bootstrap`) through its own short-lived reader connection (WAL
-/// mode lets this coexist with the live feeder's writer thread). Never
-/// panics and never surfaces an `Err` to the frontend: a missing store
-/// (startup seeding failed) or a failed query both fall back to
-/// `events::mock_events`, so the Bus Explorer always renders something
-/// rather than trapping on a broken bus.
+/// Recent events for the Bus Explorer. The reader itself lives with the bus
+/// it reads (`genaryx_api::bus`), so the web shell serves the same rows.
 #[tauri::command]
 fn recent_events(limit: usize, state: tauri::State<'_, AppState>) -> Vec<UiEvent> {
-    if let Some(dir) = &state.events_dir {
-        let db_path = dir.join("console.sqlite");
-        match genaryx_core::store::Store::open(&db_path) {
-            Ok(store) => match store.recent_events(limit) {
-                Ok(rows) => return rows.into_iter().map(UiEvent::from).collect(),
-                Err(e) => {
-                    eprintln!("genaryx: recent_events query failed, falling back to mock data: {e}")
-                }
-            },
-            Err(e) => eprintln!(
-                "genaryx: could not open store for recent_events, falling back to mock data: {e}"
-            ),
-        }
-    }
-    events::mock_events(limit)
+    genaryx_api::bus::recent_events(limit, &state)
 }
 
 /// Where the Bus Explorer's events actually come from, so the UI can say so.
@@ -167,8 +139,8 @@ fn recent_events(limit: usize, state: tauri::State<'_, AppState>) -> Vec<UiEvent
 /// failure the "no fabricated data" rule exists to prevent. Cheap to call and
 /// read-only, so a panel can re-read it whenever it likes.
 #[tauri::command]
-fn bus_status(state: tauri::State<'_, AppState>) -> live::BusMode {
-    state.mode.clone()
+fn bus_status(state: tauri::State<'_, AppState>) -> genaryx_api::bus::BusMode {
+    genaryx_api::bus::bus_status(&state)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -184,12 +156,13 @@ pub fn run() {
             let (events_dir, bus_mode) = match live::bootstrap(app.handle().clone()) {
                 Ok(bus) => (Some(bus.events_dir), bus.mode),
                 Err(e) => {
-                    eprintln!(
-                        "genaryx: bus startup failed, Bus Explorer will use mock data: {e}"
-                    );
-                    (None, live::BusMode::Unavailable {
-                        reason: e.to_string(),
-                    })
+                    eprintln!("genaryx: bus startup failed, Bus Explorer will use mock data: {e}");
+                    (
+                        None,
+                        genaryx_api::bus::BusMode::Unavailable {
+                            reason: e.to_string(),
+                        },
+                    )
                 }
             };
 
@@ -202,7 +175,7 @@ pub fn run() {
             let money_handle = app.handle().clone();
             let money_events_dir = events_dir.clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = money::bootstrap(money_events_dir).await;
+                let resolved = genaryx_api::money::bootstrap(money_events_dir).await;
                 let state = money_handle.state::<MoneyState>();
                 *state.inner.lock().await = resolved;
             });
@@ -214,7 +187,7 @@ pub fn run() {
             let policy_handle = app.handle().clone();
             let policy_events_dir = events_dir.clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = policy::bootstrap(policy_events_dir).await;
+                let resolved = genaryx_api::policy::bootstrap(policy_events_dir).await;
                 let state = policy_handle.state::<PolicyState>();
                 *state.inner.lock().await = resolved;
             });
@@ -232,7 +205,7 @@ pub fn run() {
             app.manage(IdentityState::pending());
             let identity_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = identity::bootstrap().await;
+                let resolved = genaryx_api::identity::bootstrap().await;
                 let state = identity_handle.state::<IdentityState>();
                 *state.inner.lock().await = resolved;
             });
@@ -245,7 +218,7 @@ pub fn run() {
             app.manage(QualityState::pending());
             let quality_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = quality::bootstrap().await;
+                let resolved = genaryx_api::quality::bootstrap().await;
                 let state = quality_handle.state::<QualityState>();
                 *state.inner.lock().await = resolved;
             });
@@ -256,7 +229,7 @@ pub fn run() {
             app.manage(CryptoState::pending());
             let crypto_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = crypto::bootstrap().await;
+                let resolved = genaryx_api::crypto::bootstrap().await;
                 let state = crypto_handle.state::<CryptoState>();
                 *state.inner.lock().await = resolved;
             });
@@ -271,7 +244,7 @@ pub fn run() {
             app.manage(MemoryState::pending());
             let memory_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = memory::bootstrap().await;
+                let resolved = genaryx_api::memory::bootstrap().await;
                 let state = memory_handle.state::<MemoryState>();
                 *state.inner.lock().await = resolved;
             });
@@ -284,7 +257,7 @@ pub fn run() {
             app.manage(DrillsState::pending());
             let drills_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = drills::bootstrap().await;
+                let resolved = genaryx_api::drills::bootstrap().await;
                 let state = drills_handle.state::<DrillsState>();
                 *state.inner.lock().await = resolved;
             });
@@ -299,7 +272,7 @@ pub fn run() {
             app.manage(EvidenceState::pending());
             let evidence_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = evidence::bootstrap().await;
+                let resolved = genaryx_api::evidence::bootstrap().await;
                 let state = evidence_handle.state::<EvidenceState>();
                 *state.inner.lock().await = resolved;
             });
@@ -308,11 +281,11 @@ pub fn run() {
             // non-blocking shape once more, resolving only a best-effort
             // `wireguard-go` default path - no environment, tunnel, or SSH
             // client exists until the operator explicitly defines one (see
-            // `remote::state`'s module doc).
+            // `genaryx_api::remote::state`'s module doc).
             app.manage(RemoteState::pending());
             let remote_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = remote::bootstrap().await;
+                let resolved = genaryx_api::remote::bootstrap().await;
                 let state = remote_handle.state::<RemoteState>();
                 *state.inner.lock().await = resolved;
             });
@@ -325,7 +298,7 @@ pub fn run() {
             app.manage(CopilotState::pending());
             let copilot_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let resolved = copilot::bootstrap().await;
+                let resolved = genaryx_api::copilot::bootstrap().await;
                 let state = copilot_handle.state::<CopilotState>();
                 *state.inner.lock().await = resolved;
             });
@@ -346,61 +319,61 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             recent_events,
             bus_status,
-            money::commands::money_status,
-            money::commands::money_overview,
-            money::commands::money_runs,
-            money::commands::money_incidents,
-            money::commands::money_savings,
-            money::commands::money_kill_run,
-            money::commands::money_set_budget,
-            money::commands::money_ack_incident,
-            policy::commands::policy_status,
-            policy::commands::policy_list_approvals,
-            policy::commands::policy_list_policies,
-            policy::commands::policy_decide_approval,
-            identity::commands::identity_status,
-            identity::commands::identity_list_identities,
-            identity::commands::identity_list_alerts,
-            identity::commands::identity_list_remediations,
-            identity::commands::identity_rescan,
-            quality::commands::quality_status,
-            quality::commands::quality_list_run_summaries,
-            quality::commands::quality_run_scores,
-            quality::commands::quality_list_baselines,
-            crypto::commands::crypto_status,
-            crypto::commands::crypto_scan_ncsc,
-            crypto::commands::crypto_scan_cbom,
-            crypto::commands::crypto_scan_evidence,
-            crypto::commands::crypto_verify_evidence,
-            memory::commands::memory_status,
-            memory::commands::memory_stats,
-            memory::commands::memory_recall,
-            memory::commands::memory_why,
-            memory::commands::memory_forget,
-            drills::commands::drills_status,
-            drills::commands::drills_run,
-            evidence::commands::evidence_status,
-            evidence::commands::evidence_build,
-            remote::commands::remote_status,
-            remote::commands::remote_set_environment,
-            remote::commands::remote_hetzner_list,
-            remote::commands::remote_wg_connect,
-            remote::commands::remote_wg_disconnect,
-            remote::commands::remote_ssh_check_reachable,
-            remote::commands::remote_ssh_read_file,
-            remote::commands::remote_ssh_tail_start,
-            remote::commands::remote_ssh_tail_stop,
-            pocket::commands::pocket_status,
-            pocket::commands::pocket_connect,
-            pocket::commands::pocket_disconnect,
-            graph::agent_graph,
-            graph::agent_slice,
-            graph::agent_events,
-            replay::run_events,
-            copilot::commands::copilot_status,
-            copilot::commands::copilot_ask,
-            copilot::commands::copilot_explain,
-            copilot::commands::copilot_log_proposal_approved,
+            commands::money::money_status,
+            commands::money::money_overview,
+            commands::money::money_runs,
+            commands::money::money_incidents,
+            commands::money::money_savings,
+            commands::money::money_kill_run,
+            commands::money::money_set_budget,
+            commands::money::money_ack_incident,
+            commands::policy::policy_status,
+            commands::policy::policy_list_approvals,
+            commands::policy::policy_list_policies,
+            commands::policy::policy_decide_approval,
+            commands::identity::identity_status,
+            commands::identity::identity_list_identities,
+            commands::identity::identity_list_alerts,
+            commands::identity::identity_list_remediations,
+            commands::identity::identity_rescan,
+            commands::quality::quality_status,
+            commands::quality::quality_list_run_summaries,
+            commands::quality::quality_run_scores,
+            commands::quality::quality_list_baselines,
+            commands::crypto::crypto_status,
+            commands::crypto::crypto_scan_ncsc,
+            commands::crypto::crypto_scan_cbom,
+            commands::crypto::crypto_scan_evidence,
+            commands::crypto::crypto_verify_evidence,
+            commands::memory::memory_status,
+            commands::memory::memory_stats,
+            commands::memory::memory_recall,
+            commands::memory::memory_why,
+            commands::memory::memory_forget,
+            commands::drills::drills_status,
+            commands::drills::drills_run,
+            commands::evidence::evidence_status,
+            commands::evidence::evidence_build,
+            commands::remote::remote_status,
+            commands::remote::remote_set_environment,
+            commands::remote::remote_hetzner_list,
+            commands::remote::remote_wg_connect,
+            commands::remote::remote_wg_disconnect,
+            commands::remote::remote_ssh_check_reachable,
+            commands::remote::remote_ssh_read_file,
+            commands::remote::remote_ssh_tail_start,
+            commands::remote::remote_ssh_tail_stop,
+            commands::pocket::pocket_status,
+            commands::pocket::pocket_connect,
+            commands::pocket::pocket_disconnect,
+            commands::graph::agent_graph,
+            commands::graph::agent_slice,
+            commands::graph::agent_events,
+            commands::replay::run_events,
+            commands::copilot::copilot_status,
+            commands::copilot::copilot_ask,
+            commands::copilot::copilot_explain,
+            commands::copilot::copilot_log_proposal_approved,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

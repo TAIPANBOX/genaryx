@@ -32,7 +32,7 @@
 //! own free-text reasons that the two are never confused in the audit
 //! trail.
 
-use crate::money::{self, MoneyState};
+use genaryx_api::money::{self, MoneyState};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -253,7 +253,7 @@ async fn on_kill_clicked(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
     let result = money::commands::money_kill_run(
         target.run_id.clone(),
         TRAY_KILL_REASON.to_string(),
-        app.state::<MoneyState>(),
+        &app.state::<MoneyState>(),
     )
     .await;
     match result {
@@ -272,7 +272,7 @@ async fn on_kill_clicked(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
 /// Never panics: every `Err` from either read degrades the relevant item to
 /// an honest "no data" state instead.
 async fn refresh(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
-    let overview = money::commands::money_overview(app.state::<MoneyState>()).await;
+    let overview = money::commands::money_overview(&app.state::<MoneyState>()).await;
     let burn_text = match &overview {
         Ok(o) => format_burn_line(runtime, o),
         Err(money::commands::MoneyError::Bootstrapping) => "Genaryx: connecting…".to_string(),
@@ -288,7 +288,7 @@ async fn refresh(app: &AppHandle<Wry>, runtime: &Arc<TrayRuntime>) {
         return; // an operator confirmation is in flight - do not relabel out from under it.
     }
 
-    let runs = money::commands::money_runs(app.state::<MoneyState>()).await;
+    let runs = money::commands::money_runs(&app.state::<MoneyState>()).await;
     match runs {
         Ok(list) => {
             let top = list

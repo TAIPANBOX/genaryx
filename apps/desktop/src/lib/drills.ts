@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type { DrillsError, DrillsStatus, MockryxReport } from "../drillsTypes";
 
 /** Thrown by every fetcher below when there is no Tauri runtime to talk to -
@@ -15,9 +15,9 @@ function toDrillsError(err: unknown): DrillsError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw NO_ENVIRONMENT_ERROR;
+  if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
   try {
-    return await invoke<T>(command, args);
+    return await invokeBackend<T>(command, args);
   } catch (err) {
     throw toDrillsError(err);
   }
@@ -30,9 +30,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
  * show (mirrors `lib/crypto.ts`'s `fetchCryptoStatus`: no `unreachable`
  * variant to fall back to either). */
 export async function fetchDrillsStatus(): Promise<DrillsStatus> {
-  if (!isTauri()) return { state: "no_environment" };
+  if (!hasBackend()) return { state: "no_environment" };
   try {
-    return await invoke<DrillsStatus>("drills_status");
+    return await invokeBackend<DrillsStatus>("drills_status");
   } catch {
     return { state: "no_environment" };
   }

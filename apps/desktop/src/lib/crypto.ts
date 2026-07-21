@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type { CryptoError, CryptoStatus, EvidenceReport, NcscReport, VerifyOutcome } from "../cryptoTypes";
 
 /** Thrown by every fetcher below when there is no Tauri runtime to talk to -
@@ -15,9 +15,9 @@ function toCryptoError(err: unknown): CryptoError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw NO_ENVIRONMENT_ERROR;
+  if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
   try {
-    return await invoke<T>(command, args);
+    return await invokeBackend<T>(command, args);
   } catch (err) {
     throw toCryptoError(err);
   }
@@ -28,9 +28,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
  * way this catches is a genuine IPC-transport failure - folded into the
  * same honest "no crypto plane" state a missing qryx binary would show. */
 export async function fetchCryptoStatus(): Promise<CryptoStatus> {
-  if (!isTauri()) return { state: "no_environment" };
+  if (!hasBackend()) return { state: "no_environment" };
   try {
-    return await invoke<CryptoStatus>("crypto_status");
+    return await invokeBackend<CryptoStatus>("crypto_status");
   } catch {
     return { state: "no_environment" };
   }

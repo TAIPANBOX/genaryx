@@ -1,5 +1,3 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import {
@@ -9,6 +7,7 @@ import {
   startRemoteTail,
   stopRemoteTail,
 } from "../lib/remote";
+import { hasBackend, subscribeBackend } from "../lib/transport";
 import type { RemoteError, RemoteFile, RemoteStatus, RemoteTailEnded, RemoteTailLine, TailStatus } from "../remoteTypes";
 
 const FIELD_STYLE = {
@@ -20,8 +19,13 @@ const FIELD_STYLE = {
   color: "var(--fg)",
 } as const;
 
-/** Tauri event names `remote::commands` emits - mirrors
- * `remote::commands::{TAIL_LINE_EVENT,TAIL_ENDED_EVENT}` exactly. */
+/** The event name this line/ended stream rides on both shells: a Tauri
+ * window event on desktop (mirrors `commands::remote::{TAIL_LINE_EVENT,
+ * TAIL_ENDED_EVENT}` in `apps/desktop/src-tauri/src/commands.rs` exactly)
+ * and an SSE event of the same literal name on web (see
+ * `crates/web/src/main.rs`'s `events` handler) - `subscribeBackend` (see
+ * `../lib/transport`) picks the right transport for whichever shell this is
+ * running in. */
 const TAIL_LINE_EVENT = "remote:tail-line";
 const TAIL_ENDED_EVENT = "remote:tail-ended";
 
@@ -34,8 +38,10 @@ type ReachableState = "idle" | "checking" | "ok" | { error: RemoteError };
 /**
  * Section 4 (docs/PHASE4.md W4 position 4): SSH ops over the pinned target -
  * "Check reachable", "Read remote descriptor", and a live remote log tail
- * streamed over the `remote:tail-line`/`remote:tail-ended` Tauri events (see
- * `remote::commands`'s module doc for the backend side of this stream).
+ * streamed over the `remote:tail-line`/`remote:tail-ended` events - a Tauri
+ * window event on desktop, an SSE named event on web (see
+ * `genaryx_api::remote::commands`'s module doc, "Streaming the remote tail",
+ * for the backend side of this stream).
  */
 export function RemoteSshOps({
   hasEnvironment,
@@ -122,13 +128,13 @@ export function RemoteSshOps({
   }, [tailBusy, onStatusChange]);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!hasBackend()) return;
     let cancelled = false;
     let unlistenLine: (() => void) | undefined;
     let unlistenEnded: (() => void) | undefined;
 
-    listen<RemoteTailLine>(TAIL_LINE_EVENT, (event) => {
-      setLines((prev) => [...prev, event.payload.line].slice(-MAX_DISPLAY_LINES));
+    subscribeBackend<RemoteTailLine>(TAIL_LINE_EVENT, (payload) => {
+      setLines((prev) => [...prev, payload.line].slice(-MAX_DISPLAY_LINES));
     })
       .then((fn) => {
         if (cancelled) {
@@ -139,11 +145,11 @@ export function RemoteSshOps({
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
-        console.error(`listen(${TAIL_LINE_EVENT}) failed:`, err);
+        console.error(`subscribe(${TAIL_LINE_EVENT}) failed:`, err);
       });
 
-    listen<RemoteTailEnded>(TAIL_ENDED_EVENT, (event) => {
-      setEndedReason(event.payload.reason);
+    subscribeBackend<RemoteTailEnded>(TAIL_ENDED_EVENT, (payload) => {
+      setEndedReason(payload.reason);
     })
       .then((fn) => {
         if (cancelled) {
@@ -154,7 +160,7 @@ export function RemoteSshOps({
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
-        console.error(`listen(${TAIL_ENDED_EVENT}) failed:`, err);
+        console.error(`subscribe(${TAIL_ENDED_EVENT}) failed:`, err);
       });
 
     return () => {

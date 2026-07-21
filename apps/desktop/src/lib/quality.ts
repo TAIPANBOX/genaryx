@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type {
   QualityError,
   QualityStatus,
@@ -27,9 +27,9 @@ function toQualityError(err: unknown): QualityError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw NO_ENVIRONMENT_ERROR;
+  if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
   try {
-    return await invoke<T>(command, args);
+    return await invokeBackend<T>(command, args);
   } catch (err) {
     throw toQualityError(err);
   }
@@ -39,9 +39,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
  * failure) it resolves to a renderable status instead - mirrors
  * `lib/identity.ts`'s `fetchIdentityStatus` exactly. */
 export async function fetchQualityStatus(): Promise<QualityStatus> {
-  if (!isTauri()) return { state: "no_environment" };
+  if (!hasBackend()) return { state: "no_environment" };
   try {
-    return await invoke<QualityStatus>("quality_status");
+    return await invokeBackend<QualityStatus>("quality_status");
   } catch (err) {
     return {
       state: "unreachable",

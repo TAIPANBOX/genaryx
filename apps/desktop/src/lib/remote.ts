@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type {
   HetznerServer,
   RemoteEnvironmentRequest,
@@ -39,9 +39,9 @@ function toRemoteError(err: unknown): RemoteError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw NO_TAURI_ERROR;
+  if (!hasBackend()) throw NO_TAURI_ERROR;
   try {
-    return await invoke<T>(command, args);
+    return await invokeBackend<T>(command, args);
   } catch (err) {
     throw toRemoteError(err);
   }
@@ -53,9 +53,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
  * never fails on the Rust side either, so the catch branch only matters for
  * a genuine transport failure. */
 export async function fetchRemoteStatus(): Promise<RemoteStatus> {
-  if (!isTauri()) return REMOTE_UNAVAILABLE;
+  if (!hasBackend()) return REMOTE_UNAVAILABLE;
   try {
-    return await invoke<RemoteStatus>("remote_status");
+    return await invokeBackend<RemoteStatus>("remote_status");
   } catch {
     return REMOTE_UNAVAILABLE;
   }

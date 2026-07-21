@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { hasBackend, invokeBackend } from "./transport";
 import type { Approval, Decision, DecideOutcome, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 
 /** Thrown by every fetcher/mutator below when there is no Tauri runtime to
@@ -20,9 +20,9 @@ function toPolicyError(err: unknown): PolicyError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw NO_ENVIRONMENT_ERROR;
+  if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
   try {
-    return await invoke<T>(command, args);
+    return await invokeBackend<T>(command, args);
   } catch (err) {
     throw toPolicyError(err);
   }
@@ -32,9 +32,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
  * failure) it resolves to a renderable status instead - mirrors
  * `lib/money.ts`'s `fetchMoneyStatus` exactly. */
 export async function fetchPolicyStatus(): Promise<PolicyStatus> {
-  if (!isTauri()) return { state: "no_environment" };
+  if (!hasBackend()) return { state: "no_environment" };
   try {
-    return await invoke<PolicyStatus>("policy_status");
+    return await invokeBackend<PolicyStatus>("policy_status");
   } catch (err) {
     return {
       state: "unreachable",
