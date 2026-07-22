@@ -1,5 +1,8 @@
 import { hasBackend, invokeBackend } from "./transport";
 import type {
+  CloudListOptions,
+  CloudProviderId,
+  CloudServer,
   HetznerServer,
   RemoteEnvironmentRequest,
   RemoteError,
@@ -79,6 +82,14 @@ export const listHetznerServers = (token: string, labelSelector: string): Promis
     label_selector: labelSelector.trim().length > 0 ? labelSelector : null,
   });
 
+/** Cloud VM inventory (STRICTLY READ-ONLY) for a provider with a built-in
+ * connector (`aws`/`gcp`/`azure`), via the operator's OWN already-authenticated
+ * official CLI. The console stores none of the provider's credentials and the
+ * connector only ever runs the describe/list command - it can never create,
+ * resize, or delete a resource. */
+export const listCloudServers = (provider: CloudProviderId, options: CloudListOptions): Promise<CloudServer[]> =>
+  call<CloudServer[]>("remote_cloud_list", { provider, options });
+
 /** Bring the WireGuard tunnel up: generates the console's WG identity on
  * first use, then attempts `WgTunnel::bring_up`. Fail-closed: a failed
  * bring-up still RESOLVES (never rejects) with `tunnel.state === "failed"` -
@@ -122,6 +133,8 @@ export function describeRemoteError(err: RemoteError): string {
     case "ssh":
       return err.message;
     case "hetzner":
+      return err.message;
+    case "cloud":
       return err.message;
     case "internal":
       return err.message;

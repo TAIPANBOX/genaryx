@@ -60,8 +60,9 @@ use super::state::{
     RemoteClient, RemoteEnvironmentConfig, RemoteInner, RemoteState, TailSession, TunnelState,
 };
 use genaryx_connectors::{
-    HetznerClient, HetznerError, HetznerServer, SshClient, SshError, SshTarget, WgConfig, WgError,
-    WgInterfaceAddr, WgKeypair, WgPeer, WgTunnel,
+    CloudCliError, CloudListOptions, CloudProvider, CloudServer, HetznerClient, HetznerError,
+    HetznerServer, SshClient, SshError, SshTarget, WgConfig, WgError, WgInterfaceAddr, WgKeypair,
+    WgPeer, WgTunnel,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -258,6 +259,12 @@ pub enum RemoteError {
     Hetzner {
         message: String,
     },
+    /// A cloud-inventory CLI failure (`aws`/`gcloud`/`az` missing, not
+    /// authenticated, a non-zero exit, or unparseable JSON) - read-only, so it
+    /// never reflects a mutation.
+    Cloud {
+        message: String,
+    },
     /// A task-runner/mutex-poisoning failure internal to this panel - never
     /// a domain (Wg/Ssh/Hetzner) failure, see `poisoned`/`join_failed`.
     Internal {
@@ -284,6 +291,14 @@ impl From<SshError> for RemoteError {
 impl From<HetznerError> for RemoteError {
     fn from(e: HetznerError) -> Self {
         RemoteError::Hetzner {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<CloudCliError> for RemoteError {
+    fn from(e: CloudCliError) -> Self {
+        RemoteError::Cloud {
             message: e.to_string(),
         }
     }
@@ -666,6 +681,25 @@ pub async fn remote_hetzner_list(
     let client = HetznerClient::new(token).map_err(RemoteError::from)?;
     client
         .list_servers(Some(&selector))
+        .await
+        .map_err(RemoteError::from)
+}
+
+/// List cloud VMs for one provider (`aws` | `gcp` | `azure`) via that
+/// provider's OFFICIAL CLI, STRICTLY READ-ONLY: the connector only ever runs
+/// the provider's describe/list command, never a create/modify/delete. The
+/// console holds none of these providers' credentials - it shells out to the
+/// operator's own already-authenticated CLI (`aws`/`gcloud`/`az`), so an absent
+/// or unauthenticated CLI surfaces honestly as [`RemoteError::Cloud`], never a
+/// fabricated result. An unknown provider is [`RemoteError::Invalid`].
+pub async fn remote_cloud_list(
+    provider: String,
+    options: Option<CloudListOptions>,
+) -> Result<Vec<CloudServer>, RemoteError> {
+    let p = CloudProvider::parse(&provider).ok_or_else(|| RemoteError::Invalid {
+        message: format!("unknown cloud provider '{provider}'"),
+    })?;
+    genaryx_connectors::list_servers(p, &options.unwrap_or_default())
         .await
         .map_err(RemoteError::from)
 }

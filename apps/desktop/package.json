@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "dev:web": "vite --mode web",
+    "dev:mock": "vite --mode mock",
     "build:web": "tsc && vite build --mode web --outDir dist-web"
   },
   "dependencies": {

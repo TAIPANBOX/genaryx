@@ -49,6 +49,13 @@
 //! error) the Drills panel runs and renders. See
 //! `crates/connectors/src/{mcp_stdio,engram,mockryx}.rs`.
 //!
+//! Genaryx multi-cloud inventory plan (decided 2026-07-21, D11's "Hetzner is
+//! read-only, v1" extended to AWS/GCP/Azure): [`list_servers`] is a STRICTLY
+//! READ-ONLY multi-cloud VM inventory - a `ToolRunner` over each provider's
+//! OWN official CLI (`aws`/`gcloud`/`az`) with JSON output, exactly like
+//! [`QryxClient`]/[`MockryxClient`] shell theirs. See
+//! `crates/connectors/src/cloud_cli.rs`.
+//!
 //! Phase-5 wave 2 (docs/PHASE5.md W2): [`RelayAdminClient`] is the desktop
 //! Pocket panel's connector to `genaryx-relay`'s loopback/WG-only admin API
 //! (pairing-info, per-kind pairing-window arm, two-slot device view,
@@ -71,6 +78,7 @@
 //! `genaryx_core::evidence::assemble_zip`. Missing sources are recorded, not
 //! dropped; signing is fail-closed. See `crates/connectors/src/evidence.rs`.
 
+mod cloud_cli;
 mod cloud_rest;
 mod cloud_sse;
 mod engram;
@@ -89,6 +97,7 @@ mod verdryx;
 mod wardryx;
 mod wg;
 
+pub use cloud_cli::{CloudCliError, CloudListOptions, CloudProvider, CloudServer, list_servers};
 pub use cloud_rest::{
     AckResponse, AgentAgg, Alert, AuditVerifyResponse, BudgetResponse, CloudClient, ConnectorError,
     Incident, KillResponse, PairNewResponse, PairResponse, RunAgg, SavingsSummary, Severity,

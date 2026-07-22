@@ -33,25 +33,38 @@ export function EventRow({
   event,
   expanded,
   onToggle,
+  onSelect,
+  selected,
 }: {
   event: UiEvent;
   expanded: boolean;
   onToggle: () => void;
+  /** When provided, a click pins the row (lifts it out for detail) instead of
+   * expanding it inline - passes the row's on-screen rect so the pinned clone
+   * and its detail card can be placed exactly where the row was. */
+  onSelect?: (rect: DOMRect) => void;
+  /** This row is the pinned one: dimmed in place, since a lifted clone of it
+   * now rides above the feed. */
+  selected?: boolean;
 }) {
+  const activate = (el: HTMLElement) => {
+    if (onSelect) onSelect(el.getBoundingClientRect());
+    else onToggle();
+  };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onToggle();
+      activate(e.currentTarget);
     }
   };
 
   return (
-    <div className={`bus-row${expanded ? " expanded" : ""}`}>
+    <div className={`bus-row${expanded ? " expanded" : ""}`} style={selected ? { opacity: 0.35 } : undefined}>
       <div
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
-        onClick={onToggle}
+        onClick={(e) => activate(e.currentTarget)}
         onKeyDown={onKeyDown}
         className="grid items-center gap-3 px-4 py-2 cursor-pointer select-none"
         style={{ gridTemplateColumns: "84px 108px 190px 1fr 108px 24px" }}
