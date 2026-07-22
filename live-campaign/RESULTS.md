@@ -1,5 +1,17 @@
 # Genaryx live-validation campaign - results archive
 
+> **SUPERSEDED for citations (2026-07-20).** This file is the archive of the first
+> full campaign (2026-07-17/18) and of its epoch: $4,314.42 spend, 9,287 runs,
+> 176 incidents, $2,992.70 saved, 29 identities / 44 alerts. A live re-run on
+> 2026-07-20 re-froze everything to one epoch, **e01**, and that is what the site,
+> the articles, the briefs and the explainer cite now:
+> **$4,671.02 spend / 9,501 runs / 37,596 calls / 15 killed / 180 incidents
+> (181 budget breaks) / $3,131.82 saved / 29 identities, 43 alerts.**
+> The e01 record lives in `VERIFICATION-LOG.md` and `shots/2026-07-20/MANIFEST.md`;
+> the re-run also fixed the phone/console dataset split (the relay now serves a
+> bounded slice of the same fleet the console reads). Keep this file as the
+> runbook and the history; do not cite its numbers.
+
 Full record of the live Hetzner run of the whole TAIPANBOX stack under Genaryx.
 Everything here is reusable: the exact dataset generators, the verified numbers,
 the deployment method, and a reproduction runbook. Captured so the campaign can
