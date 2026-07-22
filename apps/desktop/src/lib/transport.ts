@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { MOCK, mockInvoke, mockSubscribe } from "./mockPreview";
 
 /**
  * The one place the UI decides HOW it reaches `genaryx-core`.
@@ -26,7 +27,7 @@ const WEB_API_BASE: string | undefined = import.meta.env.VITE_GENARYX_API;
  * web API. False in a bare preview, where callers fall back to mock data or a
  * "no environment" state exactly as they did before this seam existed. */
 export function hasBackend(): boolean {
-  return isTauri() || Boolean(WEB_API_BASE);
+  return isTauri() || Boolean(WEB_API_BASE) || MOCK;
 }
 
 /** True in the browser build: this console is talking to a `genaryx-web` on
@@ -54,6 +55,9 @@ export async function invokeBackend<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
+  if (MOCK) {
+    return mockInvoke<T>(command, args);
+  }
   if (isTauri()) {
     return invoke<T>(command, args);
   }
@@ -115,6 +119,9 @@ export async function subscribeBackend<T>(
   event: string,
   onEvent: (payload: T) => void,
 ): Promise<() => void> {
+  if (MOCK) {
+    return mockSubscribe<T>(event, onEvent);
+  }
   if (isTauri()) {
     const { listen } = await import("@tauri-apps/api/event");
     return listen<T>(event, (e) => onEvent(e.payload));

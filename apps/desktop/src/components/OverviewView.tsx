@@ -15,12 +15,17 @@ import { UpsellBanner } from "./UpsellBanner";
 import { HeroBand, Hero, KpiTile, DashMain, Section, Bars, Composition, Feed } from "./dash";
 import type { BarItem, CompItem, FeedItem } from "./dash";
 import { sevColor, sevRank, spendByAgent, spendSeries, usd0 } from "../lib/dashData";
+import { usePopover } from "../lib/popover";
+import { shortAgentLabel } from "../lib/graph";
+import { AgentDetailCard } from "./AgentDetailCard";
+import { MetricDetailCard, type MetricRow } from "./MetricDetailCard";
 
 const REFRESH_INTERVAL_MS = 20_000;
 
 export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
+  const { open } = usePopover();
 
   const [overview, setOverview] = useState<Overview | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -75,6 +80,10 @@ export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
   const maxAgent = Math.max(1, ...agents.map((a) => a.spent));
   const org = status.state === "ready" ? status.org_domain : "";
 
+  // One place that opens an agent's detail card beside whatever was clicked.
+  const openAgent = (agentId: string, rect: DOMRect) =>
+    open(<AgentDetailCard agentId={agentId} onOpenFull={onOpenAgent} />, { anchor: rect });
+
   const agentBars: BarItem[] = agents.slice(0, 8).map((a) => ({
     key: a.agent,
     label: a.name,
@@ -82,8 +91,40 @@ export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
     fraction: a.spent / maxAgent,
     tone: "amber",
     value: formatUsd(a.spent),
-    onClick: () => onOpenAgent(a.agent),
+    onClick: (rect) => openAgent(a.agent, rect),
   }));
+
+  // Breakdown rows behind each headline number, so a clicked KPI opens the
+  // agents/incidents/levers that make it up, each drillable in turn.
+  const spendRows: MetricRow[] = agents.slice(0, 12).map((a) => ({
+    key: a.agent,
+    label: `${a.name} · ${a.team}`,
+    value: formatUsd(a.spent),
+    agentId: a.agent,
+  }));
+  const callRows: MetricRow[] = [...runs]
+    .sort((x, y) => y.calls - x.calls)
+    .slice(0, 12)
+    .map((r) => ({
+      key: r.run_id,
+      label: shortAgentLabel(r.agent_id),
+      value: r.calls.toLocaleString("en-US"),
+      agentId: r.agent_id,
+    }));
+  const incidentRows: MetricRow[] = topIncidents.map((inc) => ({
+    key: inc.id,
+    label: inc.kind.replace(/_/g, " "),
+    value: inc.occurrences,
+    valueColor: sevColor(inc.severity),
+    agentId: inc.agent_id ?? undefined,
+  }));
+  const savingsRows: MetricRow[] = savings
+    ? [
+        { key: "blocked", label: "Runaway blocked", value: formatUsd(savings.blocked_spend_usd) },
+        { key: "cache", label: "Semantic cache", value: formatUsd(savings.cache_saved_usd) },
+        { key: "router", label: "Model router", value: formatUsd(savings.router_saved_usd) },
+      ]
+    : [];
 
   const compItems: CompItem[] = savings
     ? [
@@ -100,7 +141,7 @@ export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
     sub: `${inc.run_id ?? inc.agent_id ?? "fleet"} · ${inc.severity}`,
     value: inc.occurrences,
     valueColor: sevColor(inc.severity),
-    onClick: inc.agent_id ? () => onOpenAgent(inc.agent_id as string) : undefined,
+    onClick: inc.agent_id ? (rect) => openAgent(inc.agent_id as string, rect) : undefined,
   }));
 
   return (
@@ -160,15 +201,81 @@ export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
                   label="Active runs"
                   value={overview.active_runs.toLocaleString("en-US")}
                   sub={`${overview.killed_runs} killed of ${overview.total_runs.toLocaleString("en-US")}`}
+                  onClick={(rect) =>
+                    open(
+                      <MetricDetailCard
+                        kicker="Money"
+                        title="Active runs"
+                        value={overview.active_runs.toLocaleString("en-US")}
+                        description={`Runs seen in the rolling window. ${overview.killed_runs} were killed by an operator; ${overview.total_runs.toLocaleString("en-US")} ran in total. Top spenders below.`}
+                        rows={spendRows}
+                        rowsTitle="by spend"
+                        onOpenFullAgent={onOpenAgent}
+                      />,
+                      { anchor: rect },
+                    )
+                  }
                 />
-                <KpiTile label="Governed saved" value={formatUsd(saved)} tone="var(--mint)" sub="blocked · cache · router" />
+                <KpiTile
+                  label="Governed saved"
+                  value={formatUsd(saved)}
+                  tone="var(--mint)"
+                  sub="blocked · cache · router"
+                  onClick={(rect) =>
+                    open(
+                      <MetricDetailCard
+                        kicker="Money"
+                        title="Governed saved"
+                        value={formatUsd(saved)}
+                        valueTone="var(--mint)"
+                        description="Spend the governance layer prevented or recovered: budget breaks blocked before the provider was called, plus semantic cache and model-router savings."
+                        rows={savingsRows}
+                        rowsTitle="by lever"
+                      />,
+                      { anchor: rect },
+                    )
+                  }
+                />
                 <KpiTile
                   label="Open incidents"
                   value={overview.open_incidents}
                   tone={overview.open_incidents > 0 ? "var(--sev-high)" : undefined}
                   sub={`${overview.total_incidents} total detected`}
+                  onClick={(rect) =>
+                    open(
+                      <MetricDetailCard
+                        kicker="Incidents"
+                        title="Open incidents"
+                        value={overview.open_incidents}
+                        valueTone={overview.open_incidents > 0 ? "var(--sev-high)" : undefined}
+                        description={`Detector-raised incidents not yet acknowledged, out of ${overview.total_incidents} detected in this window. Worst first.`}
+                        rows={incidentRows}
+                        rowsTitle="worst first"
+                        onOpenFullAgent={onOpenAgent}
+                      />,
+                      { anchor: rect },
+                    )
+                  }
                 />
-                <KpiTile label="Model calls" value={overview.total_calls.toLocaleString("en-US")} sub="across the fleet" />
+                <KpiTile
+                  label="Model calls"
+                  value={overview.total_calls.toLocaleString("en-US")}
+                  sub="across the fleet"
+                  onClick={(rect) =>
+                    open(
+                      <MetricDetailCard
+                        kicker="Money"
+                        title="Model calls"
+                        value={overview.total_calls.toLocaleString("en-US")}
+                        description="Metered calls the gateway forwarded or blocked across the fleet in this window, by agent."
+                        rows={callRows}
+                        rowsTitle="by calls"
+                        onOpenFullAgent={onOpenAgent}
+                      />,
+                      { anchor: rect },
+                    )
+                  }
+                />
               </>
             }
           />

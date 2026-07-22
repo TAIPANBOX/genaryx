@@ -455,6 +455,14 @@ pub mod remote {
         genaryx_api::remote::commands::remote_hetzner_list(token, label_selector).await
     }
 
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn remote_cloud_list(
+        provider: String,
+        options: Option<CloudListOptions>,
+    ) -> Result<Vec<CloudServer>, RemoteError> {
+        genaryx_api::remote::commands::remote_cloud_list(provider, options).await
+    }
+
     #[tauri::command]
     pub async fn remote_wg_connect(
         state: tauri::State<'_, RemoteState>,

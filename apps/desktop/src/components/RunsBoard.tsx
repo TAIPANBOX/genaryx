@@ -16,13 +16,17 @@ export function RunsBoard({
   runs,
   onKill,
   onSetBudget,
-  onOpenAgent,
+  onOpenAgentAt,
   onReplayRun,
 }: {
   runs: Run[];
   onKill: (runId: string, reason: string) => Promise<void>;
   onSetBudget: (runId: string, budgetUsd: number, reason: string) => Promise<void>;
-  onOpenAgent: (agentId: string) => void;
+  /** Open the agent's detail card in the floating layer, anchored at the given
+   * on-screen rect. The WHOLE row is the target (not just the tiny agent name),
+   * so a click anywhere on a run opens its agent; the action controls below
+   * stop their own clicks from bubbling up to it. */
+  onOpenAgentAt: (agentId: string, rect: DOMRect) => void;
   onReplayRun: (runId: string) => void;
 }) {
   if (runs.length === 0) {
@@ -46,20 +50,32 @@ export function RunsBoard({
         const status = r.killed ? "dead" : frac >= 1 ? "over" : frac >= 0.8 ? "near" : "live";
         const statusLabel = r.killed ? "killed" : frac >= 1 ? "over cap" : frac >= 0.8 ? "near cap" : "live";
         return (
-          <div className="d-tr" style={{ gridTemplateColumns: COLS }} key={r.run_id}>
+          <div
+            className="d-tr"
+            style={{ gridTemplateColumns: COLS, cursor: r.agent_id ? "pointer" : undefined }}
+            key={r.run_id}
+            role={r.agent_id ? "button" : undefined}
+            tabIndex={r.agent_id ? 0 : undefined}
+            onClick={r.agent_id ? (e) => onOpenAgentAt(r.agent_id, e.currentTarget.getBoundingClientRect()) : undefined}
+            onKeyDown={
+              r.agent_id
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onOpenAgentAt(r.agent_id, (e.currentTarget as HTMLElement).getBoundingClientRect());
+                    }
+                  }
+                : undefined
+            }
+          >
             <div className="d-run">
               <div className="rid" title={r.run_id}>
                 {r.run_id}
               </div>
               {r.agent_id ? (
-                <button
-                  type="button"
-                  className="rag"
-                  title={`Open Agent 360 for ${r.agent_id}`}
-                  onClick={() => onOpenAgent(r.agent_id)}
-                >
+                <span className="rag" title={r.agent_id}>
                   {agentShortName(r.agent_id)}
-                </button>
+                </span>
               ) : (
                 <span className="rag">-</span>
               )}
@@ -77,7 +93,7 @@ export function RunsBoard({
             <div>
               <span className={`d-pill ${status}`}>{statusLabel}</span>
             </div>
-            <div className="d-acts">
+            <div className="d-acts" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
               <button
                 type="button"
                 className="icon-btn"

@@ -115,7 +115,7 @@ export function RemoteEnvironmentForm({
           style={FIELD_STYLE}
           value={form.name}
           onChange={(e) => set("name", e.target.value)}
-          placeholder="hetzner-campaign-1"
+          placeholder="prod-stack"
           spellCheck={false}
         />
       </Field>
@@ -247,7 +247,7 @@ export function RemoteEnvironmentForm({
           style={FIELD_STYLE}
           value={form.ssh_identity_file}
           onChange={(e) => set("ssh_identity_file", e.target.value)}
-          placeholder="/Users/you/.ssh/hetzner-campaign-1"
+          placeholder="/Users/you/.ssh/genaryx"
           spellCheck={false}
         />
       </Field>

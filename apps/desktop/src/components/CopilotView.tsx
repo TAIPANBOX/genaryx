@@ -23,6 +23,8 @@ import type { IdentityError } from "../identityTypes";
 import type { MoneyError } from "../moneyTypes";
 import type { Decision, PolicyError } from "../policyTypes";
 import { ConfirmButton } from "./ConfirmButton";
+import { usePopover, PopoverHeader } from "../lib/popover";
+import { FelyxConnectCard } from "./FelyxConnectCard";
 
 const FIELD_STYLE = {
   background: "var(--panel)",
@@ -214,7 +216,28 @@ async function runApproval(action: ProposedAction, reason: string): Promise<stri
  * or a remote BYO-key provider (amber - a deliberate, explicit opt-in per
  * `genaryx-copilot`'s residency gate, `crates/copilot/src/residency.rs`).
  */
-function ResidencyBanner({ status }: { status: CopilotStatus | null }) {
+function ConnectButton({ label, onConnect }: { label: string; onConnect: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onConnect}
+      className="text-[12px]"
+      style={{
+        padding: "5px 12px",
+        borderRadius: 8,
+        cursor: "pointer",
+        border: "1px solid var(--iris)",
+        background: "color-mix(in srgb, var(--iris) 16%, transparent)",
+        color: "var(--fg)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ResidencyBanner({ status, onConnect }: { status: CopilotStatus | null; onConnect: () => void }) {
   if (!status) {
     return (
       <div className="d-card px-4 py-3 mono" style={{ fontSize: 12, color: "var(--faint)" }}>
@@ -233,6 +256,8 @@ function ResidencyBanner({ status }: { status: CopilotStatus | null }) {
         <span className="text-[12.5px]" style={{ color: "var(--dim)" }}>
           No provider configured{status.disabled_reason ? ` - ${status.disabled_reason}` : ""}
         </span>
+        <div className="flex-1" />
+        <ConnectButton label="Connect Felyx" onConnect={onConnect} />
       </div>
     );
   }
@@ -260,6 +285,8 @@ function ResidencyBanner({ status }: { status: CopilotStatus | null }) {
           ? `Local: ${status.model ?? "unknown model"} via ${status.provider ?? "unknown provider"} on this machine`
           : `Remote: ${status.provider ?? "unknown provider"} (BYO key)`}
       </span>
+      <div className="flex-1" />
+      <ConnectButton label="Change" onConnect={onConnect} />
     </div>
   );
 }
@@ -444,6 +471,40 @@ function ProposalCard({
   );
 }
 
+/** Felyx's answer lifted out of the chat into a floating card, so it can sit
+ * beside the tab it is about while you read it (Yurii's ask: the answer as a
+ * movable widget, not only a chat line). Same window chrome as every card. */
+function FelyxAnswerCard({ message }: { message: ChatMessage }) {
+  return (
+    <div className="flex flex-col">
+      <PopoverHeader kicker="Felyx" title="Answer" />
+      <div style={{ padding: "0 16px 12px" }}>
+        <div className="text-[12.5px]" style={{ color: "var(--fg)", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+          {message.text}
+        </div>
+      </div>
+      {message.toolTrace && message.toolTrace.length > 0 && (
+        <div style={{ padding: "10px 16px 14px", borderTop: "1px solid var(--line)" }}>
+          <div className="mono text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)", paddingBottom: 6 }}>
+            tools Felyx ran
+          </div>
+          {message.toolTrace.map((t, i) => (
+            <div key={i} className="flex items-center gap-2 min-w-0" style={{ padding: "3px 0" }}>
+              <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: t.ok ? "var(--mint)" : "var(--sev-high)", flexShrink: 0 }} />
+              <span className="mono text-[11.5px]" style={{ color: "var(--fg)" }}>
+                {t.name}
+              </span>
+              <span className="text-[11px] truncate" style={{ color: "var(--dim)", flex: 1 }}>
+                {t.result_preview}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
   onApproveProposal,
@@ -454,6 +515,7 @@ function MessageBubble({
   onDismissProposal: (messageId: number, index: number) => void;
 }) {
   const isUser = message.role === "user";
+  const { open } = usePopover();
   return (
     <div className="flex" style={{ justifyContent: isUser ? "flex-end" : "flex-start" }}>
       <div
@@ -487,10 +549,57 @@ function MessageBubble({
           </div>
         )}
         {!isUser && message.toolTrace && <ToolTraceSection trace={message.toolTrace} />}
+        {!isUser && !message.isNote && (
+          <button
+            type="button"
+            onClick={(e) => open(<FelyxAnswerCard message={message} />, { anchor: e.currentTarget.getBoundingClientRect(), width: 420 })}
+            className="text-[10.5px]"
+            style={{ marginTop: 6, padding: "3px 8px", borderRadius: 6, cursor: "pointer", border: "1px solid var(--line-2)", background: "transparent", color: "var(--iris)" }}
+          >
+            Open as card ↗
+          </button>
+        )}
       </div>
     </div>
   );
 }
+
+/** Preview-only seed conversation (see the seeding effect below). */
+const DEMO_MESSAGES: ChatMessage[] = [
+  { id: -1, role: "user", text: "Which agent is the runaway, and what did it cost us?" },
+  {
+    id: -2,
+    role: "assistant",
+    text:
+      "The caught runaway is sre/rca-copilot: it looped on an oversized incident trace, burned past its $1.25 per-run ceiling 26 times across shards, and tripped budget_exhausted and fanout_explosion. sre-oncall killed it break-glass; its all-time spend is $41.60. The top legitimate spender is finops/unit-economics-analyst at $77.46 (Opus, modelling unit cost), inside budget at 79% utilisation.",
+    toolTrace: [
+      { name: "money_incidents", ok: true, result_preview: "7 open; worst fanout_explosion x12 on rca-copilot" },
+      { name: "list_runs", ok: true, result_preview: "42 runs, 1 killed, top spend $77.46" },
+    ],
+    proposals: [
+      {
+        action: {
+          kind: "budget",
+          target: "unit-economics-analyst-live",
+          params: { usd_cap: 60 },
+          rationale: "The top legitimate spender has no central cap; $60/day bounds it without blocking its weekly unit-cost run.",
+          confidence: 0.72,
+          evidence_refs: ["unit-economics-analyst-live"],
+          policy_context: ["finops-spend-cap"],
+        },
+        status: "pending",
+      },
+    ],
+  },
+  { id: -3, role: "user", text: "How many approvals are pending right now?" },
+  {
+    id: -4,
+    role: "assistant",
+    text:
+      "Six approvals are awaiting a human decision, all from agents whose policy requires sign-off above a cost threshold: sre/runbook-executor, sre/deploy-guard, finops/commitment-planner, finops/idle-resource-sweeper and platform/api-gateway-tuner. The oldest has waited about nine minutes. None can act until a human grants them.",
+    toolTrace: [{ name: "list_approvals", ok: true, result_preview: "6 pending, oldest ~9m" }],
+  },
+];
 
 /**
  * The Copilot panel (Phase 6, C0 - docs/PHASE6.md, itrat-console/13 D13): a
@@ -541,10 +650,27 @@ export function CopilotView({
   const [sending, setSending] = useState(false);
   const nextId = useRef(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const { open } = usePopover();
 
-  useEffect(() => {
+  const refreshStatus = useCallback(() => {
     void fetchCopilotStatus().then(setStatus);
   }, []);
+  const openConnect = useCallback(() => {
+    open(<FelyxConnectCard onConnected={refreshStatus} />, { width: 420 });
+  }, [open, refreshStatus]);
+
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
+
+  // In the preview, once Felyx is connected, seed one short exchange so the
+  // panel shows the kind of question it answers and the shape of its output
+  // (text + the tools it ran + a proposal it never executes). Preview-only.
+  useEffect(() => {
+    if (import.meta.env.VITE_GENARYX_MOCK !== "1") return;
+    if (!status?.enabled) return;
+    setMessages((m) => (m.length > 0 ? m : DEMO_MESSAGES));
+  }, [status?.enabled]);
 
   // Keep the transcript pinned to the newest message, mirroring any chat
   // surface's baseline expectation - runs after every append (a new
@@ -720,7 +846,7 @@ export function CopilotView({
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <div className="px-5 pt-4 pb-2 shrink-0">
-        <ResidencyBanner status={status} />
+        <ResidencyBanner status={status} onConnect={openConnect} />
       </div>
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-2 flex flex-col gap-3">

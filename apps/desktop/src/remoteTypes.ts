@@ -97,6 +97,35 @@ export interface HetznerServer {
   created: string;
 }
 
+/** The provider ids that have a built-in read-only cloud inventory connector
+ * (mirrors `genaryx_connectors::CloudProvider`). */
+export type CloudProviderId = "aws" | "gcp" | "azure";
+
+/** Mirrors `genaryx_connectors::CloudServer` - one read-only VM inventory row
+ * from a provider's own official CLI (`aws`/`gcloud`/`az`). Flat snake_case,
+ * same convention as `HetznerServer`. `public_ip`/`private_ip` are `null` when
+ * the instance has none. */
+export interface CloudServer {
+  provider: string;
+  id: string;
+  name: string;
+  status: string;
+  public_ip: string | null;
+  private_ip: string | null;
+  server_type: string;
+  region: string;
+}
+
+/** Mirrors `genaryx_connectors::CloudListOptions` - all-optional provider
+ * scoping for a cloud inventory list (region for AWS, project for GCP,
+ * subscription for Azure, profile for AWS). */
+export interface CloudListOptions {
+  region?: string;
+  project?: string;
+  subscription?: string;
+  profile?: string;
+}
+
 /** Mirrors `remote::commands::RemoteError` (`#[serde(tag = "kind", rename_all = "snake_case")]`). */
 export type RemoteError =
   | { kind: "bootstrapping" }
@@ -106,6 +135,7 @@ export type RemoteError =
   | { kind: "wg"; message: string }
   | { kind: "ssh"; message: string }
   | { kind: "hetzner"; message: string }
+  | { kind: "cloud"; message: string }
   | { kind: "internal"; message: string };
 
 /** `remote:tail-line` Tauri event payload - mirrors `remote::commands::RemoteTailLine`. */

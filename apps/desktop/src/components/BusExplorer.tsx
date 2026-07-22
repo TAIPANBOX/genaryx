@@ -1,11 +1,57 @@
 import { hasBackend, subscribeBackend } from "../lib/transport";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchBusMode, type BusMode } from "../lib/busStatus";
 import { fetchRecentEvents, type EventsSource } from "../lib/recentEvents";
 import type { UiEvent } from "../types";
 import { EventRow } from "./EventRow";
 import { BusStatusBar } from "./Header";
+import { usePopover } from "../lib/popover";
+import { AgentDetailCard } from "./AgentDetailCard";
+import { PinnedEventOverlay } from "./PinnedEventOverlay";
+import { SortBar, type SortDir } from "./SortBar";
+
+const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+
+const BUS_SORTS = [
+  { key: "time", label: "time" },
+  { key: "severity", label: "severity" },
+  { key: "source", label: "source" },
+  { key: "agent", label: "agent" },
+  { key: "unit", label: "unit" },
+  { key: "user", label: "user" },
+  { key: "type", label: "type" },
+];
+
+/** Business unit out of an `agent://org/team/name` id, and the human out of the
+ * event's delegation chain, so the feed can be grouped by either. */
+function teamOf(id: string): string {
+  const m = /^agent:\/\/[^/]+\/([^/]+)\//.exec(id);
+  return m ? m[1] : "";
+}
+function userOf(e: UiEvent): string {
+  const u = e.on_behalf_of?.[0] ?? "";
+  const m = /\/([^/]+)$/.exec(u);
+  return m ? m[1] : "";
+}
+
+function sortEvents(evts: UiEvent[], key: string, dir: SortDir): UiEvent[] {
+  const sign = dir === "desc" ? -1 : 1;
+  const out = [...evts];
+  out.sort((a, b) => {
+    let c = 0;
+    if (key === "time") c = a.id - b.id;
+    else if (key === "severity") c = (SEV_RANK[a.severity ?? ""] ?? 0) - (SEV_RANK[b.severity ?? ""] ?? 0);
+    else if (key === "source") c = a.source.localeCompare(b.source);
+    else if (key === "agent") c = a.agent_id.localeCompare(b.agent_id);
+    else if (key === "unit") c = teamOf(a.agent_id).localeCompare(teamOf(b.agent_id));
+    else if (key === "user") c = userOf(a).localeCompare(userOf(b));
+    else if (key === "type") c = a.type.localeCompare(b.type);
+    // Stable tiebreak by time so grouped rows still read newest-first within a group.
+    return c * sign || (b.id - a.id);
+  });
+  return out;
+}
 
 /** Comfortably above the ~40-event mock timeline; also the cap applied to
  * the live feed below so the list never grows unbounded. */
@@ -32,7 +78,11 @@ export function BusExplorer() {
   const [mode, setMode] = useState<BusMode | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
+  const [pinned, setPinned] = useState<{ event: UiEvent; rect: DOMRect } | null>(null);
+  const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "time", dir: "desc" });
+  const displayed = useMemo(() => sortEvents(events, sort.key, sort.dir), [events, sort]);
   const parentRef = useRef<HTMLDivElement>(null);
+  const { open } = usePopover();
 
   useEffect(() => {
     let cancelled = false;
@@ -92,7 +142,7 @@ export function BusExplorer() {
   }, []);
 
   const virtualizer = useVirtualizer({
-    count: events.length,
+    count: displayed.length,
     getScrollElement: () => parentRef.current,
     // Collapsed-row estimate; `measureElement` below corrects this per-row
     // (including growing/shrinking on expand/collapse) via ResizeObserver.
@@ -115,6 +165,10 @@ export function BusExplorer() {
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <BusStatusBar count={events.length} source={source} mode={mode} />
+
+      <div className="px-4 py-2 shrink-0" style={{ borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}>
+        <SortBar options={BUS_SORTS} active={sort.key} dir={sort.dir} onChange={(key, dir) => setSort({ key, dir })} />
+      </div>
 
       <div
         className="grid gap-3 px-4 py-2 shrink-0"
@@ -147,7 +201,7 @@ export function BusExplorer() {
         ) : (
           <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
             {virtualizer.getVirtualItems().map((virtualRow) => {
-              const event = events[virtualRow.index];
+              const event = displayed[virtualRow.index];
               return (
                 <div
                   key={event.id}
@@ -161,13 +215,31 @@ export function BusExplorer() {
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
-                  <EventRow event={event} expanded={expanded.has(event.id)} onToggle={() => toggle(event.id)} />
+                  <EventRow
+                    event={event}
+                    expanded={expanded.has(event.id)}
+                    onToggle={() => toggle(event.id)}
+                    onSelect={(rect) => setPinned({ event, rect })}
+                    selected={pinned?.event.id === event.id}
+                  />
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {pinned && (
+        <PinnedEventOverlay
+          event={pinned.event}
+          rect={pinned.rect}
+          onClose={() => setPinned(null)}
+          onOpenAgent={(id, rect) => {
+            setPinned(null);
+            open(<AgentDetailCard agentId={id} />, { anchor: rect });
+          }}
+        />
+      )}
     </div>
   );
 }

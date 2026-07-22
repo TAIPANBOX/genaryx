@@ -357,6 +357,7 @@ pub fn run() {
             commands::remote::remote_status,
             commands::remote::remote_set_environment,
             commands::remote::remote_hetzner_list,
+            commands::remote::remote_cloud_list,
             commands::remote::remote_wg_connect,
             commands::remote::remote_wg_disconnect,
             commands::remote::remote_ssh_check_reachable,

@@ -43,20 +43,32 @@ export function KpiGrid({ children, cols = 2 }: { children: ReactNode; cols?: nu
   );
 }
 
-/** One KPI tile: uppercase label, big tabular number, optional sub-line. */
+/** One KPI tile: uppercase label, big tabular number, optional sub-line. When
+ * `onClick` is set the whole tile is a drill-down target (it receives the
+ * tile's on-screen rect so a popover can open anchored beside it) and reads as
+ * clickable to both mouse and keyboard. */
 export function KpiTile({
   label,
   value,
   sub,
   tone,
+  onClick,
 }: {
   label: string;
   value: ReactNode;
   sub?: ReactNode;
   tone?: string;
+  onClick?: (rect: DOMRect) => void;
 }) {
   return (
-    <div className="d-card d-tile">
+    <div
+      className={"d-card d-tile" + (onClick ? " clk" : "")}
+      style={onClick ? { cursor: "pointer" } : undefined}
+      onClick={onClick ? (e) => onClick(e.currentTarget.getBoundingClientRect()) : undefined}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? rowKeyDown(onClick) : undefined}
+    >
       <span className="k">{label}</span>
       <span className="n" style={tone ? { color: tone } : undefined}>
         {value}
@@ -118,17 +130,19 @@ export interface BarItem {
   fraction: number;
   tone?: FuseTone;
   value: ReactNode;
-  /** Drill-down: opens the object's detail in place (never switches tab). */
-  onClick?: () => void;
+  /** Drill-down: opens the object's detail in a popover anchored to this row
+   * (never switches tab). Receives the row's on-screen rect for placement. */
+  onClick?: (rect: DOMRect) => void;
 }
 
 /** Keyboard-activates a clickable dashboard row (Enter/Space), so drill-downs
- * are reachable without a mouse. */
-function rowKeyDown(onClick: () => void) {
+ * are reachable without a mouse. Passes the row element's rect so the popover
+ * opens beside the row for keyboard users too, not in a corner. */
+function rowKeyDown(onClick: (rect: DOMRect) => void) {
   return (e: ReactKeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onClick();
+      onClick((e.currentTarget as HTMLElement).getBoundingClientRect());
     }
   };
 }
@@ -148,7 +162,7 @@ export function Bars({ items, empty = "no data" }: { items: BarItem[]; empty?: s
         <div
           className={"d-bar" + (it.onClick ? " clk" : "")}
           key={it.key}
-          onClick={it.onClick}
+          onClick={it.onClick ? (e) => it.onClick!(e.currentTarget.getBoundingClientRect()) : undefined}
           role={it.onClick ? "button" : undefined}
           tabIndex={it.onClick ? 0 : undefined}
           onKeyDown={it.onClick ? rowKeyDown(it.onClick) : undefined}
@@ -173,8 +187,9 @@ export interface FeedItem {
   value?: ReactNode;
   valueColor?: string;
   action?: ReactNode;
-  /** Drill-down: opens the object's detail in place (never switches tab). */
-  onClick?: () => void;
+  /** Drill-down: opens the object's detail in a popover anchored to this row
+   * (never switches tab). Receives the row's on-screen rect for placement. */
+  onClick?: (rect: DOMRect) => void;
 }
 
 /** A vertical feed of dot + title/sub + right-aligned value/action rows
@@ -197,7 +212,7 @@ export function Feed({ items, empty = "nothing here" }: { items: FeedItem[]; emp
         <div
           className={"d-arow" + (it.onClick ? " clk" : "")}
           key={it.key}
-          onClick={it.onClick}
+          onClick={it.onClick ? (e) => it.onClick!(e.currentTarget.getBoundingClientRect()) : undefined}
           role={it.onClick ? "button" : undefined}
           tabIndex={it.onClick ? 0 : undefined}
           onKeyDown={it.onClick ? rowKeyDown(it.onClick) : undefined}
