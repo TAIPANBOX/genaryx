@@ -67,6 +67,19 @@ pub struct OnboardStatusRequest {
     pub passports_dir: Option<String>,
 }
 
+/// One filesystem scope declared on the passport: a folder path plus a
+/// mode. `mode` stays a plain `String` on the wire (the same "honesty over
+/// rejection" tolerance a pass-through field gets elsewhere in this crate),
+/// and is validated into the closed `read`/`write` set inside
+/// `onboard_generate` rather than at the type level - so a bad value comes
+/// back as a normal `OnboardError::invalid` naming the row, not an opaque
+/// deserialize failure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsScopeDto {
+    pub path: String,
+    pub mode: String,
+}
+
 /// `onboard_generate`'s form (docs/ONBOARD.md, exact field names).
 #[derive(Debug, Clone, Deserialize)]
 pub struct OnboardGenerateRequest {
@@ -93,6 +106,11 @@ pub struct OnboardGenerateRequest {
     /// Only used when `unit` is NEW to the map.
     #[serde(default)]
     pub unit_budget_usd_month: Option<f64>,
+    /// Folders this agent may access, each with a read or write mode.
+    /// Default empty: no filesystem scopes is the common case, and an old
+    /// frontend that omits this field entirely stays valid.
+    #[serde(default)]
+    pub filesystem: Vec<FsScopeDto>,
     #[serde(default)]
     pub map_path: Option<String>,
     #[serde(default)]
@@ -236,6 +254,67 @@ fn finite_positive(v: f64, what: &str) -> Result<(), OnboardError> {
     }
 }
 
+/// The two modes a filesystem scope may declare (Data shape, docs/ONBOARD.md).
+const FS_MODES: [&str; 2] = ["read", "write"];
+
+/// A declared filesystem scope after validation: trimmed path, mode
+/// confirmed to be exactly one of [`FS_MODES`]. Kept separate from the raw
+/// wire `FsScopeDto` so the three downstream builders (the passport doc, the
+/// wardryx stub, the terraform blocks) all read from the SAME validated,
+/// order-preserved list rather than re-deriving it three times.
+struct ValidatedFsScope {
+    path: String,
+    mode: String,
+}
+
+/// A declared path is honest about being a declaration, not an enforced
+/// mount: absolute or relative are both accepted (the operator's own
+/// filesystem, not something this wizard resolves), but it must be
+/// non-empty after trimming and free of control characters (bytes < 0x20,
+/// which also catches NUL) - a path that cannot even print cleanly cannot be
+/// reasoned about later, in a terminal or in the generated Terraform/YAML.
+fn valid_fs_scope_path(path: &str) -> bool {
+    !path.is_empty() && !path.chars().any(|c| (c as u32) < 0x20)
+}
+
+/// Validate and normalize `scopes` into an order-preserved, trimmed,
+/// deduplicated list - or refuse with the same `OnboardError::invalid` style
+/// as every other field here. Two rows naming the same folder are refused
+/// rather than silently collapsed: which mode would win is ambiguous, so
+/// this is one valid shape (a path appears at most once) or a clear error
+/// naming the duplicated path, never a silent merge.
+fn validate_filesystem_scopes(
+    scopes: &[FsScopeDto],
+) -> Result<Vec<ValidatedFsScope>, OnboardError> {
+    let mut out = Vec::with_capacity(scopes.len());
+    let mut seen_paths: BTreeSet<String> = BTreeSet::new();
+    for (idx, scope) in scopes.iter().enumerate() {
+        let path = scope.path.trim().to_string();
+        let raw_path = &scope.path;
+        let mode = scope.mode.as_str();
+        if !valid_fs_scope_path(&path) {
+            return Err(OnboardError::invalid(format!(
+                "filesystem scope #{idx}: path must be non-empty and free of control characters, got `{raw_path}`"
+            )));
+        }
+        if !FS_MODES.contains(&mode) {
+            return Err(OnboardError::invalid(format!(
+                "filesystem scope #{idx}: mode `{mode}` is not one of {FS_MODES:?}"
+            )));
+        }
+        if !seen_paths.insert(path.clone()) {
+            return Err(OnboardError::invalid(format!(
+                "filesystem scope `{path}` is declared more than once; one row per folder (which mode would win is ambiguous otherwise)"
+            )));
+        }
+        out.push(ValidatedFsScope {
+            path,
+            mode: scope.mode.clone(),
+        });
+    }
+    Ok(out)
+}
+
 /// Escape a free-text value for embedding in a double-quoted YAML/HCL string.
 fn quoted(s: &str) -> String {
     let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
@@ -367,6 +446,14 @@ struct PassportAttestation<'a> {
     method: &'a str,
 }
 
+/// One filesystem scope as it appears on the passport document itself -
+/// borrowed strings, mirroring `PassportAttestation`'s own zero-copy shape.
+#[derive(Serialize)]
+struct FsScope<'a> {
+    path: &'a str,
+    mode: &'a str,
+}
+
 #[derive(Serialize)]
 struct PassportDoc<'a> {
     schema: &'a str,
@@ -378,7 +465,32 @@ struct PassportDoc<'a> {
     runtime: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     attestation: Option<PassportAttestation<'a>>,
+    /// Declared filesystem access, a root-level array (Data shape,
+    /// docs/ONBOARD.md). Omitted entirely when empty, so a passport with no
+    /// scopes serializes byte-identically to one generated before this field
+    /// existed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    filesystem: Vec<FsScope<'a>>,
     created_at: String,
+}
+
+/// The minimal, tolerant read side of one `filesystem` entry. Parsed so a
+/// passport carrying the new field peeks cleanly rather than being skipped,
+/// but `path`/`mode` are not yet individually consumed by this branch -
+/// surfacing a per-passport scope count on `ProvisionedDto` would need a
+/// wider "provisioned passports" table column, which this branch's
+/// onboard-generate-form scope leaves as a named follow-up (docs/ONBOARD.md).
+/// `#[allow(dead_code)]` documents that on purpose rather than leaving a
+/// future maintainer to wonder why an unread field survived clippy (compare
+/// `MapKey`'s doc comment above, which omits fields for the exact same
+/// dead_code reason this one instead keeps and annotates).
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct FsScopePeek {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    mode: String,
 }
 
 /// The minimal, tolerant read side for listing what is provisioned.
@@ -390,6 +502,11 @@ struct PassportPeek {
     id: String,
     #[serde(default)]
     owner: String,
+    /// See `FsScopePeek`'s own doc comment for why this is parsed but not
+    /// yet read.
+    #[serde(default)]
+    #[allow(dead_code)]
+    filesystem: Vec<FsScopePeek>,
 }
 
 // ============================================================================
@@ -560,6 +677,7 @@ pub async fn onboard_generate(
     if let Some(v) = request.unit_budget_usd_month {
         finite_positive(v, "unit_budget_usd_month")?;
     }
+    let filesystem = validate_filesystem_scopes(&request.filesystem)?;
 
     let agent_id = format!("agent://{trust_domain}/{path}");
     if !valid_agent_id(&agent_id) {
@@ -626,6 +744,13 @@ pub async fn onboard_generate(
         attestation: attestation
             .as_deref()
             .map(|method| PassportAttestation { method }),
+        filesystem: filesystem
+            .iter()
+            .map(|s| FsScope {
+                path: &s.path,
+                mode: &s.mode,
+            })
+            .collect(),
         created_at: now_rfc3339(),
     };
     let mut passport_json = serde_json::to_string_pretty(&passport_doc)
@@ -671,6 +796,18 @@ pub async fn onboard_generate(
     if attestation.as_deref().is_some_and(|m| m != "none") {
         wardryx_policy_stub.push_str("deny_if_unattested: true\n");
     }
+    if !filesystem.is_empty() {
+        wardryx_policy_stub
+            .push_str("# filesystem scopes declared on the passport (informational):\n");
+        for s in &filesystem {
+            let mode_label = format!("{}:", s.mode);
+            let path = &s.path;
+            wardryx_policy_stub.push_str(&format!("#   {mode_label:<6} {path}\n"));
+        }
+        wardryx_policy_stub.push_str(
+            "# NOTE: wardryx does not enforce filesystem paths in v1 (its policy\n# surface is deny_tool / allow_domains / require_human_above_usd /\n# deny_above_usd / max_steps / deny_if_unattested). These lines are a\n# declaration carried on the passport, not an enforced control.\n",
+        );
+    }
 
     let tf_name = key_id.replace(['-', '.'], "_");
     let mut terraform_snippet = String::new();
@@ -690,6 +827,12 @@ pub async fn onboard_generate(
     }
     if let Some(m) = attestation.as_deref() {
         terraform_snippet.push_str(&format!("  attestation_method = {}\n", quoted(m)));
+    }
+    for s in &filesystem {
+        terraform_snippet.push_str("  filesystem {\n");
+        terraform_snippet.push_str(&format!("    path = {}\n", quoted(&s.path)));
+        terraform_snippet.push_str(&format!("    mode = {}\n", quoted(&s.mode)));
+        terraform_snippet.push_str("  }\n");
     }
     terraform_snippet.push_str("}\n\n");
     terraform_snippet.push_str(&format!(
@@ -845,6 +988,8 @@ mod tests {
             bind_pattern: None,
             require_human_above_usd: Some(25.0),
             unit_budget_usd_month: Some(2000.0),
+            // Empty by default: no filesystem scopes is the common case.
+            filesystem: Vec::new(),
             // An explicit empty override so the test never falls through to a
             // TOKENFUSE_IDENTITY_MAP env var leaking in from the harness.
             map_path: Some(String::new()),
@@ -1030,6 +1175,152 @@ mod tests {
         let mut r = base_request();
         r.map_path = Some(map.display().to_string());
         assert_eq!(run(onboard_generate(r)).unwrap_err().kind, "map");
+    }
+
+    // -- filesystem scopes -----------------------------------------------------
+
+    #[test]
+    fn filesystem_scope_validation_matrix() {
+        // Good: a read and a write scope on distinct paths - accepted.
+        let mut r = base_request();
+        r.filesystem = vec![
+            FsScopeDto {
+                path: "/data/reports".into(),
+                mode: "read".into(),
+            },
+            FsScopeDto {
+                path: "/data/out".into(),
+                mode: "write".into(),
+            },
+        ];
+        let bundle = run(onboard_generate(r)).unwrap();
+        let passport: serde_json::Value = serde_json::from_str(&bundle.passport_json).unwrap();
+        assert_eq!(passport["filesystem"][0]["path"], "/data/reports");
+        assert_eq!(passport["filesystem"][0]["mode"], "read");
+        assert_eq!(passport["filesystem"][1]["path"], "/data/out");
+        assert_eq!(passport["filesystem"][1]["mode"], "write");
+
+        // Bad mode: neither "read" nor "write" - named, with the row index.
+        let mut r = base_request();
+        r.filesystem = vec![FsScopeDto {
+            path: "/data/x".into(),
+            mode: "readwrite".into(),
+        }];
+        let err = run(onboard_generate(r)).unwrap_err();
+        assert_eq!(err.kind, "invalid_input");
+        assert!(err.message.contains("readwrite"), "{}", err.message);
+        assert!(err.message.contains("#0"), "{}", err.message);
+
+        // Empty path after trim.
+        let mut r = base_request();
+        r.filesystem = vec![FsScopeDto {
+            path: "   ".into(),
+            mode: "read".into(),
+        }];
+        assert_eq!(run(onboard_generate(r)).unwrap_err().kind, "invalid_input");
+
+        // A control character in the path.
+        let mut r = base_request();
+        r.filesystem = vec![FsScopeDto {
+            path: "/data/\u{0007}bad".into(),
+            mode: "read".into(),
+        }];
+        assert_eq!(run(onboard_generate(r)).unwrap_err().kind, "invalid_input");
+
+        // A NUL byte in the path.
+        let mut r = base_request();
+        r.filesystem = vec![FsScopeDto {
+            path: "/data/\0bad".into(),
+            mode: "read".into(),
+        }];
+        assert_eq!(run(onboard_generate(r)).unwrap_err().kind, "invalid_input");
+
+        // Duplicate path (same folder declared twice) - refused, not
+        // silently collapsed to whichever mode came last.
+        let mut r = base_request();
+        r.filesystem = vec![
+            FsScopeDto {
+                path: "/data/reports".into(),
+                mode: "read".into(),
+            },
+            FsScopeDto {
+                path: "/data/reports".into(),
+                mode: "write".into(),
+            },
+        ];
+        let err = run(onboard_generate(r)).unwrap_err();
+        assert_eq!(err.kind, "invalid_input");
+        assert!(err.message.contains("/data/reports"), "{}", err.message);
+    }
+
+    #[test]
+    fn filesystem_scopes_flow_into_the_wardryx_stub_and_terraform() {
+        let mut r = base_request();
+        r.filesystem = vec![
+            FsScopeDto {
+                path: "/data/reports".into(),
+                mode: "read".into(),
+            },
+            FsScopeDto {
+                path: "/data/out".into(),
+                mode: "write".into(),
+            },
+        ];
+        let bundle = run(onboard_generate(r)).unwrap();
+
+        assert!(
+            bundle
+                .wardryx_policy_stub
+                .contains("filesystem scopes declared on the passport")
+        );
+        assert!(bundle.wardryx_policy_stub.contains("read:  /data/reports"));
+        assert!(bundle.wardryx_policy_stub.contains("write: /data/out"));
+        assert!(
+            bundle
+                .wardryx_policy_stub
+                .contains("wardryx does not enforce filesystem paths in v1")
+        );
+
+        assert!(bundle.terraform_snippet.contains("filesystem {"));
+        assert!(
+            bundle
+                .terraform_snippet
+                .contains("path = \"/data/reports\"")
+        );
+        assert!(bundle.terraform_snippet.contains("mode = \"read\""));
+        assert!(bundle.terraform_snippet.contains("path = \"/data/out\""));
+        assert!(bundle.terraform_snippet.contains("mode = \"write\""));
+    }
+
+    #[test]
+    fn no_filesystem_scopes_omits_the_field_and_the_stub_note() {
+        // base_request() declares zero scopes - the common case. Every
+        // artifact must read exactly as it did before this field existed.
+        let bundle = run(onboard_generate(base_request())).unwrap();
+        assert!(!bundle.passport_json.contains("filesystem"));
+        assert!(!bundle.wardryx_policy_stub.contains("filesystem"));
+        assert!(!bundle.terraform_snippet.contains("filesystem"));
+    }
+
+    #[test]
+    fn status_tolerates_passports_with_declared_filesystem_scopes() {
+        let dir = scratch("status-fs");
+        let passports = dir.join("passports");
+        std::fs::create_dir_all(&passports).unwrap();
+        std::fs::write(
+            passports.join("recon.json"),
+            format!(
+                r#"{{"schema":"{PASSPORT_SCHEMA}","id":"agent://bank.example/treasury/recon-batch","owner":"olena","filesystem":[{{"path":"/data/reports","mode":"read"}},{{"path":"/data/out","mode":"write"}}]}}"#
+            ),
+        )
+        .unwrap();
+        let status = run(onboard_status(OnboardStatusRequest {
+            map_path: None,
+            passports_dir: Some(passports.display().to_string()),
+        }))
+        .unwrap();
+        assert_eq!(status.passports.len(), 1);
+        assert!(status.skipped.is_empty());
     }
 
     // -- status --------------------------------------------------------------

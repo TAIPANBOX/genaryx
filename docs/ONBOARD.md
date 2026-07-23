@@ -87,6 +87,7 @@ pub struct OnboardGenerateRequest {
     pub bind_pattern: Option<String>,// default: the exact agent id; may end with one '*'
     pub require_human_above_usd: Option<f64>,
     pub unit_budget_usd_month: Option<f64>, // only used when the unit is NEW to the map
+    pub filesystem: Vec<FsScopeDto>, // default empty; see "Filesystem access" below
     pub map_path: Option<String>,    // same resolution as onboard_status
     pub passports_dir: Option<String>,
 }
@@ -109,7 +110,78 @@ Validation (refuse with `OnboardError`, mirroring the tokenfuse identity-map
 grammar): trust_domain segments and path segments `[a-z0-9._-]+` (path may
 have `/` separators), non-empty trust_domain/path/unit/owner, attestation
 from the enum above, `bind_pattern` literal or single trailing `*`,
-budgets finite and > 0 when present, agent id <= 255 bytes (SPEC §3).
+budgets finite and > 0 when present, agent id <= 255 bytes (SPEC §3),
+filesystem scopes per the rules below.
+
+### Filesystem access
+
+The generate form's "Filesystem access" section lets the operator declare
+folders the agent may reach: a path plus a mode, zero or more rows, added
+with a "+" button. Zero rows (no filesystem scopes) is the common case and
+the default.
+
+```rust
+pub struct FsScopeDto { pub path: String, pub mode: String }
+```
+
+`mode` stays a plain `String` on the wire for tolerance, then is validated
+into the closed `read`/`write` set inside `onboard_generate` (the same
+"honesty over rejection" shape other pass-through fields get elsewhere in
+this crate, but validated because this one is echoed straight into three
+generated artifacts). Rules:
+
+- each `path`: non-empty after trimming surrounding whitespace, and free of
+  control characters (bytes < 0x20, which also catches NUL). Not required to
+  be absolute - this is a declaration the operator writes down, not a mount
+  this wizard resolves or enforces.
+- each `mode`: exactly `read` or `write` (case-sensitive); anything else is
+  refused, naming the bad value and the row index.
+- **dedup**: two rows naming the same path (exact string, after trimming) are
+  refused rather than silently collapsed - which mode would win is
+  ambiguous, so the error names the duplicated path. One row per folder is
+  the only valid shape.
+- scopes are emitted in the order the operator declared them.
+
+When at least one scope is declared, it flows into all three generated
+artifacts:
+
+- **Passport JSON**: a root-level `filesystem` array, `[{ "path", "mode" },
+  ...]`, placed after `attestation` and before `created_at`. Omitted
+  entirely (not an empty array) when no scopes are declared, so a passport
+  with none is byte-identical to one generated before this field existed.
+- **Wardryx policy stub**: an informational, clearly-commented block listing
+  each scope, e.g. `#   read:  /data/reports`. Wardryx's policy surface
+  (`deny_tool` / `allow_domains` / `require_human_above_usd` /
+  `deny_above_usd` / `max_steps` / `deny_if_unattested`, see
+  `~/Development/wardryx/internal/policy/policy.go`'s `Policy` struct) has no
+  path field: **wardryx does not enforce filesystem paths in v1**. The stub
+  says so explicitly - this is a declaration carried on the passport, not an
+  enforced control, and the comment exists so nobody mistakes generating the
+  note for wardryx acting on it.
+- **Terraform alternative**: one nested `filesystem { path = "..." mode =
+  "..." }` block per scope, inside the `taipan_agent_passport` resource,
+  after `attestation_method` and before the closing brace.
+
+The client-side form (`OnboardView.tsx` + the pure helper module
+`lib/fsScopes.ts`, unit-tested) mirrors the empty-path and duplicate-path
+checks so the operator sees the same problem before submitting, disabling
+Generate until every row has a distinct, non-empty path - the backend above
+stays the source of truth and re-validates regardless.
+
+**Named follow-up, not silent**: `filesystem` validates today only because
+the published agent-passport schema
+(`~/Development/agent-passport/schemas/agent-passport.schema.json`) declares
+`additionalProperties: true` at the root - a new key is accepted without a
+schema change. Formalizing `filesystem` as a first-class field in
+`~/Development/agent-passport/SPEC.md` is a public-spec change that needs
+its own sign-off across the stack's adopters, and is deliberately OUT OF
+SCOPE here; neither the spec nor the schema is touched by this feature.
+Separately, `PassportPeek`'s tolerant read side (the provisioned-passports
+listing) now parses a passport's `filesystem` entries so old passports
+without the field keep peeking cleanly, but does not yet surface a
+per-passport scope count in `ProvisionedDto`/the "Provisioned passports"
+table - that table's column layout is a small, separate UI change left for
+a follow-up rather than folded into this branch's generate-form scope.
 
 ### `onboard_write_passport(args: { passport_json: string, passport_path: string, passports_dir?: string, overwrite: bool }) -> OnboardWriteDto`
 
@@ -131,3 +203,11 @@ wizard's only write.
 - SwiftUI screen (post-pivot backlog).
 - B3 (operators via customer IdP + named audit actors + WebAuthn) is a
   separate decision, not part of this branch.
+- Formalizing `filesystem` as a first-class field in the public
+  agent-passport SPEC.md/schema (it validates today only because the schema
+  allows additional root properties) - a public-spec change needing its own
+  sign-off, out of scope here.
+- A per-passport filesystem scope count on `ProvisionedDto`/the "Provisioned
+  passports" table (the tolerant peek already parses `filesystem` entries;
+  surfacing a count is a small, separate UI change, not folded into this
+  branch's generate-form scope).

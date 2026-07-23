@@ -74,6 +74,17 @@ export const ATTESTATION_METHODS: readonly string[] = [
   "mtls-cert",
 ];
 
+/** The two modes a declared filesystem scope may carry. */
+export type FsScopeMode = "read" | "write";
+
+/** Mirrors `onboard::commands::FsScopeDto` - one folder the agent may access,
+ * plus the mode it may access it in. Declaration-only: the passport carries
+ * this as information, it is never an enforced mount (docs/ONBOARD.md). */
+export interface FsScope {
+  path: string;
+  mode: FsScopeMode;
+}
+
 /** Mirrors `onboard::commands::OnboardGenerateRequest` field-for-field. */
 export interface OnboardGenerateRequest {
   trust_domain: string;
@@ -90,6 +101,9 @@ export interface OnboardGenerateRequest {
   require_human_above_usd: number | null;
   /** Only used when `unit` is NEW to the map. */
   unit_budget_usd_month: number | null;
+  /** Folders this agent may access, each with a read or write mode. Empty is
+   * the common case (no filesystem scopes declared). */
+  filesystem: FsScope[];
   map_path: string | null;
   passports_dir: string | null;
 }
