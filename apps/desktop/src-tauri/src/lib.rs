@@ -336,6 +336,12 @@ pub fn run() {
             commands::identity::identity_list_alerts,
             commands::identity::identity_list_remediations,
             commands::identity::identity_rescan,
+            // Onboard (docs/ONBOARD.md, D15/B2): stateless like Pocket below -
+            // every call re-resolves the identity map + passports dir fresh,
+            // so there is nothing for `setup` to `app.manage` here.
+            commands::onboard::onboard_status,
+            commands::onboard::onboard_generate,
+            commands::onboard::onboard_write_passport,
             commands::quality::quality_status,
             commands::quality::quality_list_run_summaries,
             commands::quality::quality_run_scores,

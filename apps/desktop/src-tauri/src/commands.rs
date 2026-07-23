@@ -176,6 +176,35 @@ pub mod identity {
     }
 }
 
+pub mod onboard {
+    use genaryx_api::onboard::commands::*;
+    #[allow(unused_imports)]
+    use genaryx_api::{bus::AppState, bus::BusMode, events::UiEvent};
+    #[allow(unused_imports)]
+    use genaryx_connectors::*;
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn onboard_status(
+        request: OnboardStatusRequest,
+    ) -> Result<OnboardStatusDto, OnboardError> {
+        genaryx_api::onboard::commands::onboard_status(request).await
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn onboard_generate(
+        request: OnboardGenerateRequest,
+    ) -> Result<OnboardBundleDto, OnboardError> {
+        genaryx_api::onboard::commands::onboard_generate(request).await
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn onboard_write_passport(
+        request: OnboardWritePassportRequest,
+    ) -> Result<OnboardWriteDto, OnboardError> {
+        genaryx_api::onboard::commands::onboard_write_passport(request).await
+    }
+}
+
 pub mod quality {
     use genaryx_api::quality::commands::*;
     #[allow(unused_imports)]

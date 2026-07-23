@@ -463,9 +463,6 @@ function mockAlerts() {
 }
 
 // Owner and unit aggregates, so a card can navigate agent -> owner -> unit.
-function fleetAgentDto(a: FleetAgent) {
-  return { agentId: agentId(a), name: a.name, team: a.team, owner: a.owner, model: a.model, spentUsd: a.spentUsd, calls: a.calls, closed: Boolean(a.closed), blocked: Boolean(a.blocked) };
-}
 function entityAgentFor(a: FleetAgent, portion: number, current: boolean) {
   return {
     agentId: a.id,

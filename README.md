@@ -82,6 +82,16 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
   enterprise gallery separately shows a 2026-07-22 run. Records, shots,
   runbook and open items live in [`live-campaign/`](live-campaign/)
   (`VERIFICATION-LOG.md`, `shots/2026-07-20/MANIFEST.md`, `OPEN-WORK.md`).
+- **The "new agent" onboarding wizard (D15/B2, not yet live-verified).** One
+  form generates the four artifacts registering an agent takes (Passport
+  JSON, a minted `TOKENFUSE_CLIENT_KEYS` entry, an identity-map fragment for
+  open TokenFuse's docs/20 map, a Wardryx policy stub, plus a Terraform
+  alternative) and lists what is already provisioned. Propose-only by design:
+  the operator commits everything themselves; the one convenience write is
+  the passport file into the local staging dir (`~/.taipan/passports/`), and
+  the minted secret is shown once, never persisted. `crates/api/src/onboard`
+  + an Onboard view in the web/Tauri shells; design in
+  [`docs/ONBOARD.md`](docs/ONBOARD.md).
 
 ## Not built yet (decided, on the roadmap)
 
@@ -93,6 +103,13 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
   never a direct-execute button.
 - **Store distribution** of the macOS shell and Pocket (Apple Developer
   account pending; see the blocker note in the wiki).
+- **Onboard wizard follow-ups**: the SwiftUI screen (web-first pivot backlog)
+  and the "provisioned, awaiting first traffic" check against the Cloud's
+  per-unit aggregation, together with Identity-tab unit grouping.
+- **D15/B3, operators via the customer's IdP**: OIDC login for the web
+  console (offline JWKS, air-gap safe), named audit actors, roles
+  admin/approver/viewer, and the WebAuthn per-action ceremony absorbing the
+  web-side signed kill above.
 
 ## Layout
 

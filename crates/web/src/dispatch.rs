@@ -29,6 +29,9 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use genaryx_api::evidence::commands::EvidenceBuildRequest;
+use genaryx_api::onboard::commands::{
+    OnboardGenerateRequest, OnboardStatusRequest, OnboardWritePassportRequest,
+};
 use genaryx_api::policy::commands::DecisionDto;
 use genaryx_api::remote::commands::RemoteEnvironmentRequest;
 use serde_json::Value;
@@ -382,6 +385,39 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "money_status" => Ok(reply(
             genaryx_api::money::commands::money_status(&ctx.money).await,
         )),
+        "onboard_generate" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                request: OnboardGenerateRequest,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::onboard::commands::onboard_generate(a.request).await,
+            ))
+        }
+        "onboard_status" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                request: OnboardStatusRequest,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::onboard::commands::onboard_status(a.request).await,
+            ))
+        }
+        "onboard_write_passport" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                request: OnboardWritePassportRequest,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::onboard::commands::onboard_write_passport(a.request).await,
+            ))
+        }
         "pocket_connect" => Ok(reply(genaryx_api::pocket::commands::pocket_connect().await)),
         "pocket_disconnect" => Ok(reply(
             genaryx_api::pocket::commands::pocket_disconnect().await,

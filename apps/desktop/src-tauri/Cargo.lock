@@ -1580,6 +1580,7 @@ dependencies = [
  "genaryx-copilot",
  "genaryx-core",
  "genaryx-signing",
+ "getrandom 0.2.17",
  "serde",
  "serde_json",
  "sha2",

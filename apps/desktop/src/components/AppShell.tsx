@@ -15,6 +15,7 @@ import { EvidenceView } from "./EvidenceView";
 import { IdentityView } from "./IdentityView";
 import { MemoryView } from "./MemoryView";
 import { MoneyView } from "./MoneyView";
+import { OnboardView } from "./OnboardView";
 import { OverviewView } from "./OverviewView";
 import { PocketView } from "./PocketView";
 import { PolicyView } from "./PolicyView";
@@ -229,6 +230,7 @@ export function AppShell() {
         />
       )}
       {view === "identity" && <IdentityView onOpenAgent={onOpenAgent} />}
+      {view === "onboard" && <OnboardView />}
       {view === "quality" && <QualityView onOpenAgent={onOpenAgent} />}
       {view === "crypto" && <CryptoView />}
       {view === "memory" && <MemoryView onOpenAgent={onOpenAgent} />}
