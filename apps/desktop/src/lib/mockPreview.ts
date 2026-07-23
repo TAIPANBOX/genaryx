@@ -966,7 +966,9 @@ function mockEvidenceBuild() {
  * of rows - a fixture, not a simulation of the operator's own filesystem.
  * One passport declares zero filesystem scopes and two declare a few, so the
  * `filesystem_count` column reads as both "-" and "N folders" in the same
- * table. */
+ * table; `models_count` varies independently of `filesystem_count` per row
+ * (never the same number on the same row) so the two columns are visibly
+ * distinct rather than looking like one value duplicated twice. */
 function mockOnboardStatus() {
   return {
     map_path: "/root/.taipan/identity.json",
@@ -983,6 +985,7 @@ function mockOnboardStatus() {
         owner: `user://${ORG}/j.carter`,
         file: "/root/.taipan/passports/sre-rca-copilot.json",
         filesystem_count: 2,
+        models_count: 1,
         in_map: true,
       },
       {
@@ -990,6 +993,7 @@ function mockOnboardStatus() {
         owner: `user://${ORG}/t.osei`,
         file: "/root/.taipan/passports/platform-api-gateway-tuner.json",
         filesystem_count: 0,
+        models_count: 0,
         in_map: true,
       },
       {
@@ -997,6 +1001,7 @@ function mockOnboardStatus() {
         owner: `user://${ORG}/n.foster`,
         file: "/root/.taipan/passports/finops-idle-resource-sweeper.json",
         filesystem_count: 1,
+        models_count: 2,
         in_map: false,
       },
     ],
@@ -1015,14 +1020,24 @@ interface MockFsScope {
   mode: string;
 }
 
+/** One declared model entry, mock-preview shape (mirrors `ModelDecl` in
+ * `onboardTypes.ts`) - `model`/`endpoint` stay optional, same as the wire
+ * shape, so an entry naming only a provider renders as bare `{ provider }`. */
+interface MockModelDecl {
+  provider: string;
+  model?: string;
+  endpoint?: string;
+}
+
 /** `onboard_generate`'s mock: builds the same four-artifact bundle shape the
  * real `crates/api/src/onboard/commands.rs::onboard_generate` returns, from
  * whatever the operator typed into the form. Echoes the request's own
- * `filesystem` rows when the operator declared any (so add/remove/generate
- * is faithful to test end to end), and otherwise falls back to two example
- * scopes - this is a showroom (see this file's own header comment), and the
- * whole point of extending this mock was to make the feature visible without
- * first wiring a live backend. */
+ * `filesystem` rows and `models` entries when the operator declared any (so
+ * add/remove/generate is faithful to test end to end), and otherwise falls
+ * back to a couple of example entries for each - this is a showroom (see
+ * this file's own header comment), and the whole point of extending this
+ * mock was to make the feature visible without first wiring a live
+ * backend. */
 function mockOnboardGenerate(args?: Record<string, unknown>) {
   const req = (args?.request ?? {}) as Record<string, unknown>;
   const trustDomain = String(req.trust_domain || ORG);
@@ -1050,6 +1065,20 @@ function mockOnboardGenerate(args?: Record<string, unknown>) {
           { path: "/data/out", mode: "write" },
         ];
 
+  const requestedModels = Array.isArray(req.models) ? (req.models as unknown[]) : [];
+  const models: MockModelDecl[] =
+    requestedModels.length > 0
+      ? requestedModels.map((m) => {
+          const decl = (m ?? {}) as Record<string, unknown>;
+          const model = typeof decl.model === "string" && decl.model ? decl.model : undefined;
+          const endpoint = typeof decl.endpoint === "string" && decl.endpoint ? decl.endpoint : undefined;
+          return { provider: String(decl.provider ?? ""), ...(model ? { model } : {}), ...(endpoint ? { endpoint } : {}) };
+        })
+      : [
+          { provider: "anthropic", model: "claude-sonnet-4-5", endpoint: "api.anthropic.com" },
+          { provider: "openai" },
+        ];
+
   const passport: Record<string, unknown> = {
     schema: "taipanbox.dev/agent-passport/v0.1",
     id: agentId,
@@ -1058,6 +1087,7 @@ function mockOnboardGenerate(args?: Record<string, unknown>) {
     ...(runtime ? { runtime } : {}),
     ...(attestationMethod ? { attestation: { method: attestationMethod } } : {}),
     ...(filesystem.length > 0 ? { filesystem } : {}),
+    ...(models.length > 0 ? { models } : {}),
     created_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
   };
 
@@ -1092,6 +1122,12 @@ function mockOnboardGenerate(args?: Record<string, unknown>) {
   if (attestationMethod) tfLines.push(`  attestation_method = "${attestationMethod}"`);
   for (const s of filesystem) {
     tfLines.push("  filesystem {", `    path = "${s.path}"`, `    mode = "${s.mode}"`, "  }");
+  }
+  for (const m of models) {
+    tfLines.push("  models {", `    provider = "${m.provider}"`);
+    if (m.model) tfLines.push(`    model = "${m.model}"`);
+    if (m.endpoint) tfLines.push(`    endpoint = "${m.endpoint}"`);
+    tfLines.push("  }");
   }
   tfLines.push("}", "", `resource "taipan_wardryx_policy" "${tfName}" {`);
   tfLines.push(`  id     = "onboard-${keyId}"`, `  target = "${bindPattern}"`, "}");

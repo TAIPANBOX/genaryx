@@ -26,12 +26,14 @@ export interface UnitOption {
  * (needs the Cloud; a named follow-up). `filesystem_count` is the number of
  * scopes the passport's own `filesystem` array declares (0 when it has none,
  * or predates that field) - the individual paths/modes are not mirrored
- * here, only the count. */
+ * here, only the count. `models_count` is the same shape for the passport's
+ * own `models` array (agent-passport SPEC.md section 4.5). */
 export interface Provisioned {
   agent_id: string;
   owner: string;
   file: string;
   filesystem_count: number;
+  models_count: number;
   in_map: boolean;
 }
 
@@ -89,6 +91,17 @@ export interface FsScope {
   mode: FsScopeMode;
 }
 
+/** Mirrors `onboard::commands::ModelDeclDto` - one LLM provider/model/
+ * endpoint the agent is declared to use (agent-passport SPEC.md section
+ * 4.5). Declaration-only, same as `FsScope`: nothing in this stack grants or
+ * restricts model access from this field, it exists for audit and inventory
+ * (docs/ONBOARD.md). Only `provider` is required. */
+export interface ModelDecl {
+  provider: string;
+  model?: string;
+  endpoint?: string;
+}
+
 /** Mirrors `onboard::commands::OnboardGenerateRequest` field-for-field. */
 export interface OnboardGenerateRequest {
   trust_domain: string;
@@ -108,6 +121,9 @@ export interface OnboardGenerateRequest {
   /** Folders this agent may access, each with a read or write mode. Empty is
    * the common case (no filesystem scopes declared). */
   filesystem: FsScope[];
+  /** LLM providers/models/endpoints this agent is declared to use. Empty is
+   * the common case (no models declared). */
+  models: ModelDecl[];
   map_path: string | null;
   passports_dir: string | null;
 }
