@@ -46,7 +46,7 @@ const FIELD_STYLE = {
   width: "100%",
 } as const;
 
-const PASSPORT_COLUMNS = "1fr 1fr 1fr 110px 90px";
+const PASSPORT_COLUMNS = "1fr 1fr 1fr 90px 110px 90px";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -537,7 +537,7 @@ export function OnboardView() {
                   background: "var(--panel-3)",
                 }}
               >
-                {["agent id", "owner", "file", "", ""].map((label, idx) => (
+                {["agent id", "owner", "file", "folders", "", ""].map((label, idx) => (
                   <span
                     key={`${label}-${idx}`}
                     className="mono"
@@ -578,6 +578,17 @@ export function OnboardView() {
                     style={{ color: "var(--faint)" }}
                   >
                     {p.file}
+                  </span>
+                  <span
+                    className="mono truncate text-[11px]"
+                    title={
+                      p.filesystem_count > 0
+                        ? `${p.filesystem_count} declared filesystem scope${p.filesystem_count === 1 ? "" : "s"}`
+                        : "no declared filesystem scopes"
+                    }
+                    style={{ color: "var(--faint)" }}
+                  >
+                    {p.filesystem_count > 0 ? `${p.filesystem_count} folder${p.filesystem_count === 1 ? "" : "s"}` : "-"}
                   </span>
                   <span
                     className="badge"

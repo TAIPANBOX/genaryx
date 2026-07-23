@@ -865,6 +865,53 @@ function mockEvidenceBuild() {
 
 // --- Onboard (the "new agent" wizard, docs/ONBOARD.md), on-demand ---
 
+/** `onboard_status`'s mock: a small, fixed set of already-provisioned
+ * passports so the "Provisioned passports" table has something to show in
+ * `dev:mock` (this command was left unmocked when `onboard_generate` was
+ * added - without this arm the panel reads as permanently empty, since
+ * `mockInvoke`'s `default:` case answers `null`). Ignores the request's own
+ * `map_path`/`passports_dir` overrides and always answers the same handful
+ * of rows - a fixture, not a simulation of the operator's own filesystem.
+ * One passport declares zero filesystem scopes and two declare a few, so the
+ * `filesystem_count` column reads as both "-" and "N folders" in the same
+ * table. */
+function mockOnboardStatus() {
+  return {
+    map_path: "/root/.taipan/identity.json",
+    map_loaded: true,
+    map_error: null,
+    units: [
+      { id: "sre", name: "SRE", budget_usd_month: 4000 },
+      { id: "platform", name: "Platform", budget_usd_month: 3000 },
+    ],
+    passports_dir: "/root/.taipan/passports",
+    passports: [
+      {
+        agent_id: `agent://${ORG}/sre/rca-copilot`,
+        owner: `user://${ORG}/j.carter`,
+        file: "/root/.taipan/passports/sre-rca-copilot.json",
+        filesystem_count: 2,
+        in_map: true,
+      },
+      {
+        agent_id: `agent://${ORG}/platform/api-gateway-tuner`,
+        owner: `user://${ORG}/t.osei`,
+        file: "/root/.taipan/passports/platform-api-gateway-tuner.json",
+        filesystem_count: 0,
+        in_map: true,
+      },
+      {
+        agent_id: `agent://${ORG}/finops/idle-resource-sweeper`,
+        owner: `user://${ORG}/n.foster`,
+        file: "/root/.taipan/passports/finops-idle-resource-sweeper.json",
+        filesystem_count: 1,
+        in_map: false,
+      },
+    ],
+    skipped: [],
+  };
+}
+
 /** A fixed, obviously-fake `gx_<32 hex>` - never a real secret, just a
  * plausible shape for the "shown once" client-key display. */
 const MOCK_CLIENT_KEY_SECRET = "gx_0123456789abcdef0123456789abcdef";
@@ -1591,6 +1638,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "evidence_build": return r(mockEvidenceBuild());
 
     // ---- onboard (the "new agent" wizard), on-demand ----
+    case "onboard_status": return r(mockOnboardStatus());
     case "onboard_generate": return r(mockOnboardGenerate(args));
 
     // ---- Felyx ----
