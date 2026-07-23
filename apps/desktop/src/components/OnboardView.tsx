@@ -34,6 +34,8 @@ import {
   isExistingFileError,
   writeOnboardPassport,
 } from "../lib/onboard";
+import { applyOnboardPreset, PRESETS } from "../lib/onboardPresets";
+import type { OnboardPreset } from "../lib/onboardPresets";
 import { ATTESTATION_METHODS } from "../onboardTypes";
 import type {
   FsScopeMode,
@@ -278,6 +280,41 @@ export function OnboardView() {
   const nextModelRowId = useRef(0);
   const modelHasEmptyProvider = modelHasEmptyProviderOf(modelDeclRows);
   const modelDuplicateKeys = modelDuplicateKeysOf(modelDeclRows);
+
+  // Framework presets (I14c, docs/ONBOARD.md "Framework presets"): a small
+  // client-side convenience, nothing else. Applying one sets runtime +
+  // attestation outright (the whole point of clicking a preset - "use this
+  // one instead") and APPENDS its example models/filesystem rows to
+  // whatever the operator already declared, each minted a fresh id from the
+  // same counters "+ Add model"/"+ Add folder" use above - it never touches
+  // trust domain, path, unit, or owner (`applyOnboardPreset`'s own return
+  // type has no room for those fields at all, see `lib/onboardPresets.ts`).
+  const applyPreset = useCallback((preset: OnboardPreset) => {
+    const fields = applyOnboardPreset(preset);
+    setRuntime(fields.runtime);
+    setAttestationMethod(fields.attestation_method);
+    if (fields.models.length > 0) {
+      setModelDeclRows((rows) => [
+        ...rows,
+        ...fields.models.map((m) => ({
+          id: `model-${nextModelRowId.current++}`,
+          provider: m.provider,
+          model: m.model ?? "",
+          endpoint: m.endpoint ?? "",
+        })),
+      ]);
+    }
+    if (fields.filesystem.length > 0) {
+      setFsScopeRows((rows) => [
+        ...rows,
+        ...fields.filesystem.map((s) => ({
+          id: `fs-${nextFsRowId.current++}`,
+          path: s.path,
+          mode: s.mode,
+        })),
+      ]);
+    }
+  }, []);
 
   const units = status?.units ?? [];
   const hasUnitChoices = units.length > 0;
@@ -671,6 +708,31 @@ export function OnboardView() {
           The wizard proposes; you commit. Only the passport file is written, into the local staging
           dir.
         </span>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+            Start from a framework preset (optional)
+          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="icon-btn"
+                style={{ width: "auto", padding: "0 12px", fontSize: 11 }}
+                title={preset.hint}
+                onClick={() => applyPreset(preset)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px]" style={{ color: "var(--faint)" }}>
+            Presets are starting points, edit freely - they fill in runtime, attestation, and a
+            couple of example models (plus a workdir for some frameworks) below; your trust
+            domain, path, unit, and owner are never touched.
+          </span>
+        </div>
 
         <div className="grid gap-2.5" style={{ gridTemplateColumns: "1fr 1fr" }}>
           <Field label="trust domain">
