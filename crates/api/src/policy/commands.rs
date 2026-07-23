@@ -500,16 +500,20 @@ pub async fn policy_decide_approval(
     state: &PolicyState,
 ) -> Result<DecideOutcome, PolicyError> {
     let client = ready_client(&state).await?;
+    // The web shell's signed-in principal when set (docs/CONSOLE-IDP.md), else
+    // this client's own default. Used both as the approver Wardryx records and
+    // as the journaled operator, so the two never disagree.
+    let operator = crate::console_actor::operator_or(&client.operator);
     let result = client
         .client
-        .decide_approval(&id, decision.to_verdict(), &client.operator)
+        .decide_approval(&id, decision.to_verdict(), &operator)
         .await;
 
     let (http_status, verify_result, token, summary) =
         describe_decision_result(decision, &id, &result);
 
     let rec = CommandRecord {
-        operator: client.operator.clone(),
+        operator: operator.clone(),
         env: "local".to_string(),
         action: decision.action().to_string(),
         target: id.clone(),

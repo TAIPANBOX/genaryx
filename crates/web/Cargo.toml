@@ -55,6 +55,17 @@ argon2 = "0.5.3"
 password-hash = { version = "0.5.0", features = ["std"] }
 rand = "0.8.5"
 
+# Offline OIDC/JWT verification for the IdP login path (docs/CONSOLE-IDP.md),
+# static JWKS only. Same crate + posture as tokenfuse-cloud's oidc.rs.
+jsonwebtoken = { workspace = true }
+
 clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# Drive the router directly in tests via `oneshot` (the auth + role gate),
+# instead of only binding it to a socket. Same tower/http-body family axum 0.8
+# already pulls in, so no new stack.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

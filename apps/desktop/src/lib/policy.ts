@@ -1,4 +1,4 @@
-import { hasBackend, invokeBackend } from "./transport";
+import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
 import type { Approval, Decision, DecideOutcome, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 
 /** Thrown by every fetcher/mutator below when there is no Tauri runtime to
@@ -13,6 +13,8 @@ const NO_ENVIRONMENT_ERROR: PolicyError = { kind: "no_environment" };
  * serialized from, so this is normally already a `PolicyError` in disguise;
  * the fallback branch only matters for a transport-level IPC failure. */
 function toPolicyError(err: unknown): PolicyError {
+  const role = requiredRoleFromCommandError(err);
+  if (role) return { kind: "role_required", role };
   if (err && typeof err === "object" && "kind" in err) {
     return err as PolicyError;
   }
@@ -55,8 +57,11 @@ export const decideApproval = (id: string, decision: Decision): Promise<DecideOu
   call<DecideOutcome>("policy_decide_approval", { id, decision });
 
 /** Human-readable text for any `PolicyError` - used for the plain error
- * banner (mirrors `lib/money.ts`'s `describeMoneyError`). */
-export function describePolicyError(err: PolicyError): string {
+ * banner (mirrors `lib/money.ts`'s `describeMoneyError`, including the
+ * optional `currentRole` - the signed-in operator's own role, from
+ * `useSession()` - that lets a `role_required` refusal say who you are, not
+ * just what was needed). */
+export function describePolicyError(err: PolicyError, currentRole?: ConsoleRole | null): string {
   switch (err.kind) {
     case "bootstrapping":
       return "Still connecting to a Wardryx policy plane.";
@@ -66,5 +71,9 @@ export function describePolicyError(err: PolicyError): string {
       return `Could not reach Wardryx: ${err.reason}`;
     case "wardryx":
       return err.status !== null ? `Wardryx error ${err.status}: ${err.message}` : err.message;
+    case "role_required": {
+      const need = `This action needs the ${err.role} role.`;
+      return currentRole ? `${need} You are signed in as ${currentRole}.` : need;
+    }
   }
 }

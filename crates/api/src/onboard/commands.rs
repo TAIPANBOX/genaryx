@@ -326,12 +326,11 @@ struct MapUnit {
     budget_usd_month: Option<f64>,
 }
 
+// Only `agents` is consumed here (id-in-map matching); `key_id`/`unit` are
+// deliberately not declared - serde ignores the extra keys, and declaring
+// fields the code never reads is dead weight (and a dead_code lint).
 #[derive(Debug, Deserialize)]
 struct MapKey {
-    #[serde(default)]
-    key_id: String,
-    #[serde(default)]
-    unit: String,
     #[serde(default)]
     agents: Vec<String>,
 }

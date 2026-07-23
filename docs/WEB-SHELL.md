@@ -45,6 +45,73 @@ Binding a wildcard address works but is logged as a warning at startup. Add
 HTTP inside the tunnel a `Secure` cookie is simply never sent back, which
 locks the operator out with no explanation.
 
+## IdP login and roles
+
+One local operator account (above) always works. If the customer runs an
+identity provider, `genaryx-web` can also verify its OIDC ID-tokens, and it
+does so entirely offline: no `.well-known` discovery, no outbound call to the
+IdP, ever. It is off unless configured, and configuring it never removes the
+local account.
+
+Set all three of these before `serve` starts, or OIDC stays off and the
+console shows only the local login:
+
+```sh
+export GENARYX_WEB_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0
+export GENARYX_WEB_OIDC_AUDIENCE=genaryx-console
+export GENARYX_WEB_OIDC_JWKS=/etc/genaryx/jwks.json   # inline JSON also works
+```
+
+Four more are optional, each defaulting to what a plain OIDC token already
+carries:
+
+- `GENARYX_WEB_OIDC_SUB_CLAIM` (default `sub`): the claim used as the
+  signed-in username.
+- `GENARYX_WEB_OIDC_ROLES_CLAIM` (default `roles`): the claim read for role
+  mapping.
+- `GENARYX_WEB_OIDC_ADMIN_ROLE` (default `genaryx-admin`): the roles-claim
+  value that grants the `admin` role.
+- `GENARYX_WEB_OIDC_APPROVER_ROLE` (default `genaryx-approver`): the
+  roles-claim value that grants the `approver` role.
+
+`GENARYX_WEB_OIDC_JWKS` is read once at startup, inline JSON or a file path,
+and never fetched again: no live call to the IdP, air-gap safe by
+construction, the same contract tokenfuse-cloud's own OIDC already uses.
+Rotating the IdP's signing key means updating the file (or the env var) and
+restarting `genaryx-web`; there is no background refresh to fall back on.
+`GET /api/auth/session` reports `oidc_available: true` once the three
+required vars are set, and the browser then shows "Sign in with your
+organization" next to the local login form.
+
+The local Argon2id account (`set-password`, above) is unchanged by any of
+this: it stays the break-glass path onto the box, and it is always `admin`,
+IdP configured or not.
+
+Every session, local or OIDC, carries one of three roles, and `genaryx-web`
+checks it before a command runs, not after:
+
+- `viewer`: reads. Every status and list endpoint, the live bus, onboard
+  status, crypto scan and verify, Felyx ask/explain/status.
+- `approver`: viewer, plus granting or denying a Wardryx approval.
+- `admin`: approver, plus every privileged mutation: kill a run, set a
+  budget, ack an incident, forget a memory, remote WireGuard/SSH, identity
+  rescan, drills, onboard generate/write, pair or unpair Pocket, the copilot
+  proposal-approval log, and evidence build.
+
+An OIDC session's role comes from the roles claim: `admin` if it contains the
+admin role, `approver` if it contains the approver role, otherwise `viewer`;
+it cannot end up with more access than the token's own claim grants. This is
+also why the audit trail now names the signed-in person
+(`user://<org>/<sub>` for OIDC, `user://<org>/<username>` for local) instead
+of the box's OS account.
+
+Roles gate the command surface, not the moment of action. Signing in still
+opens the console: in part 1, the right role plus a live session is enough to
+run a privileged command, and nothing re-signs it as it happens. A stolen
+`admin` session can still act, not just look, until the per-action WebAuthn
+ceremony (part 2, a separate branch) lands. The full contract and the honest
+limits are in docs/CONSOLE-IDP.md.
+
 ## Pointing it at the stack
 
 Every plane resolves its own environment from a `taipan up` descriptor under
@@ -155,6 +222,7 @@ carries what the bus receives, and a stack nobody is calling receives nothing.
   no session, 404 is an unknown command.
 - `GET /api/events` is the live bus as Server-Sent Events (`event: bus`).
 
-Signing in opens the console. It does not authorise a destructive action:
-those are re-signed at the moment they happen, so a stolen session can look
-but not act.
+Signing in opens the console, at whatever role the session carries. It does
+not, in part 1, re-sign a destructive action in the moment it happens: a live
+session at the right role is still the whole gate. docs/CONSOLE-IDP.md has
+the honest limits and what part 2 changes.

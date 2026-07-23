@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { decideApproval, describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
 import { usePolicyStatus } from "../lib/usePolicyStatus";
+import { useSession } from "../lib/useSession";
 import type { Approval, Decision, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 import { ApprovalsInbox, type GrantedToken } from "./ApprovalsInbox";
 import { DecisionStream } from "./DecisionStream";
@@ -109,6 +110,7 @@ export interface PolicyViewProps {
 export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOpenAgent }: PolicyViewProps) {
   const status = usePolicyStatus();
   const ready = status?.state === "ready";
+  const session = useSession();
 
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
   const [policies, setPolicies] = useState<PolicyRecord[] | null>(null);
@@ -136,16 +138,29 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
 
   const handleDecide = useCallback(
     async (id: string, decision: Decision) => {
-      const outcome = await decideApproval(id, decision);
-      setNotice(
-        outcome.bus_recorded
-          ? `${outcome.summary} - signed console_command recorded, visible in the Bus tab.`
-          : `${outcome.summary} (bus journal not recorded: ${outcome.bus_error ?? "unknown reason"})`,
-      );
-      if (outcome.token) {
-        setGrantedToken({ approvalId: id, outcome });
+      // Sets the SAME `error` state `refresh()` above uses, so a rejection
+      // (most notably a 403 `role_required` refusal for an approver trying
+      // an admin-only command, or a viewer trying to decide at all -
+      // docs/CONSOLE-IDP.md) renders through the existing banner instead of
+      // vanishing as an unhandled rejection. Still rethrown: `ConfirmButton`'s
+      // Grant/Deny ceremony resets its pending state either way, but the
+      // reject/resolve distinction is kept honest for any future caller that
+      // branches on it, matching `MoneyView.tsx`'s identical contract.
+      try {
+        const outcome = await decideApproval(id, decision);
+        setNotice(
+          outcome.bus_recorded
+            ? `${outcome.summary} - signed console_command recorded, visible in the Bus tab.`
+            : `${outcome.summary} (bus journal not recorded: ${outcome.bus_error ?? "unknown reason"})`,
+        );
+        if (outcome.token) {
+          setGrantedToken({ approvalId: id, outcome });
+        }
+        void refresh();
+      } catch (err) {
+        setError(err as PolicyError);
+        throw err;
       }
-      void refresh();
     },
     [refresh],
   );
@@ -180,7 +195,7 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
 
       {error && (
         <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
-          {describePolicyError(error)}
+          {describePolicyError(error, session?.role)}
         </div>
       )}
 

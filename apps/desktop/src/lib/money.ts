@@ -1,4 +1,4 @@
-import { hasBackend, invokeBackend } from "./transport";
+import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
 import type {
   Incident,
   MoneyError,
@@ -24,6 +24,8 @@ const NO_ENVIRONMENT_ERROR: MoneyError = { kind: "no_environment" };
  * "command not found"), which is not a shape `money::commands::MoneyError`
  * itself ever produces. */
 function toMoneyError(err: unknown): MoneyError {
+  const role = requiredRoleFromCommandError(err);
+  if (role) return { kind: "role_required", role };
   if (err && typeof err === "object" && "kind" in err) {
     return err as MoneyError;
   }
@@ -91,8 +93,14 @@ export const ackIncident = (id: string): Promise<MutationOutcome> =>
 
 /** Human-readable text for any `MoneyError` - used for the plain error
  * banner. `plan_required` is deliberately NOT routed through this: the UI
- * renders that one as an upsell tile instead of an error message (spec). */
-export function describeMoneyError(err: MoneyError): string {
+ * renders that one as an upsell tile instead of an error message (spec).
+ *
+ * `currentRole` is the signed-in operator's OWN role (from `useSession()`),
+ * threaded in by callers that know it (`MoneyView.tsx`) so a `role_required`
+ * refusal can say who you are, not just what was needed - optional, so every
+ * OTHER existing call site (`OverviewView.tsx`, `Agent360.tsx`, ...) keeps
+ * compiling unchanged and still gets an honest, just less complete, message. */
+export function describeMoneyError(err: MoneyError, currentRole?: ConsoleRole | null): string {
   switch (err.kind) {
     case "bootstrapping":
       return "Still connecting to the Cloud environment.";
@@ -106,5 +114,9 @@ export function describeMoneyError(err: MoneyError): string {
       return "Break-glass override requires a non-empty reason.";
     case "cloud":
       return err.status !== null ? `Cloud error ${err.status}: ${err.message}` : err.message;
+    case "role_required": {
+      const need = `This action needs the ${err.role} role.`;
+      return currentRole ? `${need} You are signed in as ${currentRole}.` : need;
+    }
   }
 }

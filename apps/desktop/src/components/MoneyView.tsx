@@ -9,6 +9,7 @@ import {
   setBudget,
 } from "../lib/money";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
+import { useSession } from "../lib/useSession";
 import { formatUsd } from "../lib/format";
 import { sevColor, sevRank, spendSeries, usd0 } from "../lib/dashData";
 import type { Incident, MoneyError, MutationOutcome, Run, Savings } from "../moneyTypes";
@@ -61,6 +62,7 @@ export function MoneyView({
 }) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
+  const session = useSession();
   const { open } = usePopover();
   const openAgent = useCallback(
     (agentId: string, rect: DOMRect) =>
@@ -106,21 +108,44 @@ export function MoneyView({
     [refresh],
   );
 
+  // Each of these three sets the SAME `error` state `refresh()` above uses,
+  // so a rejection (most notably a 403 `role_required` - docs/CONSOLE-IDP.md)
+  // renders through the existing banner rather than vanishing as an unhandled
+  // rejection. Still rethrown after: `ConfirmButton`'s break-glass ceremony
+  // and `BudgetEditor`'s dialog both branch on resolve-vs-reject (the latter
+  // deliberately stays open on failure so the operator can retry without
+  // re-entering the amount/reason) - swallowing the rejection here would
+  // make both ceremonies close as if they had succeeded.
   const handleKill = useCallback(
     async (runId: string, reason: string) => {
-      afterMutation(await killRun(runId, reason));
+      try {
+        afterMutation(await killRun(runId, reason));
+      } catch (err) {
+        setError(err as MoneyError);
+        throw err;
+      }
     },
     [afterMutation],
   );
   const handleSetBudget = useCallback(
     async (runId: string, budgetUsd: number, reason: string) => {
-      afterMutation(await setBudget(runId, budgetUsd, reason));
+      try {
+        afterMutation(await setBudget(runId, budgetUsd, reason));
+      } catch (err) {
+        setError(err as MoneyError);
+        throw err;
+      }
     },
     [afterMutation],
   );
   const handleAck = useCallback(
     async (id: string) => {
-      afterMutation(await ackIncident(id));
+      try {
+        afterMutation(await ackIncident(id));
+      } catch (err) {
+        setError(err as MoneyError);
+        throw err;
+      }
     },
     [afterMutation],
   );
@@ -236,7 +261,7 @@ export function MoneyView({
       {error && error.kind === "plan_required" && <UpsellBanner error={error} />}
       {error && error.kind !== "plan_required" && (
         <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
-          {describeMoneyError(error)}
+          {describeMoneyError(error, session?.role)}
         </div>
       )}
 

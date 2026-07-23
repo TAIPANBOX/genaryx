@@ -22,14 +22,21 @@ export type MoneyStatus =
  * backstop for `money_kill_run`/`money_set_budget`: in normal use the break-glass
  * ceremony's confirm button is disabled until a reason is typed, so the frontend
  * should never actually see this - it exists so an empty reason can never reach
- * the Cloud, not as an expected UI state. */
+ * the Cloud, not as an expected UI state.
+ *
+ * `role_required` is the one variant NOT mirrored from the Rust command's own
+ * `MoneyError` enum: it is `lib/money.ts`'s `toMoneyError` recognizing
+ * `genaryx-web`'s command-chokepoint role gate (docs/CONSOLE-IDP.md), a 403
+ * that happens BEFORE the command ever reaches `money::commands` - added here
+ * client-side so the existing error banner can render it honestly. */
 export type MoneyError =
   | { kind: "bootstrapping" }
   | { kind: "no_environment" }
   | { kind: "pairing_failed"; reason: string }
   | { kind: "plan_required"; feature: string; org: string; upgrade_url: string }
   | { kind: "break_glass_missing_reason" }
-  | { kind: "cloud"; status: number | null; message: string };
+  | { kind: "cloud"; status: number | null; message: string }
+  | { kind: "role_required"; role: "viewer" | "approver" | "admin" };
 
 /** Mirrors `money::commands::OverviewDto`. */
 export interface Overview {

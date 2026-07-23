@@ -1,3 +1,6 @@
+import { cssVar } from "../lib/cssVars";
+import type { ConsoleRole } from "../lib/session";
+import { useSession } from "../lib/useSession";
 import type { ViewId } from "../lib/views";
 import { VIEWS } from "../lib/views";
 
@@ -38,12 +41,55 @@ function MoonIcon() {
   );
 }
 
+/** Role -> badge tone, low to high privilege (docs/CONSOLE-IDP.md's three
+ * console roles). Purely a privilege ladder, not a good/bad judgment, so it
+ * borrows the same severity-scale variables the rest of the app already uses
+ * for that kind of low-to-high read rather than inventing new ones. */
+const ROLE_TONE: Record<ConsoleRole, string> = {
+  viewer: "var(--sev-info)",
+  approver: "var(--sev-medium)",
+  admin: "var(--sev-high)",
+};
+
+/**
+ * Who is signed in, and with what privilege - unobtrusive but always visible
+ * once inside, so an operator never has to go hunting for either
+ * (docs/CONSOLE-IDP.md: named audit actors + roles). Web-only: the desktop
+ * shell has no console session (`useSession()` resolves to `null` there,
+ * `WebGate.tsx`'s own gate never runs for it either), so this renders nothing
+ * rather than an empty placeholder - the ONE guard that keeps a header shared
+ * with the sessionless desktop shell honest.
+ */
+function SessionBadge() {
+  const session = useSession();
+  if (!session?.signed_in || !session.role || !session.user) return null;
+  return (
+    <div
+      className="flex items-center gap-1.5"
+      title={`Signed in as ${session.user}${session.method ? ` (${session.method} account)` : ""}`}
+    >
+      <span className="badge" style={cssVar("tone", ROLE_TONE[session.role])}>
+        {session.role}
+      </span>
+      <span className="mono truncate" style={{ fontSize: 11.5, color: "var(--dim)", maxWidth: 140 }}>
+        {session.user}
+      </span>
+      {session.method && (
+        <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>
+          &middot; {session.method}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /**
  * Persistent app chrome: brand mark, view nav (Overview / Money / Policy /
- * Posture / Bus Explorer), and the theme toggle - shown once regardless of
- * which view is active, replacing the Bus Explorer's former standalone
- * header now that it is one of several views instead of the whole app (see
- * `BusStatusBar` for what stayed behind, scoped to the Bus view).
+ * Posture / Bus Explorer), the signed-in session badge, and the theme toggle
+ * - shown once regardless of which view is active, replacing the Bus
+ * Explorer's former standalone header now that it is one of several views
+ * instead of the whole app (see `BusStatusBar` for what stayed behind,
+ * scoped to the Bus view).
  *
  * `policyAlertCount` (docs/PHASE2.md Wave 3, "Actionable notifications"): a
  * small unread-count badge on the Policy nav item, owned by `AppShell.tsx`.
@@ -52,6 +98,12 @@ function MoonIcon() {
  * real OS notification-click callback does not fire here) - clicking Policy
  * while the badge shows a count always scrolls to and highlights the
  * relevant Approvals Inbox row (`AppShell.tsx`'s `onSelectView`).
+ *
+ * `SessionBadge` (docs/CONSOLE-IDP.md, part 1 - IdP login + roles): the
+ * web build's signed-in user, role and sign-in method, next to the theme
+ * toggle. Renders nothing in the desktop shell or in any web session without
+ * a role, so this header stays the one shared component both shells mount
+ * unmodified.
  */
 export function AppHeader({
   view,
@@ -134,6 +186,8 @@ export function AppHeader({
       </nav>
 
       <div className="flex-1" />
+
+      <SessionBadge />
 
       <button
         type="button"

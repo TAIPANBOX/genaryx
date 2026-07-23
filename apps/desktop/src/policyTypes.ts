@@ -20,12 +20,19 @@ export type PolicyStatus =
   | { state: "unreachable"; source: EnvSource; wardryx_url: string; reason: string }
   | { state: "ready"; source: EnvSource; wardryx_url: string; org_domain: string };
 
-/** Mirrors `policy::commands::PolicyError` (`#[serde(tag = "kind", rename_all = "snake_case")]`). */
+/** Mirrors `policy::commands::PolicyError` (`#[serde(tag = "kind", rename_all = "snake_case")]`).
+ *
+ * `role_required` is the one variant NOT mirrored from the Rust command's own
+ * `PolicyError` enum: it is `lib/policy.ts`'s `toPolicyError` recognizing
+ * `genaryx-web`'s command-chokepoint role gate (docs/CONSOLE-IDP.md), a 403
+ * that happens BEFORE the command ever reaches `policy::commands` - added
+ * here client-side so the existing error banner can render it honestly. */
 export type PolicyError =
   | { kind: "bootstrapping" }
   | { kind: "no_environment" }
   | { kind: "unreachable"; reason: string }
-  | { kind: "wardryx"; status: number | null; message: string };
+  | { kind: "wardryx"; status: number | null; message: string }
+  | { kind: "role_required"; role: "viewer" | "approver" | "admin" };
 
 /** Mirrors `policy::commands::ApprovalDto`. */
 export interface Approval {

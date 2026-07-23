@@ -18,6 +18,7 @@
 //! is confirmed with a hardware-backed signature, not with "you are logged
 //! in"). Signing in gets you the console; it does not get you the kill.
 
+use crate::roles::Role;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use rand::RngCore;
@@ -108,8 +109,39 @@ pub fn verify(op: &Operator, username: &str, password: &str) -> bool {
     password_ok && user_ok
 }
 
+/// How an operator authenticated for this session (docs/CONSOLE-IDP.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Method {
+    /// The local Argon2id owner account (break-glass).
+    Local,
+    /// A verified OIDC ID-token from the customer's IdP.
+    Oidc,
+}
+
+impl Method {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Method::Local => "local",
+            Method::Oidc => "oidc",
+        }
+    }
+}
+
+/// A resolved live session: who, at what role, by which method. Returned by
+/// [`Sessions::touch`] so every caller (the session route, the command gate,
+/// the actor binding) reads one consistent shape.
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub user: String,
+    pub role: Role,
+    pub method: Method,
+}
+
 struct Session {
     user: String,
+    role: Role,
+    method: Method,
     last_seen: Instant,
 }
 
@@ -120,8 +152,8 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    /// Mint a session id for a signed-in operator.
-    pub fn create(&self, user: &str) -> String {
+    /// Mint a session id for a signed-in operator at a resolved role/method.
+    pub fn create(&self, user: &str, role: Role, method: Method) -> String {
         let mut bytes = [0u8; 32];
         OsRng.fill_bytes(&mut bytes);
         let id = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -131,6 +163,8 @@ impl Sessions {
             id.clone(),
             Session {
                 user: user.to_string(),
+                role,
+                method,
                 last_seen: Instant::now(),
             },
         );
@@ -139,12 +173,16 @@ impl Sessions {
 
     /// Resolve a session id, refreshing its idle clock. `None` means expired
     /// or never existed, and the caller must not distinguish the two.
-    pub fn touch(&self, id: &str) -> Option<String> {
+    pub fn touch(&self, id: &str) -> Option<SessionInfo> {
         let mut guard = self.inner.lock().expect("session table poisoned");
         match guard.get_mut(id) {
             Some(s) if s.last_seen.elapsed() < IDLE_TIMEOUT => {
                 s.last_seen = Instant::now();
-                Some(s.user.clone())
+                Some(SessionInfo {
+                    user: s.user.clone(),
+                    role: s.role,
+                    method: s.method,
+                })
             }
             Some(_) => {
                 guard.remove(id);
@@ -207,17 +245,29 @@ mod tests {
     #[test]
     fn a_session_resolves_once_created_and_not_after_revoke() {
         let s = Sessions::default();
-        let id = s.create("ops");
-        assert_eq!(s.touch(&id).as_deref(), Some("ops"));
+        let id = s.create("ops", Role::Admin, Method::Local);
+        let info = s.touch(&id).expect("live");
+        assert_eq!(info.user, "ops");
+        assert_eq!(info.role, Role::Admin);
+        assert_eq!(info.method, Method::Local);
         s.revoke(&id);
         assert!(s.touch(&id).is_none());
     }
 
     #[test]
+    fn session_carries_the_role_and_method_it_was_created_with() {
+        let s = Sessions::default();
+        let id = s.create("alice", Role::Viewer, Method::Oidc);
+        let info = s.touch(&id).expect("live");
+        assert_eq!(info.role, Role::Viewer);
+        assert_eq!(info.method, Method::Oidc);
+    }
+
+    #[test]
     fn session_ids_are_unpredictable_and_distinct() {
         let s = Sessions::default();
-        let a = s.create("ops");
-        let b = s.create("ops");
+        let a = s.create("ops", Role::Admin, Method::Local);
+        let b = s.create("ops", Role::Admin, Method::Local);
         assert_ne!(a, b);
         assert_eq!(a.len(), 64);
     }
