@@ -38,6 +38,7 @@ pub mod evidence;
 pub mod identity;
 pub mod memory;
 pub mod money;
+pub mod onboard;
 pub mod pocket;
 pub mod policy;
 pub mod quality;
