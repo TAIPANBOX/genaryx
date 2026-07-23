@@ -3,6 +3,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { formatHm } from "../lib/format";
 import {
+  addFsScopeRow,
+  duplicatePaths as fsDuplicatePathsOf,
+  fsScopesAreValid,
+  hasEmptyPath as fsHasEmptyPathOf,
+  removeFsScopeRow,
+  setFsScopeMode,
+  setFsScopePath,
+  toFsScopes,
+} from "../lib/fsScopes";
+import type { FsScopeRow } from "../lib/fsScopes";
+import {
   describeOnboardError,
   fetchOnboardStatus,
   generateOnboardBundle,
@@ -11,6 +22,7 @@ import {
 } from "../lib/onboard";
 import { ATTESTATION_METHODS } from "../onboardTypes";
 import type {
+  FsScopeMode,
   OnboardBundle,
   OnboardError,
   OnboardGenerateRequest,
@@ -234,6 +246,15 @@ export function OnboardView() {
   const [bindPatternTouched, setBindPatternTouched] = useState(false);
   const [requireHumanAboveUsd, setRequireHumanAboveUsd] = useState("");
 
+  // Filesystem access (docs/ONBOARD.md): empty by default - zero declared
+  // scopes is the common case. `nextFsRowId` is a plain incrementing counter
+  // (mirrors `admissionNonce` below) so every row gets a stable React key
+  // even across add/remove, without pulling in a UUID dependency.
+  const [fsScopeRows, setFsScopeRows] = useState<FsScopeRow[]>([]);
+  const nextFsRowId = useRef(0);
+  const fsHasEmptyPath = fsHasEmptyPathOf(fsScopeRows);
+  const fsDuplicatePaths = fsDuplicatePathsOf(fsScopeRows);
+
   const units = status?.units ?? [];
   const hasUnitChoices = units.length > 0;
   const effectiveUnit = (hasUnitChoices && unitMode !== "custom" ? selectedUnit : customUnit).trim();
@@ -293,6 +314,7 @@ export function OnboardView() {
     path.trim().length > 0 &&
     effectiveUnit.length > 0 &&
     owner.trim().length > 0 &&
+    fsScopesAreValid(fsScopeRows) &&
     !generating;
 
   const onGenerate = useCallback(async () => {
@@ -313,6 +335,7 @@ export function OnboardView() {
           bindPatternTouched && bindPattern.trim().length > 0 ? bindPattern.trim() : null,
         require_human_above_usd: parseOptionalUsd(requireHumanAboveUsd),
         unit_budget_usd_month: unitIsNew ? parseOptionalUsd(unitBudget) : null,
+        filesystem: toFsScopes(fsScopeRows),
         map_path: status?.map_path ?? null,
         passports_dir: status?.passports_dir ?? null,
       };
@@ -345,6 +368,7 @@ export function OnboardView() {
     requireHumanAboveUsd,
     unitIsNew,
     unitBudget,
+    fsScopeRows,
     status,
   ]);
 
@@ -732,6 +756,75 @@ export function OnboardView() {
               ))}
             </select>
           </Field>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+            filesystem access (optional)
+          </span>
+          <div className="flex flex-col gap-2">
+            {fsScopeRows.map((row) => {
+              const trimmedRowPath = row.path.trim();
+              const flagged = trimmedRowPath.length === 0 || fsDuplicatePaths.has(trimmedRowPath);
+              return (
+                <div key={row.id} className="flex items-center gap-2">
+                  <input
+                    className="mono flex-1 min-w-0"
+                    style={{
+                      ...FIELD_STYLE,
+                      width: "auto",
+                      borderColor: flagged ? "var(--sev-medium)" : "var(--line-2)",
+                    }}
+                    value={row.path}
+                    onChange={(e) =>
+                      setFsScopeRows((rows) => setFsScopePath(rows, row.id, e.target.value))
+                    }
+                    placeholder="/data/reports"
+                    spellCheck={false}
+                  />
+                  <select
+                    className="mono"
+                    style={{ ...FIELD_STYLE, width: 92 }}
+                    value={row.mode}
+                    onChange={(e) =>
+                      setFsScopeRows((rows) =>
+                        setFsScopeMode(rows, row.id, e.target.value as FsScopeMode),
+                      )
+                    }
+                  >
+                    <option value="read">read</option>
+                    <option value="write">write</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Remove this folder"
+                    aria-label="Remove this folder"
+                    onClick={() => setFsScopeRows((rows) => removeFsScopeRow(rows, row.id))}
+                  >
+                    <span aria-hidden="true">&times;</span>
+                  </button>
+                </div>
+              );
+            })}
+            {(fsHasEmptyPath || fsDuplicatePaths.size > 0) && (
+              <span className="text-[11px]" style={{ color: "var(--sev-medium)" }}>
+                {fsHasEmptyPath
+                  ? "every folder needs a path before you can generate."
+                  : "each folder can only be declared once - remove or fix the duplicate."}
+              </span>
+            )}
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 12px", fontSize: 11, alignSelf: "flex-start" }}
+              onClick={() =>
+                setFsScopeRows((rows) => addFsScopeRow(rows, `fs-${nextFsRowId.current++}`))
+              }
+            >
+              + Add folder
+            </button>
+          </div>
         </div>
 
         <details>
