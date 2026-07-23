@@ -9,17 +9,17 @@ import type {
   RecallMode,
 } from "../memoryTypes";
 
-/** Thrown by every fetcher below when there is no Tauri runtime to talk to
+/** Thrown by every fetcher below when there is no backend to talk to
  * (a plain `vite build`/browser preview) - mirrors `lib/quality.ts`'s
  * identical `NO_ENVIRONMENT_ERROR` guard: there is no mock memory plane to
  * fall back to, so this surfaces the same "no environment" state a real
  * engram-mcp-less box would show rather than inventing fake data. */
 const NO_ENVIRONMENT_ERROR: MemoryError = { kind: "no_environment" };
 
-/** Normalize whatever `invoke()` rejected with into a `MemoryError`. Tauri
+/** Normalize whatever `invokeBackend()` rejected with into a `MemoryError`. genaryx-web
  * passes a command's `Err` value through as the structured object it was
  * serialized from, so this is normally already a `MemoryError` in disguise;
- * the fallback branch only matters for a transport-level IPC failure. */
+ * the fallback branch only matters for a transport-level failure. */
 function toMemoryError(err: unknown): MemoryError {
   if (err && typeof err === "object" && "kind" in err) {
     return err as MemoryError;
@@ -36,8 +36,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
-/** Whole-panel connection state. Never throws: outside Tauri (or on any IPC
- * failure) it resolves to a renderable status instead - mirrors
+/** Whole-panel connection state. Never throws: with no backend (or on any
+ * transport failure) it resolves to a renderable status instead - mirrors
  * `lib/quality.ts`'s `fetchQualityStatus` exactly. */
 export async function fetchMemoryStatus(): Promise<MemoryStatus> {
   if (!hasBackend()) return { state: "no_environment" };

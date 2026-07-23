@@ -55,16 +55,15 @@ rejecting it - see "Command contract" below.
   one).
 - Web shell: two `POST /api/command/routines_*` arms in
   `crates/web/src/dispatch.rs`; both classified `viewer` in
-  `crates/web/src/roles.rs`.
-- Tauri shell: `apps/desktop/src-tauri/src/commands.rs`'s `routines` module,
-  registered in `apps/desktop/src-tauri/src/lib.rs`. Stateless like
-  Onboard/Pocket - nothing is `app.manage`d for this plane.
-- UI (shared by web + Tauri): `components/RoutinesView.tsx` +
-  `lib/routines.ts` + `routinesTypes.ts`, a new "Routines" view in the
-  shell (`lib/views.ts`, `AppShell.tsx`), positioned next to Posture/Bus
-  Explorer as an ops/observability surface.
-- SwiftUI shell: NOT in scope (2026-07-21 web-first pivot; `apps/macos` is
-  untouched by this branch).
+  `crates/web/src/roles.rs`. Stateless like Onboard/Pocket - nothing is
+  held in `AppState` for this plane.
+- UI: `components/RoutinesView.tsx` + `lib/routines.ts` +
+  `routinesTypes.ts`, a new "Routines" view in the shell (`lib/views.ts`,
+  `AppShell.tsx`), positioned next to Posture/Bus Explorer as an
+  ops/observability surface.
+- The Tauri desktop shell and the SwiftUI shell this doc's history once
+  named were removed from this repo with the 2026-07-21 web-only pivot; the
+  web dispatcher above is the only shell-side wiring this plane has today.
 
 ## Environment resolution
 

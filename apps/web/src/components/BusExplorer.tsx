@@ -57,8 +57,9 @@ function sortEvents(evts: UiEvent[], key: string, dir: SortDir): UiEvent[] {
  * the live feed below so the list never grows unbounded. */
 const FETCH_LIMIT = 500;
 
-/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits on;
- * payload is one `UiEvent`, same shape `recent_events` returns. */
+/** Bus event name the live feed (`crates/api/src/bus/feed.rs`) emits on, over
+ * SSE via `subscribeBackend` (`lib/transport.ts`); payload is one `UiEvent`,
+ * same shape `recent_events` returns. */
 const LIVE_EVENT = "bus:event";
 
 const COLUMNS = "84px 108px 190px 1fr 108px 24px";
@@ -109,12 +110,12 @@ export function BusExplorer() {
     };
   }, []);
 
-  // Live path: the Rust feeder (src-tauri/src/live.rs) emits one `UiEvent`
-  // every ~2s once it has appended and ingested a new line. Prepend each as
-  // it arrives, capped at FETCH_LIMIT so the list never grows unbounded.
-  // Skipped entirely outside a Tauri runtime (plain `vite build`/preview):
-  // `listen()` calls into the IPC bridge unconditionally and would reject
-  // with no `window.__TAURI_INTERNALS__` to answer it.
+  // Live path: the Rust feeder (crates/api/src/bus/feed.rs) emits one
+  // `UiEvent` every ~2s once it has appended and ingested a new line.
+  // Prepend each as it arrives, capped at FETCH_LIMIT so the list never
+  // grows unbounded. Skipped entirely with no backend configured (plain
+  // `vite build`/preview): the `hasBackend()` guard below returns before
+  // ever calling `subscribeBackend`.
   useEffect(() => {
     if (!hasBackend()) return;
     let cancelled = false;

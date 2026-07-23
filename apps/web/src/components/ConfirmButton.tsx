@@ -5,8 +5,8 @@ import { BreakGlassDialog } from "./BreakGlassDialog";
 /**
  * A privileged action button that always shows a confirm step before calling
  * `onConfirm` (spec: "a kill/budget action shows a confirm step, then calls
- * the command"). Hand-rolled rather than `window.confirm`: a native dialog
- * is not guaranteed to be enabled in every Tauri webview configuration, and
+ * the command"). Hand-rolled rather than `window.confirm`: a native browser
+ * dialog cannot be styled to match this console's own visual language, and
  * a purpose-built control reads better in a dense table row.
  *
  * Two confirm ceremonies, selected by `breakGlass`:

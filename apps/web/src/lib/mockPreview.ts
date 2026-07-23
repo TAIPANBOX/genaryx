@@ -1220,7 +1220,7 @@ function mockCopilotAnswer(question: string) {
 // this - `mockInvoke`'s default fell through to `return r(null)`, and
 // `CopilotView.tsx`'s explain-request effect unconditionally reads
 // `answer.text`, so every "Explain" click crashed the whole view under
-// `pnpm dev:mock` (a real Tauri/genaryx-web backend was never affected -
+// `pnpm dev:mock` (a real genaryx-web backend was never affected -
 // `crates/api/src/copilot/commands.rs::copilot_explain` always returns a
 // real `Answer`). Fixed here as a genuine mock-fidelity gap, not a new
 // feature: same canned-answer shape `mockCopilotAnswer` above already uses,

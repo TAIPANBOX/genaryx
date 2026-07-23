@@ -1,62 +1,35 @@
-import {
-  isPermissionGranted,
-  onAction,
-  registerActionTypes,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
 import type { UiEvent } from "../types";
 
 /**
  * Wave-3 actionable notifications (docs/PHASE2.md, "Actionable
  * notifications"): pure extraction/mute logic plus the thin wrappers around
- * `@tauri-apps/plugin-notification` this app actually calls. The live-bus
+ * the browser's own `Notification` API this app actually calls. The live-bus
  * subscription itself lives in `useApprovalNotifications.ts`; this module
- * has no React/Tauri-event dependency so its extraction/mute functions stay
- * plain and easy to reason about in isolation.
+ * has no React/DOM dependency so its extraction/mute functions stay plain
+ * and easy to reason about in isolation.
  *
- * GROUNDED PLATFORM LIMITATION (read from the installed
- * `tauri-plugin-notification` 2.3.3 crate's own source, not assumed):
- * `src/lib.rs`'s `invoke_handler` wires exactly three commands on every
- * platform - `notify`, `request_permission`, `is_permission_granted`.
- * `register_action_types` and the `actionPerformed` event `onAction`
- * listens for are part of the npm package's JS surface (for parity with the
- * plugin's separate MOBILE Kotlin/Swift backend, `src/mobile.rs` - not built
- * by this desktop app) but nothing in `src/desktop.rs` ever registers that
- * command or emits that event. Concretely: `desktop.rs`'s
- * `imp::Notification::show()` calls `notify_rust::Notification::show()` and
- * discards the result (`let _ = notification.show();`) - no
- * `.wait_for_action(..)`, no click callback, nothing wired back to the
- * webview. So on this app (macOS desktop), clicking a raised notification
- * cannot deliver an "approve" vs "deny" (or even a bare "clicked") signal
- * into the app at all; the OS still brings the app to the foreground on
- * click (standard OS behavior for any app-attributed notification,
- * independent of this plugin), but with no way to tell the app WHICH
- * notification was clicked.
+ * Browser reality, stated plainly: a plain `new Notification(...)` gives one
+ * gesture, `click`, and no per-action buttons - those (`actions` on
+ * `ServiceWorkerRegistration.showNotification`) belong to a different API
+ * this console does not register a service worker for. Permission may be
+ * denied, or simply never granted (`Notification.permission` stuck at
+ * `"default"` if the operator never responds), and the `Notification`
+ * global itself may be absent. Every one of those fails closed to quiet:
+ * nothing here ever throws past its own caller, the operator just sees no
+ * notification.
  *
- * This is exactly the case PHASE2.md's Wave-3 spec anticipates and
- * explicitly sanctions: "actions where the platform supports them,
- * otherwise a tap that focuses the Policy panel - that fallback is
- * acceptable." [`registerApprovalActions`]/[`subscribeApprovalActionClicks`]
- * below still make the real-actions attempt (so this starts working for
- * free the day the plugin or this app's target platform changes), but the
- * WORKING deep-link path today is `AppShell.tsx`'s in-app "Policy" nav
- * badge: raising a notification also arms that badge, and clicking it
- * performs the exact same "switch to Policy, focus this approval_id"
- * navigation a real notification click would have. Either path funnels
- * through the identical `onApprovalId`/`focusApprovalId` plumbing and NEVER
- * calls a grant/deny function directly - only `ApprovalsInbox.tsx`'s
- * existing `ConfirmButton`-gated `policy_decide_approval` call does that.
+ * This IS an upgrade over the old desktop build, which could show a
+ * notification but had no way to learn it was the one clicked (no click
+ * callback wired to the OS layer at all). On the web,
+ * [`raiseApprovalNotification`]'s `onclick` DOES deliver the clicked alert's
+ * `approvalId` back into the app, through [`subscribeApprovalActionClicks`]
+ * below - though still only ever as a deep-link target, never a decision:
+ * the in-app Policy nav-badge (`AppShell.tsx`) remains the working fallback
+ * for a denied or unavailable permission.
  */
 
 const WARDRYX_SOURCE = "wardryx";
 const APPROVAL_REQUESTED_TYPE = "approval_requested";
-
-/** The one action-type id every approval notification is raised under -
- * shared between [`registerApprovalActions`] and [`raiseApprovalNotification`]
- * so a click (were one ever delivered) always resolves to a type this app
- * itself registered. */
-const APPROVAL_ACTION_TYPE = "wardryx-approval";
 
 /** One actionable "approval needed" alert, extracted from a live
  * `source == "wardryx"`, `type == "approval_requested"` bus event. Mirrors
@@ -157,18 +130,18 @@ let permissionRequested = false;
  * Request notification permission exactly once per app session
  * (PHASE2.md: "Request notification permission once on launch") - a
  * module-level guard (not a component ref) so this holds even if the
- * calling hook ever remounts. Never throws: a denial or a platform failure
- * just means [`raiseApprovalNotification`] silently shows nothing later,
- * same fail-closed-to-quiet posture `tray.rs`'s `log_menu_result` takes for
- * other best-effort OS integration calls.
+ * calling hook ever remounts. Never throws: a missing `Notification` global,
+ * a denial, or any other platform failure just means
+ * [`raiseApprovalNotification`] silently shows nothing later, same
+ * fail-closed-to-quiet posture the rest of this module keeps.
  */
 export async function ensureNotificationPermission(): Promise<void> {
   if (permissionRequested) return;
   permissionRequested = true;
+  if (!("Notification" in window)) return;
   try {
-    const granted = await isPermissionGranted();
-    if (!granted) {
-      await requestPermission();
+    if (Notification.permission === "default") {
+      await Notification.requestPermission();
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -176,91 +149,73 @@ export async function ensureNotificationPermission(): Promise<void> {
   }
 }
 
-let actionsRegistered = false;
-
 /**
- * Best-effort real OS action buttons (Review/Approve/Deny, matching the
- * SwiftUI side's PHASE2.md-specified action set) - see this module's doc
- * comment for why this is expected to fail harmlessly on today's desktop
- * build. Idempotent per session; swallows every error rather than letting a
- * platform that does not support this take down the notification feature.
+ * No-op on the web, deliberately: the plain `Notification` API has no
+ * per-action buttons outside a service worker (that is a different API,
+ * `ServiceWorkerRegistration.showNotification`'s `actions` array, which this
+ * console does not register a service worker to use). Kept as an exported
+ * no-op so `useApprovalNotifications.ts` needs no special-case branch around
+ * calling it; the in-app Policy nav-badge remains the one working deep-link
+ * path, exactly as documented on [`raiseApprovalNotification`] below.
  */
 export async function registerApprovalActions(): Promise<void> {
-  if (actionsRegistered) return;
-  actionsRegistered = true;
-  try {
-    await registerActionTypes([
-      {
-        id: APPROVAL_ACTION_TYPE,
-        actions: [
-          { id: "review", title: "Review" },
-          { id: "approve", title: "Approve" },
-          { id: "deny", title: "Deny" },
-        ],
-      },
-    ]);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.debug("genaryx: registerActionTypes unavailable on this platform (expected on desktop):", err);
-  }
+  // Intentionally empty - see doc comment above.
 }
 
+/** The one click handler [`raiseApprovalNotification`]'s `onclick` consults,
+ * set by [`subscribeApprovalActionClicks`]. `null` means no subscriber is
+ * listening, in which case a click still focuses the window but delivers no
+ * approval id anywhere. */
+let approvalClickHandler: ((approvalId: string) => void) | null = null;
+
 /**
- * Raise the native "Approval needed" notification for `alert`. Never
- * throws: a platform/permission failure is logged and swallowed - a
- * notification failing to show must never block or crash the rest of the
- * app (fail-closed-to-quiet, same rationale as [`ensureNotificationPermission`]).
+ * Raise the browser "Approval needed" notification for `alert`. Never
+ * throws: a missing `Notification` global, a denied/default permission, or
+ * any other platform failure is logged and swallowed - a notification
+ * failing to show must never block or crash the rest of the app
+ * (fail-closed-to-quiet, same rationale as [`ensureNotificationPermission`]).
  *
- * SECURITY (PHASE2.md, non-negotiable): this function only ever calls
- * `sendNotification` - it never calls `policy_decide_approval` or any
- * decision path. `extra.approvalId` is carried purely so a real action
- * click (were the platform ever to deliver one, see
- * [`subscribeApprovalActionClicks`]) can be resolved back to a deep-link
+ * SECURITY (PHASE2.md, non-negotiable): this function only ever constructs a
+ * `Notification` - it never calls `policy_decide_approval` or any decision
+ * path. The `onclick` handler hands [`approvalClickHandler`] nothing but
+ * `alert.approvalId`, purely so a click can be resolved to a deep-link
  * target, never so it can be auto-decided.
  */
 export async function raiseApprovalNotification(alert: ApprovalAlert): Promise<void> {
   const { title, body } = notificationCopy(alert);
   try {
-    sendNotification({
-      title,
-      body,
-      actionTypeId: APPROVAL_ACTION_TYPE,
-      extra: { approvalId: alert.approvalId, agentId: alert.agentId, runId: alert.runId ?? "" },
-    });
+    if (!("Notification" in window)) return;
+    const notification = new Notification(title, { body });
+    notification.onclick = () => {
+      window.focus();
+      approvalClickHandler?.(alert.approvalId);
+    };
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error("genaryx: sendNotification failed:", err);
+    console.error("genaryx: Notification failed:", err);
   }
 }
 
 /**
- * Best-effort wiring for a real OS notification-action click, if this
- * plugin+platform combination ever delivers one (today it does not on
- * desktop - see this module's doc comment). Returns an unsubscribe
- * function; safe to call even when nothing will ever fire the listener.
+ * Wire up `onApprovalId` so a click on a notification raised by
+ * [`raiseApprovalNotification`] delivers that notification's approval id
+ * back into the app. Returns an unsubscribe function; it clears
+ * [`approvalClickHandler`] only if `onApprovalId` is still the handler
+ * installed (a later `subscribeApprovalActionClicks` call is left alone,
+ * never clobbered by an earlier caller's stale unsubscribe).
  *
  * SECURITY (PHASE2.md, non-negotiable): `onApprovalId` is called with
- * nothing but the approval id to deep-link to, regardless of WHICH action
- * (review/approve/deny) was clicked - never routed to a grant/deny call
- * here. `AppShell.tsx` wires `onApprovalId` to the exact same
- * "switch to Policy, focus this approval_id" function the in-app nav-badge
- * fallback uses, so both paths land on the identical, still fully
- * ConfirmButton-gated, Approvals Inbox row.
+ * nothing but the approval id to deep-link to - never routed to a
+ * grant/deny call here. `AppShell.tsx` wires `onApprovalId` to the exact
+ * same "switch to Policy, focus this approval_id" function the in-app
+ * nav-badge fallback uses, so both paths land on the identical, still fully
+ * `ConfirmButton`-gated, Approvals Inbox row.
  */
 export async function subscribeApprovalActionClicks(onApprovalId: (approvalId: string) => void): Promise<() => void> {
-  try {
-    const listener = await onAction((notification) => {
-      const approvalId = notification.extra?.["approvalId"];
-      if (typeof approvalId === "string" && approvalId.length > 0) {
-        onApprovalId(approvalId);
-      }
-    });
-    return () => {
-      void listener.unregister();
-    };
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.debug("genaryx: onAction unavailable on this platform (expected on desktop):", err);
-    return () => {};
-  }
+  approvalClickHandler = onApprovalId;
+  return () => {
+    if (approvalClickHandler === onApprovalId) {
+      approvalClickHandler = null;
+    }
+  };
 }

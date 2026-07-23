@@ -6,14 +6,14 @@ import { StatTile } from "./StatTile";
 /** Genaryx v2 design spec section 7 parity fix #5: SwiftUI's Evidence
  * section has a `repository` / `agent stack` scope toggle (`CryptoModel.swift`'s
  * `EvidenceScope`, backed by two distinct `CryptoHandle` methods -
- * `scan_evidence` vs `agents_evidence`). The Tauri `crypto_scan_evidence`
- * command (`src-tauri/src/crypto/commands.rs`) takes only `{ path, sign_key }`
+ * `scan_evidence` vs `agents_evidence`). The `crypto_scan_evidence`
+ * command (`crates/api/src/crypto/commands.rs`) takes only `{ path, sign_key }`
  * - no scope argument, and there is no second `crypto_agents_evidence`
  * command either - so this toggle is UI-only for now: visible for parity,
  * disabled with an honest tooltip, wired to nothing. Flip `disabled` off
- * once src-tauri grows the argument (or the second command) and thread the
+ * once the backend grows the argument (or the second command) and thread the
  * chosen scope into `scanEvidence`. */
-const SCOPE_DISABLED_TITLE = "needs crypto_scan_evidence scope arg (src-tauri)";
+const SCOPE_DISABLED_TITLE = "needs crypto_scan_evidence scope arg (backend)";
 
 function EvidenceScopeToggle() {
   return (

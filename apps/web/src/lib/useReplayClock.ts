@@ -5,7 +5,7 @@ import type { UiEvent } from "../types";
  * Run Replay's playback clock (docs/PHASE3.md W4, position 5: "a time-window
  * query over the Store + a playback clock ... the mental model of the site
  * sims"). Pure frontend state over one already-fetched, static event list -
- * `Store::events_for_run` (`src-tauri/src/replay.rs`) is a point-in-time
+ * `Store::events_for_run` (`crates/api/src/replay.rs`) is a point-in-time
  * query, not a subscription, so there is nothing server-side left to drive a
  * clock; this hook is the whole thing.
  *

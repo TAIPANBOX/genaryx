@@ -11,13 +11,13 @@ import {
   subscribeApprovalActionClicks,
 } from "./notifications";
 
-/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits on -
+/** Bus event name the live feed (`crates/api/src/bus/feed.rs`) emits on -
  * the SAME event `DecisionStream.tsx`/`BusExplorer.tsx` listen for. */
 const LIVE_EVENT = "bus:event";
 
 /**
  * Wave-3 actionable notifications (docs/PHASE2.md): watches the SAME live
- * bus feed the Decision Stream filters (the `bus:event` Tauri listener - see
+ * bus feed the Decision Stream filters (the `bus:event` listener - see
  * `DecisionStream.tsx`'s doc comment for why that is "the existing event
  * pipeline", not a new poll) for `source == "wardryx"`,
  * `type == "approval_requested"` events, and raises a native "Approval
@@ -31,7 +31,7 @@ const LIVE_EVENT = "bus:event";
  * happened, and the backfilled batch (present the instant any view first
  * reads the bus) can include `approval_requested` rows that are already
  * resolved - this app's own demo seed data pairs every `approval_requested`
- * with an `approval_granted` a few rows later (`src-tauri/src/events.rs`'s
+ * with an `approval_granted` a few rows later (`crates/api/src/events.rs`'s
  * `seeds()`). Re-alerting on history every time a view mounts would be
  * exactly the kind of spurious re-notification the Wave-3 de-dupe rule
  * ("never re-raised on a list refresh") rules out.
@@ -78,10 +78,10 @@ export function useApprovalNotifications({
   onActionRef.current = onActionApprovalId;
 
   // Permission + best-effort action-type registration: once per app
-  // session, and only inside a real Tauri runtime (a plain `vite
-  // dev`/browser preview has no native notification plane to ask - mirrors
-  // every other `isTauri()` guard in this app, e.g. `BusExplorer.tsx`'s
-  // live-listener effect).
+  // session, and only with a real backend configured (a plain `vite
+  // dev`/browser preview has no live bus to raise a notification from -
+  // mirrors every other `hasBackend()` guard in this app, e.g.
+  // `BusExplorer.tsx`'s live-listener effect).
   useEffect(() => {
     if (!hasBackend()) return;
     void ensureNotificationPermission();

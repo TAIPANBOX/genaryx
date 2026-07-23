@@ -1,15 +1,15 @@
 /**
  * Memory wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/memory/commands.rs` and `src-tauri/src/memory/env.rs`
+ * `crates/api/src/memory/commands.rs` and `crates/api/src/memory/env.rs`
  * field-for-field (same convention `qualityTypes.ts`/`cryptoTypes.ts` follow
  * for their own panels), including the exact serde tag/rename_all shape of
- * every enum so `invoke<T>(...)` results type-check honestly instead of
+ * every enum so `invokeBackend<T>(...)` results type-check honestly instead of
  * being cast.
  *
  * `EngramStats`/`EngramCounts`/`EngramMemory`/`EngramProvenance`/
  * `EngramForgetResult` mirror `genaryx_connectors::Engram*`
  * (`crates/connectors/src/engram.rs`) directly - those Rust types already
- * derive `Serialize` and cross the Tauri IPC boundary as-is, so these
+ * derive `Serialize` and cross the genaryx-web JSON boundary as-is, so these
  * interfaces exist only so the frontend has names/types for the exact same
  * wire shape, not because the Rust side re-wraps anything. Every `Option<T>`
  * field there serializes as `T | null` (always present, never omitted -

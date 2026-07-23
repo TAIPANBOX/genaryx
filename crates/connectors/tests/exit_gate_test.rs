@@ -100,16 +100,17 @@ const GATEWAY_PORT: u16 = 4100;
 /// `--name`.
 const WARDRYX_PORT: u16 = 8090;
 
-/// Mirrors the SwiftUI shell's Touch-ID-gated grant convention
-/// (`crates/ffi/src/wardryx/mod.rs`'s `SIG_ALG`/`SIG_FPR`), the shape
-/// docs/PHASE2.md's exit-gate line names explicitly ("the operator grants
-/// it with a local hardware confirmation (Touch ID)"): Wardryx's admin API
-/// has no signing story at all (bearer-only), so these are honest, fixed
-/// labels naming what actually authorized the call rather than a
-/// fabricated signature. The Tauri track's own confirm ceremony instead
-/// uses `"none"`/`"bearer-admin"` (`apps/desktop/src-tauri/src/policy/
-/// state.rs`) since it is not yet hardware-gated; this test proves the
-/// hardware-gated cycle the exit gate itself describes.
+/// Mirrors what the former SwiftUI shell's Touch-ID-gated grant convention
+/// used (`crates/ffi/src/wardryx/mod.rs`'s `SIG_ALG`/`SIG_FPR`, before that
+/// shell was removed with the web-only pivot), the shape docs/PHASE2.md's
+/// exit-gate line names explicitly ("the operator grants it with a local
+/// hardware confirmation (Touch ID)"): Wardryx's admin API has no signing
+/// story at all (bearer-only), so these are honest, fixed labels naming
+/// what actually authorized the call rather than a fabricated signature.
+/// The former Tauri shell's own confirm ceremony instead used
+/// `"none"`/`"bearer-admin"` (`policy/state.rs`, under its now-removed
+/// `apps/desktop/src-tauri`) since it was not yet hardware-gated; this test
+/// proves the hardware-gated cycle the exit gate itself describes.
 const GRANT_SIG_ALG: &str = "bearer";
 const GRANT_SIG_FPR: &str = "local-auth";
 

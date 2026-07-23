@@ -15,7 +15,7 @@ const FETCH_LIMIT = 500;
  * recent slice of whatever `FETCH_LIMIT` currently holds. */
 const DISPLAY_LIMIT = 50;
 
-/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits
+/** Bus event name the live feed (`crates/api/src/bus/feed.rs`) emits
  * on - the SAME event `BusExplorer.tsx` listens for; payload is one
  * `UiEvent`. */
 const LIVE_EVENT = "bus:event";
@@ -55,7 +55,7 @@ function dataStringArray(data: unknown, key: string): string[] | null {
  * A live, filtered view over the SAME event bus the Bus Explorer tails
  * (`source == "wardryx"`: `policy_allow/deny`, `approval_*`,
  * `policy_updated` - docs/PHASE2.md's Wave-2 data contract). Reuses
- * `fetchRecentEvents` for the initial batch and the `bus:event` Tauri
+ * `fetchRecentEvents` for the initial batch and the `bus:event`
  * listener for live updates, exactly like `BusExplorer.tsx` - deliberately
  * NOT a new poll or REST read; this component only ever filters what the
  * existing pipeline already delivers.

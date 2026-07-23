@@ -1,6 +1,6 @@
 /**
  * UI-facing event shape for the Bus Explorer. Mirrors the Rust `UiEvent` in
- * `src-tauri/src/events.rs`, which is itself a field-for-field serde mirror
+ * `crates/api/src/events.rs`, which is itself a field-for-field serde mirror
  * of `genaryx_core::store::StoredEvent` (see that file's `From` impl for the
  * exact mock -> real-bus wiring point).
  */

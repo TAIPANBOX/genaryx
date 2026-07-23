@@ -1,11 +1,11 @@
 import { hasBackend, invokeBackend } from "./transport";
 import type { CryptoError, CryptoStatus, EvidenceReport, NcscReport, VerifyOutcome } from "../cryptoTypes";
 
-/** Thrown by every fetcher below when there is no Tauri runtime to talk to -
+/** Thrown by every fetcher below when there is no backend to talk to -
  * mirrors `lib/identity.ts`'s identical `NO_ENVIRONMENT_ERROR` guard. */
 const NO_ENVIRONMENT_ERROR: CryptoError = { kind: "no_environment" };
 
-/** Normalize whatever `invoke()` rejected with into a `CryptoError` - mirrors
+/** Normalize whatever `invokeBackend()` rejected with into a `CryptoError` - mirrors
  * `lib/quality.ts`'s `toQualityError`. */
 function toCryptoError(err: unknown): CryptoError {
   if (err && typeof err === "object" && "kind" in err) {

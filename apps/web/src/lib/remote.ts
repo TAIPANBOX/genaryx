@@ -10,12 +10,12 @@ import type {
   RemoteStatus,
 } from "../remoteTypes";
 
-/** Thrown by every mutator below when there is no Tauri runtime to talk to -
- * mirrors `lib/evidence.ts`'s identical `NO_TAURI_ERROR` guard. */
-const NO_TAURI_ERROR: RemoteError = { kind: "internal", message: "no Tauri runtime available" };
+/** Thrown by every mutator below when there is no backend to talk to -
+ * mirrors `lib/evidence.ts`'s identical `NO_BACKEND_ERROR` guard. */
+const NO_BACKEND_ERROR: RemoteError = { kind: "internal", message: "no backend available" };
 
-/** The honest, SETTLED fallback shape for `fetchRemoteStatus` outside Tauri
- * (or on a genuine IPC failure) - mirrors `lib/evidence.ts`'s
+/** The honest, SETTLED fallback shape for `fetchRemoteStatus` with no
+ * backend (or on a genuine transport failure) - mirrors `lib/evidence.ts`'s
  * `EVIDENCE_UNAVAILABLE`: NOT `{state:"bootstrapping"}`, which would leave
  * the panel showing "resolving..." forever in a plain browser preview
  * instead of settling like a real, freshly-booted, unconfigured panel would
@@ -30,10 +30,10 @@ const REMOTE_UNAVAILABLE: RemoteStatus = {
   tail: null,
 };
 
-/** Normalize whatever `invoke()` rejected with into a `RemoteError`. Tauri
+/** Normalize whatever `invokeBackend()` rejected with into a `RemoteError`. genaryx-web
  * passes a command's `Err` value through as the structured object it was
  * serialized from, so this is normally already a `RemoteError` in disguise;
- * the fallback branch only matters for a transport-level IPC failure. */
+ * the fallback branch only matters for a transport-level failure. */
 function toRemoteError(err: unknown): RemoteError {
   if (err && typeof err === "object" && "kind" in err) {
     return err as RemoteError;
@@ -42,7 +42,7 @@ function toRemoteError(err: unknown): RemoteError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!hasBackend()) throw NO_TAURI_ERROR;
+  if (!hasBackend()) throw NO_BACKEND_ERROR;
   try {
     return await invokeBackend<T>(command, args);
   } catch (err) {
@@ -50,8 +50,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
-/** Whole-panel state. Never throws: outside Tauri (or on any IPC failure) it
- * settles to [`REMOTE_UNAVAILABLE`] instead of hanging on `bootstrapping` -
+/** Whole-panel state. Never throws: with no backend (or on any transport
+ * failure) it settles to [`REMOTE_UNAVAILABLE`] instead of hanging on `bootstrapping` -
  * mirrors `lib/evidence.ts`'s `fetchEvidenceStatus`. `remote_status` itself
  * never fails on the Rust side either, so the catch branch only matters for
  * a genuine transport failure. */
@@ -93,7 +93,7 @@ export const listCloudServers = (provider: CloudProviderId, options: CloudListOp
 /** Bring the WireGuard tunnel up: generates the console's WG identity on
  * first use, then attempts `WgTunnel::bring_up`. Fail-closed: a failed
  * bring-up still RESOLVES (never rejects) with `tunnel.state === "failed"` -
- * only a genuine IPC/task failure throws. Locally (no privileged helper)
+ * only a genuine transport/task failure throws. Locally (no privileged helper)
  * this is expected to fail with a privilege error - see `RemoteTunnelPanel`. */
 export const connectTunnel = (): Promise<RemoteStatus> => call<RemoteStatus>("remote_wg_connect");
 
@@ -109,7 +109,7 @@ export const readRemoteFile = (path: string): Promise<RemoteFile> =>
   call<RemoteFile>("remote_ssh_read_file", { path });
 
 /** Start (replacing any previous) a streaming remote tail - lines arrive
- * over the `remote:tail-line` Tauri event (see `RemoteSshOps.tsx`). */
+ * over the `remote:tail-line` SSE event (see `RemoteSshOps.tsx`). */
 export const startRemoteTail = (path: string, fromOffset: number): Promise<RemoteStatus> =>
   call<RemoteStatus>("remote_ssh_tail_start", { path, from_offset: fromOffset });
 

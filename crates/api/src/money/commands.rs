@@ -6,10 +6,10 @@
 //! guessing from a read command's error shape.
 //!
 //! Every DTO here is a UI-facing serde mirror of a `genaryx_connectors` type
-//! (same convention `src-tauri/src/events.rs`'s `UiEvent` already uses for
+//! (same convention `crate::events`'s `UiEvent` uses for
 //! `genaryx_core::store::StoredEvent`): the connector's own DTOs only derive
 //! `Deserialize` (they exist to parse the Cloud's responses), not
-//! `Serialize`, so they cannot cross the Tauri IPC boundary as-is.
+//! `Serialize`, so they cannot be handed to the frontend as-is.
 //!
 //! Fail-closed mutation contract: every mutation calls the connector first,
 //! then ALWAYS attempts `genaryx_core::command::record` - even when the

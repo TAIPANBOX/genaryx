@@ -3,7 +3,7 @@ import { fetchMoneyStatus } from "./money";
 import type { MoneyStatus } from "../moneyTypes";
 
 /** Poll cadence while the backend is still pairing (`state: "bootstrapping"`,
- * see `src-tauri/src/money/state.rs`'s non-blocking bootstrap). */
+ * see `crates/api/src/money/state.rs`'s non-blocking bootstrap). */
 const POLL_MS = 3_000;
 
 /** Give up re-polling after this many attempts (~60s) so a genuinely stuck

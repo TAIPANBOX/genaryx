@@ -3,7 +3,7 @@ import { fetchMemoryStatus } from "./memory";
 import type { MemoryStatus } from "../memoryTypes";
 
 /** Poll cadence while the backend is still resolving (`state:"bootstrapping"`,
- * see `src-tauri/src/memory/state.rs`'s spawn-then-handshake bootstrap).
+ * see `crates/api/src/memory/state.rs`'s spawn-then-handshake bootstrap).
  * Mirrors `lib/useIdentityStatus.ts`'s identical constant. */
 const POLL_MS = 3_000;
 

@@ -1,10 +1,10 @@
 /**
  * Browser-preview fallback data: the same ~40-event timeline as the Rust
- * mock in `src-tauri/src/events.rs` (kept in sync by hand; both mirror the
+ * mock in `crates/api/src/events.rs` (kept in sync by hand; both mirror the
  * canonical event/type/severity shapes `genaryx_core::demo` uses), so a
- * plain `vite build` / `vite preview` without the Tauri runtime still
+ * plain `vite build` / `vite preview` with no backend configured still
  * renders a realistic Bus Explorer. See `lib/recentEvents.ts` for when this
- * is used instead of the real `invoke("recent_events")`.
+ * is used instead of the real `invokeBackend("recent_events")`.
  */
 import type { Severity, UiEvent } from "./types";
 

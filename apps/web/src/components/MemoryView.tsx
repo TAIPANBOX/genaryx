@@ -90,7 +90,7 @@ function MemoryEmptyState({ status }: { status: MemoryStatus | null }) {
  * The Memory panel (docs/PHASE4.md W2): store stats, an on-demand recall
  * query, why/provenance for a selected memory (plus the irreversible
  * `forget` action), and a live timeline - over the ONE long-lived
- * `engram-mcp` connection `src-tauri/src/memory/state.rs` spawns once and
+ * `engram-mcp` connection `crates/api/src/memory/state.rs` spawns once and
  * keeps alive for the app's whole lifetime. Mirrors `QualityView.tsx`'s
  * overall shape (status hook, empty state, section layout) including its
  * [`REFRESH_INTERVAL_MS`] poll: `engram-mcp`'s store can change from an

@@ -3,7 +3,7 @@ import { fetchIdentityStatus } from "./identity";
 import type { IdentityStatus } from "../identityTypes";
 
 /** Poll cadence while the backend is still resolving (`state: "bootstrapping"`,
- * see `src-tauri/src/identity/state.rs`'s non-blocking bootstrap). Mirrors
+ * see `crates/api/src/identity/state.rs`'s non-blocking bootstrap). Mirrors
  * `lib/usePolicyStatus.ts`'s identical constant. */
 const POLL_MS = 3_000;
 

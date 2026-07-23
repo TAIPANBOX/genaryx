@@ -1,13 +1,13 @@
 /**
  * Drills wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/drills/commands.rs` and `src-tauri/src/drills/env.rs`
+ * `crates/api/src/drills/commands.rs` and `crates/api/src/drills/env.rs`
  * field-for-field (same convention `qualityTypes.ts`/`cryptoTypes.ts` follow
  * for their own panels).
  *
  * `MockryxReport`/`MockryxResult`/`MockryxFinding`/`MockryxMetrics` mirror
  * `genaryx_connectors::Mockryx*` (`crates/connectors/src/mockryx.rs`)
  * directly - those Rust types already derive `Serialize` and cross the
- * Tauri IPC boundary as-is, so these interfaces exist only so the frontend
+ * genaryx-web JSON boundary as-is, so these interfaces exist only so the frontend
  * has names/types for the exact same wire shape, not because the Rust side
  * re-wraps anything. Every `Option<T>` field there serializes as `T | null`
  * (always present, never omitted); every `Vec<T>` (even one with
@@ -95,7 +95,7 @@ export interface MockryxReport {
 }
 
 /** Mirrors `genaryx_connectors::MockryxReport::has_gaps` exactly (Rust
- * methods do not cross the Tauri IPC boundary, so this is a deliberate,
+ * methods do not cross the genaryx-web JSON boundary, so this is a deliberate,
  * one-for-one TypeScript re-implementation of that same logic, not a
  * divergent one): any scenario that outright `failed`, or any scenario
  * carrying findings (which, after `--fail-on-skip`, can include promoted

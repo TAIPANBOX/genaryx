@@ -1,6 +1,6 @@
 /**
  * Crypto wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/crypto/commands.rs` field-for-field (same convention
+ * `crates/api/src/crypto/commands.rs` field-for-field (same convention
  * `identityTypes.ts`/`qualityTypes.ts` follow for their own panels).
  *
  * `NcscReport`/`NcscDiscovery`/`NcscPriority`/`NcscFullMigration`/`NcscFinding`/
@@ -8,7 +8,7 @@
  * `genaryx_connectors::{NcscReport,...}` (`crates/connectors/src/qryx.rs`)
  * directly - those Rust types already derive `Serialize` (with
  * `#[serde(rename_all = "camelCase")]`/explicit renames matching qryx's own
- * Go JSON tags) and cross the Tauri IPC boundary as-is, so these interfaces
+ * Go JSON tags) and cross the genaryx-web JSON boundary as-is, so these interfaces
  * exist only so the frontend has names/types for the exact same
  * camelCase-on-the-wire shape, not because the Rust side re-wraps anything.
  */

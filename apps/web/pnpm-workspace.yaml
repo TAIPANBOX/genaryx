@@ -1,4 +1,4 @@
-# Single-package pnpm workspace, scoped to apps/desktop only. Its only job is
+# Single-package pnpm workspace, scoped to apps/web only. Its only job is
 # to pre-approve esbuild's install script (pnpm 11 ignores dependency build
 # scripts by default), so `pnpm install` never blocks on an interactive
 # `pnpm approve-builds` prompt in CI or a fresh checkout.

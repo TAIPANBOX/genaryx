@@ -1,15 +1,15 @@
 /**
  * Identity wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/identity/commands.rs` and `src-tauri/src/identity/env.rs`
+ * `crates/api/src/identity/commands.rs` and `crates/api/src/identity/env.rs`
  * field-for-field (same convention `policyTypes.ts`/`moneyTypes.ts` follow
  * for their own panels), including the exact serde tag/rename_all shape of
- * every enum so `invoke<T>(...)` results type-check honestly instead of
+ * every enum so `invokeBackend<T>(...)` results type-check honestly instead of
  * being cast.
  *
  * `IdryxIdentity`/`IdryxAlert`/`IdryxRecommendation`/`IdryxPermission`/
  * `IdryxRemediation` mirror `genaryx_connectors::Idryx*` (`crates/connectors/src/idryx.rs`)
  * directly - those Rust types already derive `Serialize` and cross the
- * Tauri IPC boundary as-is (docs/PHASE3.md W2: "you do NOT need to write
+ * genaryx-web JSON boundary as-is (docs/PHASE3.md W2: "you do NOT need to write
  * UI-mirror DTOs for them"), so these interfaces exist only so the
  * frontend has names/types for the exact same wire shape, not because the
  * Rust side re-wraps anything.

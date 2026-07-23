@@ -1,6 +1,6 @@
 /**
  * Remote (Distance) wire types (docs/PHASE4.md W4). Mirrors the Rust DTOs in
- * `src-tauri/src/remote/commands.rs` field-for-field (same convention
+ * `crates/api/src/remote/commands.rs` field-for-field (same convention
  * `memoryTypes.ts`/`evidenceTypes.ts` follow for their own panels).
  *
  * `HetznerServer` mirrors `genaryx_connectors::HetznerServer`
@@ -138,13 +138,13 @@ export type RemoteError =
   | { kind: "cloud"; message: string }
   | { kind: "internal"; message: string };
 
-/** `remote:tail-line` Tauri event payload - mirrors `remote::commands::RemoteTailLine`. */
+/** `remote:tail-line` SSE event payload - mirrors `remote::commands::RemoteTailLine`. */
 export interface RemoteTailLine {
   path: string;
   line: string;
 }
 
-/** `remote:tail-ended` Tauri event payload - mirrors `remote::commands::RemoteTailEnded`. */
+/** `remote:tail-ended` SSE event payload - mirrors `remote::commands::RemoteTailEnded`. */
 export interface RemoteTailEnded {
   path: string;
   reason: string;

@@ -31,8 +31,8 @@ function WarningIcon() {
  * reason text deserves more space than a table cell can spare.
  *
  * Hand-rolled (no dialog/modal dependency, matching `ConfirmButton`'s own
- * "not `window.confirm`, a Tauri webview cannot be assumed to support it"
- * reasoning) and `position: fixed` (escapes any scrolling ancestor, matching
+ * "a native dialog cannot be styled to match this console" reasoning) and
+ * `position: fixed` (escapes any scrolling ancestor, matching
  * `index.css`'s ambient backdrop which uses the same technique).
  *
  * `onConfirm` only ever fires with a trimmed, non-empty `reason` - the

@@ -5,7 +5,7 @@
  * already fetches elsewhere - `fetchIdentities()`/`fetchAlerts()`
  * (`lib/identity.ts`) and `fetchPolicies()` (`lib/policy.ts`) - exactly like
  * `Agent360.tsx` assembles its own sections from the same per-plane reads.
- * No new Tauri command, no new wire type: everything below is a pure
+ * No new backend command, no new wire type: everything below is a pure
  * function over `IdryxIdentity[]`/`IdryxAlert[]`/`PolicyRecord[]`.
  *
  * Every non-trivial rule here is a faithful port of a real server-side

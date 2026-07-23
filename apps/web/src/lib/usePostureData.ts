@@ -32,7 +32,7 @@ import { useRemoteStatus } from "./useRemoteStatus";
  * are present and when the newest event landed, not the whole history. */
 const FETCH_LIMIT = 500;
 
-/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits on -
+/** Bus event name the live feed (`crates/api/src/bus/feed.rs`) emits on -
  * the SAME event every other bus-consuming view listens for. */
 const LIVE_EVENT = "bus:event";
 

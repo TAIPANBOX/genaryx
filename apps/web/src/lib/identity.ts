@@ -7,17 +7,17 @@ import type {
   IdryxRecommendation,
 } from "../identityTypes";
 
-/** Thrown by every fetcher below when there is no Tauri runtime to talk to
+/** Thrown by every fetcher below when there is no backend to talk to
  * (a plain `vite build`/browser preview) - mirrors `lib/policy.ts`'s
  * identical `NO_ENVIRONMENT_ERROR` guard: there is no mock identity plane
  * to fall back to, so this surfaces the same "no environment" state a real
  * no-descriptor box would show rather than inventing fake data. */
 const NO_ENVIRONMENT_ERROR: IdentityError = { kind: "no_environment" };
 
-/** Normalize whatever `invoke()` rejected with into an `IdentityError`.
- * Tauri passes a command's `Err` value through as the structured object it
+/** Normalize whatever `invokeBackend()` rejected with into an `IdentityError`.
+ * genaryx-web passes a command's `Err` value through as the structured object it
  * was serialized from, so this is normally already an `IdentityError` in
- * disguise; the fallback branch only matters for a transport-level IPC
+ * disguise; the fallback branch only matters for a transport-level
  * failure. */
 function toIdentityError(err: unknown): IdentityError {
   if (err && typeof err === "object" && "kind" in err) {
@@ -35,8 +35,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
-/** Whole-panel connection state. Never throws: outside Tauri (or on any IPC
- * failure) it resolves to a renderable status instead - mirrors
+/** Whole-panel connection state. Never throws: with no backend (or on any
+ * transport failure) it resolves to a renderable status instead - mirrors
  * `lib/policy.ts`'s `fetchPolicyStatus` exactly. */
 export async function fetchIdentityStatus(): Promise<IdentityStatus> {
   if (!hasBackend()) return { state: "no_environment" };

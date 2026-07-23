@@ -1,6 +1,6 @@
 /**
  * Pocket panel wire types (docs/PHASE5.md W2). Mirrors the Rust DTOs in
- * `src-tauri/src/pocket/commands.rs` field-for-field (same convention
+ * `crates/api/src/pocket/commands.rs` field-for-field (same convention
  * `remoteTypes.ts`/`moneyTypes.ts` follow for their own panels).
  */
 

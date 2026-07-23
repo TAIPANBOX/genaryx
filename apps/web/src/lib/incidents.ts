@@ -3,7 +3,7 @@
  * sources - money incidents, idryx identity alerts, verdryx quality-drift
  * bus events, and triggered posture findings - into one `UnifiedIncident`
  * shape the Overview panel's Incident Center card renders. Kept
- * framework-free (no React/Tauri) like `lib/dashData.ts`/`lib/posture.ts`,
+ * framework-free (no React/DOM) like `lib/dashData.ts`/`lib/posture.ts`,
  * so `OverviewView.tsx` owns every fetch and just calls
  * [`aggregateIncidents`] with what it currently has.
  *

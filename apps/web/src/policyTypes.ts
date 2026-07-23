@@ -1,9 +1,9 @@
 /**
  * Policy + Approvals wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/policy/commands.rs` and `src-tauri/src/policy/env.rs`
+ * `crates/api/src/policy/commands.rs` and `crates/api/src/policy/env.rs`
  * field-for-field (same convention `moneyTypes.ts` follows for the Money
  * panel), including the exact serde tag/rename_all shape of every enum so
- * `invoke<T>(...)` results type-check honestly instead of being cast.
+ * `invokeBackend<T>(...)` results type-check honestly instead of being cast.
  */
 
 /** Mirrors `policy::env::EnvSource` (`#[serde(tag = "source", rename_all = "snake_case")]`).

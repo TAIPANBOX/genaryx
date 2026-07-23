@@ -1,28 +1,28 @@
 import { hasBackend, invokeBackend } from "./transport";
 import type { PocketError, PocketQr, PocketStatus } from "../pocketTypes";
 
-/** The honest, SETTLED fallback shape for `fetchPocketStatus` outside Tauri -
- * mirrors `lib/remote.ts`'s `REMOTE_UNAVAILABLE`/`lib/evidence.ts`'s
+/** The honest, SETTLED fallback shape for `fetchPocketStatus` with no
+ * backend - mirrors `lib/remote.ts`'s `REMOTE_UNAVAILABLE`/`lib/evidence.ts`'s
  * `EVIDENCE_UNAVAILABLE`: a real, renderable "nothing configured" state
  * (Connect would have nothing to resolve either, so `cloud_ready: false` is
- * accurate, not a guess) rather than a stuck "loading" placeholder. No Tauri
- * runtime also means no relay to have armed a window, so both windows are
+ * accurate, not a guess) rather than a stuck "loading" placeholder. No
+ * backend also means no relay to have armed a window, so both windows are
  * honestly `null` here too. */
-const POCKET_UNAVAILABLE_NO_TAURI: PocketStatus = {
+const POCKET_UNAVAILABLE_NO_BACKEND: PocketStatus = {
   state: "idle",
   cloud_ready: false,
   phone_window: null,
   watch_window: null,
 };
 
-/** Thrown by `pocketConnect`/`pocketDisconnect` when there is no Tauri
- * runtime to talk to - mirrors `lib/remote.ts`'s `NO_TAURI_ERROR`. */
-const NO_TAURI_ERROR: PocketError = { kind: "relay", message: "no Tauri runtime available" };
+/** Thrown by `pocketConnect`/`pocketDisconnect` when there is no backend
+ * to talk to - mirrors `lib/remote.ts`'s `NO_BACKEND_ERROR`. */
+const NO_BACKEND_ERROR: PocketError = { kind: "relay", message: "no backend available" };
 
-/** Normalize whatever `invoke()` rejected with into a `PocketError`. Tauri
+/** Normalize whatever `invokeBackend()` rejected with into a `PocketError`. genaryx-web
  * passes a command's `Err` value through as the structured object it was
  * serialized from, so this is normally already a `PocketError` in disguise;
- * the fallback branch only matters for a transport-level IPC failure. */
+ * the fallback branch only matters for a transport-level failure. */
 function toPocketError(err: unknown): PocketError {
   if (err && typeof err === "object" && "kind" in err) {
     return err as PocketError;
@@ -31,7 +31,7 @@ function toPocketError(err: unknown): PocketError {
 }
 
 async function call<T>(command: string): Promise<T> {
-  if (!hasBackend()) throw NO_TAURI_ERROR;
+  if (!hasBackend()) throw NO_BACKEND_ERROR;
   try {
     return await invokeBackend<T>(command);
   } catch (err) {
@@ -40,12 +40,12 @@ async function call<T>(command: string): Promise<T> {
 }
 
 /** Whole-panel status (idle / paired / relay-unreachable). Never throws:
- * outside Tauri it settles to [`POCKET_UNAVAILABLE_NO_TAURI`], and
+ * with no backend it settles to [`POCKET_UNAVAILABLE_NO_BACKEND`], and
  * `pocket_status` itself never fails on the Rust side either (see
  * `pocket::commands::pocket_status`'s doc), so the catch branch only covers
- * a genuine transport-level IPC failure. */
+ * a genuine transport-level failure. */
 export async function fetchPocketStatus(): Promise<PocketStatus> {
-  if (!hasBackend()) return POCKET_UNAVAILABLE_NO_TAURI;
+  if (!hasBackend()) return POCKET_UNAVAILABLE_NO_BACKEND;
   try {
     return await invokeBackend<PocketStatus>("pocket_status");
   } catch (err) {

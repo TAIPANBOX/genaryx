@@ -1,6 +1,6 @@
 /**
  * Evidence Center wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/evidence/commands.rs` field-for-field (same convention
+ * `crates/api/src/evidence/commands.rs` field-for-field (same convention
  * `drillsTypes.ts`/`cryptoTypes.ts` follow for their own panels).
  *
  * `EvidenceManifest`/`ManifestArtifact`/`MissingSource` mirror

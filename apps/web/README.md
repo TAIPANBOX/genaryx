@@ -1,73 +1,78 @@
-# Genaryx desktop shell
+# Genaryx web console (frontend)
 
-Cross-platform Tauri 2 shell (decision D2) over `genaryx-core`. Phase-0 scope:
-a working, virtualized **Bus Explorer** live-event list rendered from mock
-data, in the it-rat2 design language (dark by default, full light theme too).
+The browser frontend of the Genaryx console: React + TypeScript + Vite +
+Tailwind, served by `genaryx-web` (`../../crates/web`) from the customer's own
+box. All product logic lives in `genaryx-core`/`genaryx-api`
+(`../../crates/core`, `../../crates/api`, 06 §0.9); this app is a thin shell
+that renders it - every panel calls through `src/lib/transport.ts`, which
+talks HTTP + Server-Sent Events to `genaryx-web`'s `POST /api/command/<name>`
+and `GET /api/events`, never `fetch` directly.
 
-All product logic lives in `genaryx-core` (`../../crates/core`, 06 §0.9); this
-app is a thin shell: `src-tauri/` exposes one Tauri command, `src/` renders it.
+## Panels
 
-## Data is mock, on purpose
+Overview, Money (TokenFuse), Policy (Wardryx) + Approvals, Identity (Idryx) +
+Agent 360, Quality (Verdryx), Crypto (Qryx), Memory (Engram), Drills
+(Mockryx), Remote (Distance: WireGuard + SSH + cloud inventory), Copilot
+(Felyx), Pocket, Onboard, Routines, Posture, and the live Bus Explorer - one
+React view per plane, in the it-rat2 design language (dark by default, full
+light theme too). `WebGate` is the sign-in screen every panel sits behind
+once a real `genaryx-web` is configured (local Argon2id account, optionally
+also an IdP - see docs/CONSOLE-IDP.md); the mock preview below has no login
+gate at all.
 
-`recent_events` (in `src-tauri/src/events.rs`) returns ~40 hardcoded events
-spanning all six emitting planes (tokenfuse, wardryx, engram, verdryx,
-mockryx, qryx), shaped exactly like `genaryx_core::store::StoredEvent`. The
-frontend (`src/lib/recentEvents.ts`) calls it through `@tauri-apps/api`, and
-falls back to the same-shaped data in `src/mockData.ts` when there is no
-Tauri runtime (a plain browser preview), so `pnpm build` / `pnpm preview`
-always render something real-looking.
-
-**The follow-up task**: wire the real bus. `genaryx_core::ingest::IngestService`
-already has everything needed (`Store::recent_events` for the initial page,
-`IngestService::subscribe()` for the live broadcast of new events). The exact
-swap-in point is documented above `impl From<StoredEvent> for UiEvent` in
-`src-tauri/src/events.rs`: hold an `IngestService` (or its `Store`) in Tauri
-managed state, replace the `mock_events(limit)` call in the `recent_events`
-command with a real `Store::recent_events` query, and forward
-`IngestService::subscribe()`'s broadcast to the frontend as Tauri events.
-Everything downstream of `UiEvent` (the whole `src/` frontend) already
-consumes this exact shape, so that swap is the entire remaining task.
-
-## Commands
+## Running it
 
 ```sh
 pnpm install       # first run only (also approves esbuild's install script,
                     # see pnpm-workspace.yaml)
-pnpm build         # tsc --noEmit-equivalent (tsconfig noEmit:true) + vite build -> dist/
-pnpm dev           # Vite dev server alone, browser preview with mock data
-pnpm tauri dev     # the real desktop app: Vite + the Rust shell together
-pnpm tauri build   # a distributable desktop app bundle
+pnpm dev           # Vite dev server against a real genaryx-web on
+                    # 127.0.0.1:7420 (see vite.config.ts's /api proxy)
+pnpm dev:mock      # no-backend preview: every command/bus read is served
+                    # from src/lib/mockPreview.ts, so the whole UI renders
+                    # with nothing running behind it
+pnpm build         # tsc --noEmit-equivalent (tsconfig noEmit:true) + vite
+                    # build -> dist/
+pnpm test          # vitest run
 ```
 
-`src-tauri/` is a standalone Cargo project (its own `Cargo.toml` /
-`Cargo.lock`, not a member of the repo-root workspace), so Rust-only checks
-run from inside it:
+`pnpm dev` needs a real `genaryx-web` reachable at `127.0.0.1:7420` (override
+with `GENARYX_WEB_ORIGIN`) - see
+[`../../docs/WEB-SHELL.md`](../../docs/WEB-SHELL.md) for how to build and run
+one. `pnpm dev:mock` needs nothing at all: it is the fastest way to see every
+panel render without a backend, and is what a plain `vite preview` also falls
+back to when no `VITE_GENARYX_API` is configured.
+
+## Serving the built bundle
 
 ```sh
-cd src-tauri
-cargo check        # or `cargo build`
+pnpm build
+cd ../.. && cargo build -p genaryx-web --release
+./target/release/genaryx-web serve --ui apps/web/dist --bind 127.0.0.1:7420
 ```
 
 ## Layout
 
 ```
-apps/desktop/
-  src/                    React + TypeScript frontend
-    components/
-      BusExplorer.tsx     the page: header, column labels, virtualized list
-      EventRow.tsx        one row + its click-to-expand data/raw panel
-      SeverityBadge.tsx   info/low/medium/high/critical pill
-      SourceChip.tsx      per-service colored chip
-      Header.tsx          app name, live event counter, theme toggle
-      JsonPreview.tsx      tiny hand-rolled JSON highlighter (no dependency)
-    lib/
-      recentEvents.ts     invoke("recent_events") with the mock fallback
-      cssVars.ts          typed helper for the CSS custom properties in index.css
-    mockData.ts           browser-preview fallback data (mirrors the Rust mock)
-    types.ts              UiEvent (mirrors the Rust UiEvent / StoredEvent)
-    index.css             design tokens: dark default + light theme, ambient backdrop
-  src-tauri/              Rust shell (Tauri 2), standalone Cargo project
-    src/
-      lib.rs              tauri::Builder, the `recent_events` command
-      events.rs           UiEvent, the mock generator, the StoredEvent wiring point
+apps/web/
+  src/
+    components/          one file per panel (MoneyView, PolicyView,
+                          IdentityView, CryptoView, MemoryView, QualityView,
+                          DrillsView, RemoteView, CopilotView, PocketView,
+                          OnboardView, RoutinesView, PostureView,
+                          OverviewView, BusExplorer, ...) plus shared chrome
+                          (AppShell, AppHeader, Header, WebGate) and small
+                          reusable pieces (SeverityBadge, SourceChip,
+                          ConfirmButton, ...)
+    lib/                  one module per plane (money.ts, policy.ts, ...):
+                          fetchers/mutators over lib/transport.ts, plus pure
+                          logic (access.ts, posture.ts, incidents.ts, ...)
+                          kept framework-free so it stays easy to test
+    lib/transport.ts      the one seam that decides HOW the UI reaches
+                          genaryx-core: HTTP + SSE against genaryx-web, or the
+                          mock preview - no panel talks to fetch() directly
+    *Types.ts              wire types, field-for-field mirrors of the Rust
+                          DTOs in crates/api/src/<plane>/{commands,env}.rs
+    index.css              design tokens: dark default + light theme
+  .env.web / .env.mock    build-mode env (VITE_GENARYX_API / VITE_GENARYX_MOCK)
+  vite.config.ts          dev server + the /api proxy to a real genaryx-web
 ```

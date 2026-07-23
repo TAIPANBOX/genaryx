@@ -3,7 +3,7 @@ import { fetchPolicyStatus } from "./policy";
 import type { PolicyStatus } from "../policyTypes";
 
 /** Poll cadence while the backend is still resolving (`state: "bootstrapping"`,
- * see `src-tauri/src/policy/state.rs`'s non-blocking bootstrap). Mirrors
+ * see `crates/api/src/policy/state.rs`'s non-blocking bootstrap). Mirrors
  * `lib/useMoneyStatus.ts`'s identical constant. */
 const POLL_MS = 3_000;
 

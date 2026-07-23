@@ -4,10 +4,10 @@ import type { MoneyError } from "../moneyTypes";
 /**
  * Renders a `ConnectorError::PlanRequired` rejection as an upsell, never as
  * an error toast (spec). The upgrade URL is shown as plain selectable text
- * rather than a clickable link: this app runs inside a Tauri webview, whose
- * external-link handling is not something this task can verify without
- * launching the GUI, so showing the URL as text is the choice that cannot
- * silently fail to open anything.
+ * rather than a clickable link - inherited from the old desktop build's
+ * caution around external-link handling inside a webview; a plain `<a
+ * href>` would work fine in this browser-only build, but that has not been
+ * revisited (a small, clearly-labeled follow-up, not a functional gap).
  */
 export function UpsellBanner({ error }: { error: Extract<MoneyError, { kind: "plan_required" }> }) {
   return (

@@ -1,14 +1,14 @@
 /**
  * Quality wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/quality/commands.rs` and `src-tauri/src/quality/env.rs`
+ * `crates/api/src/quality/commands.rs` and `crates/api/src/quality/env.rs`
  * field-for-field (same convention `identityTypes.ts` follows for its own
  * panel), including the exact serde tag/rename_all shape of every enum so
- * `invoke<T>(...)` results type-check honestly instead of being cast.
+ * `invokeBackend<T>(...)` results type-check honestly instead of being cast.
  *
  * `VerdryxEvalRun`/`VerdryxScore`/`VerdryxBaseline`/`VerdryxRunSummary`
  * mirror `genaryx_connectors::Verdryx*` (`crates/connectors/src/verdryx.rs`)
  * directly - those Rust types already derive `Serialize` and cross the
- * Tauri IPC boundary as-is, so these interfaces exist only so the frontend
+ * genaryx-web JSON boundary as-is, so these interfaces exist only so the frontend
  * has names/types for the exact same wire shape, not because the Rust side
  * re-wraps anything.
  */

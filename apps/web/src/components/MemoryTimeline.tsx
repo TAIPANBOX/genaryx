@@ -10,7 +10,7 @@ import { SeverityBadge } from "./SeverityBadge";
 const FETCH_LIMIT = 500;
 const DISPLAY_LIMIT = 50;
 
-/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits on -
+/** Bus event name the live feed (`crates/api/src/bus/feed.rs`) emits on -
  * the SAME event `BusExplorer.tsx`/`DecisionStream.tsx`/`QualityDriftStream.tsx`
  * listen for; payload is one `UiEvent`. */
 const LIVE_EVENT = "bus:event";
@@ -40,7 +40,7 @@ function dataString(data: unknown, key: string): string | null {
  * a filtered view over the SAME event bus the Bus Explorer tails
  * (`source == "engram"`), mirroring `QualityDriftStream.tsx`/
  * `DecisionStream.tsx`'s exact shape (reuses `fetchRecentEvents` for the
- * initial batch and the `bus:event` Tauri listener for live updates) -
+ * initial batch and the `bus:event` listener for live updates) -
  * deliberately NOT a new backend read.
  */
 export function MemoryTimeline({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {

@@ -1,11 +1,11 @@
 import { hasBackend, invokeBackend } from "./transport";
 import type { DrillsError, DrillsStatus, MockryxReport } from "../drillsTypes";
 
-/** Thrown by every fetcher below when there is no Tauri runtime to talk to -
+/** Thrown by every fetcher below when there is no backend to talk to -
  * mirrors `lib/crypto.ts`'s identical `NO_ENVIRONMENT_ERROR` guard. */
 const NO_ENVIRONMENT_ERROR: DrillsError = { kind: "no_environment" };
 
-/** Normalize whatever `invoke()` rejected with into a `DrillsError` - mirrors
+/** Normalize whatever `invokeBackend()` rejected with into a `DrillsError` - mirrors
  * `lib/crypto.ts`'s `toCryptoError`. */
 function toDrillsError(err: unknown): DrillsError {
   if (err && typeof err === "object" && "kind" in err) {

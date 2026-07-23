@@ -10,7 +10,7 @@ import { SeverityBadge } from "./SeverityBadge";
 const FETCH_LIMIT = 500;
 const DISPLAY_LIMIT = 50;
 
-/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits on -
+/** Bus event name the live feed (`crates/api/src/bus/feed.rs`) emits on -
  * the SAME event `BusExplorer.tsx`/`DecisionStream.tsx` listen for; payload
  * is one `UiEvent`. */
 const LIVE_EVENT = "bus:event";
@@ -48,7 +48,7 @@ function dataString(data: unknown, key: string): string | null {
  * Drift alerts (docs/PHASE4.md W1 position 4): a live, filtered view over
  * the SAME event bus the Bus Explorer tails (`source == "verdryx" && type ==
  * "quality_drift"`) - mirrors `DecisionStream.tsx`'s exact shape (reuses
- * `fetchRecentEvents` for the initial batch and the `bus:event` Tauri
+ * `fetchRecentEvents` for the initial batch and the `bus:event`
  * listener for live updates; deliberately NOT a new poll or backend read).
  * Verdryx's DB has no drift table of its own - its live drift signal IS the
  * `quality_drift` bus event (`crates/connectors/src/verdryx.rs`'s module

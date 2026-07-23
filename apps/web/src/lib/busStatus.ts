@@ -2,7 +2,7 @@ import { hasBackend, invokeBackend } from "./transport";
 
 /**
  * Where the events on screen actually come from, as reported by the Rust
- * `bus_status` command (`src-tauri/src/live.rs`'s `BusMode`).
+ * `bus_status` command (`crates/api/src/bus/mod.rs`'s `BusMode`).
  *
  * `live` means the console is tailing a real environment's `events.dir`, so
  * everything shown is something a product genuinely emitted. `demo` means no
@@ -22,8 +22,8 @@ export type BusMode =
 /**
  * Ask the core which mode the bus is in.
  *
- * Returns `null` outside a Tauri runtime (a plain `vite build` or browser
- * preview, where there is no core to ask) and on any invoke failure, so a
+ * Returns `null` with no backend configured (a plain `vite build` or browser
+ * preview, where there is no core to ask) and on any call failure, so a
  * caller renders no claim at all rather than a wrong one.
  */
 export async function fetchBusMode(): Promise<BusMode | null> {

@@ -548,9 +548,9 @@ mod tests {
     // A minimal, dependency-free base64url-no-pad encoder for building a
     // syntactically valid (never cryptographically verified - see
     // `ApprovalTokenClaims::decode`'s own doc comment) synthetic
-    // `approval_token` in tests. `genaryx-desktop` does not otherwise depend
-    // on a base64 crate, and pulling one in just for this one test seemed
-    // like the wrong trade - this is ~15 lines and only ever compiled for
+    // `approval_token` in tests. This crate does not otherwise depend on a
+    // base64 crate, and pulling one in just for this one test seemed like
+    // the wrong trade - this is ~15 lines and only ever compiled for
     // `cfg(test)`.
     fn b64url_nopad(bytes: &[u8]) -> String {
         const ALPHABET: &[u8; 64] =

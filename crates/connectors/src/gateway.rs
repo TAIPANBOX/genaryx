@@ -91,7 +91,7 @@ pub struct GatewayUnauthorized {
 /// One row of [`GatewayKeysReport::keys`]: a client key's configuration,
 /// identity-map binding, and call activity. `configured`/`bound` are
 /// independent booleans (a key can be either, both, or neither) - see
-/// `apps/desktop/src/lib/credentials.ts::deriveKeyStatus` on the frontend
+/// `apps/web/src/lib/credentials.ts::deriveKeyStatus` on the frontend
 /// for the exact precedence that turns these four fields plus the two
 /// [`GatewayKeyStats`] blocks into one human status.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

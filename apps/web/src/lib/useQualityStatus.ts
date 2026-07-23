@@ -3,7 +3,7 @@ import { fetchQualityStatus } from "./quality";
 import type { QualityStatus } from "../qualityTypes";
 
 /** Poll cadence while the backend is still resolving (`state: "bootstrapping"`,
- * see `src-tauri/src/quality/state.rs`'s non-blocking bootstrap). Mirrors
+ * see `crates/api/src/quality/state.rs`'s non-blocking bootstrap). Mirrors
  * `lib/useIdentityStatus.ts`'s identical constant. */
 const POLL_MS = 3_000;
 

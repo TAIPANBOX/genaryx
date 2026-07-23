@@ -9,7 +9,7 @@ import type {
   Savings,
 } from "../moneyTypes";
 
-/** Thrown by every fetcher/mutator below when there is no Tauri runtime to
+/** Thrown by every fetcher/mutator below when there is no backend to
  * talk to (a plain `vite build`/browser preview) - mirrors
  * `lib/recentEvents.ts`'s `hasBackend()` guard, except the Money panel has no
  * sensible mock data to fall back to (there is no mock Cloud), so it
@@ -17,10 +17,10 @@ import type {
  * show rather than inventing fake numbers. */
 const NO_ENVIRONMENT_ERROR: MoneyError = { kind: "no_environment" };
 
-/** Normalize whatever `invoke()` rejected with into a `MoneyError`. Tauri
+/** Normalize whatever `invokeBackend()` rejected with into a `MoneyError`. genaryx-web
  * passes a command's `Err` value through as the structured object it was
  * serialized from, so this is normally already a `MoneyError` in disguise;
- * the fallback branch only matters for a transport-level IPC failure (e.g.
+ * the fallback branch only matters for a transport-level failure (e.g.
  * "command not found"), which is not a shape `money::commands::MoneyError`
  * itself ever produces. */
 function toMoneyError(err: unknown): MoneyError {
@@ -41,8 +41,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
-/** Whole-panel connection state. Never throws: outside Tauri (or on any IPC
- * failure) it resolves to a renderable status instead, matching every other
+/** Whole-panel connection state. Never throws: with no backend (or on any
+ * transport failure) it resolves to a renderable status instead, matching every other
  * money_* fetcher's fail-closed contract but without a `MoneyError` to
  * unwrap since this is the command the UI uses to decide whether to call
  * the others at all. */
@@ -65,11 +65,10 @@ export const fetchRuns = (): Promise<Run[]> => call<Run[]>("money_runs");
 export const fetchIncidents = (): Promise<Incident[]> => call<Incident[]>("money_incidents");
 export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings");
 
-// Argument keys are snake_case on purpose: the Rust side pins
-// `#[tauri::command(rename_all = "snake_case")]` on every mutation so the
-// whole IPC surface (args AND return values) stays one convention, matching
-// `UiEvent`'s existing snake_case wire shape rather than Tauri's camelCase
-// default.
+// Argument keys are snake_case on purpose, matching the Rust side's own
+// snake_case field names (`crates/api/src/money/commands.rs`) - one
+// convention for the whole wire surface, args and return values alike,
+// matching `UiEvent`'s existing snake_case shape.
 
 // `killRun`/`setBudget` are break-glass overrides (Phase-2 wave 3B): both take
 // a mandatory `reason`, threaded straight into the Rust side's

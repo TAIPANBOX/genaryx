@@ -7,17 +7,17 @@ import type {
   VerdryxScore,
 } from "../qualityTypes";
 
-/** Thrown by every fetcher below when there is no Tauri runtime to talk to
+/** Thrown by every fetcher below when there is no backend to talk to
  * (a plain `vite build`/browser preview) - mirrors `lib/identity.ts`'s
  * identical `NO_ENVIRONMENT_ERROR` guard: there is no mock quality plane to
  * fall back to, so this surfaces the same "no environment" state a real
  * verdryx-less box would show rather than inventing fake data. */
 const NO_ENVIRONMENT_ERROR: QualityError = { kind: "no_environment" };
 
-/** Normalize whatever `invoke()` rejected with into a `QualityError`. Tauri
+/** Normalize whatever `invokeBackend()` rejected with into a `QualityError`. genaryx-web
  * passes a command's `Err` value through as the structured object it was
  * serialized from, so this is normally already a `QualityError` in
- * disguise; the fallback branch only matters for a transport-level IPC
+ * disguise; the fallback branch only matters for a transport-level
  * failure. */
 function toQualityError(err: unknown): QualityError {
   if (err && typeof err === "object" && "kind" in err) {
@@ -35,8 +35,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
-/** Whole-panel connection state. Never throws: outside Tauri (or on any IPC
- * failure) it resolves to a renderable status instead - mirrors
+/** Whole-panel connection state. Never throws: with no backend (or on any
+ * transport failure) it resolves to a renderable status instead - mirrors
  * `lib/identity.ts`'s `fetchIdentityStatus` exactly. */
 export async function fetchQualityStatus(): Promise<QualityStatus> {
   if (!hasBackend()) return { state: "no_environment" };

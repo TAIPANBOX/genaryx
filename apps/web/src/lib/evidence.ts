@@ -6,14 +6,14 @@ import type {
   EvidenceStatus,
 } from "../evidenceTypes";
 
-/** Thrown by every fetcher/mutator below when there is no Tauri runtime to
+/** Thrown by every fetcher/mutator below when there is no backend to
  * talk to - mirrors `lib/drills.ts`'s identical `NO_ENVIRONMENT_ERROR` guard.
  * Evidence has no "no_environment" status variant of its own (see
  * `evidenceTypes.ts`'s doc comment), so this folds into the same `build`
- * error shape every other IPC-transport failure does. */
-const NO_TAURI_ERROR: EvidenceError = { kind: "build", message: "no Tauri runtime available" };
+ * error shape every other transport failure does. */
+const NO_BACKEND_ERROR: EvidenceError = { kind: "build", message: "no backend available" };
 
-/** Normalize whatever `invoke()` rejected with into an `EvidenceError` -
+/** Normalize whatever `invokeBackend()` rejected with into an `EvidenceError` -
  * mirrors `lib/drills.ts`'s `toDrillsError`. */
 function toEvidenceError(err: unknown): EvidenceError {
   if (err && typeof err === "object" && "kind" in err) {
@@ -23,7 +23,7 @@ function toEvidenceError(err: unknown): EvidenceError {
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!hasBackend()) throw NO_TAURI_ERROR;
+  if (!hasBackend()) throw NO_BACKEND_ERROR;
   try {
     return await invokeBackend<T>(command, args);
   } catch (err) {
@@ -33,9 +33,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 /** Every source unresolved - the honest, settled fallback shape (see
  * `EVIDENCE_UNAVAILABLE`'s use sites below): NOT `bootstrapping`, which would
- * leave the panel showing "resolving..." forever outside a real Tauri
- * runtime (a plain `vite dev`/`vite preview` browser tab, or a genuine
- * IPC-transport failure) instead of settling like every sibling panel's own
+ * leave the panel showing "resolving..." forever with no real backend
+ * (a plain `vite dev`/`vite preview` browser tab, or a genuine
+ * transport failure) instead of settling like every sibling panel's own
  * `no_environment` fallback does. */
 const EVIDENCE_UNAVAILABLE: EvidenceStatus = {
   state: "ready",
@@ -52,7 +52,7 @@ const EVIDENCE_UNAVAILABLE: EvidenceStatus = {
 
 /** Whole-panel local-tool availability. Never throws: `evidence_status`
  * itself never fails (see `evidence::commands::evidence_status`'s doc
- * comment), so the only way this catches is a genuine IPC-transport failure -
+ * comment), so the only way this catches is a genuine transport failure -
  * folded into the same honest "nothing resolved" shape a real fresh box with
  * no local tools would report, never a perpetual "resolving..." state. */
 export async function fetchEvidenceStatus(): Promise<EvidenceStatus> {
@@ -83,8 +83,8 @@ export function describeEvidenceError(err: EvidenceError): string {
 }
 
 /** Trigger a browser download of the built pack's zip bytes via a Blob + a
- * temporary `<a download>` - deliberately self-contained (no Tauri dialog
- * plugin, per this wave's scope). Decodes the base64 payload client-side. */
+ * temporary `<a download>` - deliberately self-contained (a plain browser
+ * download, no native save dialog). Decodes the base64 payload client-side. */
 export function downloadEvidencePack(result: EvidenceBuildResult): void {
   const binary = atob(result.zip_base64);
   const bytes = new Uint8Array(binary.length);

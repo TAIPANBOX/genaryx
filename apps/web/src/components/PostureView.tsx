@@ -135,7 +135,7 @@ function FindingRow({ finding }: { finding: PostureFinding }) {
  * (the same `fetchRecentEvents` + `bus:event` listener pattern
  * `DecisionStream.tsx`/`BusExplorer.tsx` already follow, unfiltered here
  * since "schema mix" and "bus stale" are properties of the WHOLE bus, not
- * just the wardryx slice). No new Tauri command, no new connector call.
+ * just the wardryx slice). No new backend command, no new connector call.
  *
  * All of that data-fetching now lives in `lib/usePostureData.ts` (extracted
  * from this component during I3 so `OverviewView.tsx`'s Incident Center, I2,

@@ -11,7 +11,7 @@ import type { EventsSource } from "../lib/recentEvents";
  * environment when live, so an operator with several of them can see which
  * one is on screen without opening a settings panel.
  *
- * Renders nothing when the mode is unknown (no Tauri runtime to ask), rather
+ * Renders nothing when the mode is unknown (no backend to ask), rather
  * than guessing.
  */
 function BusModeChip({ mode }: { mode: BusMode | null }) {
@@ -90,7 +90,7 @@ export function BusStatusBar({
         <span
           className="chip"
           style={cssVar("dot", "var(--sev-medium)")}
-          title="No Tauri runtime detected (or the recent_events command failed): showing bundled mock data."
+          title="No backend detected (or the recent_events command failed): showing bundled mock data."
         >
           <span className="dot" aria-hidden="true" />
           mock data

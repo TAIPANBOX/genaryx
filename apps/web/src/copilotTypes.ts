@@ -1,6 +1,6 @@
 /**
  * Copilot wire types (Phase 6, C0). Mirrors the Rust DTOs in
- * `src-tauri/src/copilot/commands.rs` field-for-field, same convention
+ * `crates/api/src/copilot/commands.rs` field-for-field, same convention
  * `identityTypes.ts`/`policyTypes.ts` follow for their own panels.
  *
  * Unlike every other panel's status type, `CopilotStatus` is a flat
@@ -19,7 +19,7 @@ export interface CopilotStatus {
 }
 
 /** Mirrors `genaryx_copilot::provider::Usage` (already `Serialize`, crosses
- * the Tauri IPC boundary as-is - see `lib/copilot.ts`'s doc comment). */
+ * the genaryx-web JSON boundary as-is - see `lib/copilot.ts`'s doc comment). */
 export interface CopilotUsage {
   prompt_tokens: number;
   completion_tokens: number;

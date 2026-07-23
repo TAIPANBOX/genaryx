@@ -19,13 +19,9 @@ const FIELD_STYLE = {
   color: "var(--fg)",
 } as const;
 
-/** The event name this line/ended stream rides on both shells: a Tauri
- * window event on desktop (mirrors `commands::remote::{TAIL_LINE_EVENT,
- * TAIL_ENDED_EVENT}` in `apps/desktop/src-tauri/src/commands.rs` exactly)
- * and an SSE event of the same literal name on web (see
- * `crates/web/src/main.rs`'s `events` handler) - `subscribeBackend` (see
- * `../lib/transport`) picks the right transport for whichever shell this is
- * running in. */
+/** The event name this line/ended stream rides on: an SSE event of this
+ * literal name (see `crates/web/src/main.rs`'s `events` handler) -
+ * `subscribeBackend` (see `../lib/transport`) is what opens that stream. */
 const TAIL_LINE_EVENT = "remote:tail-line";
 const TAIL_ENDED_EVENT = "remote:tail-ended";
 
@@ -38,8 +34,7 @@ type ReachableState = "idle" | "checking" | "ok" | { error: RemoteError };
 /**
  * Section 4 (docs/PHASE4.md W4 position 4): SSH ops over the pinned target -
  * "Check reachable", "Read remote descriptor", and a live remote log tail
- * streamed over the `remote:tail-line`/`remote:tail-ended` events - a Tauri
- * window event on desktop, an SSE named event on web (see
+ * streamed over the `remote:tail-line`/`remote:tail-ended` SSE events (see
  * `genaryx_api::remote::commands`'s module doc, "Streaming the remote tail",
  * for the backend side of this stream).
  */

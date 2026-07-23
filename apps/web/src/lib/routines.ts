@@ -24,7 +24,7 @@ export { ROUTINE_NAMES } from "../routinesTypes";
  * mirrors `lib/credentials.ts`'s identical no-backend guard, just a plain
  * `Error` (not a tagged union) since this plane has none of its own - see
  * this module's doc comment. */
-const NO_BACKEND_MESSAGE = "no backend: cannot reach the routines plane (no Tauri runtime and no VITE_GENARYX_API)";
+const NO_BACKEND_MESSAGE = "no backend: cannot reach the routines plane (no VITE_GENARYX_API configured, and not the mock build)";
 
 // ============================================================================
 // Fetchers

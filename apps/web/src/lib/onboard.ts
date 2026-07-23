@@ -10,8 +10,8 @@ import type {
 } from "../onboardTypes";
 
 /** Thrown by every call below when there is no backend to talk to (a plain
- * `vite build`/browser preview with no Tauri runtime and no configured web
- * API) - mirrors `lib/identity.ts`'s identical `NO_ENVIRONMENT_ERROR` guard.
+ * `vite build`/browser preview with no configured web API) - mirrors
+ * `lib/identity.ts`'s identical `NO_ENVIRONMENT_ERROR` guard.
  * Onboard has no mock-data path of its own (docs/ONBOARD.md's wizard reads
  * the OPERATOR's own local filesystem - there is nothing honest to invent in
  * a browser preview), so a missing backend surfaces the same "no
@@ -21,11 +21,11 @@ const NO_ENVIRONMENT_ERROR: OnboardError = {
   message: "no backend available",
 };
 
-/** Normalize whatever `invoke()` rejected with into an `OnboardError`. Tauri
- * (and `genaryx-web`'s non-2xx body) pass a command's `Err` value through as
+/** Normalize whatever `invokeBackend()` rejected with into an `OnboardError`.
+ * `genaryx-web`'s non-2xx body passes a command's `Err` value through as
  * the structured object it was serialized from, so this is normally already
  * an `OnboardError` in disguise; the fallback branch only matters for a
- * genuine transport-level IPC failure. */
+ * genuine transport-level failure. */
 function toOnboardError(err: unknown): OnboardError {
   if (err && typeof err === "object" && "kind" in err && "message" in err) {
     return err as OnboardError;
@@ -79,7 +79,7 @@ export function isExistingFileError(err: OnboardError): boolean {
 export function describeOnboardError(err: OnboardError): string {
   switch (err.kind) {
     case "no_environment":
-      return "No backend available - open this console from the desktop app, or from a live web session.";
+      return "No backend available - open this console from a live genaryx-web session, not a bare preview build.";
     case "transport":
       return `Could not reach the console backend: ${err.message}`;
     case "validation":

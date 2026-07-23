@@ -162,7 +162,7 @@ function describeApprovalError(kind: ProposedActionKind, err: unknown): string {
  * turns a `ProposedAction` into a real call, and it is always the exact SAME
  * call a manual click elsewhere in this app already makes:
  * - `kill` -> [`killRun`] (`src/lib/money.ts`) -> `money_kill_run`
- *   (`src-tauri/src/money/commands.rs`), the signed `POST /v1/runs/{id}/kill`
+ *   (`crates/api/src/money/commands.rs`), the signed `POST /v1/runs/{id}/kill`
  *   `RunsBoard.tsx`'s own Kill button already triggers.
  * - `budget` -> [`setBudget`] -> `money_set_budget`, the same signed
  *   `POST /v1/runs/{id}/budget` `BudgetEditor.tsx` already triggers.

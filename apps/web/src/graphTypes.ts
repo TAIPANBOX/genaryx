@@ -4,7 +4,7 @@
  * directly (`genaryx_core::{LayoutView, PositionedNode, GraphEdge, NodeKind,
  * AgentSlice, GraphNode}` - `crates/core/src/{graph,layout}.rs`), not a
  * connector: every one of them already derives `Serialize` and crosses the
- * Tauri IPC boundary unmirrored (`src-tauri/src/graph.rs`'s module doc), so
+ * genaryx-web JSON boundary unmirrored (`crates/api/src/graph.rs`'s module doc), so
  * this file exists only to give the frontend names/types for that same wire
  * shape, exactly the same "no UI-facing mirror struct needed" convention
  * `identityTypes.ts` documents for the Idryx DTOs.
@@ -62,7 +62,7 @@ export interface PositionedNode {
  * Canvas2D renderer draws directly: positioned nodes, the edges, and the
  * canvas bounds the positions live in. An empty graph (`nodes: []`) is a
  * real, honest state (no delegation activity yet / no Store), never an
- * error - see `src-tauri/src/graph.rs`'s `agent_graph` doc comment. */
+ * error - see `crates/api/src/graph.rs`'s `agent_graph` doc comment. */
 export interface LayoutView {
   nodes: PositionedNode[];
   edges: GraphEdge[];

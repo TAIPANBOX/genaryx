@@ -1,16 +1,16 @@
 # Running the console on the customer's box
 
-`genaryx-web` is the browser shell of the same console the desktop app ships.
-It runs **inside the customer's perimeter**, beside their stack, and answers
-every request by calling `genaryx-api`, the identical functions the Tauri shell
-wraps. Nothing about their runs, spend or identities travels anywhere to be
-displayed, and it-rat.com has no route to it.
+`genaryx-web` is the browser shell of the console: the only shell this
+product ships. It runs **inside the customer's perimeter**, beside their
+stack, and answers every request by calling `genaryx-api`, the command layer
+this shell wraps. Nothing about their runs, spend or identities travels
+anywhere to be displayed, and it-rat.com has no route to it.
 
 ## Build
 
 ```sh
-cd apps/desktop && npm run build:web     # browser bundle -> apps/desktop/dist-web
-cd ../..         && cargo build -p genaryx-web --release
+cd apps/web && pnpm build     # browser bundle -> apps/web/dist
+cd ../..    && cargo build -p genaryx-web --release
 ```
 
 ## First run
@@ -27,7 +27,7 @@ echo 'a-long-passphrase' | ./target/release/genaryx-web \
 ```sh
 ./target/release/genaryx-web serve \
   --bind 127.0.0.1:7420 \
-  --ui apps/desktop/dist-web
+  --ui apps/web/dist
 ```
 
 ### Where to bind
@@ -215,7 +215,7 @@ carries what the bus receives, and a stack nobody is calling receives nothing.
 ## What the API looks like
 
 - `POST /api/auth/login` / `logout`, `GET /api/auth/session`
-- `POST /api/command/<name>` mirrors Tauri's `invoke`: the body is the args
+- `POST /api/command/<name>`: the body is the args
   object the frontend already sends, a 2xx body is the command's Ok value, and
   a **422 body is the command's own Err value unwrapped**, so each plane's
   existing error normaliser works untouched. 400 is malformed arguments, 401 is

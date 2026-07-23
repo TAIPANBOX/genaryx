@@ -1,9 +1,9 @@
 /**
  * Money + Overview wire types. Mirrors the Rust DTOs in
- * `src-tauri/src/money/commands.rs` and `src-tauri/src/money/env.rs`
+ * `crates/api/src/money/commands.rs` and `crates/api/src/money/env.rs`
  * field-for-field (same convention as `types.ts`'s `UiEvent` mirroring the
  * Bus Explorer's Rust `UiEvent`), including the exact serde tag/rename_all
- * shape of every enum so `invoke<T>(...)` results type-check honestly
+ * shape of every enum so `invokeBackend<T>(...)` results type-check honestly
  * instead of being cast.
  */
 

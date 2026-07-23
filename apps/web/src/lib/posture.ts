@@ -15,7 +15,7 @@ import type { Severity } from "../types";
  * Posture-lite (docs/PHASE2.md Wave 3) + Posture full's identity-plane
  * zonds (docs/PHASE3.md W4, position 6) + the I3 connection/credential
  * health group below: the pure signals-in/findings-out core of the Posture
- * view, kept free of React/Tauri so it is easy to reason about (and, if
+ * view, kept free of React/DOM so it is easy to reason about (and, if
  * ever needed, test) in isolation - `lib/usePostureData.ts` owns all the
  * data-fetching (money/policy/identity/quality/crypto/memory/drills/
  * copilot/remote status, policies, approvals, money runs, identities,
@@ -28,7 +28,7 @@ import type { Severity } from "../types";
  *
  * Posture-lite's 4 v0 zonds (identical set the SwiftUI track builds),
  * computed purely from signals every panel in this app already fetches - no
- * new Tauri command or connector change:
+ * new backend command or connector change:
  *
  * 1. devkey in use - `money_status`/`policy_status`'s own `org_domain`.
  * 2. Governance fail-open - `policy_list_policies()` returned zero policies.
@@ -38,7 +38,7 @@ import type { Severity } from "../types";
  * Posture full's 5 identity-plane zonds (PHASE3.md position 6), same shape,
  * computed purely from the SAME reads the Identity panel/Agent 360 already
  * make (`identity_status`, `identity_list_identities`,
- * `identity_list_alerts`) plus `policy_status` - again no new Tauri command:
+ * `identity_list_alerts`) plus `policy_status` - again no new backend command:
  *
  * 5. idryx exposed - the discovered idryx URL is not loopback (idryx has no
  *    auth on any route, per docs/PHASE3.md's grounded contract).
@@ -238,7 +238,7 @@ export interface PostureInput {
 }
 
 /** Wardryx/TokenFuse Cloud's shared "devkey resolves to this org" constant -
- * grounded by `src-tauri/src/money/state.rs`'s own test
+ * grounded by `crates/api/src/money/state.rs`'s own test
  * (`devkey fallback resolves org=default (unsanitized already-safe)`), the
  * one place in this codebase that actually asserts the devkey -> org
  * mapping. Wardryx's own `org_domain` (`policy/state.rs::org_domain_for`) is
