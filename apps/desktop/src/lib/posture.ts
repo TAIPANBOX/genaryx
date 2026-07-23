@@ -1,18 +1,29 @@
 import type { IdentityStatus, IdryxAlert, IdryxIdentity } from "../identityTypes";
 import { ATTESTATION_DETECTORS } from "../identityTypes";
-import type { MoneyStatus } from "../moneyTypes";
-import type { PolicyRecord, PolicyStatus } from "../policyTypes";
+import type { CopilotStatus } from "../copilotTypes";
+import type { CryptoStatus } from "../cryptoTypes";
+import type { DrillsStatus } from "../drillsTypes";
+import type { MemoryStatus } from "../memoryTypes";
+import type { MoneyStatus, Run } from "../moneyTypes";
+import type { Approval, PolicyRecord, PolicyStatus } from "../policyTypes";
+import type { QualityStatus } from "../qualityTypes";
+import type { RemoteStatus } from "../remoteTypes";
 import type { Severity } from "../types";
 
 /**
  * Posture-lite (docs/PHASE2.md Wave 3) + Posture full's identity-plane
- * zonds (docs/PHASE3.md W4, position 6): the pure signals-in/findings-out
- * core of the Posture view, kept free of React/Tauri so it is easy to
- * reason about (and, if ever needed, test) in isolation -
- * `PostureView.tsx` owns all the data-fetching (money/policy/identity
- * status, policies, identities, alerts, bus signals) and just calls
- * [`computeStackPostureFindings`]/[`computeIdentityPostureFindings`] with
- * what it currently has.
+ * zonds (docs/PHASE3.md W4, position 6) + the I3 connection/credential
+ * health group below: the pure signals-in/findings-out core of the Posture
+ * view, kept free of React/Tauri so it is easy to reason about (and, if
+ * ever needed, test) in isolation - `lib/usePostureData.ts` owns all the
+ * data-fetching (money/policy/identity/quality/crypto/memory/drills/
+ * copilot/remote status, policies, approvals, money runs, identities,
+ * alerts, bus signals) and just calls
+ * [`computeStackPostureFindings`]/[`computeIdentityPostureFindings`]/
+ * [`computeConnectionHealthFindings`] with what it currently has;
+ * `PostureView.tsx` and `OverviewView.tsx`'s Incident Center (I2,
+ * `lib/incidents.ts`) both consume that one hook's output rather than each
+ * re-deriving their own.
  *
  * Posture-lite's 4 v0 zonds (identical set the SwiftUI track builds),
  * computed purely from signals every panel in this app already fetches - no
@@ -41,6 +52,19 @@ import type { Severity } from "../types";
  *    `taipan up`-minted key - a real gap the existing devkey zond does NOT
  *    catch (see [`wardryxKeylessAdminFinding`]'s doc comment).
  *
+ * I3's "Connection & credential health" group (itrat-console/15-adjacent,
+ * shipped alongside I2's Incident Center) adds 11 more zonds, same shape,
+ * computed purely from `*_status` reads this shell already performs for its
+ * other panels (money/policy/identity/quality/crypto/memory/drills/copilot/
+ * remote - see [`computeConnectionHealthFindings`]) plus two staleness
+ * checks over data already read elsewhere (`money_runs`,
+ * `policy_list_approvals`). This group is explicitly NOT live probing: it
+ * never opens a socket or calls a provider itself, it only reads the
+ * console's own already-resolved status objects - see
+ * [`computeConnectionHealthFindings`]'s own doc comment for the full list of
+ * non-goals (no provider-key validity checks, no MCP secret-handle / JWKS
+ * checks).
+ *
  * Every finding also carries a `state` distinguishing "checked and clean"
  * (`ok`) from "checked and it fired" (`triggered`) from "cannot tell yet"
  * (`unknown` - e.g. the relevant backend has not finished bootstrapping, or
@@ -65,14 +89,32 @@ export interface PostureFinding {
     | "attestation_coverage"
     | "identity_snapshot_age"
     | "detector_feed_freshness"
-    | "wardryx_keyless_admin";
+    | "wardryx_keyless_admin"
+    // I3 "Connection & credential health" group (see
+    // `computeConnectionHealthFindings`): one row per `*_status` plane this
+    // shell already calls, plus two staleness checks.
+    | "money_plane_health"
+    | "policy_plane_health"
+    | "identity_plane_health"
+    | "quality_plane_health"
+    | "crypto_plane_health"
+    | "memory_plane_health"
+    | "drills_plane_health"
+    | "copilot_plane_health"
+    | "remote_plane_health"
+    | "cloud_ingest_freshness"
+    | "approvals_waiting";
   title: string;
   /** The severity IF `state === "triggered"` - fixed per zond, straight
    * from PHASE2.md/PHASE3.md (devkey/governance/idryx_exposed/
    * wardryx_keyless_admin high, schema-mix/identity_snapshot_age info,
    * bus-stale/attestation_coverage/detector_feed_freshness medium); a
    * non-triggered finding renders its own calm `ok`/`unknown` badge instead
-   * (see `PostureView.tsx`), never this severity. */
+   * (see `PostureView.tsx`), never this severity. I3's own 11 zonds follow
+   * the same fixed-per-zond rule: `policy_plane_health` is high (fail-open
+   * class, mirroring `governance_fail_open`/`wardryx_keyless_admin` - see
+   * that finding's own doc comment), every other new zond is medium (a
+   * visibility/operational gap, not itself a governance fail-open). */
   severity: Severity;
   state: FindingState;
   whyItMatters: string;
@@ -132,6 +174,36 @@ export interface PostureInput {
    * no way to observe (see [`identitySnapshotAgeFinding`]'s doc comment).
    * `null` until that fetch has resolved at least once. */
   identitySnapshotAsOfMs: number | null;
+
+  // ---- I3 additions: the "Connection & credential health" group's own
+  // inputs. Six more `*_status` reads this shell already performs for their
+  // own panels (`useQualityStatus`/`useCryptoStatus`/`useMemoryStatus`/
+  // `useDrillsStatus`/`useRemoteStatus`, plus a one-shot `copilot_status`
+  // fetch - mirrors `CopilotView.tsx`'s own inline fetch, there being no
+  // dedicated hook for a DTO with no bootstrapping/polling shape to begin
+  // with, see `copilotTypes.ts`), plus two more reads other panels already
+  // make (`money_runs`, `policy_list_approvals`) for the two staleness
+  // checks. All gathered by `lib/usePostureData.ts`. ----
+
+  qualityStatus: QualityStatus | null;
+  cryptoStatus: CryptoStatus | null;
+  memoryStatus: MemoryStatus | null;
+  drillsStatus: DrillsStatus | null;
+  /** Flat DTO, not a `state`-tagged union (see `copilotTypes.ts`) - `null`
+   * only until the one-shot `copilot_status` fetch first resolves. */
+  copilotStatus: CopilotStatus | null;
+  remoteStatus: RemoteStatus | null;
+  /** `null` until `lib/usePostureData.ts`'s own `money_runs` read has
+   * resolved at least once (only ever attempted once
+   * `moneyStatus.state === "ready"`) - feeds [`cloudIngestFreshnessFinding`]
+   * only; every OTHER money-plane zond in this file keys off `moneyStatus`
+   * alone. */
+  moneyRuns: Run[] | null;
+  /** `null` until `lib/usePostureData.ts`'s own `policy_list_approvals` read
+   * has resolved at least once (only ever attempted once
+   * `policyStatus.state === "ready"`) - feeds [`approvalsWaitingFinding`]
+   * only. */
+  approvals: Approval[] | null;
 }
 
 /** Wardryx/TokenFuse Cloud's shared "devkey resolves to this org" constant -
@@ -424,6 +496,368 @@ function formatAgeShort(ms: number): string {
   return `${h}h`;
 }
 
+// ---------------------------------------------------------------------------
+// I3 "Connection & credential health" group: 9 per-plane health zonds (one
+// row per `*_status` command this shell already calls elsewhere) + 2
+// staleness checks over data already read elsewhere (`money_runs`,
+// `policy_list_approvals`). Same `unknown`/`ok`/`triggered` contract as
+// every zond above - "configured but unreachable" is `triggered`, "not
+// configured yet" is `unknown` (never a fabricated `ok`), matching this
+// whole file's fail-closed doctrine.
+// ---------------------------------------------------------------------------
+
+/** "Cloud ingest gone stale" threshold for `cloud_ingest_freshness` - the I3
+ * spec's own number. */
+const CLOUD_INGEST_STALE_MS = 15 * 60_000;
+
+/** "An approval has waited too long for a human" threshold for
+ * `approvals_waiting` - the I3 spec's own number. */
+const APPROVAL_WAIT_STALE_MS = 60 * 60_000;
+
+function moneyPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.moneyStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "reachable and ready.";
+  } else if (s?.state === "pairing_failed") {
+    state = "triggered";
+    detail = `pairing failed: ${s.reason}`;
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "money_plane_health",
+    title: "Money plane (TokenFuse Cloud)",
+    severity: "medium",
+    state,
+    whyItMatters:
+      `Whether the console can currently reach the money plane it discovered (money_status) - ${detail} ` +
+      "A console-side gap here is a visibility/control loss (no read on spend/runs/incidents, no kill/budget), not " +
+      "itself a fail-open: the gateway still enforces independently of whether the console can see it.",
+    howToFix:
+      "Confirm the discovered cloud_url is reachable and the bearer is valid (taipan up, or TOKENFUSE_CLOUD_URL/TOKENFUSE_CLOUD_KEYS).",
+  };
+}
+
+function policyPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.policyStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "reachable and ready.";
+  } else if (s?.state === "unreachable") {
+    state = "triggered";
+    detail = `unreachable: ${s.reason}`;
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "policy_plane_health",
+    title: "Policy plane (Wardryx)",
+    severity: "high", // fail-open class - see this zond's own whyItMatters and PostureFinding.severity's doc comment.
+    state,
+    whyItMatters:
+      `Whether the console can currently reach Wardryx (policy_status) - ${detail} Fail-open-class like this ` +
+      "group's governance-fail-open/keyless-admin zonds above: while Wardryx is unreachable, approvals cannot be " +
+      "listed or decided, and neither of those other two zonds can even run their own check blind.",
+    howToFix:
+      "Confirm Wardryx is up and the discovered wardryx_url/admin key are correct (taipan up --with wardryx, or WARDRYX_URL/WARDRYX_ADMIN_KEY).",
+  };
+}
+
+function identityPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.identityStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "reachable and ready.";
+  } else if (s?.state === "unreachable") {
+    state = "triggered";
+    detail = `unreachable: ${s.reason}`;
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "identity_plane_health",
+    title: "Identity plane (idryx)",
+    severity: "medium",
+    state,
+    whyItMatters: `Whether the console can currently reach idryx (identity_status) - ${detail}`,
+    howToFix: "Run taipan up --with idryx, or confirm the discovered idryx_url is reachable.",
+  };
+}
+
+function qualityPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.qualityStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "reachable and ready.";
+  } else if (s?.state === "unreachable") {
+    state = "triggered";
+    detail = `unreachable: ${s.reason}`;
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "quality_plane_health",
+    title: "Quality plane (Verdryx)",
+    severity: "medium",
+    state,
+    whyItMatters: `Whether the console can currently open verdryx.db (quality_status) - ${detail}`,
+    howToFix: "Park (or symlink) verdryx.db at ~/.taipan/verdryx.db, or confirm the discovered db_path is correct.",
+  };
+}
+
+/** CryptoStatus has no `unreachable` variant at all - qryx is a CLI wrapper
+ * with no serve process to health-check (see `cryptoTypes.ts`'s own doc
+ * comment) - so this zond can structurally only ever read `ok` or
+ * `unknown`, never `triggered`. Kept in the group anyway for one uniform
+ * per-plane row rather than a silent gap in the checklist. */
+function cryptoPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.cryptoStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "ready.";
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "crypto_plane_health",
+    title: "Crypto plane (Qryx)",
+    severity: "medium",
+    state,
+    whyItMatters:
+      `Whether qryx is configured for this console (crypto_status) - ${detail} CryptoStatus carries no ` +
+      '"unreachable" variant (qryx has no serve process to probe), so this row can only ever read ok or unknown.',
+    howToFix: "Run taipan up (mints qryx_bin/default_target), or set the equivalent env vars this box discovers from.",
+  };
+}
+
+function memoryPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.memoryStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "reachable and ready.";
+  } else if (s?.state === "unreachable") {
+    state = "triggered";
+    detail = `unreachable: ${s.reason}`;
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "memory_plane_health",
+    title: "Memory plane (Engram)",
+    severity: "medium",
+    state,
+    whyItMatters: `Whether engram-mcp actually spawned and completed its handshake (memory_status) - ${detail}`,
+    howToFix: "Confirm engram_mcp_bin resolves and db_path is writable, or re-run taipan up --with engram.",
+  };
+}
+
+/** DrillsStatus, like CryptoStatus, has no `unreachable` variant - mockryx
+ * has no serve process of its own to health-check either (see
+ * `drillsTypes.ts`'s own doc comment) - so this zond likewise can only ever
+ * read `ok` or `unknown`, never `triggered`. */
+function drillsPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.drillsStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "ready.";
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "drills_plane_health",
+    title: "Drills plane (Mockryx)",
+    severity: "medium",
+    state,
+    whyItMatters:
+      `Whether mockryx's gateway is configured for this console (drills_status) - ${detail} DrillsStatus ` +
+      'likewise carries no "unreachable" variant, so this row can only ever read ok or unknown.',
+    howToFix: "Run taipan up --with mockryx (mints gateway_url/has_api_key), or set the equivalent env vars.",
+  };
+}
+
+/** CopilotStatus is a flat DTO with no reachability concept at all - no
+ * `state`-tagged union, no environment to discover (see `copilotTypes.ts`'s
+ * own doc comment) - so "disabled" is read as `unknown` (not configured),
+ * never a fabricated `triggered`: a disabled copilot is very commonly a
+ * DELIBERATE choice (no BYO model connected yet), not a failure. Like
+ * crypto/drills above, this zond can therefore never actually read
+ * `triggered` either. */
+function copilotPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.copilotStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s) {
+    if (s.enabled) {
+      state = "ok";
+      detail = `enabled (${s.provider ?? "unknown provider"}${s.local ? ", local" : ""}).`;
+    } else {
+      detail = `disabled${s.disabled_reason ? `: ${s.disabled_reason}` : "."}`;
+    }
+  }
+  return {
+    id: "copilot_plane_health",
+    title: "Copilot plane (Felyx)",
+    severity: "medium",
+    state,
+    whyItMatters:
+      `Whether a copilot provider is connected (copilot_status) - ${detail} CopilotStatus has no reachability ` +
+      "concept at all, so this row can only ever read ok or unknown, never triggered.",
+    howToFix: "Open the Copilot tab and Connect Felyx (Anthropic, OpenAI, OpenRouter, Ollama, or LM Studio) if you want it enabled.",
+  };
+}
+
+/** Unlike the two CLI-wrapper planes above, Remote genuinely CAN be
+ * "configured but unreachable": a saved environment whose WireGuard
+ * bring-up failed. `disconnected`/`connecting` are normal not-yet-tried
+ * states (`ok`), never `triggered` - only a DURABLE `failed` record counts
+ * (see `remoteTypes.ts`'s own doc comment: "never silently reverts to
+ * disconnected"). */
+function remotePlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.remoteStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    if (s.environment === null) {
+      detail = "no remote environment saved yet (not configured).";
+    } else if (s.tunnel.state === "failed") {
+      state = "triggered";
+      detail = `tunnel bring-up failed: ${s.tunnel.message}`;
+    } else {
+      state = "ok";
+      detail = `environment "${s.environment.name}" saved, tunnel ${s.tunnel.state}.`;
+    }
+  }
+  return {
+    id: "remote_plane_health",
+    title: "Remote plane (Distance: WireGuard + SSH)",
+    severity: "medium",
+    state,
+    whyItMatters: `Whether a saved remote environment's WireGuard tunnel is actually up (remote_status) - ${detail}`,
+    howToFix: "Reconnect from the Remote tab, and check the peer/endpoint/keys saved in the environment form.",
+  };
+}
+
+/** Whether TokenFuse Cloud is still receiving fresh run activity, judged
+ * from `money_runs`' own `last_seen` (the same field `spendSeries` buckets
+ * for the Money/Overview hero sparkline) - the in-console productization of
+ * the `genaryx-web doctor` idea (I3 spec). An EMPTY run list is left
+ * `unknown` rather than `triggered`: the I3 spec's own condition is "runs
+ * exist BUT the newest is stale", and with zero runs there is genuinely
+ * nothing to call fresh or stale (could mean "no traffic yet" just as
+ * easily as "ingest broken") - a different, deliberately more cautious
+ * call than `bus_stale` above, which DOES treat an empty bus feed as
+ * `triggered`; the two zonds read different data with different priors, so
+ * they need not agree. */
+function cloudIngestFreshnessFinding(input: PostureInput): PostureFinding {
+  let state: FindingState = "unknown";
+  let detail = "no run data loaded yet.";
+  if (input.moneyRuns !== null) {
+    if (input.moneyRuns.length === 0) {
+      detail = "no runs in the current window.";
+    } else {
+      const times = input.moneyRuns.map((r) => Date.parse(r.last_seen)).filter((ms) => Number.isFinite(ms));
+      if (times.length === 0) {
+        detail = "every run has an unparseable last_seen.";
+      } else {
+        const ageMs = Math.max(0, input.nowMs - Math.max(...times));
+        state = ageMs > CLOUD_INGEST_STALE_MS ? "triggered" : "ok";
+        detail = `newest run last_seen ${formatAgeShort(ageMs)} ago.`;
+      }
+    }
+  }
+  return {
+    id: "cloud_ingest_freshness",
+    title: "Cloud ingest freshness",
+    severity: "medium",
+    state,
+    whyItMatters: `Whether TokenFuse Cloud is still receiving fresh run activity, judged from money_runs' own last_seen - ${detail}`,
+    howToFix: "Check the gateway is still forwarding traffic to Cloud, and that this box's discovered cloud_url is still correct.",
+  };
+}
+
+/** How long the oldest PENDING approval (`policy_list_approvals`) has
+ * waited for a human decision. Zero pending approvals is a vacuous, clean
+ * `ok` (mirrors `attestationCoverageFinding`'s identical "0 privileged
+ * identities is a vacuous pass, not unknown" precedent above) - unlike
+ * [`cloudIngestFreshnessFinding`], "the list is empty" is unambiguous here:
+ * nothing is waiting, which is unambiguously fine, not merely "no data". */
+function approvalsWaitingFinding(input: PostureInput): PostureFinding {
+  let state: FindingState = "unknown";
+  let detail = "no approvals data loaded yet.";
+  if (input.approvals !== null) {
+    const pending = input.approvals.filter((a) => a.pending);
+    if (pending.length === 0) {
+      state = "ok";
+      detail = "no approvals currently pending.";
+    } else {
+      const times = pending.map((a) => Date.parse(a.requested_at)).filter((ms) => Number.isFinite(ms));
+      if (times.length === 0) {
+        detail = "every pending approval has an unparseable requested_at.";
+      } else {
+        const ageMs = Math.max(0, input.nowMs - Math.min(...times));
+        state = ageMs > APPROVAL_WAIT_STALE_MS ? "triggered" : "ok";
+        detail = `oldest pending approval requested ${formatAgeShort(ageMs)} ago.`;
+      }
+    }
+  }
+  return {
+    id: "approvals_waiting",
+    title: "Approvals waiting",
+    severity: "medium",
+    state,
+    whyItMatters: `How long the oldest pending approval has waited for a human decision (policy_list_approvals) - ${detail}`,
+    howToFix: "Open the Policy panel's Approvals inbox and grant or deny the oldest pending request.",
+  };
+}
+
+/** I3's 11-zond "Connection & credential health" group, in the order listed
+ * above: the 9 per-plane health rows (money/policy/identity/quality/
+ * crypto/memory/drills/copilot/remote, in that fixed order) then the 2
+ * staleness checks. Same purity/totality guarantee as
+ * [`computeStackPostureFindings`]/[`computeIdentityPostureFindings`]: never
+ * throws, always returns exactly 11 findings.
+ *
+ * Explicit non-goals (I3 spec): this group never opens a socket, calls a
+ * provider, or shells a binary itself - every row above reads only a
+ * `*_status`/list command this shell ALREADY calls for its own panels, at
+ * whatever cadence `lib/usePostureData.ts` already reads them. It
+ * specifically does NOT: probe connectivity live from the browser/console
+ * process; validate provider-key VALIDITY (TokenFuse stores no provider
+ * keys by design - not a gap, a deliberate privacy feature, so there is no
+ * key here to check in the first place); or check MCP secret-handle
+ * freshness or JWKS age (both need a gateway/cloud surface this console
+ * does not have a read on today - named follow-ups, not silently skipped). */
+export function computeConnectionHealthFindings(input: PostureInput): PostureFinding[] {
+  return [
+    moneyPlaneHealthFinding(input),
+    policyPlaneHealthFinding(input),
+    identityPlaneHealthFinding(input),
+    qualityPlaneHealthFinding(input),
+    cryptoPlaneHealthFinding(input),
+    memoryPlaneHealthFinding(input),
+    drillsPlaneHealthFinding(input),
+    copilotPlaneHealthFinding(input),
+    remotePlaneHealthFinding(input),
+    cloudIngestFreshnessFinding(input),
+    approvalsWaitingFinding(input),
+  ];
+}
+
 /** Posture-lite's 4 v0 zonds, in PHASE2.md's own order. Pure and total:
  * never throws, always returns exactly 4 findings regardless of how
  * incomplete `input` currently is (an unresolved backend just yields more
@@ -447,10 +881,18 @@ export function computeIdentityPostureFindings(input: PostureInput): PostureFind
   ];
 }
 
-/** All 9 zonds together, Posture-lite's 4 then the identity-plane 5, in one
- * fixed order - for any caller that just wants "the whole board" as a
- * single list. `PostureView.tsx` itself calls the two halves above
- * separately (see that component). */
+/** All 20 zonds together, Posture-lite's 4, then the identity-plane 5, then
+ * I3's connection/credential-health 11, in one fixed order - for any caller
+ * that just wants "the whole board" as a single list (e.g. `lib/incidents.ts`'s
+ * Incident Center aggregation, which only cares which findings are
+ * `triggered`, not which of the three groups they came from).
+ * `PostureView.tsx` itself calls the three groups above separately (see that
+ * component), so it can render each under its own subheading rather than
+ * slicing this combined array by a fragile fixed index. */
 export function computePostureFindings(input: PostureInput): PostureFinding[] {
-  return [...computeStackPostureFindings(input), ...computeIdentityPostureFindings(input)];
+  return [
+    ...computeStackPostureFindings(input),
+    ...computeIdentityPostureFindings(input),
+    ...computeConnectionHealthFindings(input),
+  ];
 }
