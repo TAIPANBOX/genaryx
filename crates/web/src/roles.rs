@@ -56,6 +56,10 @@ const ADMIN_COMMANDS: &[&str] = &[
     // Onboard generates a minted secret and stages a passport write.
     "onboard_generate",
     "onboard_write_passport",
+    // Admission's baseline leg fires real gateway calls under the newcomer's
+    // own key and spends real provider money (docs/ADMISSION.md) - the same
+    // "admin only" posture as Drills' `drills_run` just above.
+    "admission_baseline",
     // Copilot: logging a proposal as approved leads to a signed action.
     "copilot_log_proposal_approved",
     // Pocket pairs / unpairs a phone with the relay.
@@ -93,6 +97,8 @@ pub fn required_role(command: &str) -> Role {
 /// placed on purpose and an unknown name still fails closed in
 /// [`required_role`].
 const VIEWER_COMMANDS: &[&str] = &[
+    "admission_check",
+    "admission_status",
     "agent_events",
     "agent_graph",
     "agent_slice",
@@ -147,6 +153,9 @@ mod tests {
     /// equals the union of the three classified sets, so adding a dispatch
     /// arm without classifying it fails CI rather than silently defaulting.
     const ALL_DISPATCH_COMMANDS: &[&str] = &[
+        "admission_baseline",
+        "admission_check",
+        "admission_status",
         "agent_events",
         "agent_graph",
         "agent_slice",

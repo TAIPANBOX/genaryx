@@ -117,6 +117,7 @@ mod commands;
 mod live;
 mod tray;
 
+use genaryx_api::admission::AdmissionState;
 use genaryx_api::bus::AppState;
 use genaryx_api::copilot::CopilotState;
 use genaryx_api::credentials::CredentialsState;
@@ -231,6 +232,23 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let resolved = genaryx_api::credentials::bootstrap().await;
                 let state = credentials_handle.state::<CredentialsState>();
+                *state.inner.lock().await = resolved;
+            });
+
+            // Admission panel (I6 "admission gate", docs/ADMISSION.md): same
+            // non-blocking manage-then-spawn-resolve shape once more, an
+            // entirely independent plane from Credentials just above even
+            // though both hold a `GatewayClient` over the SAME
+            // `services.gateway` URL (see `genaryx_api::admission`'s module
+            // doc) - this one additionally shells the `verdryx` CLI for its
+            // one admin command, resolved fresh per call rather than at
+            // bootstrap (see `admission::env`'s "Honest per-piece resolution
+            // states").
+            app.manage(AdmissionState::pending());
+            let admission_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = genaryx_api::admission::bootstrap().await;
+                let state = admission_handle.state::<AdmissionState>();
                 *state.inner.lock().await = resolved;
             });
 
@@ -368,6 +386,9 @@ pub fn run() {
             commands::onboard::onboard_status,
             commands::onboard::onboard_generate,
             commands::onboard::onboard_write_passport,
+            commands::admission::admission_status,
+            commands::admission::admission_check,
+            commands::admission::admission_baseline,
             commands::quality::quality_status,
             commands::quality::quality_list_run_summaries,
             commands::quality::quality_run_scores,

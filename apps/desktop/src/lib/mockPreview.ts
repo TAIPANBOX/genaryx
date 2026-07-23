@@ -1121,6 +1121,43 @@ function mockCredentialsKeys() {
   };
 }
 
+// ---- Admission (I6 "admission gate") ---------------------------------------
+// Reuses `mockCredentialsKeys`'s SAME fixture report rather than a second,
+// parallel one - the gateway's key-lifecycle report is the exact same
+// object both planes read (`genaryx_api::admission`'s module doc: "the SAME
+// gateway `credentials` reads"), so the preview should agree with itself.
+// Typing `billing-agent` (bound, matches a real `agents` pattern) is the
+// happy path; typing anything else is the "key unknown to gateway" negative
+// - both fall out of one lookup, no separate fixture needed for either.
+function mockAdmissionCheck(keyId: string, agentId: string) {
+  const report = mockCredentialsKeys();
+  const key = report.keys.find((k) => k.key_id === keyId) ?? null;
+  // Docs/20 grammar: a literal, or a single trailing `*` (prefix match) -
+  // mirrors `agent_bound_in_report`/`valid_pattern`/`pattern_matches` in
+  // `crates/api/src/admission/commands.rs`.
+  const inMap = report.keys.some((k) =>
+    k.agents.some((p) => (p.endsWith("*") ? agentId.startsWith(p.slice(0, -1)) : p === agentId)),
+  );
+  return {
+    key_id: keyId,
+    agent_id: agentId,
+    strict_mode: report.strict_mode,
+    identity_map_configured: report.identity_map_configured,
+    key,
+    in_map: inMap,
+  };
+}
+
+function mockAdmissionBaseline(agentId: string) {
+  return {
+    run_id: `admission-${Math.floor(pseudo("admission-run" + agentId) * 1e12).toString(16).slice(0, 12)}`,
+    case_count: 12,
+    mean_score: 0.91,
+    total_cost_usd: 0.34,
+    baseline_id_or_label: `admission-${agentId}`,
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const r = (v: unknown) => v as T;
@@ -1129,6 +1166,13 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "policy_status": return r(READY({ wardryx_url: "http://127.0.0.1:8090", org_domain: "live" }));
     case "identity_status": return r(READY({ idryx_url: "http://127.0.0.1:8081", rescan_available: true }));
     case "credentials_status": return r(READY({ gateway_url: "http://127.0.0.1:4100" }));
+    case "admission_status": return r({
+      gateway: READY({ gateway_url: "http://127.0.0.1:4100" }),
+      verdryx_bin: "/root/.taipan/bin/verdryx",
+      verdryx_bin_present: true,
+      verdryx_db: { source: { source: "well_known" }, path: "/root/.taipan/verdryx.db" },
+      drills_scenario_dir: "/root/.stack-up/repos/mockryx/scenarios",
+    });
     case "quality_status": return r(READY({ db_path: "/root/.taipan/verdryx.db" }));
     case "memory_status": return r(READY({ db_path: "/root/.taipan/engram.engram", engram_mcp_bin: "/root/.taipan/bin/engram-mcp" }));
     case "crypto_status": return r({ state: "ready", default_target: "/root", qryx_bin: "/root/.taipan/bin/qryx" });
@@ -1176,6 +1220,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "identity_list_alerts": return r(mockAlerts());
     case "identity_list_remediations": return r([]);
     case "credentials_keys": return r(mockCredentialsKeys());
+    case "admission_check": return r(mockAdmissionCheck(String(args?.key_id ?? ""), String(args?.agent_id ?? "")));
+    case "admission_baseline": return r(mockAdmissionBaseline(String(args?.agent_id ?? "")));
 
     case "agent_graph": return r(mockGraph());
     case "agent_record": return r(mockAgentRecord(String(args?.agent_id ?? "")));
