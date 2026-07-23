@@ -191,6 +191,16 @@ const PER_CALL_USD: Record<string, number> = {
 const RUNAWAY_TEAM = "sre";
 const RUNAWAY_NAME = "rca-copilot";
 
+/** I11 "agent drift card" fixture: the one mock agent that gets a
+ * quality-drift history, a short spend-run history, and a behavior-anomaly
+ * alert, so Agent 360's Drift section (`components/Agent360.tsx`) has
+ * something real to render for at least one agent under `dev:mock`. An
+ * ordinary, unprivileged data-team agent - deliberately NOT the runaway
+ * (already its own distinct story above) and not one of the I5 access-matrix
+ * fixture agents below, so each fixture agent's "reason to look
+ * interesting" stays legible on its own. */
+const DRIFT_DEMO_AGENT_ID = `agent://${ORG}/data/data-quality-checker`;
+
 function genHistory(a: { team: string; name: string; owner: string }): LifecycleEntry[] {
   const born = 8 * DAY + Math.floor(pseudo(a.name + "born") * 12 * DAY);
   const h: LifecycleEntry[] = [
@@ -312,8 +322,41 @@ function runFor(a: FleetAgent) {
   };
 }
 
+/** I11 fixture: `spendSeries` (lib/dashData.ts) needs at least two distinct
+ * `last_seen` timestamps to draw anything - below that it returns `[]`
+ * (`Sparkline`'s own "< 2 values" empty case). Every fixture agent otherwise
+ * has exactly the one live run `runFor` produces above, so NO agent's own
+ * spend trend would ever render in Agent 360's Drift section under
+ * `dev:mock` without this: a short run history for the SAME agent the drift
+ * events below are attached to ({@link DRIFT_DEMO_AGENT_ID}), so its
+ * per-agent `runs` (Agent 360 already filters `money_runs` to
+ * `run.agent_id === agentId`) has more than the one point. A modest,
+ * gently-rising spend trend - nothing dramatic, this agent's story is the
+ * quality regression below, not a cost incident. */
+function mockDriftAgentRunHistory() {
+  const model = "claude-haiku-4-5";
+  const points = [
+    { agoMs: 10 * DAY, spentUsd: 1.12, calls: 210 },
+    { agoMs: 7 * DAY, spentUsd: 1.38, calls: 236 },
+    { agoMs: 4 * DAY, spentUsd: 1.61, calls: 258 },
+    { agoMs: 1 * DAY, spentUsd: 2.27, calls: 301 },
+  ];
+  return points.map((p, i) => ({
+    run_id: `data-quality-checker-hist-${i + 1}`,
+    model,
+    agent_id: DRIFT_DEMO_AGENT_ID,
+    spent_usd: p.spentUsd,
+    budget_usd: 3,
+    calls: p.calls,
+    cache_hits: Math.round(p.calls * 0.1),
+    steps: Math.min(p.calls, 40),
+    last_seen: ago(p.agoMs),
+    killed: false,
+  }));
+}
+
 function mockRuns() {
-  return FLEET.map(runFor);
+  return [...FLEET.map(runFor), ...mockDriftAgentRunHistory()];
 }
 
 function mockOverview() {
@@ -578,6 +621,13 @@ function mockAlerts() {
     // join `lib/access.ts` derives independently - both must agree here.
     { detector: "shadow_mcp", identity: `mcp://${ORG}/shadow/scratch-notes`, severity: "high", time: ago(11 * 60_000), summary: "unsanctioned MCP server in use (shadow MCP)" },
     { detector: "agent_shadow_tool", identity: `agent://${ORG}/platform/dependency-upgrader`, severity: "high", time: ago(9 * 60_000), summary: "agent uses tool(s) from an unsanctioned MCP server: scratch_notes_write" },
+    // I11 "agent drift card" fixture: idryx's own login-behavior baseline
+    // detector (`behavior_anomaly` - see `identityTypes.ts`'s `DETECTOR_IDS`
+    // doc), for the SAME agent the quality-drift events below are attached
+    // to. Agent 360's Drift section surfaces this alert AS-IS (this card's
+    // "idryx baselines" are exactly its existing behavior_anomaly alerts,
+    // nothing new fetched from idryx).
+    { detector: "behavior_anomaly", identity: DRIFT_DEMO_AGENT_ID, severity: "medium", time: ago(30 * 60_000), summary: "behavior_anomaly: data-quality-checker's call cadence shifted outside its 30-day login-behavior baseline" },
   ];
 }
 
@@ -752,7 +802,7 @@ function mockQualityDriftEvent(): UiEvent {
     ts: ago(6 * 60_000),
     source: "verdryx",
     type: "quality_drift",
-    agent_id: `agent://${ORG}/data/data-quality-checker`,
+    agent_id: DRIFT_DEMO_AGENT_ID,
     run_id: null,
     severity: "high",
     schema: "taipanbox.dev/agent-event/v0.2",
@@ -772,6 +822,48 @@ function mockQualityDriftEvent(): UiEvent {
     raw: "",
     file: "/root/.stack-up/events/verdryx.ndjson",
     off: 900_001,
+  };
+}
+
+/** I11 "agent drift card" fixture: a second `quality_drift` event for the
+ * SAME agent, verdict "on-track", so Agent 360's Drift section (assembled
+ * client-side from these bus events - `components/Agent360.tsx`) has a real
+ * example of both tones under `dev:mock`, not just the regression above.
+ * Older than the regression (`ago(2 * DAY)` vs. the regression's own
+ * `ago(6 * 60_000)`), so the honest reading is "was fine, later regressed" -
+ * both check the SAME baseline (`base-release`). NOTE: `lib/incidents.ts`'s
+ * own doc comment records that the REAL verdryx bus only ever fires
+ * `quality_drift` on a regression (an "all clear" never gets an event at
+ * all) - this on-track row exists ONLY in the mock preview, to exercise the
+ * Drift section's other tone, using a value (`verdict: "on-track"`) the
+ * wire contract already allows for even though production never emits it. */
+function mockQualityOnTrackEvent(): UiEvent {
+  return {
+    id: 900_002,
+    env: "live",
+    ts: ago(2 * DAY),
+    source: "verdryx",
+    type: "quality_drift",
+    agent_id: DRIFT_DEMO_AGENT_ID,
+    run_id: null,
+    severity: "low",
+    schema: "taipanbox.dev/agent-event/v0.2",
+    on_behalf_of: [],
+    data: {
+      baseline_id: "base-release",
+      window: "eval-1003",
+      mean_score: 0.875,
+      delta: -0.005,
+      verdict: "on-track",
+      baseline_n: 44,
+      t_statistic: -0.34,
+      ci_low: -0.021,
+      ci_high: 0.011,
+    },
+    prev_hash: null,
+    raw: "",
+    file: "/root/.stack-up/events/verdryx.ndjson",
+    off: 900_002,
   };
 }
 
@@ -1609,7 +1701,13 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       const id = String(args?.agent_id ?? "");
       const limit = Number(args?.limit ?? 50);
       const evts = seedEvents(limit).filter((e) => e.agent_id === id);
-      return r(evts.length ? evts : seedEvents(limit).slice(0, 6).map((e) => ({ ...e, agent_id: id })));
+      const base = evts.length ? evts : seedEvents(limit).slice(0, 6).map((e) => ({ ...e, agent_id: id }));
+      // I11 fixture: the SAME two quality_drift events `recent_events` below
+      // seeds (see `mockQualityDriftEvent`/`mockQualityOnTrackEvent`'s own
+      // doc comments) must also show up on THIS agent's own per-agent feed -
+      // Agent 360's Drift section reads `agent_events`, not `recent_events`.
+      const drift = id === DRIFT_DEMO_AGENT_ID ? [mockQualityDriftEvent(), mockQualityOnTrackEvent()] : [];
+      return r([...drift, ...base]);
     }
     // The seeded quality_drift event is APPENDED after the freshly-generated
     // ones (see mockQualityDriftEvent's own doc comment for why order matters
