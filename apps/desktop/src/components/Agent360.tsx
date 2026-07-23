@@ -4,9 +4,11 @@ import type { AgentSlice } from "../graphTypes";
 import { ATTESTATION_DETECTORS } from "../identityTypes";
 import type { IdentityError, IdryxAlert, IdryxIdentity } from "../identityTypes";
 import { cssVar } from "../lib/cssVars";
+import { sevRank, spendSeries } from "../lib/dashData";
 import { formatTimestamp, formatUsd } from "../lib/format";
 import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph";
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
+import { isQualityDriftEvent } from "../lib/incidents";
 import { describeMoneyError, fetchRuns } from "../lib/money";
 import { describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
 import { effectiveOverlay, matchedPolicies, mcpReachForAgent, mcpServerIdentities, permissionRollup, shadowServerIds } from "../lib/access";
@@ -18,6 +20,7 @@ import type { MoneyError, Run } from "../moneyTypes";
 import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 import type { UiEvent } from "../types";
 import { DelegationGraphView } from "./DelegationGraphView";
+import { Sparkline } from "./dash";
 import { SeverityBadge } from "./SeverityBadge";
 import { SourceChip } from "./SourceChip";
 
@@ -27,6 +30,79 @@ const EVENTS_LIMIT = 50;
 const EVENTS_SHOWN = 12;
 const POLICY_EVENTS_SHOWN = 8;
 const IDENTITY_ALERTS_SHOWN = 6;
+/** I11 "Drift" section: how many older drift checks show below the latest,
+ * and how many behavior-anomaly alerts show before pointing at the Identity
+ * panel instead - same "compact card, not a full panel" budget as the
+ * constants above. */
+const DRIFT_CHECKS_SHOWN = 6;
+const BEHAVIOR_ALERTS_SHOWN = 6;
+
+/** Best-effort read of one field out of an event's untyped `data` payload -
+ * never assumes the shape, never throws on a missing/malformed field (the
+ * core keeps `data` deliberately untyped end to end). Duplicated rather than
+ * imported from `QualityDriftStream.tsx`'s identical pair (and
+ * `lib/incidents.ts`'s private copy) ON PURPOSE - the same "two independent
+ * literals, not worth a shared dependency" call `lib/incidents.ts`'s own doc
+ * comment already makes for this exact pair. */
+function dataNumber(data: unknown, key: string): number | null {
+  if (data && typeof data === "object" && key in (data as Record<string, unknown>)) {
+    const value = (data as Record<string, unknown>)[key];
+    if (typeof value === "number") return value;
+  }
+  return null;
+}
+
+function dataString(data: unknown, key: string): string | null {
+  if (data && typeof data === "object" && key in (data as Record<string, unknown>)) {
+    const value = (data as Record<string, unknown>)[key];
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+/** One `quality_drift` bus event's fields, pulled out of its untyped `data`
+ * once so the render below reads plain properties instead of re-parsing
+ * `data` per field per row. `baselineN`/`tStatistic`/`ciLow`/`ciHigh` are
+ * `null` together whenever the event predates them or the field is
+ * malformed - never assumed present, matching this whole card's tolerance
+ * for an honestly-incomplete upstream payload. */
+interface DriftReading {
+  id: number;
+  ts: string;
+  verdict: string | null;
+  meanScore: number | null;
+  delta: number | null;
+  baselineId: string | null;
+  baselineN: number | null;
+  tStatistic: number | null;
+  ciLow: number | null;
+  ciHigh: number | null;
+}
+
+function driftReading(e: UiEvent): DriftReading {
+  return {
+    id: e.id,
+    ts: e.ts,
+    verdict: dataString(e.data, "verdict"),
+    meanScore: dataNumber(e.data, "mean_score"),
+    delta: dataNumber(e.data, "delta"),
+    baselineId: dataString(e.data, "baseline_id"),
+    baselineN: dataNumber(e.data, "baseline_n"),
+    tStatistic: dataNumber(e.data, "t_statistic"),
+    ciLow: dataNumber(e.data, "ci_low"),
+    ciHigh: dataNumber(e.data, "ci_high"),
+  };
+}
+
+/** on-track -> calm/mint, regressed -> warn/ember, anything else (an
+ * unrecognized verdict string) -> the same neutral "faint" tone
+ * `SeverityBadge` falls back to for an unrecognized severity - never looks
+ * more assured than the data actually is. */
+function verdictTone(verdict: string | null): string {
+  if (verdict === "regressed") return "var(--ember)";
+  if (verdict === "on-track") return "var(--mint)";
+  return "var(--faint)";
+}
 
 function SectionHeader({ title }: { title: string }) {
   return (
@@ -417,6 +493,29 @@ export function Agent360({
   // section above already made (`allIdentities`/`allAlerts`) - no new fetch.
   const mcpServers = mcpServerIdentities(allIdentities);
   const shadowIds = shadowServerIds(allAlerts);
+  // Drift (I11): assembled entirely from state the sections above already
+  // fetched - zero new fetches, zero new commands. Quality drift is `events`
+  // (Events section) filtered to verdryx's `quality_drift` bus event with
+  // the SAME predicate `QualityDriftStream.tsx`/`lib/incidents.ts` use
+  // elsewhere, newest first (sorted here rather than trusted from the
+  // transport, so this reads correctly regardless of fetch order). Spend
+  // trend buckets `runs` (Money section) with the SAME `spendSeries` helper
+  // MoneyView/OverviewView already feed their own hero Sparkline from.
+  // Behavior anomalies are `identityAlerts` (Identity section) filtered to
+  // idryx's `behavior_anomaly` detector - idryx's own LOGIN-behavior
+  // baseline, not a quality baseline of any kind: "idryx baselines" on this
+  // card is exactly this filter over alerts Agent 360 already held, nothing
+  // new fetched from idryx.
+  const driftReadings = (events ?? [])
+    .filter(isQualityDriftEvent)
+    .map(driftReading)
+    .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
+  const latestDrift = driftReadings[0] ?? null;
+  const behaviorAlerts = identityAlerts
+    .filter((a) => a.detector === "behavior_anomaly")
+    .slice()
+    .sort((a, b) => sevRank(b.severity) - sevRank(a.severity) || Date.parse(b.time) - Date.parse(a.time));
+  const spendTrend = spendSeries(runs ?? []);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Agent 360: ${agentId}`}>
@@ -680,6 +779,154 @@ export function Agent360({
             </div>
           )}
           {moneyReady && <OpenPanelButton label="Open Money panel" onClick={() => onNavigate("money")} />}
+        </section>
+
+        {/* ---- Drift (I11: quality drift + spend trend + behavior anomalies) ---- */}
+        <section className="flex flex-col gap-3">
+          <SectionHeader title="Drift" />
+
+          {/* Quality drift: verdryx's quality_drift bus events for this
+              agent, out of the SAME `events` the Events/Policy sections
+              above already hold. */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+              quality drift
+            </span>
+            {events === null ? (
+              <PlaneNote>loading...</PlaneNote>
+            ) : latestDrift === null ? (
+              <PlaneNote>
+                no quality-drift signal for this agent yet - drift arrives on the bus from verdryx only when it
+                flags a regression against a baseline.
+              </PlaneNote>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="badge" style={cssVar("tone", verdictTone(latestDrift.verdict))}>
+                    {latestDrift.verdict ?? "unknown verdict"}
+                  </span>
+                  <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
+                    {formatTimestamp(latestDrift.ts)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                  <Field label="mean score" value={latestDrift.meanScore !== null ? latestDrift.meanScore.toFixed(3) : "-"} />
+                  <Field
+                    label="delta"
+                    value={
+                      latestDrift.delta !== null ? `${latestDrift.delta >= 0 ? "+" : ""}${latestDrift.delta.toFixed(3)}` : "-"
+                    }
+                  />
+                  {latestDrift.baselineId && <Field label="baseline" value={latestDrift.baselineId} />}
+                  {latestDrift.baselineN !== null && latestDrift.baselineN > 0 && (
+                    <>
+                      <Field label="t-statistic" value={latestDrift.tStatistic !== null ? latestDrift.tStatistic.toFixed(2) : "-"} />
+                      <Field
+                        label="95% CI"
+                        value={
+                          latestDrift.ciLow !== null && latestDrift.ciHigh !== null
+                            ? `[${latestDrift.ciLow.toFixed(3)}, ${latestDrift.ciHigh.toFixed(3)}]`
+                            : "-"
+                        }
+                      />
+                      <Field label="baseline n" value={String(latestDrift.baselineN)} />
+                    </>
+                  )}
+                </div>
+                {driftReadings.length > 1 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                      recent checks
+                    </span>
+                    {driftReadings.slice(1, DRIFT_CHECKS_SHOWN).map((d) => (
+                      <div key={d.id} className="flex items-center gap-2 min-w-0">
+                        <span className="badge" style={cssVar("tone", verdictTone(d.verdict))}>
+                          {d.verdict ?? "-"}
+                        </span>
+                        <span className="mono tabular text-[11px]" style={{ color: "var(--dim)" }}>
+                          {d.delta !== null ? `${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)}` : "-"}
+                        </span>
+                        <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
+                          {formatTimestamp(d.ts)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <OpenPanelButton label="Open Quality panel" onClick={() => onNavigate("quality")} />
+          </div>
+
+          {/* Spend trend: this agent's own runs (Money section above),
+              bucketed with the SAME `spendSeries` helper MoneyView/
+              OverviewView already feed their own hero Sparkline from. */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+              spend trend
+            </span>
+            {!moneyReady ? (
+              <PlaneNote>
+                {!moneyStatus || moneyStatus.state === "bootstrapping"
+                  ? "connecting to the money plane..."
+                  : "money plane not connected."}
+              </PlaneNote>
+            ) : moneyError ? (
+              <PlaneNote>{describeMoneyError(moneyError)}</PlaneNote>
+            ) : runs === null ? (
+              <PlaneNote>loading...</PlaneNote>
+            ) : runs.length === 0 ? (
+              <PlaneNote>no runs for this agent yet.</PlaneNote>
+            ) : spendTrend.length === 0 ? (
+              <PlaneNote>not enough distinct run timestamps yet to draw a trend (needs at least two).</PlaneNote>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <Sparkline values={spendTrend} height={56} />
+                <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+                  spend over recent runs &middot; {formatUsd(totalSpentUsd)} total across {runs.length} run
+                  {runs.length === 1 ? "" : "s"}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Behavior anomalies: idryx's behavior_anomaly alerts for this
+              agent, out of the SAME `identityAlerts` the Identity section
+              above already fetched - idryx's login-behavior baseline, not a
+              quality one. */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+              behavior anomalies
+            </span>
+            {!identityReady ? (
+              <PlaneNote>
+                {!identityStatus || identityStatus.state === "bootstrapping"
+                  ? "connecting to the identity plane..."
+                  : "identity plane not connected."}
+              </PlaneNote>
+            ) : identityError ? (
+              <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
+            ) : identity === undefined ? (
+              <PlaneNote>loading...</PlaneNote>
+            ) : behaviorAlerts.length === 0 ? (
+              <PlaneNote>no behavior-anomaly alerts for this agent.</PlaneNote>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {behaviorAlerts.slice(0, BEHAVIOR_ALERTS_SHOWN).map((a, idx) => (
+                  <div key={idx} className="flex items-center gap-2 min-w-0">
+                    <SeverityBadge severity={a.severity} />
+                    <span className="text-[11px] truncate" style={{ color: "var(--dim)" }} title={a.summary}>
+                      {a.summary}
+                    </span>
+                    <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
+                      {formatTimestamp(a.time)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
+          </div>
         </section>
 
         {/* ---- Policy ---- */}
