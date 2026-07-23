@@ -145,6 +145,11 @@ pub struct ProvisionedDto {
     pub agent_id: String,
     pub owner: String,
     pub file: String,
+    /// Count of the passport's declared `filesystem` scopes
+    /// (`PassportPeek::filesystem.len()`). Only the count is surfaced here -
+    /// the individual paths/modes stay on the passport file itself, the
+    /// "Provisioned passports" table shows a folder count, not the folders.
+    pub filesystem_count: usize,
     /// Whether any `keys[].agents` pattern in the loaded map matches this id.
     pub in_map: bool,
 }
@@ -475,15 +480,16 @@ struct PassportDoc<'a> {
 }
 
 /// The minimal, tolerant read side of one `filesystem` entry. Parsed so a
-/// passport carrying the new field peeks cleanly rather than being skipped,
-/// but `path`/`mode` are not yet individually consumed by this branch -
-/// surfacing a per-passport scope count on `ProvisionedDto` would need a
-/// wider "provisioned passports" table column, which this branch's
-/// onboard-generate-form scope leaves as a named follow-up (docs/ONBOARD.md).
-/// `#[allow(dead_code)]` documents that on purpose rather than leaving a
-/// future maintainer to wonder why an unread field survived clippy (compare
-/// `MapKey`'s doc comment above, which omits fields for the exact same
-/// dead_code reason this one instead keeps and annotates).
+/// passport carrying the field peeks cleanly rather than being skipped, but
+/// `path`/`mode` are still not individually consumed: the "Provisioned
+/// passports" table surfaces a per-passport COUNT
+/// (`ProvisionedDto::filesystem_count`, via `PassportPeek::filesystem.len()`
+/// below), not the individual folders, so only the containing `Vec`'s length
+/// is ever read - these two fields are not. `#[allow(dead_code)]` documents
+/// that on purpose rather than leaving a future maintainer to wonder why an
+/// unread field survived clippy (compare `MapKey`'s doc comment above, which
+/// omits fields for the exact same dead_code reason this one instead keeps
+/// and annotates).
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct FsScopePeek {
@@ -502,10 +508,10 @@ struct PassportPeek {
     id: String,
     #[serde(default)]
     owner: String,
-    /// See `FsScopePeek`'s own doc comment for why this is parsed but not
-    /// yet read.
+    /// Read via `.len()` into `ProvisionedDto::filesystem_count` below - see
+    /// `FsScopePeek`'s own doc comment for why ITS fields stay unread even
+    /// though this one is no longer dead code.
     #[serde(default)]
-    #[allow(dead_code)]
     filesystem: Vec<FsScopePeek>,
 }
 
@@ -601,10 +607,12 @@ pub async fn onboard_status(
                     }),
                     Ok(p) => {
                         let in_map = map.as_ref().is_some_and(|m| id_bound_in_map(m, &p.id));
+                        let filesystem_count = p.filesystem.len();
                         passports.push(ProvisionedDto {
                             agent_id: p.id,
                             owner: p.owner,
                             file: display,
+                            filesystem_count,
                             in_map,
                         });
                     }
@@ -1321,6 +1329,9 @@ mod tests {
         .unwrap();
         assert_eq!(status.passports.len(), 1);
         assert!(status.skipped.is_empty());
+        // The whole point of this branch: the two declared scopes surface as
+        // a plain count on the DTO, for the "Provisioned passports" table.
+        assert_eq!(status.passports[0].filesystem_count, 2);
     }
 
     // -- status --------------------------------------------------------------
@@ -1370,12 +1381,17 @@ mod tests {
             .find(|p| p.agent_id.contains("recon"))
             .unwrap();
         assert!(recon.in_map, "the treasury/* binding covers recon");
+        assert_eq!(
+            recon.filesystem_count, 0,
+            "neither fixture passport here declares a filesystem field"
+        );
         let fraud = status
             .passports
             .iter()
             .find(|p| p.agent_id.contains("fraud"))
             .unwrap();
         assert!(!fraud.in_map, "nothing binds fraud/*");
+        assert_eq!(fraud.filesystem_count, 0);
         assert_eq!(status.skipped.len(), 1);
         assert!(status.skipped[0].file.ends_with("broken.json"));
     }

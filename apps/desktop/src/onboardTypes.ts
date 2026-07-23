@@ -23,11 +23,15 @@ export interface UnitOption {
  * passport found in the passports dir. `in_map` is whether any `keys[].agents`
  * pattern in the loaded map matches this passport's id (literal or
  * trailing-`*` prefix) - "seen live traffic yet" is deliberately not here
- * (needs the Cloud; a named follow-up). */
+ * (needs the Cloud; a named follow-up). `filesystem_count` is the number of
+ * scopes the passport's own `filesystem` array declares (0 when it has none,
+ * or predates that field) - the individual paths/modes are not mirrored
+ * here, only the count. */
 export interface Provisioned {
   agent_id: string;
   owner: string;
   file: string;
+  filesystem_count: number;
   in_map: boolean;
 }
 
