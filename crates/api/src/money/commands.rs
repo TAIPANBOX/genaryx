@@ -425,7 +425,9 @@ fn finish_mutation<T>(
     };
 
     let rec = CommandRecord {
-        operator: client.operator.clone(),
+        // The web shell's signed-in principal when set (docs/CONSOLE-IDP.md),
+        // else this client's own default (the desktop shell's OS user).
+        operator: crate::console_actor::operator_or(&client.operator),
         env: "local".to_string(),
         action: action.to_string(),
         target: target.to_string(),

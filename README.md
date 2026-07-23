@@ -92,12 +92,20 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
   the minted secret is shown once, never persisted. `crates/api/src/onboard`
   + an Onboard view in the web/Tauri shells; design in
   [`docs/ONBOARD.md`](docs/ONBOARD.md).
+- **Console IdP login and roles (D15/B3 part 1).** `genaryx-web` verifies a
+  customer's own OIDC ID-tokens offline (static JWKS, never fetched),
+  alongside the existing local account. Three roles (`viewer`, `approver`,
+  `admin`) gate every privileged command at the chokepoint before it
+  dispatches, and a web-originated mutation now names the signed-in person in
+  the audit trail instead of the box's OS account. The local account stays
+  the break-glass admin. Design and the honest limits in
+  [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
 
 ## Not built yet (decided, on the roadmap)
 
-- **Web-side signed kill**: WebAuthn passkey or a tiny native helper, so the
-  browser console gets the same hardware-backed ceremony the desktop shells
-  and the phone already have.
+- **Web-side signed kill** (B3 part 2): WebAuthn passkey or a tiny native
+  helper, so the browser console gets the same hardware-backed ceremony the
+  desktop shells and the phone already have.
 - **Email alerts**: a thin consumer of existing bus signals, sent **by the
   box**, always an alert plus a deep link into the authenticated console,
   never a direct-execute button.
@@ -106,10 +114,11 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
 - **Onboard wizard follow-ups**: the SwiftUI screen (web-first pivot backlog)
   and the "provisioned, awaiting first traffic" check against the Cloud's
   per-unit aggregation, together with Identity-tab unit grouping.
-- **D15/B3, operators via the customer's IdP**: OIDC login for the web
-  console (offline JWKS, air-gap safe), named audit actors, roles
-  admin/approver/viewer, and the WebAuthn per-action ceremony absorbing the
-  web-side signed kill above.
+- **D15/B3 part 2, the WebAuthn per-action ceremony**: part 1 (OIDC login,
+  roles, named audit actors) is built, see docs/CONSOLE-IDP.md. What remains
+  is a per-action passkey re-sign for kill, budget, policy write, and
+  approval grant; once it lands it absorbs the web-side signed kill bullet
+  above.
 
 ## Layout
 

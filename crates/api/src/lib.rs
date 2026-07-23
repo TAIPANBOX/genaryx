@@ -27,6 +27,7 @@
 //! [`events::UiEvent`]) lives here too, because both shells read it.
 
 pub mod bus;
+pub mod console_actor;
 pub mod events;
 pub mod graph;
 pub mod replay;

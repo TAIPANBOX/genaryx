@@ -43,6 +43,31 @@ export function webApiBase(): string {
   return WEB_API_BASE ?? "";
 }
 
+/** Console roles, as `genaryx-web`'s command chokepoint names them
+ * (docs/CONSOLE-IDP.md "Role gating", `crates/web/src/roles.rs`'s `Role`).
+ * Shared by `lib/session.ts`'s `Session.role` and {@link requiredRoleFromCommandError}
+ * below, so "who am I" and "what did this refuse" speak the same type. */
+export type ConsoleRole = "viewer" | "approver" | "admin";
+
+/**
+ * True when `err` is `genaryx-web`'s role-gate refusal - a `403 {"error":
+ * "role <x> required"}` the command chokepoint returns BEFORE a command ever
+ * reaches its own domain handler (docs/CONSOLE-IDP.md "Role gating"). This is
+ * never a `MoneyError`/`PolicyError`/...-shaped rejection (those are always
+ * tagged with their own `kind`), so it needs its own recognizer - kept here,
+ * the one place that already speaks the raw wire shape, so every plane's
+ * normalizer (`toMoneyError`, `toPolicyError`) can fold the SAME check into
+ * its own typed `role_required` variant instead of re-deriving the message
+ * format per plane.
+ */
+export function requiredRoleFromCommandError(err: unknown): ConsoleRole | null {
+  if (!err || typeof err !== "object" || "kind" in err) return null;
+  const message = (err as { error?: unknown }).error;
+  if (typeof message !== "string") return null;
+  const m = /^role (viewer|approver|admin) required$/.exec(message);
+  return (m?.[1] as ConsoleRole | undefined) ?? null;
+}
+
 /**
  * Invoke a core command over whichever transport is live.
  *

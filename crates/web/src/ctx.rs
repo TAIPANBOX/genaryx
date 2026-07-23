@@ -77,6 +77,11 @@ pub struct Ctx {
     /// The operator record, re-readable at runtime so setting a password does
     /// not need a restart.
     pub operator: RwLock<Option<Operator>>,
+    /// Offline OIDC config for the IdP login path (docs/CONSOLE-IDP.md).
+    /// `None` unless `GENARYX_WEB_OIDC_*` is configured at startup, in which
+    /// case the login route also accepts a verified ID-token and the local
+    /// account stays as break-glass. Resolved once here, never per request.
+    pub oidc: Option<crate::oidc::OidcConfig>,
     /// Live bus events, fanned out to every open SSE stream. Bounded on
     /// purpose: a browser tab that stops reading drops events rather than
     /// growing this process's memory without limit. The UI's own reads are
@@ -102,6 +107,7 @@ impl Ctx {
     pub fn bootstrap(cfg: Config, bus: AppState, events: broadcast::Sender<UiEvent>) -> Self {
         Self {
             operator: RwLock::new(crate::auth::load(&cfg.operator_file())),
+            oidc: crate::oidc::OidcConfig::from_env(),
             bus,
             money: MoneyState::pending(),
             policy: PolicyState::pending(),
