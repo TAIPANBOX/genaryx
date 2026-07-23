@@ -247,6 +247,15 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// `"YYYY-MM-DD"` UTC, for the identity-map fragment's `keys[].created`
+/// (I15). Coarser than [`now_rfc3339`] on purpose - the identity map is a
+/// human-edited file (docs/20), and a bare date reads better there than a
+/// full timestamp; chrono is already a dependency of this crate (see
+/// `now_rfc3339` above).
+fn today() -> String {
+    chrono::Utc::now().format("%Y-%m-%d").to_string()
+}
+
 /// Mint a fresh gateway client-key secret: `gx_` + 32 lowercase hex chars
 /// (16 random bytes). Never logged, never written to disk by this plane.
 fn mint_secret() -> Result<String, OnboardError> {
@@ -399,6 +408,10 @@ struct FragmentKey<'a> {
     key_id: &'a str,
     unit: &'a str,
     agents: [&'a str; 1],
+    /// `"YYYY-MM-DD"`, stamped at generation time (I15 "key lifecycle
+    /// health": the Credentials card's "created/age" column reads this same
+    /// field back off the identity map via the gateway's `/v1/keys` report).
+    created: String,
 }
 
 #[derive(Serialize)]
@@ -639,6 +652,7 @@ pub async fn onboard_generate(
             key_id: &key_id,
             unit: &unit,
             agents: [&bind_pattern],
+            created: today(),
         }],
     };
     let mut identity_map_fragment = serde_json::to_string_pretty(&fragment)
@@ -949,6 +963,11 @@ mod tests {
             fragment["keys"][0]["agents"][0],
             "agent://bank.example/treasury/recon-batch"
         );
+        // I15: the fragment stamps today's date on the key, matched against
+        // the same `today()` this test call re-derives (a flaky midnight
+        // rollover between the two calls is the one theoretical false
+        // negative, exactly as any such date-boundary test would have).
+        assert_eq!(fragment["keys"][0]["created"], today());
         // The passport parses and carries the exact schema + field set.
         let passport: serde_json::Value = serde_json::from_str(&bundle.passport_json).unwrap();
         assert_eq!(passport["schema"], PASSPORT_SCHEMA);

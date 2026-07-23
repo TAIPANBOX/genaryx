@@ -119,6 +119,14 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
   is a per-action passkey re-sign for kill, budget, policy write, and
   approval grant; once it lands it absorbs the web-side signed kill bullet
   above.
+- **Credentials card, SwiftUI mirror** (I15 "key lifecycle health"): the
+  desktop/web shells' new Credentials card has no SwiftUI counterpart yet
+  (web-first pivot backlog, same precedent as the Onboard wizard's SwiftUI
+  screen bullet above).
+- **Live e2e against a real gateway `/v1/keys`** (I15 "key lifecycle
+  health", review-stage check): `crates/connectors/src/gateway.rs`'s DTOs
+  are proven against fixtures only; a round trip against an actual running
+  TokenFuse gateway is verified at review, not by a unit test.
 
 ## Layout
 

@@ -33,6 +33,7 @@ pub mod graph;
 pub mod replay;
 
 pub mod copilot;
+pub mod credentials;
 pub mod crypto;
 pub mod drills;
 pub mod evidence;

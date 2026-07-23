@@ -432,6 +432,13 @@ function utcStamp(msAgo: number) {
   return new Date(now - msAgo).toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 
+/** `"YYYY-MM-DD"`, the exact shape `crates/api/src/onboard/commands.rs::today`
+ * stamps on a real identity-map fragment - used only for `GatewayKeyEntry.created`
+ * below, distinct from `utcStamp`'s full-timestamp format. */
+function dateStamp(msAgo: number) {
+  return new Date(now - msAgo).toISOString().slice(0, 10);
+}
+
 function mockIdentities() {
   return FLEET.map((a) => ({
     id: agentId(a),
@@ -925,6 +932,83 @@ function mockCloudList(provider: string) {
   ];
 }
 
+// ---- Credentials (I15 "key lifecycle health") -------------------------------
+// One `GatewayKeysReport` fixture, five keys, each landing on a different
+// `deriveKeyStatus` outcome (`lib/credentials.ts`): active, stale, never-used,
+// dangling, and removed - plus 3 unauthorized attempts since startup. Together
+// these light up the Credentials card, its "Key issues" KpiTile, the
+// `key_hygiene` posture zond, and the Incident Center, all under `dev:mock`
+// with no real gateway involved. `unbound`/`mismatching` are exercised by the
+// derivation logic's own unit-shaped coverage (`crates/connectors/src/gateway.rs`'s
+// tests, `lib/credentials.ts`'s doc comment) rather than a sixth/seventh row
+// here - five is enough to show the table's full worst-first sort and every
+// severity tone `CredentialsKeysTable` renders.
+function mockCredentialsKeys() {
+  return {
+    strict_mode: "enforce",
+    identity_map_configured: true,
+    history_available: true,
+    unauthorized_since_startup: { attempts: 3, last_millis: now - 6 * 60_000 },
+    keys: [
+      // active: configured, bound, called minutes ago, no mismatches.
+      {
+        key_id: "billing-agent",
+        configured: true,
+        bound: true,
+        unit: "finance",
+        agents: [`agent://${ORG}/finance/billing-agent`],
+        created: dateStamp(120 * DAY),
+        since_startup: { calls: 214, identity_mismatches: 0, last_seen_millis: now - 4 * 60_000 },
+        history: { calls: 48_112, identity_mismatches: 0, first_seen_millis: now - 120 * DAY, last_seen_millis: now - 4 * 60_000 },
+      },
+      // stale: configured, bound, real history, but nothing seen in 19 days.
+      {
+        key_id: "legacy-etl-sync",
+        configured: true,
+        bound: true,
+        unit: "data-platform",
+        agents: [`agent://${ORG}/data-platform/legacy-etl-sync`],
+        created: dateStamp(200 * DAY),
+        since_startup: { calls: 0, identity_mismatches: 0, last_seen_millis: null },
+        history: { calls: 9_340, identity_mismatches: 0, first_seen_millis: now - 200 * DAY, last_seen_millis: now - 19 * DAY },
+      },
+      // never-used: configured, bound, onboarded 2 days ago, zero calls ever.
+      {
+        key_id: "fraud-detector-v2",
+        configured: true,
+        bound: true,
+        unit: "platform",
+        agents: [`agent://${ORG}/platform/fraud-detector-v2`],
+        created: dateStamp(2 * DAY),
+        since_startup: { calls: 0, identity_mismatches: 0, last_seen_millis: null },
+        history: null as { calls: number; identity_mismatches: number; first_seen_millis: number | null; last_seen_millis: number | null } | null,
+      },
+      // dangling: still bound in the identity map, secret no longer configured.
+      {
+        key_id: "sre-oncall-summarizer",
+        configured: false,
+        bound: true,
+        unit: "sre",
+        agents: [`agent://${ORG}/sre/oncall-summarizer`],
+        created: dateStamp(160 * DAY),
+        since_startup: { calls: 0, identity_mismatches: 0, last_seen_millis: null },
+        history: { calls: 3_802, identity_mismatches: 0, first_seen_millis: now - 160 * DAY, last_seen_millis: now - 41 * DAY },
+      },
+      // removed: neither configured nor bound anymore - a ghost, history only.
+      {
+        key_id: "decommissioned-recon-batch",
+        configured: false,
+        bound: false,
+        unit: null as string | null,
+        agents: [] as string[],
+        created: null as string | null,
+        since_startup: { calls: 0, identity_mismatches: 0, last_seen_millis: null },
+        history: { calls: 12_004, identity_mismatches: 0, first_seen_millis: now - 300 * DAY, last_seen_millis: now - 95 * DAY },
+      },
+    ],
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const r = (v: unknown) => v as T;
@@ -932,6 +1016,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "money_status": return r(READY({ cloud_url: "http://127.0.0.1:8080", org_domain: ORG }));
     case "policy_status": return r(READY({ wardryx_url: "http://127.0.0.1:8090", org_domain: "live" }));
     case "identity_status": return r(READY({ idryx_url: "http://127.0.0.1:8081", rescan_available: true }));
+    case "credentials_status": return r(READY({ gateway_url: "http://127.0.0.1:4100" }));
     case "quality_status": return r(READY({ db_path: "/root/.taipan/verdryx.db" }));
     case "memory_status": return r(READY({ db_path: "/root/.taipan/engram.engram", engram_mcp_bin: "/root/.taipan/bin/engram-mcp" }));
     case "crypto_status": return r({ state: "ready", default_target: "/root", qryx_bin: "/root/.taipan/bin/qryx" });
@@ -978,6 +1063,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "identity_list_identities": return r(mockIdentities());
     case "identity_list_alerts": return r(mockAlerts());
     case "identity_list_remediations": return r([]);
+    case "credentials_keys": return r(mockCredentialsKeys());
 
     case "agent_graph": return r(mockGraph());
     case "agent_record": return r(mockAgentRecord(String(args?.agent_id ?? "")));

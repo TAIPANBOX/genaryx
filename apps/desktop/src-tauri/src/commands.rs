@@ -176,6 +176,32 @@ pub mod identity {
     }
 }
 
+pub mod credentials {
+    use genaryx_api::credentials::commands::*;
+    #[allow(unused_imports)]
+    use genaryx_api::credentials::env::*;
+    #[allow(unused_imports)]
+    use genaryx_api::credentials::state::*;
+    #[allow(unused_imports)]
+    use genaryx_api::{bus::AppState, bus::BusMode, events::UiEvent};
+    #[allow(unused_imports)]
+    use genaryx_connectors::*;
+
+    #[tauri::command]
+    pub async fn credentials_status(
+        state: tauri::State<'_, CredentialsState>,
+    ) -> Result<CredentialsStatusDto, ()> {
+        genaryx_api::credentials::commands::credentials_status(&state).await
+    }
+
+    #[tauri::command]
+    pub async fn credentials_keys(
+        state: tauri::State<'_, CredentialsState>,
+    ) -> Result<GatewayKeysReport, CredentialsError> {
+        genaryx_api::credentials::commands::credentials_keys(&state).await
+    }
+}
+
 pub mod onboard {
     use genaryx_api::onboard::commands::*;
     #[allow(unused_imports)]

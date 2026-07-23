@@ -1,6 +1,7 @@
 import type { IdentityStatus, IdryxAlert, IdryxIdentity } from "../identityTypes";
 import { ATTESTATION_DETECTORS } from "../identityTypes";
 import type { CopilotStatus } from "../copilotTypes";
+import type { CredentialsStatus, GatewayKeysReport } from "./credentials";
 import type { CryptoStatus } from "../cryptoTypes";
 import type { DrillsStatus } from "../drillsTypes";
 import type { MemoryStatus } from "../memoryTypes";
@@ -65,6 +66,16 @@ import type { Severity } from "../types";
  * non-goals (no provider-key validity checks, no MCP secret-handle / JWKS
  * checks).
  *
+ * I15 "key lifecycle health" adds 2 more zonds to the SAME
+ * [`computeConnectionHealthFindings`] group: `credentials_plane_health`
+ * (mirrors the 9 per-plane health rows above exactly, for the Credentials
+ * card's own gateway connection) and `key_hygiene` (triggered by the
+ * gateway's own key-lifecycle report - dangling/unbound keys, or
+ * unauthorized attempts since startup). Both are fed by
+ * `lib/usePostureData.ts`'s own `credentials_status`/`credentials_keys`
+ * reads, on the same interval pattern the `cloud_ingest_freshness` zond's
+ * `money_runs` read already uses.
+ *
  * Every finding also carries a `state` distinguishing "checked and clean"
  * (`ok`) from "checked and it fired" (`triggered`) from "cannot tell yet"
  * (`unknown` - e.g. the relevant backend has not finished bootstrapping, or
@@ -103,18 +114,24 @@ export interface PostureFinding {
     | "copilot_plane_health"
     | "remote_plane_health"
     | "cloud_ingest_freshness"
-    | "approvals_waiting";
+    | "approvals_waiting"
+    // I15 "key lifecycle health": the Credentials card's own plane-health row
+    // plus the gateway key-report zond - see this file's module doc comment.
+    | "credentials_plane_health"
+    | "key_hygiene";
   title: string;
   /** The severity IF `state === "triggered"` - fixed per zond, straight
    * from PHASE2.md/PHASE3.md (devkey/governance/idryx_exposed/
    * wardryx_keyless_admin high, schema-mix/identity_snapshot_age info,
    * bus-stale/attestation_coverage/detector_feed_freshness medium); a
    * non-triggered finding renders its own calm `ok`/`unknown` badge instead
-   * (see `PostureView.tsx`), never this severity. I3's own 11 zonds follow
-   * the same fixed-per-zond rule: `policy_plane_health` is high (fail-open
-   * class, mirroring `governance_fail_open`/`wardryx_keyless_admin` - see
-   * that finding's own doc comment), every other new zond is medium (a
-   * visibility/operational gap, not itself a governance fail-open). */
+   * (see `PostureView.tsx`), never this severity. I3's own 11 zonds (and
+   * I15's 2 more, `credentials_plane_health`/`key_hygiene`) follow the same
+   * fixed-per-zond rule: `policy_plane_health` is high (fail-open class,
+   * mirroring `governance_fail_open`/`wardryx_keyless_admin` - see that
+   * finding's own doc comment), every other new zond (I15's pair included)
+   * is medium - a visibility/operational or hygiene gap, not itself a
+   * governance fail-open. */
   severity: Severity;
   state: FindingState;
   whyItMatters: string;
@@ -204,6 +221,20 @@ export interface PostureInput {
    * `policyStatus.state === "ready"`) - feeds [`approvalsWaitingFinding`]
    * only. */
   approvals: Approval[] | null;
+
+  // ---- I15 "key lifecycle health" additions: the Credentials card's own
+  // status hook (`useCredentialsStatus`) plus a `credentials_keys` read on
+  // the same interval pattern [`cloudIngestFreshnessFinding`]'s own
+  // `moneyRuns` uses above - both gathered by `lib/usePostureData.ts`. ----
+
+  /** Whole-panel Credentials/gateway connection state - feeds
+   * [`credentialsPlaneHealthFinding`] only. */
+  credentialsStatus: CredentialsStatus | null;
+  /** `null` until `lib/usePostureData.ts`'s own `credentials_keys` read has
+   * resolved at least once (only ever attempted once
+   * `credentialsStatus.state === "ready"`) - feeds [`keyHygieneFinding`]
+   * only. */
+  keysReport: GatewayKeysReport | null;
 }
 
 /** Wardryx/TokenFuse Cloud's shared "devkey resolves to this org" constant -
@@ -500,10 +531,13 @@ function formatAgeShort(ms: number): string {
 // I3 "Connection & credential health" group: 9 per-plane health zonds (one
 // row per `*_status` command this shell already calls elsewhere) + 2
 // staleness checks over data already read elsewhere (`money_runs`,
-// `policy_list_approvals`). Same `unknown`/`ok`/`triggered` contract as
-// every zond above - "configured but unreachable" is `triggered`, "not
-// configured yet" is `unknown` (never a fabricated `ok`), matching this
-// whole file's fail-closed doctrine.
+// `policy_list_approvals`). I15 "key lifecycle health" adds a 10th
+// per-plane row (`credentials_plane_health`) plus a 3rd report-content check
+// (`key_hygiene`, over the gateway's own `credentials_keys` report) further
+// below, right where each is computed. Same `unknown`/`ok`/`triggered`
+// contract as every zond above - "configured but unreachable" is
+// `triggered`, "not configured yet" is `unknown` (never a fabricated `ok`),
+// matching this whole file's fail-closed doctrine.
 // ---------------------------------------------------------------------------
 
 /** "Cloud ingest gone stale" threshold for `cloud_ingest_freshness` - the I3
@@ -752,6 +786,42 @@ function remotePlaneHealthFinding(input: PostureInput): PostureFinding {
   };
 }
 
+/** Credentials plane's own console-to-gateway connection (I15 "key
+ * lifecycle health") - mirrors every per-plane health zond above exactly,
+ * same three-way split: `ready` is `ok`, `unreachable` is `triggered`, no
+ * environment discovered is `unknown` (never a fabricated `ok`). Kept as its
+ * own row rather than folded into `identityPlaneHealthFinding` just because
+ * both render in the same Identity tab: the Credentials card resolves a
+ * genuinely separate descriptor service (`services.gateway`, not
+ * `services.idryx` - see `genaryx_api::credentials`'s module doc), and can
+ * be `ready` while Identity is `no_environment` or vice versa. Medium, not
+ * high: same rationale as `moneyPlaneHealthFinding`'s doc comment - a
+ * console-side gap here is a visibility loss (no read on key/unauthorized-
+ * attempt activity), not itself a fail-open. The gateway keeps enforcing
+ * `strict_mode` independently of whether this console can currently see it. */
+function credentialsPlaneHealthFinding(input: PostureInput): PostureFinding {
+  const s = input.credentialsStatus;
+  let state: FindingState = "unknown";
+  let detail = "not yet resolved.";
+  if (s?.state === "ready") {
+    state = "ok";
+    detail = "reachable and ready.";
+  } else if (s?.state === "unreachable") {
+    state = "triggered";
+    detail = `unreachable: ${s.reason}`;
+  } else if (s?.state === "no_environment") {
+    detail = "no environment discovered (not configured).";
+  }
+  return {
+    id: "credentials_plane_health",
+    title: "Credentials plane (TokenFuse gateway)",
+    severity: "medium",
+    state,
+    whyItMatters: `Whether the console can currently reach the gateway's key-lifecycle report (credentials_status) - ${detail}`,
+    howToFix: "Confirm the discovered services.gateway.url is reachable (taipan up), and that the gateway process is actually running.",
+  };
+}
+
 /** Whether TokenFuse Cloud is still receiving fresh run activity, judged
  * from `money_runs`' own `last_seen` (the same field `spendSeries` buckets
  * for the Money/Overview hero sparkline) - the in-console productization of
@@ -825,23 +895,76 @@ function approvalsWaitingFinding(input: PostureInput): PostureFinding {
   };
 }
 
-/** I3's 11-zond "Connection & credential health" group, in the order listed
- * above: the 9 per-plane health rows (money/policy/identity/quality/
- * crypto/memory/drills/copilot/remote, in that fixed order) then the 2
- * staleness checks. Same purity/totality guarantee as
- * [`computeStackPostureFindings`]/[`computeIdentityPostureFindings`]: never
- * throws, always returns exactly 11 findings.
+/** Gateway key hygiene (I15 "key lifecycle health" spec, verbatim
+ * precedence): triggered when the latest `GatewayKeysReport` shows a
+ * dangling key (bound but not configured - a map entry with no live secret
+ * behind it anymore), OR the identity map is NOT in `"off"` mode and at
+ * least one key is unbound (configured but not bound, while
+ * `identity_map_configured` is true - mirrors `lib/credentials.ts`'s
+ * `deriveKeyStatus` doc comment: "never fires when the map itself is off,
+ * there is nothing to be unbound FROM"), OR any unauthorized attempt has
+ * been recorded against the gateway since it started. `unknown` until a
+ * report has loaded at least once - never a fabricated `ok` on absent data,
+ * matching this whole file's fail-closed doctrine.
  *
- * Explicit non-goals (I3 spec): this group never opens a socket, calls a
- * provider, or shells a binary itself - every row above reads only a
- * `*_status`/list command this shell ALREADY calls for its own panels, at
- * whatever cadence `lib/usePostureData.ts` already reads them. It
- * specifically does NOT: probe connectivity live from the browser/console
- * process; validate provider-key VALIDITY (TokenFuse stores no provider
- * keys by design - not a gap, a deliberate privacy feature, so there is no
- * key here to check in the first place); or check MCP secret-handle
- * freshness or JWKS age (both need a gateway/cloud surface this console
- * does not have a read on today - named follow-ups, not silently skipped). */
+ * Medium, not high: this is a hygiene/coverage check over a list (the same
+ * bucket `attestationCoverageFinding` and the two staleness checks just
+ * above sit in), not a structural fail-open like `governance_fail_open`/
+ * `idryx_exposed`/`wardryx_keyless_admin` (all "zero authentication or zero
+ * policy required at all", a categorically different, always-high class).
+ * A single stale dangling map entry and an active credential-stuffing
+ * attempt both trip this same zond; medium keeps either from over- or
+ * under-stating the other. */
+function keyHygieneFinding(input: PostureInput): PostureFinding {
+  const report = input.keysReport;
+  let state: FindingState = "unknown";
+  let detail = "no key-lifecycle report loaded yet.";
+  if (report !== null) {
+    const dangling = report.keys.filter((k) => k.bound && !k.configured).length;
+    const unbound = report.identity_map_configured
+      ? report.keys.filter((k) => k.configured && !k.bound).length
+      : 0;
+    const strictOn = report.strict_mode !== "off";
+    const unauthorized = report.unauthorized_since_startup.attempts;
+    const triggered = dangling > 0 || (strictOn && unbound > 0) || unauthorized > 0;
+    state = triggered ? "triggered" : "ok";
+    const parts: string[] = [];
+    if (dangling > 0) parts.push(`${dangling} dangling`);
+    if (strictOn && unbound > 0) parts.push(`${unbound} unbound (strict_mode=${report.strict_mode})`);
+    if (unauthorized > 0) parts.push(`${unauthorized} unauthorized attempt${unauthorized === 1 ? "" : "s"} since startup`);
+    detail = parts.length > 0 ? `${parts.join(", ")}.` : "no dangling or unbound keys, no unauthorized attempts.";
+  }
+  return {
+    id: "key_hygiene",
+    title: "Gateway key hygiene",
+    severity: "medium",
+    state,
+    whyItMatters: `Whether the gateway's key-lifecycle report (credentials_keys) shows a dangling or unbound client key, or any unauthorized attempt since startup - ${detail}`,
+    howToFix:
+      "Edit TOKENFUSE_CLIENT_KEYS and the identity map together (remove the dangling entry, or add the missing binding), then restart the gateway so it picks up the change.",
+  };
+}
+
+/** I3's original 11-zond "Connection & credential health" group plus I15's
+ * 2 more, 13 total, in the order listed above: the 10 per-plane health rows
+ * (money/policy/identity/quality/crypto/memory/drills/copilot/remote/
+ * credentials, in that fixed order) then the 3 report-content checks
+ * (cloud ingest freshness, approvals waiting, gateway key hygiene). Same
+ * purity/totality guarantee as
+ * [`computeStackPostureFindings`]/[`computeIdentityPostureFindings`]: never
+ * throws, always returns exactly 13 findings.
+ *
+ * Explicit non-goals (I3 spec, still true after I15's addition): this group
+ * never opens a socket, calls a provider, or shells a binary itself - every
+ * row above reads only a `*_status`/list command this shell ALREADY calls
+ * for its own panels, at whatever cadence `lib/usePostureData.ts` already
+ * reads them. It specifically does NOT: probe connectivity live from the
+ * browser/console process; validate provider-key VALIDITY (TokenFuse stores
+ * no provider keys by design - not a gap, a deliberate privacy feature, so
+ * there is no key here to check in the first place); or check MCP
+ * secret-handle freshness or JWKS age (both need a gateway/cloud surface
+ * this console does not have a read on today - named follow-ups, not
+ * silently skipped). */
 export function computeConnectionHealthFindings(input: PostureInput): PostureFinding[] {
   return [
     moneyPlaneHealthFinding(input),
@@ -853,8 +976,10 @@ export function computeConnectionHealthFindings(input: PostureInput): PostureFin
     drillsPlaneHealthFinding(input),
     copilotPlaneHealthFinding(input),
     remotePlaneHealthFinding(input),
+    credentialsPlaneHealthFinding(input),
     cloudIngestFreshnessFinding(input),
     approvalsWaitingFinding(input),
+    keyHygieneFinding(input),
   ];
 }
 
