@@ -8,24 +8,13 @@
 #
 # WHY THIS EXISTS, and why `cargo test --workspace` is not enough.
 #
-# `apps/desktop/src-tauri` is deliberately a STANDALONE Cargo project, not a
-# member of the root workspace (see its Cargo.toml: the empty `[workspace]`
-# table stops upward discovery so it locks and builds independently). That is
-# the right call, but it has a sharp edge: `cargo build/clippy/test
-# --workspace` at the root NEVER compiles the Tauri shell. On 2026-07-21 that
-# edge drew blood. Commit 4ad8b83 added an `InvalidPathSegment` variant to
-# `ConnectorError` and `WardryxError` in `crates/connectors`, updated
-# `crates/ffi` (which the SwiftUI shell consumes, and which IS in the
-# workspace), and left the Tauri shell with four non-exhaustive `match`
-# expressions. The workspace stayed green. The shell did not compile at all,
-# and nothing said so, because the one CI job that would have caught it had
-# not run since 2026-07-17 (GitHub Actions blocked on billing for private
-# repos).
-#
-# So the rule this script encodes: a shell that the workspace cannot see must
-# be checked explicitly, on every run, locally, with no network and no
-# billing in the path. Keeping src-tauri out of the workspace stays correct;
-# THIS SCRIPT, not workspace membership, is the guarantee.
+# The console's frontend is TypeScript, and `cargo build/clippy/test
+# --workspace` never compiles a line of it. This script exists so the parts
+# cargo cannot see are still checked explicitly, on every run, locally, with
+# no network and no billing in the path. (Its original motivation was the
+# standalone Tauri shell's Cargo project, which the workspace could not see
+# either; the desktop shells are gone since the web-only pivot, but the
+# principle stayed and the frontend still needs it.)
 #
 # Everything here is read-only with respect to source: it compiles, lints and
 # tests, and never rewrites a file (`cargo fmt` runs in `--check` mode).
@@ -91,64 +80,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. The Tauri shell's Rust. The blind spot this script exists for.
-#    In --fast we still COMPILE it (cargo check), because "does the shell
-#    build against the core as it stands right now" is exactly the question
-#    that went unanswered for four days.
+# 2. The web console's frontend. The blind spot this script exists for:
+#    TypeScript that no cargo invocation will ever compile.
 # ---------------------------------------------------------------------------
-TAURI_RS="$ROOT/apps/desktop/src-tauri"
-if [ "$FAST" -eq 1 ]; then
-  step "tauri shell: cargo check" "$TAURI_RS" cargo check --all-targets
-else
-  step "tauri shell: clippy" "$TAURI_RS" cargo clippy --all-targets -- -D warnings
-  step "tauri shell: test"   "$TAURI_RS" cargo test
-fi
-
-# ---------------------------------------------------------------------------
-# 3. The Tauri shell's frontend.
-# ---------------------------------------------------------------------------
-DESKTOP="$ROOT/apps/desktop"
+WEB="$ROOT/apps/web"
 if ! command -v pnpm >/dev/null 2>&1; then
-  skip "tauri shell: frontend" "pnpm not installed"
+  skip "web ui" "pnpm not installed"
 else
   # `--frozen-lockfile` is the CI behaviour and the one we want locally too:
   # it fails rather than silently resolving a different tree than the one
   # committed. Skipped in --fast when node_modules is already present, since
   # a pre-push hook that reinstalls dependencies is a hook nobody keeps.
-  if [ "$FAST" -eq 1 ] && [ -d "$DESKTOP/node_modules" ]; then
-    skip "tauri shell: pnpm install" "--fast, node_modules present"
+  if [ "$FAST" -eq 1 ] && [ -d "$WEB/node_modules" ]; then
+    skip "web ui: pnpm install" "--fast, node_modules present"
   else
-    step "tauri shell: pnpm install" "$DESKTOP" pnpm install --frozen-lockfile
+    step "web ui: pnpm install" "$WEB" pnpm install --frozen-lockfile
   fi
-  step "tauri shell: tsc" "$DESKTOP" pnpm exec tsc --noEmit
+  step "web ui: tsc" "$WEB" pnpm exec tsc --noEmit
   if [ "$FAST" -eq 1 ]; then
-    skip "tauri shell: vite build" "--fast"
+    skip "web ui: vitest" "--fast"
+    skip "web ui: vite build" "--fast"
   else
-    step "tauri shell: vite build" "$DESKTOP" pnpm build
+    step "web ui: vitest" "$WEB" pnpm test
+    step "web ui: vite build" "$WEB" pnpm build
   fi
-fi
-
-# ---------------------------------------------------------------------------
-# 4. The SwiftUI shell. macOS only, and expensive: build-ffi.sh regenerates
-#    the UniFFI bindings and the xcframework from scratch every time (it is
-#    idempotent by wiping both output directories), so it is a full-gate step
-#    rather than a pre-push one.
-#
-#    Note this covers a DIFFERENT failure than step 2. `crates/ffi` is in the
-#    workspace, so a Rust-side break there is caught by step 1; what only
-#    this step catches is Swift code that no longer matches a changed FFI
-#    interface.
-# ---------------------------------------------------------------------------
-MACOS="$ROOT/apps/macos"
-if [ "$(uname -s)" != "Darwin" ]; then
-  skip "swiftui shell" "not macOS"
-elif [ "$FAST" -eq 1 ]; then
-  skip "swiftui shell" "--fast (xcframework regeneration is minutes)"
-elif ! command -v swift >/dev/null 2>&1; then
-  skip "swiftui shell" "swift not installed"
-else
-  step "swiftui shell: ffi bindings" "$MACOS" bash build-ffi.sh
-  step "swiftui shell: swift build"  "$MACOS" swift build
 fi
 
 [ "$LIST" -eq 1 ] && exit 0

@@ -13,17 +13,8 @@ Cargo.lock.bak
 # macOS
 .DS_Store
 
-# Xcode / SwiftPM
-apps/macos/.build
-apps/macos/*.xcodeproj/xcuserdata
-apps/macos/*.xcodeproj/project.xcworkspace/xcuserdata
-DerivedData/
-*.xcframework
-
-# Node / Tauri (desktop shell)
+# Node (web console frontend)
 node_modules/
-apps/desktop/dist
-apps/desktop/src-tauri/target
 
 # Secrets / keys (defense-in-depth; nothing signed lives in the tree)
 *.pem
@@ -32,9 +23,8 @@ apps/desktop/src-tauri/target
 !**/testdata/**/*.pem
 .claude/
 
-# Built frontends. `npm run build:web` regenerates dist-web on demand, and the
+# Built frontend. `pnpm build` regenerates apps/web/dist on demand, and the
 # filenames are content-hashed, so a committed copy is stale the next build and
 # conflicts on every one after that.
-apps/desktop/dist-web/
-apps/desktop/dist/
-node_modules/
+apps/web/dist/
+apps/web/dist-web/

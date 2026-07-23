@@ -1,40 +1,42 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
 import { MOCK, mockInvoke, mockSubscribe } from "./mockPreview";
 
 /**
  * The one place the UI decides HOW it reaches `genaryx-core`.
  *
- * The same React components run two ways: as the desktop shell over Tauri IPC,
- * or as the web app over HTTP to a `genaryx-web` backend co-located with the
- * customer's stack. Neither panel should know which, so every plane module
- * (`lib/money.ts`, `lib/policy.ts`, ...) calls through here instead of
- * importing `@tauri-apps/api/core` directly.
+ * The console is a web app: these React components talk HTTP to a
+ * `genaryx-web` backend co-located with the customer's stack. No panel should
+ * know that, so every plane module (`lib/money.ts`, `lib/policy.ts`, ...)
+ * calls through here instead of touching `fetch` directly. The only other
+ * transport is the mock preview (`.env.mock`), which routes every command to
+ * `src/lib/mockPreview.ts` so the UI can be demoed with no backend at all.
+ * (A Tauri IPC branch lived here when the product also shipped native desktop
+ * shells; those left with the web-only pivot.)
  *
- * The contract is deliberately identical to Tauri's `invoke`: resolve with the
- * command's Ok value, reject with its Err value as the SAME structured object
- * each plane's own error-normaliser (`toMoneyError`, `toPolicyError`, ...)
- * already expects. The HTTP backend mirrors the Tauri commands one for one:
- * same command names, same args, byte-identical serde DTOs, and it returns a
- * command's Err as the JSON body on a non-2xx. So nothing downstream changes.
+ * The contract survives from that era on purpose: resolve with the command's
+ * Ok value, reject with its Err value as the SAME structured object each
+ * plane's own error-normaliser (`toMoneyError`, `toPolicyError`, ...) already
+ * expects. `genaryx-web` mirrors the command layer one for one: same command
+ * names, same args, byte-identical serde DTOs, and it returns a command's Err
+ * as the JSON body on a non-2xx. So nothing downstream changes.
  */
 
-/** Where the web build sends commands. Undefined in the desktop build (which
- * uses Tauri) and in a bare `vite preview` (no backend at all). Set at
- * web-build time, e.g. `VITE_GENARYX_API=/api`. */
+/** Where the build sends commands. Set at build time (`.env.web`:
+ * `VITE_GENARYX_API=/api`); undefined in a bare `vite preview` and in the
+ * mock build, which have no backend at all. */
 const WEB_API_BASE: string | undefined = import.meta.env.VITE_GENARYX_API;
 
-/** True when there is a real backend to call: a Tauri runtime, or a configured
- * web API. False in a bare preview, where callers fall back to mock data or a
+/** True when there is a real backend to call (a configured web API) or a mock
+ * one. False in a bare preview, where callers fall back to mock data or a
  * "no environment" state exactly as they did before this seam existed. */
 export function hasBackend(): boolean {
-  return isTauri() || Boolean(WEB_API_BASE) || MOCK;
+  return Boolean(WEB_API_BASE) || MOCK;
 }
 
-/** True in the browser build: this console is talking to a `genaryx-web` on
- * the customer's own box, so it needs a signed-in session before it can read
- * anything. The desktop build is already on that box and has no such gate. */
+/** True when this console is talking to a `genaryx-web` on the customer's own
+ * box, so it needs a signed-in session before it can read anything. False in
+ * the mock preview, which has no login gate. */
 export function isWebShell(): boolean {
-  return !isTauri() && Boolean(WEB_API_BASE);
+  return Boolean(WEB_API_BASE);
 }
 
 /** Base URL of the web backend, for the few callers that need more than
@@ -69,7 +71,7 @@ export function requiredRoleFromCommandError(err: unknown): ConsoleRole | null {
 }
 
 /**
- * Invoke a core command over whichever transport is live.
+ * Invoke a core command over whichever transport is live (HTTP or mock).
  *
  * Resolves with the command's result; rejects with its structured error value
  * (never wrapped), so each plane's normaliser keeps working unchanged. Throws
@@ -83,20 +85,16 @@ export async function invokeBackend<T>(
   if (MOCK) {
     return mockInvoke<T>(command, args);
   }
-  if (isTauri()) {
-    return invoke<T>(command, args);
-  }
   if (!WEB_API_BASE) {
     throw new Error(
-      `no backend: cannot invoke "${command}" without a Tauri runtime or VITE_GENARYX_API`,
+      `no backend: cannot invoke "${command}" without VITE_GENARYX_API`,
     );
   }
   const resp = await fetch(`${WEB_API_BASE}/command/${command}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(args ?? {}),
-    // The web build authenticates with a session cookie set at login; the
-    // desktop path returns above and never reaches here.
+    // The console authenticates with a session cookie set at login.
     credentials: "include",
   });
 
@@ -113,27 +111,25 @@ export async function invokeBackend<T>(
   }
 
   if (!resp.ok) {
-    // Mirror invoke()'s reject-with-the-Err-value: genaryx-web returns the
-    // command's structured error as the body on a non-2xx, so the plane's own
-    // normaliser unwraps it exactly as it does a Tauri Err.
+    // genaryx-web returns the command's structured error as the body on a
+    // non-2xx, so the plane's own normaliser unwraps it exactly as it always
+    // has - reject with the Err value itself, never a wrapper.
     throw body;
   }
   return body as T;
 }
 
 /**
- * The live bus, whichever shell we are in.
+ * The live bus, as Server-Sent Events from `genaryx-web`.
  *
- * The desktop shell gets it as a Tauri event; the web build gets the same
- * payloads as Server-Sent Events from `genaryx-web`. Callers hand in the
- * Tauri event name they already use and get back an unsubscribe function, so
- * a panel that redraws on a new bus event needs no idea which shell it is in.
- * This is also how the Remote panel's live SSH tail reaches the browser: its
- * two Tauri events (`remote:tail-line`/`remote:tail-ended`) ride the SAME
- * `genaryx-web` SSE stream, each under its own named SSE event rather than
- * the bus's `UiEvent` shape, which a raw remote log line does not fit (see
- * `crates/web/src/ctx.rs`'s `RemoteTailEvent` doc comment for the backend
- * side of that split).
+ * Callers hand in the event name they subscribe to and get back an
+ * unsubscribe function, so a panel that redraws on a new bus event needs no
+ * idea what carries it. This is also how the Remote panel's live SSH tail
+ * reaches the browser: its two event names (`remote:tail-line`/
+ * `remote:tail-ended`) ride the SAME `genaryx-web` SSE stream, each under its
+ * own named SSE event rather than the bus's `UiEvent` shape, which a raw
+ * remote log line does not fit (see `crates/web/src/ctx.rs`'s
+ * `RemoteTailEvent` doc comment for the backend side of that split).
  *
  * One `EventSource` is shared by every subscriber and closed when the last
  * one leaves, across every event name: seven-plus panels each opening their
@@ -147,10 +143,6 @@ export async function subscribeBackend<T>(
   if (MOCK) {
     return mockSubscribe<T>(event, onEvent);
   }
-  if (isTauri()) {
-    const { listen } = await import("@tauri-apps/api/event");
-    return listen<T>(event, (e) => onEvent(e.payload));
-  }
   if (!WEB_API_BASE) {
     // No backend at all (a bare preview): there is nothing to stream, and a
     // caller that also fell back to mock data must not be left waiting.
@@ -160,7 +152,7 @@ export async function subscribeBackend<T>(
 }
 
 /**
- * The SSE `event:` name a given Tauri event name arrives under on
+ * The SSE `event:` name a given bus event name arrives under on
  * `genaryx-web`'s `/events` stream.
  *
  * The live bus feed is the one legacy exception: its SSE frames are named
@@ -168,12 +160,11 @@ export async function subscribeBackend<T>(
  * one shape - kept as its own literal mapping (rather than renamed to match)
  * so every existing subscriber (`BusExplorer`, `DecisionStream`, ...) keeps
  * working unchanged. Every other event name arrives under its own literal
- * name, matching the Tauri event name exactly - which is what
- * `crates/web/src/main.rs`'s `events` handler emits a remote tail's
- * `remote:tail-line`/`remote:tail-ended` frames under.
+ * name - which is what `crates/web/src/main.rs`'s `events` handler emits a
+ * remote tail's `remote:tail-line`/`remote:tail-ended` frames under.
  */
-function sseEventNameFor(tauriEvent: string): string {
-  return tauriEvent === "bus:event" ? "bus" : tauriEvent;
+function sseEventNameFor(event: string): string {
+  return event === "bus:event" ? "bus" : event;
 }
 
 /** Subscribers to each named SSE event, keyed by the SSE event name - all
