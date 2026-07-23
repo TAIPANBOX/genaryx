@@ -614,6 +614,48 @@ function mockQualityBaselines() {
   ];
 }
 
+// I2/I3 addition: one seeded `quality_drift` bus event (source "verdryx",
+// schema v0.2 per docs/PHASE4.md's own grounded contract: "tokenfuse/qryx
+// emit v0.1, wardryx/verdryx/mockryx v0.2") so `QualityDriftStream.tsx`'s
+// Drift Alerts section AND the new Incident Center card both have a real
+// "via verdryx" row to render in the mock preview - before this, the
+// synthetic live event generator (`makeEvent`) never produced one at all,
+// so this source was always empty under `pnpm dev:mock`. Mean/delta are
+// consistent with `mockQualityBaselines`'s own "base-release" (mean 0.88):
+// a drift down to 0.85 is exactly the -0.03 delta below. Appended (not
+// prepended) wherever it is spliced into `recent_events` below, so it never
+// outranks a genuinely fresher live-generated event as the bus's "newest"
+// (which would wrongly read as a stale bus to the `bus_stale` zond).
+function mockQualityDriftEvent(): UiEvent {
+  return {
+    id: 900_001,
+    env: "live",
+    ts: ago(6 * 60_000),
+    source: "verdryx",
+    type: "quality_drift",
+    agent_id: `agent://${ORG}/data/data-quality-checker`,
+    run_id: null,
+    severity: "high",
+    schema: "taipanbox.dev/agent-event/v0.2",
+    on_behalf_of: [],
+    data: {
+      baseline_id: "base-release",
+      window: "eval-1005",
+      mean_score: 0.85,
+      delta: -0.03,
+      verdict: "regressed",
+      baseline_n: 44,
+      t_statistic: -2.31,
+      ci_low: -0.081,
+      ci_high: -0.009,
+    },
+    prev_hash: null,
+    raw: "",
+    file: "/root/.stack-up/events/verdryx.ndjson",
+    off: 900_001,
+  };
+}
+
 // --- Crypto (Qryx) ---
 const F_ECDSA = { algorithm: "ECDSA-256", type: "public-key", severity: "high", occurrences: 14, locations: ["ingress/tls", "relay/acme-account.key", "cert-broker"], externallyFacing: true, longLivedData: false, planned: false };
 const F_RSA = { algorithm: "RSA-2048", type: "certificate", severity: "high", occurrences: 6, locations: ["vault/pki", "legacy-lb/tls"], externallyFacing: true, longLivedData: true, planned: false };
@@ -743,6 +785,40 @@ function mockCopilotAnswer(question: string) {
     tool_trace: [{ name: "money_overview", ok: true, result_preview: "spent $495, saved $38.90, 7 incidents" }],
     proposals: [],
     usage: { prompt_tokens: 640 + question.length * 3, completion_tokens: 130 },
+  };
+}
+
+// I2 addition: `copilot_explain` (C1's "Explain with Felyx" - the Money
+// panel's own existing Incidents feed already calls this, the new Incident
+// Center card reuses the exact same wiring) had no mock case at all before
+// this - `mockInvoke`'s default fell through to `return r(null)`, and
+// `CopilotView.tsx`'s explain-request effect unconditionally reads
+// `answer.text`, so every "Explain" click crashed the whole view under
+// `pnpm dev:mock` (a real Tauri/genaryx-web backend was never affected -
+// `crates/api/src/copilot/commands.rs::copilot_explain` always returns a
+// real `Answer`). Fixed here as a genuine mock-fidelity gap, not a new
+// feature: same canned-answer shape `mockCopilotAnswer` above already uses,
+// grounded in the SAME root-cause chain docs/PHASE6-C1.md's prompt asks
+// Felyx to build (cause -> effect -> effect, citing the run/incident/policy
+// ids it "used").
+function mockCopilotExplainAnswer(incidentId: string) {
+  const ra = runawayAgent();
+  return {
+    text:
+      `Incident \`${incidentId}\` traces to sre/rca-copilot: an oversized incident trace caused retries past its $1.25 ` +
+      "per-run ceiling 26 times across shards, tripping budget_exhausted then fanout_explosion. Root-cause chain: " +
+      "oversized trace -> repeated over-budget retries -> fanout across shards. It was already killed break-glass by " +
+      "sre-oncall; the only governing Wardryx policy on this agent (rca-max-steps) caps steps, not spend, which is why " +
+      "nothing blocked it in advance. Recommended: add a Wardryx deny-above-usd policy for this agent so a future run " +
+      "halts before 26 retries, not after.",
+    tool_trace: [
+      { name: "incidents", ok: true, result_preview: `resolved ${incidentId || "(no id)"}` },
+      { name: "list_runs", ok: true, result_preview: `${ra.name}-live: 12x fanout_explosion, killed` },
+      { name: "identity_alerts", ok: true, result_preview: "runaway_agent, excessive_agency on rca-copilot" },
+      { name: "policies", ok: true, result_preview: "rca-max-steps (max_steps=12) - no spend cap on this agent" },
+    ],
+    proposals: [],
+    usage: { prompt_tokens: 780, completion_tokens: 165 },
   };
 }
 
@@ -972,7 +1048,11 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       const evts = seedEvents(limit).filter((e) => e.agent_id === id);
       return r(evts.length ? evts : seedEvents(limit).slice(0, 6).map((e) => ({ ...e, agent_id: id })));
     }
-    case "recent_events": return r(seedEvents(Number(args?.limit ?? 60)));
+    // The seeded quality_drift event is APPENDED after the freshly-generated
+    // ones (see mockQualityDriftEvent's own doc comment for why order matters
+    // here), so `res.events[0]` (newest-first) is still whichever real event
+    // `seedEvents` itself produced most recently.
+    case "recent_events": return r([...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
     case "run_events": return r(seedEvents(20));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });
@@ -996,6 +1076,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
 
     // ---- Felyx ----
     case "copilot_ask": return r(mockCopilotAnswer(String(args?.question ?? "")));
+    case "copilot_explain": return r(mockCopilotExplainAnswer(String(args?.incident_id ?? "")));
 
     default:
       if (/_list_|_events|_incidents|_runs|scores|baselines|summaries|remediations/.test(command)) return r([]);

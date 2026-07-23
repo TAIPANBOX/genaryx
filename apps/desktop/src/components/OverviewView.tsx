@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import {
+  ackIncident,
   describeMoneyError,
   fetchIncidents,
   fetchOverview,
@@ -19,10 +20,43 @@ import { usePopover } from "../lib/popover";
 import { shortAgentLabel } from "../lib/graph";
 import { AgentDetailCard } from "./AgentDetailCard";
 import { MetricDetailCard, type MetricRow } from "./MetricDetailCard";
+import type { IdryxAlert } from "../identityTypes";
+import { fetchAlerts } from "../lib/identity";
+import { useIdentityStatus } from "../lib/useIdentityStatus";
+import { aggregateIncidents, INCIDENT_SOURCE_LABEL, INCIDENT_SOURCE_VIEW, isQualityDriftEvent } from "../lib/incidents";
+import { usePostureData } from "../lib/usePostureData";
+import { fetchRecentEvents } from "../lib/recentEvents";
+import { hasBackend, subscribeBackend } from "../lib/transport";
+import type { UiEvent } from "../types";
+import type { ViewId } from "../lib/views";
+import { FreshBadge } from "./FreshBadge";
 
 const REFRESH_INTERVAL_MS = 20_000;
 
-export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) => void }) {
+/** Same cap `QualityDriftStream.tsx`/`DecisionStream.tsx` apply to their own
+ * bus reads - the Incident Center only needs a recent window of quality
+ * drift events, not the whole history. */
+const BUS_FETCH_LIMIT = 500;
+
+/** Rows shown on the Incident Center card (I2 spec's own number). */
+const INCIDENT_CENTER_ROWS = 10;
+
+export function OverviewView({
+  onOpenAgent,
+  onSelectView,
+  onExplainIncident,
+}: {
+  onOpenAgent: (agentId: string) => void;
+  /** Source-chip click on an Incident Center row - switches to that source's
+   * own tab (`AppShell.tsx`'s existing view-switching mechanism), same
+   * pattern as `Agent360.tsx`'s "Open <plane> panel" links. */
+  onSelectView: (view: ViewId) => void;
+  /** "Explain with Felyx" (C1, docs/PHASE6-C1.md) - identical wiring to
+   * `MoneyView.tsx`'s own prop of the same name; only ever called for a
+   * money-sourced Incident Center row (see `lib/incidents.ts`'s
+   * `explainable` doc comment for why). */
+  onExplainIncident: (incidentId: string) => void;
+}) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
   const { open } = usePopover();
@@ -57,6 +91,96 @@ export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
     const id = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [refresh]);
+
+  // I2 Incident Center's other three sources - each a fresh, independent
+  // read this view owns itself (mirrors `PostureView.tsx`'s own "each view
+  // owns its own reads" convention for the identical identity-alerts read).
+
+  const identityStatus = useIdentityStatus();
+  const [identityAlerts, setIdentityAlerts] = useState<IdryxAlert[]>([]);
+  useEffect(() => {
+    if (identityStatus?.state !== "ready") return;
+    let cancelled = false;
+    fetchAlerts()
+      .then((a) => {
+        if (!cancelled) setIdentityAlerts(a);
+      })
+      .catch(() => {
+        if (!cancelled) setIdentityAlerts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [identityStatus?.state]);
+
+  // Quality drift: same source `QualityDriftStream.tsx` reads (the live bus,
+  // filtered to `source === "verdryx" && type === "quality_drift"`), fetched
+  // independently here rather than reaching into that component's state.
+  const [qualityDriftEvents, setQualityDriftEvents] = useState<UiEvent[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchRecentEvents(BUS_FETCH_LIMIT).then((res) => {
+      if (!cancelled) setQualityDriftEvents(res.events.filter(isQualityDriftEvent));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (!hasBackend()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    subscribeBackend<UiEvent>("bus:event", (payload) => {
+      if (!isQualityDriftEvent(payload)) return;
+      setQualityDriftEvents((prev) => [payload, ...prev].slice(0, BUS_FETCH_LIMIT));
+    })
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error("subscribe(bus:event) failed (overview incident center):", err);
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Posture findings: the SAME live hook `PostureView.tsx` renders from, so
+  // a triggered zond shows up here automatically, no separate derivation.
+  const posture = usePostureData();
+  const postureFindings = useMemo(
+    () => [...posture.stackFindings, ...posture.identityFindings, ...posture.connectionFindings],
+    [posture.stackFindings, posture.identityFindings, posture.connectionFindings],
+  );
+
+  const unifiedIncidents = useMemo(
+    () =>
+      aggregateIncidents({
+        moneyIncidents: incidents,
+        identityAlerts,
+        qualityDriftEvents,
+        postureFindings,
+      }).slice(0, INCIDENT_CENTER_ROWS),
+    [incidents, identityAlerts, qualityDriftEvents, postureFindings],
+  );
+
+  const handleAckIncident = useCallback(
+    async (id: string) => {
+      try {
+        await ackIncident(id);
+        void refresh();
+      } catch (err) {
+        setError(err as MoneyError);
+      }
+    },
+    [refresh],
+  );
 
   const agents = useMemo(() => spendByAgent(runs), [runs]);
   const series = useMemo(() => spendSeries(runs), [runs]);
@@ -134,14 +258,66 @@ export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
       ]
     : [];
 
-  const incidentFeed: FeedItem[] = topIncidents.map((inc) => ({
-    key: inc.id,
-    color: sevColor(inc.severity),
-    title: inc.kind.replace(/_/g, " "),
-    sub: `${inc.run_id ?? inc.agent_id ?? "fleet"} · ${inc.severity}`,
-    value: inc.occurrences,
-    valueColor: sevColor(inc.severity),
-    onClick: inc.agent_id ? (rect) => openAgent(inc.agent_id as string, rect) : undefined,
+  // I2 Incident Center: the top `unifiedIncidents` rows, rendered through
+  // the same `Feed` primitive every other incidents list in this app uses.
+  // The source chip is its OWN nested clickable button (mirrors
+  // `Agent360.tsx`'s `AgentChip` - a bare `.chip` button, no dot, just
+  // `cursor: pointer`), not the row's `onClick`: only money rows have a
+  // natural "open agent" drill target, but every row's chip must navigate,
+  // so the chip owns its own click and stops it from bubbling rather than
+  // the row itself carrying one conditionally.
+  const incidentCenterFeed: FeedItem[] = unifiedIncidents.map((row) => ({
+    key: row.id,
+    color: sevColor(row.severity),
+    title: (
+      <span className="flex items-center gap-2">
+        <button
+          type="button"
+          className="chip"
+          style={{ cursor: "pointer" }}
+          title={`Open the ${INCIDENT_SOURCE_VIEW[row.source]} tab`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectView(INCIDENT_SOURCE_VIEW[row.source]);
+          }}
+        >
+          {INCIDENT_SOURCE_LABEL[row.source]}
+        </button>
+        <span className="truncate">{row.title}</span>
+      </span>
+    ),
+    sub: row.detail,
+    action:
+      row.source === "money" ? (
+        <span className="flex items-center gap-1.5">
+          {row.explainable && (
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 9px", fontSize: 11, color: "var(--iris)" }}
+              title="Explain this incident with Felyx"
+              onClick={() => onExplainIncident(row.raw.id)}
+            >
+              Explain
+            </button>
+          )}
+          {row.ackable ? (
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 9px", fontSize: 11 }}
+              title="Acknowledge incident"
+              onClick={() => void handleAckIncident(row.raw.id)}
+            >
+              Ack
+            </button>
+          ) : (
+            <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>
+              ack'd
+            </span>
+          )}
+        </span>
+      ) : undefined,
   }));
 
   return (
@@ -293,8 +469,17 @@ export function OverviewView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
                     <Composition items={compItems} />
                   </Section>
                 )}
-                <Section title="Incidents" right="worst first">
-                  <Feed items={incidentFeed} empty="no incidents" />
+                <Section
+                  title="Incident center"
+                  right={
+                    <FreshBadge
+                      variant="auto"
+                      detail="20s"
+                      title="Money incidents/runs poll every 20s; identity alerts + the posture identity snapshot load once and Refresh on their own panel; quality drift and the posture bus signals are live; the 9 plane-health checks each settle within seconds of connecting."
+                    />
+                  }
+                >
+                  <Feed items={incidentCenterFeed} empty="no incidents across money, identity, quality, or posture" />
                 </Section>
               </>
             }
