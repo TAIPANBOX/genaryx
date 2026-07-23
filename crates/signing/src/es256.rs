@@ -86,8 +86,9 @@ impl Assurance {
     }
 }
 
-/// An ES256 device signer. Implementations: [`SoftwareSigner`] (portable) and,
-/// on macOS, [`crate::enclave::SecKeySigner`] (Secure Enclave or SecKey).
+/// An ES256 device signer. Implementation: [`SoftwareSigner`] (portable).
+/// The macOS SecKey/Secure-Enclave implementations left with the desktop
+/// shells; hardware assurance now arrives via WebAuthn assertions instead.
 pub trait Es256Signer: Send + Sync {
     /// What holds the key - drives the honest journal/UI label.
     fn assurance(&self) -> Assurance;

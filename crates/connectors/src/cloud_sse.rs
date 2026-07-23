@@ -17,7 +17,7 @@
 //! a crate that owns its own internal decoder would hide exactly the logic
 //! this spike exists to prove, leaving us testing someone else's parser
 //! instead of ours. `reqwest` (already a transitive dependency of this
-//! workspace via `genaryx-ffi`'s bindgen tooling -- docs/PHASE0.md F-04, so
+//! workspace via the (since-removed) desktop FFI bindgen tooling (F-04), so
 //! this adds no new dependency *family* to the tree, only a new direct edge
 //! to one already resolved) supplies an async byte stream
 //! (`Response::bytes_stream`, the `stream` feature) plus bearer auth

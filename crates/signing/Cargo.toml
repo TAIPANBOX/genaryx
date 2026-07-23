@@ -23,13 +23,6 @@ base64 = { workspace = true }
 getrandom = { workspace = true }
 thiserror = { workspace = true }
 
-# Spike #2, Tauri-shell path: Secure-Enclave-backed SecKey signing (src/enclave.rs).
-# core-foundation is only for reading the generated key's token attribute back
-# (fail-closed proof the key is enclave-resident, see `SecKeySigner::generate`).
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = { workspace = true }
-core-foundation = { workspace = true }
-
 # For the live-cloud spike drivers under examples/ only.
 [dev-dependencies]
 tokio = { workspace = true }

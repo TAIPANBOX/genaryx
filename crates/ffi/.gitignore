@@ -1,4 +1,0 @@
-# Everything below is produced by build-smoke.sh; regenerate, never commit.
-swift-smoke/.build/
-swift-smoke/Binary/
-swift-smoke/Sources/GenaryxCoreFFI/Generated/
