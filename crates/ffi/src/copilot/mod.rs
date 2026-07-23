@@ -54,7 +54,11 @@
 //! is present" contract) - it never fails this constructor, which still
 //! only fails on a genuine local runtime-allocation problem, exactly as
 //! before C1. `engram` is deliberately left `None` here - see
-//! [`build_clients`]'s own doc for why.
+//! [`build_clients`]'s own doc for why. I10 adds `tokenfuse` (the
+//! `savings_breakdown`/`cost_per_action` optimization tools) to the
+//! cheap-and-nice bucket too, but with a narrower resolution than the Tauri
+//! shell's - see [`build_tokenfuse_traces`]'s own doc for why (no `evidence`
+//! module in this crate to lean on).
 //!
 //! Fail-closed at the boundary (06 §0.5): nothing here panics across FFI;
 //! [`CopilotHandle::ask`] against a disabled service returns the honest
@@ -64,7 +68,7 @@ pub mod dto;
 
 pub use dto::{CopilotAnswerDto, CopilotFfiError, CopilotStatusDto, CopilotToolDto};
 
-use genaryx_copilot::{Clients, CopilotConfig, CopilotService};
+use genaryx_copilot::{Clients, CopilotConfig, CopilotService, TokenfuseTraces};
 
 // C1 (docs/PHASE6-C1.md C1-W2): the connector clients `build_clients` wires,
 // plus the SAME per-plane environment discovery every sibling handle in this
@@ -245,7 +249,40 @@ fn build_clients() -> Clients {
         engram: None,
         qryx_bin: crypto_env::discover().map(|resolved| resolved.qryx_bin),
         verdryx_db: quality_env::discover().map(|resolved| resolved.db_path),
+        tokenfuse: build_tokenfuse_traces(),
     }
+}
+
+/// I10 "Felyx optimization recommendations": resolve the tokenfuse binary +
+/// traces dir pair the SAME "well-known path" way `crypto_env`/`quality_env`
+/// resolve their own binary/db above (plain file-existence checks, no
+/// network, no spawn - the "cheap-and-nice" bucket this doc's `qryx_bin`/
+/// `verdryx_db` paragraph describes, not the `engram` one). UNLIKE the Tauri
+/// shell's `crates/api/src/copilot/state.rs::resolve_tokenfuse`, this crate
+/// has no `evidence` module at all to lean on for the traces-dir half
+/// (Track B/SwiftUI is the deferred secondary shell - docs/PHASE6.md, and
+/// the "Web-first pivot" decision), so rather than duplicate that module's
+/// full descriptor-scan here for a shell that is not today's shipping
+/// target, the traces dir is read from the SAME `TOKENFUSE_DATA_DIR`
+/// environment variable the tokenfuse CLI itself reads (see
+/// `crates/connectors/src/tokenfuse.rs`'s module doc) rather than derived
+/// from a `taipan up` descriptor. `None` when either half does not resolve,
+/// leaving `savings_breakdown`/`cost_per_action` simply unadvertised on this
+/// shell - never a construction failure, matching every other plane here.
+fn build_tokenfuse_traces() -> Option<TokenfuseTraces> {
+    let home = std::env::var_os("HOME")?;
+    let bin = std::path::PathBuf::from(home)
+        .join(".taipan")
+        .join("bin")
+        .join("tokenfuse-gateway");
+    if !bin.is_file() {
+        return None;
+    }
+    let traces_dir = std::env::var_os("TOKENFUSE_DATA_DIR").map(std::path::PathBuf::from)?;
+    if !traces_dir.is_dir() {
+        return None;
+    }
+    Some(TokenfuseTraces { bin, traces_dir })
 }
 
 /// Resolve + build the money plane's [`CloudClient`], exactly the same

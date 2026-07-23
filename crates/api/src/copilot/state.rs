@@ -34,7 +34,7 @@
 //! one `Arc<CopilotService>` directly.
 
 use genaryx_connectors::{CloudClient, EngramClient, IdryxClient, WardryxClient};
-use genaryx_copilot::{Clients, CopilotConfig, CopilotService};
+use genaryx_copilot::{Clients, CopilotConfig, CopilotService, TokenfuseTraces};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -105,9 +105,13 @@ pub async fn bootstrap() -> CopilotInner {
 /// (`CopilotService::explain_incident`'s prompt names `alerts`/`list_runs`/
 /// `identity_alerts`/`policies` by tool - crate-side tool names over these
 /// three clients); `qryx_bin`/`verdryx_db` are cheap, well-known paths wired
-/// the same way the Crypto/Quality panels resolve them; `engram` is the one
-/// heavier, genuinely optional plane (it spawns and handshakes a real child
-/// process - see [`resolve_engram`]). Every step here is independent and
+/// the same way the Crypto/Quality panels resolve them; `tokenfuse` (I10
+/// "Felyx optimization recommendations" - `savings_breakdown`/
+/// `cost_per_action`) is likewise a cheap, well-known bin+dir pair, reusing
+/// the EVIDENCE Center's own resolution rather than a fresh one - see
+/// [`resolve_tokenfuse`]; `engram` is the one heavier, genuinely optional
+/// plane (it spawns and handshakes a real child process - see
+/// [`resolve_engram`]). Every step here is independent and
 /// best-effort: a plane that does not resolve is simply left `None` in the
 /// returned [`Clients`], so `genaryx_copilot::ToolRegistry::new` just does
 /// not advertise that plane's tools - never a bootstrap failure
@@ -143,6 +147,7 @@ async fn resolve_clients() -> Clients {
     let qryx_bin = crate::crypto::env::discover().map(|env| env.qryx_bin);
     let verdryx_db = crate::quality::env::discover().map(|env| env.db_path);
     let engram = resolve_engram().await;
+    let tokenfuse = resolve_tokenfuse();
 
     Clients {
         cloud,
@@ -151,7 +156,32 @@ async fn resolve_clients() -> Clients {
         engram,
         qryx_bin,
         verdryx_db,
+        tokenfuse,
     }
+}
+
+/// Best-effort tokenfuse-traces wiring (I10 "Felyx optimization
+/// recommendations"): reuses the Evidence Center's OWN
+/// `evidence::env::discover_tokenfuse` - the SAME `~/.taipan/bin/
+/// tokenfuse-gateway` binary resolution plus the SAME `<name>.traces/gateway`
+/// default-traces-dir convention Evidence already ground-truthed against a
+/// live `taipan up` box (see that module's doc comment for the full
+/// derivation; not re-derived here, since it already exists and this is
+/// exactly the "reuse each existing panel's own env discovery" pattern
+/// [`resolve_clients`] uses for every other plane). Evidence's own
+/// `default_traces_dir` is only a STARTING POINT for an operator-editable UI
+/// field there (that panel lets the operator override it), but Felyx's tools
+/// have no such field to fall back on, so this resolves to `Some` only when
+/// a concrete traces dir was actually found on disk - `None` (never a
+/// fabricated path) otherwise, leaving `savings_breakdown`/`cost_per_action`
+/// simply unadvertised, exactly like every other plane here.
+fn resolve_tokenfuse() -> Option<TokenfuseTraces> {
+    let resolved = crate::evidence::env::discover_tokenfuse()?;
+    let traces_dir = resolved.default_traces_dir?;
+    Some(TokenfuseTraces {
+        bin: resolved.tokenfuse_bin,
+        traces_dir,
+    })
 }
 
 /// Best-effort Engram wiring: reuses `memory::env::discover` for the SAME
@@ -243,5 +273,21 @@ mod tests {
         // yields every plane, none of them, or anything in between is a
         // property of this machine's `~/.taipan` state, not this test.
         let _ = resolve_clients().await;
+    }
+
+    #[test]
+    fn resolve_tokenfuse_never_panics() {
+        // Same best-effort discipline as `resolve_clients_never_panics`: this
+        // box may or may not have a `~/.taipan/bin/tokenfuse-gateway` plus a
+        // resolvable traces dir; either way `resolve_tokenfuse` must return a
+        // clean `Option`, never panic.
+        let resolved = resolve_tokenfuse();
+        // If it DID resolve on this dev box, sanity-check the shape rather
+        // than asserting nothing at all - both fields should be non-empty
+        // paths, not a fabricated placeholder.
+        if let Some(tf) = resolved {
+            assert!(!tf.bin.as_os_str().is_empty());
+            assert!(!tf.traces_dir.as_os_str().is_empty());
+        }
     }
 }

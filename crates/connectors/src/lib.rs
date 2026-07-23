@@ -83,6 +83,15 @@
 //! `GET /v1/keys` key-lifecycle report (docs/22-key-lifecycle.md in
 //! tokenfuse), the Identity tab's new Credentials card renders from. See
 //! `crates/connectors/src/gateway.rs`.
+//!
+//! I10 "Felyx optimization recommendations": [`TokenfuseClient`] gains
+//! `savings` and `cost_per_action`, two more reads over the same gateway CLI
+//! that [`build_evidence_pack`] already shells - a parsed `tokenfuse savings`
+//! report ([`TokenfuseSavings`]) and a per-model/per-agent cost and
+//! tool-call breakdown ([`CostPerActionReport`]/[`CostBreakdownRow`]) via two
+//! FIXED `tokenfuse sql` aggregate queries. The Felyx copilot's new
+//! `savings_breakdown`/`cost_per_action` tools read through these; see
+//! `crates/copilot/src/tools/optimize.rs`.
 
 mod cloud_cli;
 mod cloud_rest;
@@ -142,7 +151,9 @@ pub use relay_admin::{
 };
 pub use sse_decoder::{SseDecoder, SseEvent};
 pub use ssh::{SshClient, SshError, SshTarget};
-pub use tokenfuse::{TokenfuseClient, TokenfuseError};
+pub use tokenfuse::{
+    CostBreakdownRow, CostPerActionReport, TokenfuseClient, TokenfuseError, TokenfuseSavings,
+};
 pub use urlpath::PathSegmentError;
 pub use verdryx::{
     Baseline as VerdryxBaseline, EvalRun as VerdryxEvalRun, RunSummary as VerdryxRunSummary,

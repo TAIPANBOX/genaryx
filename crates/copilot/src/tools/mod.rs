@@ -8,11 +8,23 @@
 //! connectors (Qryx, Verdryx, Engram) via a `spawn_blocking` bridge: memory
 //! recall/why, quality, and `crypto_scan` (the first parameterized tool).
 //! Wardryx's `decide` (a POST that can create a hold) is still C2.
+//!
+//! I10 ("Felyx optimization recommendations") adds `optimize`: two more read
+//! tools over the TokenFuse gateway CLI (`savings_breakdown`/
+//! `cost_per_action`), shelled fresh per call via the SAME `spawn_blocking`
+//! bridge `crypto_scan` uses (a CLI has no long-lived state to hold). Still
+//! READ only - Felyx can see the cost/savings numbers, but proposing a
+//! concrete action from them (e.g. capping a wasteful agent's budget) goes
+//! through the model choosing to call an EXISTING `tools::propose` tool, not
+//! a new one; see `crates/copilot/src/tools/optimize.rs`'s module doc for the
+//! full rationale, including why this overlaps in shape (but not source)
+//! with `tools::cloud`'s existing `savings` tool.
 
 mod cloud;
 mod crypto;
 mod idryx;
 mod memory;
+mod optimize;
 mod propose;
 mod quality;
 mod wardryx;
@@ -45,6 +57,26 @@ pub struct Clients {
     /// The `verdryx.db` path; `quality_latest` opens it read-only inside a
     /// blocking task (a rusqlite Connection is `!Sync`, never shared).
     pub verdryx_db: Option<PathBuf>,
+    /// The resolved tokenfuse gateway binary plus its traces dir
+    /// (`TOKENFUSE_DATA_DIR`), resolved once at bootstrap (see
+    /// `crates/api/src/copilot/state.rs`'s `resolve_clients`).
+    /// `optimize::tools()` shells `tokenfuse` fresh per call inside a
+    /// blocking task - the same "no long-lived state, just a resolved path"
+    /// pattern as `qryx_bin` - reading `traces_dir` rather than accepting it
+    /// as a model-supplied argument: unlike `crypto_scan`'s `path` (an
+    /// arbitrary filesystem target Qryx is meant to scan on request), the
+    /// trace directory is a fixed environment fact, not something the model
+    /// should be able to redirect.
+    pub tokenfuse: Option<TokenfuseTraces>,
+}
+
+/// The resolved TokenFuse binary + traces dir pair [`Clients::tokenfuse`]
+/// holds; see its doc comment for why both are fixed at bootstrap rather than
+/// model-supplied.
+#[derive(Debug, Clone)]
+pub struct TokenfuseTraces {
+    pub bin: PathBuf,
+    pub traces_dir: PathBuf,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -113,6 +145,9 @@ impl ToolRegistry {
         if clients.verdryx_db.is_some() {
             tools.extend(quality::tools());
         }
+        if clients.tokenfuse.is_some() {
+            tools.extend(optimize::tools());
+        }
         // Propose tools (C2) are always available: a proposal is a descriptor,
         // not a plane read, so the copilot can recommend an action even where a
         // plane is unconfigured. They emit a `ProposedAction` and never mutate;
@@ -179,6 +214,8 @@ mod tests {
         let names = reg.tool_names();
         assert!(!names.contains(&"money_summary")); // no cloud -> no read tools
         assert!(!names.contains(&"memory_recall"));
+        assert!(!names.contains(&"savings_breakdown")); // no tokenfuse -> no optimize tools
+        assert!(!names.contains(&"cost_per_action"));
         assert!(names.contains(&"propose_kill")); // propose tools always present
         assert!(names.contains(&"propose_budget"));
         assert!(reg.is_propose_tool("propose_kill"));
@@ -217,5 +254,23 @@ mod tests {
             .find(|s| s.name == "crypto_scan")
             .expect("crypto_scan advertised");
         assert_eq!(crypto.params_schema["required"][0], "path");
+    }
+
+    #[test]
+    fn i10_optimize_tools_register_from_a_resolved_tokenfuse_client() {
+        // Like qryx/verdryx, tokenfuse is backed by resolved paths in
+        // `Clients` (no live binary/traces needed to prove registration).
+        let reg = ToolRegistry::new(Clients {
+            tokenfuse: Some(TokenfuseTraces {
+                bin: PathBuf::from("/x/tokenfuse-gateway"),
+                traces_dir: PathBuf::from("/x/traces"),
+            }),
+            ..Default::default()
+        });
+        let names = reg.tool_names();
+        assert!(names.contains(&"savings_breakdown"));
+        assert!(names.contains(&"cost_per_action"));
+        assert!(!reg.is_propose_tool("savings_breakdown"));
+        assert!(!reg.is_propose_tool("cost_per_action"));
     }
 }
