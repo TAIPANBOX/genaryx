@@ -88,6 +88,47 @@ fn decode<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, Response> {
 #[allow(clippy::result_large_err)]
 pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Response, Response> {
     match name {
+        "admission_baseline" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                evalset_path: String,
+                model: String,
+                agent_id: String,
+                api_key: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::admission::commands::admission_baseline(
+                    a.evalset_path,
+                    a.model,
+                    a.agent_id,
+                    a.api_key,
+                    &ctx.admission,
+                )
+                .await,
+            ))
+        }
+        "admission_check" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                key_id: String,
+                agent_id: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::admission::commands::admission_check(
+                    a.key_id,
+                    a.agent_id,
+                    &ctx.admission,
+                )
+                .await,
+            ))
+        }
+        "admission_status" => Ok(reply(
+            genaryx_api::admission::commands::admission_status(&ctx.admission).await,
+        )),
         "agent_events" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { formatHm } from "../lib/format";
 import {
@@ -17,6 +17,8 @@ import type {
   OnboardStatus,
   OnboardWriteResult,
 } from "../onboardTypes";
+import { AdmissionVerify } from "./AdmissionVerify";
+import type { AdmissionSeed } from "./AdmissionVerify";
 import { ConfirmButton } from "./ConfirmButton";
 import { FreshBadge } from "./FreshBadge";
 import { JsonPreview } from "./JsonPreview";
@@ -32,7 +34,7 @@ const FIELD_STYLE = {
   width: "100%",
 } as const;
 
-const PASSPORT_COLUMNS = "1fr 1fr 1fr 110px";
+const PASSPORT_COLUMNS = "1fr 1fr 1fr 110px 90px";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -53,6 +55,21 @@ function parseOptionalUsd(s: string): number | null {
   if (t.length === 0) return null;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Best-effort guess at a provisioned passport's `key_id`, for the "Verify"
+ * per-row action's pre-fill (I6, docs/ADMISSION.md). `ProvisionedDto.file`
+ * is `<passports_dir>/<path with '/' -> '-'>.json`
+ * (`onboard::commands::onboard_generate`), and the DEFAULT `key_id` is that
+ * SAME `path.replace('/', '-')` when the operator never overrode it at
+ * generation time - so stripping the directory and the `.json` extension
+ * off `file` recovers it exactly in the common (un-overridden) case. A
+ * genuine guess, not an authority: a custom `key_id` override at generation
+ * time makes this wrong, which is exactly why the Verify section's own key
+ * id field stays freely editable rather than locked to this value. */
+function guessKeyIdFromPassportFile(file: string): string {
+  const base = file.split(/[/\\]/).pop() ?? file;
+  return base.endsWith(".json") ? base.slice(0, -".json".length) : base;
 }
 
 /**
@@ -259,6 +276,18 @@ export function OnboardView() {
   const [writeError, setWriteError] = useState<OnboardError | null>(null);
   const [needsOverwriteConfirm, setNeedsOverwriteConfirm] = useState(false);
 
+  // ---- admission-gate Verify section (I6, docs/ADMISSION.md) ----
+  // Reachable two ways: a fresh Generate below pre-fills it from the new
+  // bundle, and each provisioned passport row's own "Verify" action
+  // pre-fills it from that row - see `AdmissionSeed`'s own doc comment for
+  // why `nonce` has to keep incrementing rather than being a plain object.
+  const [admissionSeed, setAdmissionSeed] = useState<AdmissionSeed | null>(null);
+  const admissionNonce = useRef(0);
+  const pushAdmissionSeed = useCallback((seedKeyId: string, seedAgentId: string) => {
+    admissionNonce.current += 1;
+    setAdmissionSeed({ keyId: seedKeyId, agentId: seedAgentId, nonce: admissionNonce.current });
+  }, []);
+
   const canGenerate =
     trustDomain.trim().length > 0 &&
     path.trim().length > 0 &&
@@ -293,6 +322,7 @@ export function OnboardView() {
       setWriteResult(null);
       setWriteError(null);
       setNeedsOverwriteConfirm(false);
+      pushAdmissionSeed(b.key_id, b.agent_id);
     } catch (err) {
       setGenerateError(err as OnboardError);
     } finally {
@@ -310,6 +340,7 @@ export function OnboardView() {
     keyIdTouched,
     keyIdOverride,
     bindPatternTouched,
+    pushAdmissionSeed,
     bindPattern,
     requireHumanAboveUsd,
     unitIsNew,
@@ -482,9 +513,9 @@ export function OnboardView() {
                   background: "var(--panel-3)",
                 }}
               >
-                {["agent id", "owner", "file", ""].map((label) => (
+                {["agent id", "owner", "file", "", ""].map((label, idx) => (
                   <span
-                    key={label}
+                    key={`${label}-${idx}`}
                     className="mono"
                     style={{
                       fontSize: 10,
@@ -530,6 +561,14 @@ export function OnboardView() {
                   >
                     {p.in_map ? "in map" : "not in map"}
                   </span>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    style={{ width: "auto", padding: "0 10px", fontSize: 11 }}
+                    onClick={() => pushAdmissionSeed(guessKeyIdFromPassportFile(p.file), p.agent_id)}
+                  >
+                    Verify
+                  </button>
                 </div>
               ))}
             </div>
@@ -871,6 +910,10 @@ export function OnboardView() {
           </div>
         </Section>
       )}
+
+      <Section title="Verify (admission gate)">
+        <AdmissionVerify seed={admissionSeed} />
+      </Section>
     </div>
   );
 }

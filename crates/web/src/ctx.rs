@@ -10,6 +10,7 @@
 
 use crate::auth::{Operator, Sessions};
 use crate::config::Config;
+use genaryx_api::admission::AdmissionState;
 use genaryx_api::bus::AppState;
 use genaryx_api::copilot::CopilotState;
 use genaryx_api::credentials::CredentialsState;
@@ -73,6 +74,12 @@ pub struct Ctx {
     /// `genaryx_api::credentials`'s module doc) that just happens to render
     /// in the same Identity tab.
     pub credentials: CredentialsState,
+    /// I6 "admission gate" (docs/ADMISSION.md): the VERIFY step over the SAME
+    /// gateway `credentials` reads, an entirely independent plane from it
+    /// (own state machine, own reachability probe) that additionally shells
+    /// the `verdryx` CLI for its one admin command - see
+    /// `genaryx_api::admission`'s module doc.
+    pub admission: AdmissionState,
     pub quality: QualityState,
     pub crypto: CryptoState,
     pub memory: MemoryState,
@@ -120,6 +127,7 @@ impl Ctx {
             policy: PolicyState::pending(),
             identity: IdentityState::pending(),
             credentials: CredentialsState::pending(),
+            admission: AdmissionState::pending(),
             quality: QualityState::pending(),
             crypto: CryptoState::pending(),
             memory: MemoryState::pending(),
@@ -158,6 +166,7 @@ impl Ctx {
         resolve!(policy, genaryx_api::policy::bootstrap(policy_dir));
         resolve!(identity, genaryx_api::identity::bootstrap());
         resolve!(credentials, genaryx_api::credentials::bootstrap());
+        resolve!(admission, genaryx_api::admission::bootstrap());
         resolve!(quality, genaryx_api::quality::bootstrap());
         resolve!(crypto, genaryx_api::crypto::bootstrap());
         resolve!(memory, genaryx_api::memory::bootstrap());

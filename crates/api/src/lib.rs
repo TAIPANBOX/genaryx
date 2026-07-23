@@ -32,6 +32,7 @@ pub mod events;
 pub mod graph;
 pub mod replay;
 
+pub mod admission;
 pub mod copilot;
 pub mod credentials;
 pub mod crypto;

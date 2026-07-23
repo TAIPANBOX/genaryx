@@ -231,6 +231,52 @@ pub mod onboard {
     }
 }
 
+pub mod admission {
+    use genaryx_api::admission::commands::*;
+    #[allow(unused_imports)]
+    use genaryx_api::admission::env::*;
+    #[allow(unused_imports)]
+    use genaryx_api::admission::state::*;
+    #[allow(unused_imports)]
+    use genaryx_api::{bus::AppState, bus::BusMode, events::UiEvent};
+    #[allow(unused_imports)]
+    use genaryx_connectors::*;
+
+    #[tauri::command]
+    pub async fn admission_status(
+        state: tauri::State<'_, AdmissionState>,
+    ) -> Result<AdmissionStatusDto, ()> {
+        genaryx_api::admission::commands::admission_status(&state).await
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn admission_check(
+        key_id: String,
+        agent_id: String,
+        state: tauri::State<'_, AdmissionState>,
+    ) -> Result<AdmissionCheckDto, AdmissionError> {
+        genaryx_api::admission::commands::admission_check(key_id, agent_id, &state).await
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn admission_baseline(
+        evalset_path: String,
+        model: String,
+        agent_id: String,
+        api_key: String,
+        state: tauri::State<'_, AdmissionState>,
+    ) -> Result<AdmissionBaselineDto, AdmissionError> {
+        genaryx_api::admission::commands::admission_baseline(
+            evalset_path,
+            model,
+            agent_id,
+            api_key,
+            &state,
+        )
+        .await
+    }
+}
+
 pub mod quality {
     use genaryx_api::quality::commands::*;
     #[allow(unused_imports)]
