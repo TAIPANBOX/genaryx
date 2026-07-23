@@ -3,7 +3,12 @@ name: ci
 on:
   push:
     branches: [main, "phase-*"]
+    # Tags run the FULL matrix, including the macOS job below: a phase tag is
+    # exactly the moment the SwiftUI shell must be proven to still build.
+    tags: ["*"]
   pull_request:
+  # Manual full run (the way to get the macOS job on demand between tags).
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -71,6 +76,14 @@ jobs:
   swiftui-shell:
     name: swiftui shell (macos)
     runs-on: macos-14
+    # macOS minutes bill at 10x on this private repo and this job burned most
+    # of the account's free Actions pool in early July (billing note,
+    # 2026-07-23). It now runs only on tags and manual dispatch; every push/PR
+    # still builds the shared core and the Tauri shell on Linux, and the
+    # SwiftUI shell is deferred post-pivot anyway (README "not built yet"
+    # keeps its screen work parked). Flip this back when the spending limit
+    # or the pivot changes.
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     steps:
       - uses: actions/checkout@v4
       - name: Rust toolchain
