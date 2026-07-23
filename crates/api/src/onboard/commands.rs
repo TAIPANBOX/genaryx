@@ -80,6 +80,21 @@ pub struct FsScopeDto {
     pub mode: String,
 }
 
+/// One LLM provider/model/endpoint declared on the passport (agent-passport
+/// SPEC.md section 4.5, `models`). Mirrors `FsScopeDto`'s own wire/validation
+/// split - a tolerant wire shape here, validated into its final form inside
+/// `onboard_generate` (`validate_model_decls`) rather than at the type level.
+/// Unlike `FsScopeDto`, only `provider` is required: `model` and `endpoint`
+/// are honestly optional on the wire, matching the spec exactly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelDeclDto {
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+}
+
 /// `onboard_generate`'s form (docs/ONBOARD.md, exact field names).
 #[derive(Debug, Clone, Deserialize)]
 pub struct OnboardGenerateRequest {
@@ -111,6 +126,12 @@ pub struct OnboardGenerateRequest {
     /// frontend that omits this field entirely stays valid.
     #[serde(default)]
     pub filesystem: Vec<FsScopeDto>,
+    /// LLM providers/models/endpoints this agent is declared to use
+    /// (agent-passport SPEC.md section 4.5). Default empty: no declared
+    /// models is the common case, and an old frontend that omits this field
+    /// entirely stays valid.
+    #[serde(default)]
+    pub models: Vec<ModelDeclDto>,
     #[serde(default)]
     pub map_path: Option<String>,
     #[serde(default)]
@@ -150,6 +171,12 @@ pub struct ProvisionedDto {
     /// the individual paths/modes stay on the passport file itself, the
     /// "Provisioned passports" table shows a folder count, not the folders.
     pub filesystem_count: usize,
+    /// Count of the passport's declared `models` entries
+    /// (`PassportPeek::models.len()`). Only the count is surfaced here - the
+    /// individual provider/model/endpoint values stay on the passport file
+    /// itself; the "Provisioned passports" table shows a models count, not
+    /// the models (mirrors `filesystem_count`'s exact same shape).
+    pub models_count: usize,
     /// Whether any `keys[].agents` pattern in the loaded map matches this id.
     pub in_map: bool,
 }
@@ -320,6 +347,100 @@ fn validate_filesystem_scopes(
     Ok(out)
 }
 
+/// A declared model field (`provider`, or `model`/`endpoint` when present) is
+/// honest about being a declaration, not an enforced binding: it must be
+/// non-empty after trimming and free of control characters (bytes < 0x20,
+/// which also catches NUL) - mirrors `valid_fs_scope_path`'s exact rule,
+/// applied here to `provider`/`model`/`endpoint` instead of a filesystem
+/// path. Kept as its own function (rather than reusing `valid_fs_scope_path`
+/// directly) so the two domains stay independently named and neither refusal
+/// message has to explain itself in terms of the other's field.
+fn valid_model_field(s: &str) -> bool {
+    !s.is_empty() && !s.chars().any(|c| (c as u32) < 0x20)
+}
+
+/// A one-line label for a declared model triple, used in duplicate-decl
+/// error messages - `anthropic (model: claude-sonnet-4-5, endpoint:
+/// api.anthropic.com)`, or plain `openai` when `model`/`endpoint` are both
+/// absent.
+fn format_model_label(provider: &str, model: Option<&str>, endpoint: Option<&str>) -> String {
+    match (model, endpoint) {
+        (None, None) => provider.to_string(),
+        (Some(m), None) => format!("{provider} (model: {m})"),
+        (None, Some(e)) => format!("{provider} (endpoint: {e})"),
+        (Some(m), Some(e)) => format!("{provider} (model: {m}, endpoint: {e})"),
+    }
+}
+
+/// A declared model entry after validation: trimmed `provider` (non-empty,
+/// control-char-free), and trimmed `model`/`endpoint` when present
+/// (control-char-free; a blank value after trimming is treated as absent,
+/// the same "blank means not provided" tolerance `display_name`/`runtime`
+/// get in `onboard_generate` below). Kept separate from the raw wire
+/// `ModelDeclDto` for the same reason `ValidatedFsScope` is kept separate
+/// from `FsScopeDto`: the passport doc and the terraform blocks read from
+/// the SAME validated, order-preserved list rather than re-deriving it twice.
+struct ValidatedModelDecl {
+    provider: String,
+    model: Option<String>,
+    endpoint: Option<String>,
+}
+
+/// Validate and normalize `decls` into an order-preserved, trimmed,
+/// deduplicated list - or refuse with the same `OnboardError::invalid` style
+/// as every other field here. Two rows declaring the exact same
+/// (provider, model, endpoint) triple after trimming are refused rather than
+/// silently collapsed - mirrors `validate_filesystem_scopes`'s duplicate
+/// refusal, but keyed on the full triple rather than a single field: two
+/// entries for the SAME provider with DIFFERENT models or endpoints are
+/// perfectly legal (e.g. `anthropic`/`claude-sonnet-4-5` and
+/// `anthropic`/`claude-opus-4-1` are two distinct, both-true declarations),
+/// so only an exact repeat of all three fields is ambiguous.
+fn validate_model_decls(decls: &[ModelDeclDto]) -> Result<Vec<ValidatedModelDecl>, OnboardError> {
+    let mut out = Vec::with_capacity(decls.len());
+    let mut seen: BTreeSet<(String, Option<String>, Option<String>)> = BTreeSet::new();
+    for (idx, decl) in decls.iter().enumerate() {
+        let provider = decl.provider.trim().to_string();
+        let raw_provider = &decl.provider;
+        if !valid_model_field(&provider) {
+            return Err(OnboardError::invalid(format!(
+                "model declaration #{idx}: provider must be non-empty and free of control characters, got `{raw_provider}`"
+            )));
+        }
+        let model = match decl.model.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(m) if valid_model_field(m) => Some(m.to_string()),
+            Some(m) => {
+                return Err(OnboardError::invalid(format!(
+                    "model declaration #{idx}: model must be free of control characters, got `{m}`"
+                )));
+            }
+        };
+        let endpoint = match decl.endpoint.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(e) if valid_model_field(e) => Some(e.to_string()),
+            Some(e) => {
+                return Err(OnboardError::invalid(format!(
+                    "model declaration #{idx}: endpoint must be free of control characters, got `{e}`"
+                )));
+            }
+        };
+        let key = (provider.clone(), model.clone(), endpoint.clone());
+        if !seen.insert(key) {
+            return Err(OnboardError::invalid(format!(
+                "model declaration `{}` is declared more than once; one row per provider/model/endpoint combination (which entry would be authoritative is ambiguous otherwise)",
+                format_model_label(&provider, model.as_deref(), endpoint.as_deref())
+            )));
+        }
+        out.push(ValidatedModelDecl {
+            provider,
+            model,
+            endpoint,
+        });
+    }
+    Ok(out)
+}
+
 /// Escape a free-text value for embedding in a double-quoted YAML/HCL string.
 fn quoted(s: &str) -> String {
     let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
@@ -459,6 +580,20 @@ struct FsScope<'a> {
     mode: &'a str,
 }
 
+/// One declared model entry as it appears on the passport document itself -
+/// borrowed strings, mirroring `FsScope`'s own zero-copy shape. `model` and
+/// `endpoint` are optional on the wire too (SPEC.md section 4.5: only
+/// `provider` is required), each with its own `skip_serializing_if` so an
+/// entry naming neither serializes as bare `{ "provider": "..." }`.
+#[derive(Serialize)]
+struct PassportModel<'a> {
+    provider: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint: Option<&'a str>,
+}
+
 #[derive(Serialize)]
 struct PassportDoc<'a> {
     schema: &'a str,
@@ -476,6 +611,12 @@ struct PassportDoc<'a> {
     /// existed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     filesystem: Vec<FsScope<'a>>,
+    /// Declared LLM providers/models/endpoints, a root-level array (SPEC.md
+    /// section 4.5). Omitted entirely when empty, so a passport declaring no
+    /// models serializes byte-identically to one generated before this field
+    /// existed (mirrors `filesystem`'s own byte-identical-when-empty rule).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    models: Vec<PassportModel<'a>>,
     created_at: String,
 }
 
@@ -499,6 +640,24 @@ struct FsScopePeek {
     mode: String,
 }
 
+/// The minimal, tolerant read side of one `models` entry. Parsed so a
+/// passport carrying the field peeks cleanly rather than being skipped, but
+/// `provider`/`model`/`endpoint` are not individually consumed: the
+/// "Provisioned passports" table surfaces a per-passport COUNT
+/// (`ProvisionedDto::models_count`, via `PassportPeek::models.len()` below),
+/// not the individual declarations - mirrors `FsScopePeek`'s exact same
+/// dead-code-on-purpose shape (see its own doc comment).
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct ModelPeek {
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    endpoint: String,
+}
+
 /// The minimal, tolerant read side for listing what is provisioned.
 #[derive(Deserialize)]
 struct PassportPeek {
@@ -513,6 +672,11 @@ struct PassportPeek {
     /// though this one is no longer dead code.
     #[serde(default)]
     filesystem: Vec<FsScopePeek>,
+    /// Read via `.len()` into `ProvisionedDto::models_count` below - see
+    /// `ModelPeek`'s own doc comment for why ITS fields stay unread even
+    /// though this one is no longer dead code.
+    #[serde(default)]
+    models: Vec<ModelPeek>,
 }
 
 // ============================================================================
@@ -608,11 +772,13 @@ pub async fn onboard_status(
                     Ok(p) => {
                         let in_map = map.as_ref().is_some_and(|m| id_bound_in_map(m, &p.id));
                         let filesystem_count = p.filesystem.len();
+                        let models_count = p.models.len();
                         passports.push(ProvisionedDto {
                             agent_id: p.id,
                             owner: p.owner,
                             file: display,
                             filesystem_count,
+                            models_count,
                             in_map,
                         });
                     }
@@ -686,6 +852,7 @@ pub async fn onboard_generate(
         finite_positive(v, "unit_budget_usd_month")?;
     }
     let filesystem = validate_filesystem_scopes(&request.filesystem)?;
+    let models = validate_model_decls(&request.models)?;
 
     let agent_id = format!("agent://{trust_domain}/{path}");
     if !valid_agent_id(&agent_id) {
@@ -757,6 +924,14 @@ pub async fn onboard_generate(
             .map(|s| FsScope {
                 path: &s.path,
                 mode: &s.mode,
+            })
+            .collect(),
+        models: models
+            .iter()
+            .map(|m| PassportModel {
+                provider: &m.provider,
+                model: m.model.as_deref(),
+                endpoint: m.endpoint.as_deref(),
             })
             .collect(),
         created_at: now_rfc3339(),
@@ -840,6 +1015,17 @@ pub async fn onboard_generate(
         terraform_snippet.push_str("  filesystem {\n");
         terraform_snippet.push_str(&format!("    path = {}\n", quoted(&s.path)));
         terraform_snippet.push_str(&format!("    mode = {}\n", quoted(&s.mode)));
+        terraform_snippet.push_str("  }\n");
+    }
+    for m in &models {
+        terraform_snippet.push_str("  models {\n");
+        terraform_snippet.push_str(&format!("    provider = {}\n", quoted(&m.provider)));
+        if let Some(v) = m.model.as_deref() {
+            terraform_snippet.push_str(&format!("    model = {}\n", quoted(v)));
+        }
+        if let Some(v) = m.endpoint.as_deref() {
+            terraform_snippet.push_str(&format!("    endpoint = {}\n", quoted(v)));
+        }
         terraform_snippet.push_str("  }\n");
     }
     terraform_snippet.push_str("}\n\n");
@@ -998,6 +1184,8 @@ mod tests {
             unit_budget_usd_month: Some(2000.0),
             // Empty by default: no filesystem scopes is the common case.
             filesystem: Vec::new(),
+            // Empty by default: no declared models is the common case.
+            models: Vec::new(),
             // An explicit empty override so the test never falls through to a
             // TOKENFUSE_IDENTITY_MAP env var leaking in from the harness.
             map_path: Some(String::new()),
@@ -1334,6 +1522,195 @@ mod tests {
         assert_eq!(status.passports[0].filesystem_count, 2);
     }
 
+    // -- declared models -------------------------------------------------------
+
+    #[test]
+    fn model_decl_validation_matrix() {
+        // Good: a fully-specified entry, a provider-only entry, and a second
+        // entry for the SAME provider with a different model - all distinct
+        // triples, all accepted.
+        let mut r = base_request();
+        r.models = vec![
+            ModelDeclDto {
+                provider: "anthropic".into(),
+                model: Some("claude-sonnet-4-5".into()),
+                endpoint: Some("api.anthropic.com".into()),
+            },
+            ModelDeclDto {
+                provider: "openai".into(),
+                model: None,
+                endpoint: None,
+            },
+            ModelDeclDto {
+                provider: "anthropic".into(),
+                model: Some("claude-opus-4-1".into()),
+                endpoint: None,
+            },
+        ];
+        let bundle = run(onboard_generate(r)).unwrap();
+        let passport: serde_json::Value = serde_json::from_str(&bundle.passport_json).unwrap();
+        assert_eq!(passport["models"][0]["provider"], "anthropic");
+        assert_eq!(passport["models"][0]["model"], "claude-sonnet-4-5");
+        assert_eq!(passport["models"][0]["endpoint"], "api.anthropic.com");
+        assert_eq!(passport["models"][1]["provider"], "openai");
+        assert!(passport["models"][1].get("model").is_none());
+        assert!(passport["models"][1].get("endpoint").is_none());
+        assert_eq!(passport["models"][2]["provider"], "anthropic");
+        assert_eq!(passport["models"][2]["model"], "claude-opus-4-1");
+        assert!(passport["models"][2].get("endpoint").is_none());
+
+        // Empty provider after trim.
+        let mut r = base_request();
+        r.models = vec![ModelDeclDto {
+            provider: "   ".into(),
+            model: None,
+            endpoint: None,
+        }];
+        let err = run(onboard_generate(r)).unwrap_err();
+        assert_eq!(err.kind, "invalid_input");
+        assert!(err.message.contains("#0"), "{}", err.message);
+
+        // A control character in the provider.
+        let mut r = base_request();
+        r.models = vec![ModelDeclDto {
+            provider: "anthro\u{0007}pic".into(),
+            model: None,
+            endpoint: None,
+        }];
+        assert_eq!(run(onboard_generate(r)).unwrap_err().kind, "invalid_input");
+
+        // A control character in the model.
+        let mut r = base_request();
+        r.models = vec![ModelDeclDto {
+            provider: "anthropic".into(),
+            model: Some("claude\0bad".into()),
+            endpoint: None,
+        }];
+        assert_eq!(run(onboard_generate(r)).unwrap_err().kind, "invalid_input");
+
+        // A control character in the endpoint.
+        let mut r = base_request();
+        r.models = vec![ModelDeclDto {
+            provider: "anthropic".into(),
+            model: None,
+            endpoint: Some("api.anthropic\u{0007}.com".into()),
+        }];
+        assert_eq!(run(onboard_generate(r)).unwrap_err().kind, "invalid_input");
+
+        // A blank model/endpoint (whitespace only) is tolerated as absent,
+        // not refused - it is treated the same as an omitted field.
+        let mut r = base_request();
+        r.models = vec![ModelDeclDto {
+            provider: "openai".into(),
+            model: Some("   ".into()),
+            endpoint: Some("".into()),
+        }];
+        let bundle = run(onboard_generate(r)).unwrap();
+        let passport: serde_json::Value = serde_json::from_str(&bundle.passport_json).unwrap();
+        assert!(passport["models"][0].get("model").is_none());
+        assert!(passport["models"][0].get("endpoint").is_none());
+
+        // Duplicate (provider, model, endpoint) triple - refused, not
+        // silently collapsed.
+        let mut r = base_request();
+        r.models = vec![
+            ModelDeclDto {
+                provider: "anthropic".into(),
+                model: Some("claude-sonnet-4-5".into()),
+                endpoint: None,
+            },
+            ModelDeclDto {
+                provider: "anthropic".into(),
+                model: Some("claude-sonnet-4-5".into()),
+                endpoint: None,
+            },
+        ];
+        let err = run(onboard_generate(r)).unwrap_err();
+        assert_eq!(err.kind, "invalid_input");
+        assert!(err.message.contains("anthropic"), "{}", err.message);
+        assert!(
+            err.message.contains("declared more than once"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn model_decls_flow_into_terraform_but_never_the_wardryx_stub() {
+        let mut r = base_request();
+        r.models = vec![
+            ModelDeclDto {
+                provider: "anthropic".into(),
+                model: Some("claude-sonnet-4-5".into()),
+                endpoint: Some("api.anthropic.com".into()),
+            },
+            ModelDeclDto {
+                provider: "openai".into(),
+                model: None,
+                endpoint: None,
+            },
+        ];
+        let bundle = run(onboard_generate(r)).unwrap();
+
+        assert!(bundle.terraform_snippet.contains("models {"));
+        assert!(
+            bundle
+                .terraform_snippet
+                .contains("provider = \"anthropic\"")
+        );
+        assert!(
+            bundle
+                .terraform_snippet
+                .contains("model = \"claude-sonnet-4-5\"")
+        );
+        assert!(
+            bundle
+                .terraform_snippet
+                .contains("endpoint = \"api.anthropic.com\"")
+        );
+        assert!(bundle.terraform_snippet.contains("provider = \"openai\""));
+
+        // Models are not a wardryx policy concern (no path/tool/domain rule
+        // applies to them): unlike filesystem, no note is ever added to the
+        // wardryx stub for a declared model, with or without models present.
+        assert!(!bundle.wardryx_policy_stub.contains("model"));
+    }
+
+    #[test]
+    fn no_model_decls_omits_the_field() {
+        // base_request() declares zero model entries - the common case. The
+        // passport must read exactly as it did before this field existed,
+        // and the wardryx stub/terraform must never mention "models" either.
+        let bundle = run(onboard_generate(base_request())).unwrap();
+        assert!(!bundle.passport_json.contains("models"));
+        assert!(!bundle.wardryx_policy_stub.contains("models"));
+        assert!(!bundle.terraform_snippet.contains("models"));
+    }
+
+    #[test]
+    fn status_tolerates_passports_with_declared_models() {
+        let dir = scratch("status-models");
+        let passports = dir.join("passports");
+        std::fs::create_dir_all(&passports).unwrap();
+        std::fs::write(
+            passports.join("recon.json"),
+            format!(
+                r#"{{"schema":"{PASSPORT_SCHEMA}","id":"agent://bank.example/treasury/recon-batch","owner":"olena","models":[{{"provider":"anthropic","model":"claude-sonnet-4-5","endpoint":"api.anthropic.com"}},{{"provider":"openai"}}]}}"#
+            ),
+        )
+        .unwrap();
+        let status = run(onboard_status(OnboardStatusRequest {
+            map_path: None,
+            passports_dir: Some(passports.display().to_string()),
+        }))
+        .unwrap();
+        assert_eq!(status.passports.len(), 1);
+        assert!(status.skipped.is_empty());
+        // The whole point of this branch: the two declared models surface as
+        // a plain count on the DTO, for the "Provisioned passports" table.
+        assert_eq!(status.passports[0].models_count, 2);
+    }
+
     // -- status --------------------------------------------------------------
 
     #[test]
@@ -1385,6 +1762,10 @@ mod tests {
             recon.filesystem_count, 0,
             "neither fixture passport here declares a filesystem field"
         );
+        assert_eq!(
+            recon.models_count, 0,
+            "neither fixture passport here declares a models field"
+        );
         let fraud = status
             .passports
             .iter()
@@ -1392,6 +1773,7 @@ mod tests {
             .unwrap();
         assert!(!fraud.in_map, "nothing binds fraud/*");
         assert_eq!(fraud.filesystem_count, 0);
+        assert_eq!(fraud.models_count, 0);
         assert_eq!(status.skipped.len(), 1);
         assert!(status.skipped[0].file.ends_with("broken.json"));
     }

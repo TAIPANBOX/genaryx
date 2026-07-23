@@ -14,6 +14,20 @@ import {
 } from "../lib/fsScopes";
 import type { FsScopeRow } from "../lib/fsScopes";
 import {
+  addModelDeclRow,
+  duplicateModelKeys as modelDuplicateKeysOf,
+  hasEmptyProvider as modelHasEmptyProviderOf,
+  isEmptyProvider,
+  modelDeclKey,
+  modelDeclsAreValid,
+  removeModelDeclRow,
+  setModelDeclEndpoint,
+  setModelDeclModel,
+  setModelDeclProvider,
+  toModelDecls,
+} from "../lib/modelDecls";
+import type { ModelDeclRow } from "../lib/modelDecls";
+import {
   describeOnboardError,
   fetchOnboardStatus,
   generateOnboardBundle,
@@ -46,7 +60,7 @@ const FIELD_STYLE = {
   width: "100%",
 } as const;
 
-const PASSPORT_COLUMNS = "1fr 1fr 1fr 90px 110px 90px";
+const PASSPORT_COLUMNS = "1fr 1fr 1fr 90px 90px 110px 90px";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -255,6 +269,16 @@ export function OnboardView() {
   const fsHasEmptyPath = fsHasEmptyPathOf(fsScopeRows);
   const fsDuplicatePaths = fsDuplicatePathsOf(fsScopeRows);
 
+  // Declared models (docs/ONBOARD.md, agent-passport SPEC.md section 4.5):
+  // same empty-by-default, same stable-id-counter shape as filesystem access
+  // above - `nextModelRowId` is its own counter, independent of
+  // `nextFsRowId`, so removing/adding rows in one section never collides
+  // with ids handed out by the other.
+  const [modelDeclRows, setModelDeclRows] = useState<ModelDeclRow[]>([]);
+  const nextModelRowId = useRef(0);
+  const modelHasEmptyProvider = modelHasEmptyProviderOf(modelDeclRows);
+  const modelDuplicateKeys = modelDuplicateKeysOf(modelDeclRows);
+
   const units = status?.units ?? [];
   const hasUnitChoices = units.length > 0;
   const effectiveUnit = (hasUnitChoices && unitMode !== "custom" ? selectedUnit : customUnit).trim();
@@ -315,6 +339,7 @@ export function OnboardView() {
     effectiveUnit.length > 0 &&
     owner.trim().length > 0 &&
     fsScopesAreValid(fsScopeRows) &&
+    modelDeclsAreValid(modelDeclRows) &&
     !generating;
 
   const onGenerate = useCallback(async () => {
@@ -336,6 +361,7 @@ export function OnboardView() {
         require_human_above_usd: parseOptionalUsd(requireHumanAboveUsd),
         unit_budget_usd_month: unitIsNew ? parseOptionalUsd(unitBudget) : null,
         filesystem: toFsScopes(fsScopeRows),
+        models: toModelDecls(modelDeclRows),
         map_path: status?.map_path ?? null,
         passports_dir: status?.passports_dir ?? null,
       };
@@ -369,6 +395,7 @@ export function OnboardView() {
     unitIsNew,
     unitBudget,
     fsScopeRows,
+    modelDeclRows,
     status,
   ]);
 
@@ -537,7 +564,7 @@ export function OnboardView() {
                   background: "var(--panel-3)",
                 }}
               >
-                {["agent id", "owner", "file", "folders", "", ""].map((label, idx) => (
+                {["agent id", "owner", "file", "folders", "models", "", ""].map((label, idx) => (
                   <span
                     key={`${label}-${idx}`}
                     className="mono"
@@ -589,6 +616,17 @@ export function OnboardView() {
                     style={{ color: "var(--faint)" }}
                   >
                     {p.filesystem_count > 0 ? `${p.filesystem_count} folder${p.filesystem_count === 1 ? "" : "s"}` : "-"}
+                  </span>
+                  <span
+                    className="mono truncate text-[11px]"
+                    title={
+                      p.models_count > 0
+                        ? `${p.models_count} declared model${p.models_count === 1 ? "" : "s"}`
+                        : "no declared models"
+                    }
+                    style={{ color: "var(--faint)" }}
+                  >
+                    {p.models_count > 0 ? `${p.models_count} model${p.models_count === 1 ? "" : "s"}` : "-"}
                   </span>
                   <span
                     className="badge"
@@ -834,6 +872,79 @@ export function OnboardView() {
               }
             >
               + Add folder
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+            declared models (optional)
+          </span>
+          <div className="flex flex-col gap-2">
+            {modelDeclRows.map((row) => {
+              const flagged =
+                isEmptyProvider(row) || modelDuplicateKeys.has(modelDeclKey(row));
+              const borderColor = flagged ? "var(--sev-medium)" : "var(--line-2)";
+              return (
+                <div key={row.id} className="flex items-center gap-2">
+                  <input
+                    className="mono flex-1 min-w-0"
+                    style={{ ...FIELD_STYLE, width: "auto", borderColor }}
+                    value={row.provider}
+                    onChange={(e) =>
+                      setModelDeclRows((rows) => setModelDeclProvider(rows, row.id, e.target.value))
+                    }
+                    placeholder="anthropic"
+                    spellCheck={false}
+                  />
+                  <input
+                    className="mono flex-1 min-w-0"
+                    style={{ ...FIELD_STYLE, width: "auto", borderColor }}
+                    value={row.model}
+                    onChange={(e) =>
+                      setModelDeclRows((rows) => setModelDeclModel(rows, row.id, e.target.value))
+                    }
+                    placeholder="claude-sonnet-4-5 (optional)"
+                    spellCheck={false}
+                  />
+                  <input
+                    className="mono flex-1 min-w-0"
+                    style={{ ...FIELD_STYLE, width: "auto", borderColor }}
+                    value={row.endpoint}
+                    onChange={(e) =>
+                      setModelDeclRows((rows) => setModelDeclEndpoint(rows, row.id, e.target.value))
+                    }
+                    placeholder="api.anthropic.com (optional)"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Remove this model"
+                    aria-label="Remove this model"
+                    onClick={() => setModelDeclRows((rows) => removeModelDeclRow(rows, row.id))}
+                  >
+                    <span aria-hidden="true">&times;</span>
+                  </button>
+                </div>
+              );
+            })}
+            {(modelHasEmptyProvider || modelDuplicateKeys.size > 0) && (
+              <span className="text-[11px]" style={{ color: "var(--sev-medium)" }}>
+                {modelHasEmptyProvider
+                  ? "every model needs a provider before you can generate."
+                  : "each provider/model/endpoint combination can only be declared once - remove or fix the duplicate."}
+              </span>
+            )}
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 12px", fontSize: 11, alignSelf: "flex-start" }}
+              onClick={() =>
+                setModelDeclRows((rows) => addModelDeclRow(rows, `model-${nextModelRowId.current++}`))
+              }
+            >
+              + Add model
             </button>
           </div>
         </div>
