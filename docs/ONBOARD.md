@@ -284,6 +284,56 @@ folder(s)" / "N model(s)", or a plain dash at zero), not colored badges. This
 count is surfaced directly in this same change rather than left as a
 follow-up.
 
+### Framework presets
+
+The generate form's top row (I14c) offers three buttons: "LangGraph",
+"CrewAI", "AutoGen". Clicking one pre-fills a handful of the fields above
+with sensible defaults for that framework - "a catalog of one agent" inside
+onboarding, without an actual registry or marketplace behind it.
+
+**Purely client-side.** A preset is a fixed object in
+`apps/desktop/src/lib/onboardPresets.ts` (`PRESETS`); applying it only sets
+`OnboardView.tsx`'s own form state before Generate is clicked. No backend
+call, no new command, no new validation - `onboard_generate` above cannot
+tell a preset-filled request from a hand-typed one, because there is no
+difference by the time it reaches the wire.
+
+Each preset sets:
+
+- `runtime`: the framework's own name (`langgraph`/`crewai`/`autogen`).
+- `attestation_method`: `none` for all three - no framework here has a
+  clear, framework-specific reason to require attestation, so proposing
+  anything else would be inventing a security posture the framework itself
+  does not impose.
+- `models`: two example provider/model bindings (an Anthropic model and an
+  OpenAI model), illustrating that these frameworks commonly call more than
+  one provider. Clearly editable examples, not a recommendation.
+- `filesystem`: one example scope, only where the framework has a genuinely
+  conventional workdir - LangGraph's checkpoint store, AutoGen's
+  code-executor `work_dir`. CrewAI has no single such convention and
+  proposes none rather than inventing one.
+
+**Never the operator's own identifiers.** A preset never sets `trust_domain`,
+`path`, `owner`, or `unit` - those name which domain, which folder, which
+person, and which business unit, and a preset has no legitimate guess for
+any of them. `OnboardPresetFields` (`lib/onboardPresets.ts`) is typed with no
+room for those four fields at all, so this is structural, not just a
+convention the module happens to follow.
+
+**Non-destructive.** Applying a preset replaces `runtime` and
+`attestation_method` outright (that is the point of clicking one - "use this
+instead") but only APPENDS its example `models`/`filesystem` rows to
+whatever the operator already declared; nothing already typed anywhere in
+the form, including a partially-filled trust domain or path, is ever
+cleared. A preset can be applied more than once, or a different one applied
+after it - each click only adds its own rows, on top of whatever is already
+there.
+
+The pure preset data and the `applyOnboardPreset` function are unit-tested
+in `lib/onboardPresets.test.ts` (mirrors `lib/modelDecls.test.ts`'s setup):
+each preset's shape, that applying one returns exactly its own field values,
+and that no preset ever carries one of the four operator-identity fields.
+
 ### `onboard_write_passport(args: { passport_json: string, passport_path: string, passports_dir?: string, overwrite: bool }) -> OnboardWriteDto`
 
 ```rust
