@@ -5,6 +5,7 @@ import type { MoneyStatus, Run } from "../moneyTypes";
 import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 import type { UiEvent } from "../types";
 import { fetchCopilotStatus } from "./copilot";
+import { fetchCredentialsKeys, type GatewayKeysReport } from "./credentials";
 import { fetchAlerts, fetchIdentities } from "./identity";
 import { fetchRuns } from "./money";
 import { fetchApprovals, fetchPolicies } from "./policy";
@@ -16,6 +17,7 @@ import {
 } from "./posture";
 import { fetchRecentEvents } from "./recentEvents";
 import { hasBackend, subscribeBackend } from "./transport";
+import { useCredentialsStatus } from "./useCredentialsStatus";
 import { useCryptoStatus } from "./useCryptoStatus";
 import { useDrillsStatus } from "./useDrillsStatus";
 import { useIdentityStatus } from "./useIdentityStatus";
@@ -46,6 +48,13 @@ const POLICIES_REFRESH_MS = 20_000;
  * fresh is the newest run" is judged against data no staler than the Money
  * panel's own. */
 const RUNS_REFRESH_MS = 20_000;
+
+/** Gateway key-lifecycle report (I15), for [`keyHygieneFinding`] - matches
+ * `IdentityView.tsx`'s own `CREDENTIALS_REFRESH_MS` for its Credentials
+ * card, so both consumers of the SAME `credentials_keys`/`GET /v1/keys`
+ * read poll it at one shared cadence rather than two independent timers
+ * hitting the gateway at different rates. */
+const CREDENTIALS_KEYS_REFRESH_MS = 30_000;
 
 /** How often `nowMs` re-ticks so every age-based zond keeps re-evaluating
  * even when no new event/fetch arrives to otherwise trigger a render - well
@@ -94,6 +103,7 @@ export function usePostureData(): PostureData {
   const memoryStatus = useMemoryStatus();
   const drillsStatus = useDrillsStatus();
   const remoteStatus = useRemoteStatus();
+  const credentialsStatus = useCredentialsStatus();
 
   // Copilot has no bootstrapping/polling shape at all (a flat DTO, see
   // `copilotTypes.ts`), so there is no dedicated `use*Status` hook for it -
@@ -122,6 +132,7 @@ export function usePostureData(): PostureData {
   const [identitySnapshotAsOfMs, setIdentitySnapshotAsOfMs] = useState<number | null>(null);
 
   const [moneyRuns, setMoneyRuns] = useState<Run[] | null>(null);
+  const [keysReport, setKeysReport] = useState<GatewayKeysReport | null>(null);
 
   const [busLoaded, setBusLoaded] = useState(false);
   const [busEventCount, setBusEventCount] = useState(0);
@@ -226,6 +237,33 @@ export function usePostureData(): PostureData {
     };
   }, [moneyStatus?.state]);
 
+  // Gateway key-lifecycle report (I15): same pattern as money runs just
+  // above - only once the Credentials plane is actually ready (mirrors
+  // `IdentityView.tsx`'s own `credentialsReady` gate for this identical
+  // read), then on the shared `CREDENTIALS_KEYS_REFRESH_MS` cadence. A
+  // failed fetch leaves `keysReport` as-is (or `null`), same "never
+  // fabricate a successful read" rationale as every other periodic read in
+  // this file.
+  useEffect(() => {
+    if (credentialsStatus?.state !== "ready") return;
+    let cancelled = false;
+    const load = () => {
+      fetchCredentialsKeys()
+        .then((r) => {
+          if (!cancelled) setKeysReport(r);
+        })
+        .catch(() => {
+          // leave `keysReport` as-is (or `null`) - see doc comment above.
+        });
+    };
+    load();
+    const id = window.setInterval(load, CREDENTIALS_KEYS_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [credentialsStatus?.state]);
+
   // Bus signals, initial batch: same read DecisionStream/BusExplorer make,
   // unfiltered (every source, not just wardryx - both bus-derived zonds
   // concern the whole bus).
@@ -307,6 +345,8 @@ export function usePostureData(): PostureData {
     remoteStatus,
     moneyRuns,
     approvals,
+    credentialsStatus,
+    keysReport,
   };
 
   return {

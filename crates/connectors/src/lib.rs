@@ -77,12 +77,19 @@
 //! ([`CloudClient::sign_evidence_manifest`]) and hands the whole set to
 //! `genaryx_core::evidence::assemble_zip`. Missing sources are recorded, not
 //! dropped; signing is fail-closed. See `crates/connectors/src/evidence.rs`.
+//!
+//! I15 "key lifecycle health": [`GatewayClient`] is the FIRST direct gateway
+//! REST connector - a typed, unauthenticated read of the gateway's
+//! `GET /v1/keys` key-lifecycle report (docs/22-key-lifecycle.md in
+//! tokenfuse), the Identity tab's new Credentials card renders from. See
+//! `crates/connectors/src/gateway.rs`.
 
 mod cloud_cli;
 mod cloud_rest;
 mod cloud_sse;
 mod engram;
 mod evidence;
+mod gateway;
 mod hetzner;
 mod idryx;
 mod mcp_stdio;
@@ -109,6 +116,10 @@ pub use engram::{
     ForgetResult as EngramForgetResult,
 };
 pub use evidence::{EvidenceBuildError, EvidenceInputs, EvidencePack, build_evidence_pack};
+pub use gateway::{
+    GatewayClient, GatewayError, GatewayKeyEntry, GatewayKeyStats, GatewayKeysReport,
+    GatewayUnauthorized,
+};
 pub use hetzner::{HetznerClient, HetznerError, HetznerServer};
 pub use idryx::{
     Alert as IdryxAlert, Identity as IdryxIdentity, IdryxClient, IdryxError,

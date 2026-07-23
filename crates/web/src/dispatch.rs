@@ -160,6 +160,12 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "copilot_status" => Ok(reply(
             genaryx_api::copilot::commands::copilot_status(&ctx.copilot).await,
         )),
+        "credentials_keys" => Ok(reply(
+            genaryx_api::credentials::commands::credentials_keys(&ctx.credentials).await,
+        )),
+        "credentials_status" => Ok(reply(
+            genaryx_api::credentials::commands::credentials_status(&ctx.credentials).await,
+        )),
         "crypto_scan_cbom" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

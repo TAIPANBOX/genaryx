@@ -26,6 +26,14 @@
 //! frontend (`src/lib/notifications.ts`) watches the same `bus:event` feed
 //! `live.rs` already emits and calls straight into the plugin's JS API.
 //!
+//! The Credentials card (I15 "key lifecycle health", see
+//! `genaryx_api::credentials`'s module doc) is managed the same non-blocking
+//! way once more, independently of the Identity panel just above even though
+//! both render in the same Identity tab: it resolves `services.gateway.url`
+//! off a `taipan up` descriptor (the same URL the Drills panel rehearses
+//! against, `genaryx_api::drills::env`), not the `services.idryx` URL
+//! Identity uses, and like Identity it is read-only (no journal, no signer).
+//!
 //! `graph::agent_graph`/`agent_slice`/`agent_events` (docs/PHASE3.md Wave 3:
 //! the delegation graph + Agent 360) need no managed state of their own at
 //! all - they read the same `AppState.events_dir` `recent_events` already
@@ -111,6 +119,7 @@ mod tray;
 
 use genaryx_api::bus::AppState;
 use genaryx_api::copilot::CopilotState;
+use genaryx_api::credentials::CredentialsState;
 use genaryx_api::crypto::CryptoState;
 use genaryx_api::drills::DrillsState;
 use genaryx_api::events::UiEvent;
@@ -207,6 +216,21 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let resolved = genaryx_api::identity::bootstrap().await;
                 let state = identity_handle.state::<IdentityState>();
+                *state.inner.lock().await = resolved;
+            });
+
+            // Credentials panel (I15 "key lifecycle health"): same
+            // non-blocking manage-then-spawn-resolve shape once more, an
+            // entirely independent plane from Identity just above (a
+            // different descriptor service - `services.gateway`, not
+            // `services.idryx` - see `genaryx_api::credentials`'s module
+            // doc) that renders in the same Identity tab as a separate
+            // Credentials card.
+            app.manage(CredentialsState::pending());
+            let credentials_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let resolved = genaryx_api::credentials::bootstrap().await;
+                let state = credentials_handle.state::<CredentialsState>();
                 *state.inner.lock().await = resolved;
             });
 
@@ -336,6 +360,8 @@ pub fn run() {
             commands::identity::identity_list_alerts,
             commands::identity::identity_list_remediations,
             commands::identity::identity_rescan,
+            commands::credentials::credentials_status,
+            commands::credentials::credentials_keys,
             // Onboard (docs/ONBOARD.md, D15/B2): stateless like Pocket below -
             // every call re-resolves the identity map + passports dir fresh,
             // so there is nothing for `setup` to `app.manage` here.

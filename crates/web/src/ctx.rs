@@ -12,6 +12,7 @@ use crate::auth::{Operator, Sessions};
 use crate::config::Config;
 use genaryx_api::bus::AppState;
 use genaryx_api::copilot::CopilotState;
+use genaryx_api::credentials::CredentialsState;
 use genaryx_api::crypto::CryptoState;
 use genaryx_api::drills::DrillsState;
 use genaryx_api::events::UiEvent;
@@ -66,6 +67,12 @@ pub struct Ctx {
     pub money: MoneyState,
     pub policy: PolicyState,
     pub identity: IdentityState,
+    /// I15 "key lifecycle health": the gateway's key-lifecycle report, an
+    /// entirely independent plane from `identity` above (different
+    /// descriptor service - `services.gateway`, not `services.idryx` - see
+    /// `genaryx_api::credentials`'s module doc) that just happens to render
+    /// in the same Identity tab.
+    pub credentials: CredentialsState,
     pub quality: QualityState,
     pub crypto: CryptoState,
     pub memory: MemoryState,
@@ -112,6 +119,7 @@ impl Ctx {
             money: MoneyState::pending(),
             policy: PolicyState::pending(),
             identity: IdentityState::pending(),
+            credentials: CredentialsState::pending(),
             quality: QualityState::pending(),
             crypto: CryptoState::pending(),
             memory: MemoryState::pending(),
@@ -149,6 +157,7 @@ impl Ctx {
         let policy_dir = events_dir.clone();
         resolve!(policy, genaryx_api::policy::bootstrap(policy_dir));
         resolve!(identity, genaryx_api::identity::bootstrap());
+        resolve!(credentials, genaryx_api::credentials::bootstrap());
         resolve!(quality, genaryx_api::quality::bootstrap());
         resolve!(crypto, genaryx_api::crypto::bootstrap());
         resolve!(memory, genaryx_api::memory::bootstrap());
