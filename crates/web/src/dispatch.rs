@@ -584,6 +584,21 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "remote_wg_disconnect" => Ok(reply(
             genaryx_api::remote::commands::remote_wg_disconnect(&ctx.remote).await,
         )),
+        "routines_history" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                routine: Option<String>,
+                limit: Option<u32>,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::routines::commands::routines_history(a.routine, a.limit).await,
+            ))
+        }
+        "routines_status" => Ok(reply(
+            genaryx_api::routines::commands::routines_status().await,
+        )),
         "run_events" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

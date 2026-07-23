@@ -1158,6 +1158,164 @@ function mockAdmissionBaseline(agentId: string) {
   };
 }
 
+// ---- Routines (I7b "Routines tab") -----------------------------------------
+// Five routines, each landing on a DISTINCT status so `dev:mock` shows the
+// full worst-first sort with no real stack-up install involved: qryx-trend
+// errors, mockryx-drill finds a gap (its own nature - a "findings" drill),
+// verdryx-drift is skipped (no baseline configured), focus-export is a clean
+// ok streak, and idryx-detect's timer is installed but has never fired yet -
+// a genuine "installed, never run" state, deliberately DISTINCT from
+// mockryx-drill's "ran at least once, but never installed as a timer"
+// (mockryx-drill is opt-in only per routines.sh's own README, never
+// installed by a plain `routines.sh install`). `installed` below matches
+// routines.sh's own DEFAULT_ROUTINES split exactly: the four daily routines
+// are installed, the weekly drill is not.
+const ROUTINES_DIR = "/root/.stack-up/routines";
+
+function routinesRecord(
+  routine: string,
+  startedAgoMs: number,
+  durationMs: number,
+  status: string,
+  extra: { exit_code?: number; reason?: string | null; artifact?: string | null; summary?: string | null } = {},
+) {
+  return {
+    schema: "stackup.routine-run/v1",
+    routine,
+    started_at: ago(startedAgoMs),
+    finished_at: ago(startedAgoMs - durationMs),
+    exit_code: extra.exit_code ?? 0,
+    status,
+    reason: extra.reason ?? null,
+    artifact: extra.artifact ?? null,
+    summary: extra.summary ?? null,
+  };
+}
+
+function mockRoutinesStatus() {
+  return {
+    routines_dir: ROUTINES_DIR,
+    routines_dir_exists: true,
+    routines: [
+      {
+        name: "focus-export",
+        installed: true,
+        latest: routinesRecord("focus-export", 14 * 3_600_000, 6_000, "ok", {
+          artifact: "out/focus-20260723.csv",
+          summary: "142 data row(s) exported to focus-20260723.csv",
+        }),
+        latest_error: null,
+      },
+      {
+        name: "qryx-trend",
+        installed: true,
+        latest: routinesRecord("qryx-trend", 14 * 3_600_000 - 10 * 60_000, 9_000, "error", {
+          exit_code: 2,
+          reason: "qryx: trend: could not open evidence file: no such file or directory",
+          summary: "qryx trend exited 2",
+        }),
+        latest_error: null,
+      },
+      {
+        name: "verdryx-drift",
+        installed: true,
+        latest: routinesRecord("verdryx-drift", 14 * 3_600_000 - 20 * 60_000, 2_000, "skipped", {
+          reason: "ROUTINE_VERDRYX_BASELINE is not set; set it in /root/.stack-up/routines/config",
+        }),
+        latest_error: null,
+      },
+      // Never run: timer installed, but hasn't fired yet - no
+      // status/idryx-detect.json on disk at all, so `latest`/`latest_error`
+      // are both null (never conflated with "not installed", see this
+      // section's own header comment).
+      { name: "idryx-detect", installed: true, latest: null, latest_error: null },
+      {
+        name: "mockryx-drill",
+        installed: false,
+        latest: routinesRecord("mockryx-drill", 3 * DAY, 41_000, "findings", {
+          exit_code: 1,
+          artifact: "out/drill-20260720T064700Z.json",
+          summary: "2 gap(s) found across 6 scenarios",
+        }),
+        latest_error: null,
+      },
+    ],
+  };
+}
+
+// A dozen-ish records across four of the five routines (idryx-detect is
+// deliberately absent - it has never run, see `mockRoutinesStatus` above,
+// so its history is genuinely empty rather than faked), newest-last per
+// routine (matching the real on-disk `history.ndjson`'s own append order -
+// `mockRoutinesHistory` reverses, exactly like the real backend does).
+const ROUTINES_HISTORY_POOL = [
+  routinesRecord("focus-export", 72 * 3_600_000 + 14 * 3_600_000, 5_000, "ok", {
+    artifact: "out/focus-20260720.csv",
+    summary: "149 data row(s) exported to focus-20260720.csv",
+  }),
+  routinesRecord("focus-export", 48 * 3_600_000 + 14 * 3_600_000, 5_000, "ok", {
+    artifact: "out/focus-20260721.csv",
+    summary: "151 data row(s) exported to focus-20260721.csv",
+  }),
+  routinesRecord("focus-export", 24 * 3_600_000 + 14 * 3_600_000, 5_000, "ok", {
+    artifact: "out/focus-20260722.csv",
+    summary: "138 data row(s) exported to focus-20260722.csv",
+  }),
+  routinesRecord("focus-export", 14 * 3_600_000, 6_000, "ok", {
+    artifact: "out/focus-20260723.csv",
+    summary: "142 data row(s) exported to focus-20260723.csv",
+  }),
+  routinesRecord("qryx-trend", 48 * 3_600_000 + 14 * 3_600_000 - 10 * 60_000, 11_000, "ok", {
+    artifact: "out/qryx-evidence.jsonl",
+    summary: "compliance score 0.93 (+0.00 vs previous)",
+  }),
+  routinesRecord("qryx-trend", 24 * 3_600_000 + 14 * 3_600_000 - 10 * 60_000, 12_000, "ok", {
+    artifact: "out/qryx-evidence.jsonl",
+    summary: "compliance score 0.94 (+0.01 vs previous)",
+  }),
+  routinesRecord("qryx-trend", 14 * 3_600_000 - 10 * 60_000, 9_000, "error", {
+    exit_code: 2,
+    reason: "qryx: trend: could not open evidence file: no such file or directory",
+    summary: "qryx trend exited 2",
+  }),
+  routinesRecord("verdryx-drift", 48 * 3_600_000 + 14 * 3_600_000 - 20 * 60_000, 2_000, "skipped", {
+    reason: "ROUTINE_VERDRYX_BASELINE is not set; set it in /root/.stack-up/routines/config",
+  }),
+  routinesRecord("verdryx-drift", 24 * 3_600_000 + 14 * 3_600_000 - 20 * 60_000, 2_000, "skipped", {
+    reason: "ROUTINE_VERDRYX_BASELINE is not set; set it in /root/.stack-up/routines/config",
+  }),
+  routinesRecord("verdryx-drift", 14 * 3_600_000 - 20 * 60_000, 2_000, "skipped", {
+    reason: "ROUTINE_VERDRYX_BASELINE is not set; set it in /root/.stack-up/routines/config",
+  }),
+  routinesRecord("mockryx-drill", 10 * DAY, 38_000, "ok", {
+    artifact: "out/drill-20260713T064700Z.json",
+    summary: "0 gap(s) found across 6 scenarios",
+  }),
+  routinesRecord("mockryx-drill", 3 * DAY, 41_000, "findings", {
+    exit_code: 1,
+    artifact: "out/drill-20260720T064700Z.json",
+    summary: "2 gap(s) found across 6 scenarios",
+  }),
+];
+
+/** `routines_history` - filters the shared pool to `routine` (when given),
+ * newest first (mirrors the real backend reversing `history.ndjson`'s own
+ * append order), capped at `limit`. `skipped_lines` is a fixed 2 regardless
+ * of the routine filter - the real backend counts malformed lines across
+ * the WHOLE file before filtering to one routine
+ * (`crates/api/src/routines/commands.rs::assemble_history`), so this mock
+ * mirrors that "file-wide, not per-routine" fact rather than hiding it. */
+function mockRoutinesHistory(routine?: string, limit?: number) {
+  const filtered = routine ? ROUTINES_HISTORY_POOL.filter((r) => r.routine === routine) : [...ROUTINES_HISTORY_POOL];
+  const newestFirst = [...filtered].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
+  return {
+    records: newestFirst.slice(0, limit ?? 200),
+    skipped_lines: 2,
+    routines_dir: ROUTINES_DIR,
+    history_file_exists: true,
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const r = (v: unknown) => v as T;
@@ -1178,6 +1336,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "crypto_status": return r({ state: "ready", default_target: "/root", qryx_bin: "/root/.taipan/bin/qryx" });
     case "drills_status": return r(READY({ gateway_url: "http://127.0.0.1:4100", has_api_key: true, mockryx_bin: "/root/.taipan/bin/mockryx", scenario_dir: "/root/.stack-up/repos/mockryx/scenarios" }));
     case "evidence_status": return r({ state: "ready", qryx_available: true, qryx_bin: "/root/.taipan/bin/qryx", qryx_default_target: "/root", idryx_available: true, idryx_bin: "/root/.taipan/bin/idryx", idryx_load_sources: ["tokenfuse:/root/.stack-up/events/tokenfuse.ndjson"], tokenfuse_available: true, tokenfuse_bin: "/root/.taipan/bin/tokenfuse-cloud", tokenfuse_default_traces_dir: "/root/.stack-up/traces" });
+    case "routines_status": return r(mockRoutinesStatus());
+    case "routines_history": return r(mockRoutinesHistory(args?.routine as string | undefined, args?.limit as number | undefined));
     case "remote_status": return r(remoteStatus());
     case "remote_hetzner_list": return r(mockHetznerList());
     case "remote_cloud_list": return r(mockCloudList(String(args?.provider ?? "aws")));
