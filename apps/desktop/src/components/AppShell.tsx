@@ -217,7 +217,9 @@ export function AppShell() {
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         policyAlertCount={unseenAlerts.length}
       />
-      {view === "overview" && <OverviewView onOpenAgent={onOpenAgent} />}
+      {view === "overview" && (
+        <OverviewView onOpenAgent={onOpenAgent} onSelectView={onSelectView} onExplainIncident={onExplainIncident} />
+      )}
       {view === "money" && (
         <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} onExplainIncident={onExplainIncident} />
       )}

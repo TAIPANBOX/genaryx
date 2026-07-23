@@ -1,47 +1,11 @@
-import { hasBackend, subscribeBackend } from "../lib/transport";
-import { useEffect, useState } from "react";
-import type { IdentityStatus, IdryxAlert, IdryxIdentity } from "../identityTypes";
+import type { IdentityStatus } from "../identityTypes";
 import { cssVar } from "../lib/cssVars";
-import { fetchAlerts, fetchIdentities } from "../lib/identity";
-import { describePolicyError, fetchPolicies } from "../lib/policy";
-import {
-  computeIdentityPostureFindings,
-  computeStackPostureFindings,
-  type FindingState,
-  type PostureFinding,
-} from "../lib/posture";
-import { fetchRecentEvents } from "../lib/recentEvents";
-import { useIdentityStatus } from "../lib/useIdentityStatus";
-import { useMoneyStatus } from "../lib/useMoneyStatus";
-import { usePolicyStatus } from "../lib/usePolicyStatus";
+import { describePolicyError } from "../lib/policy";
+import type { FindingState, PostureFinding } from "../lib/posture";
+import { usePostureData } from "../lib/usePostureData";
 import type { MoneyStatus } from "../moneyTypes";
-import type { PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
-import type { UiEvent } from "../types";
+import type { PolicyStatus } from "../policyTypes";
 import { SeverityBadge } from "./SeverityBadge";
-
-/** Same cap DecisionStream/BusExplorer apply to the bus read - Posture only
- * needs enough of a recent window to tell whether both schema versions are
- * present and when the newest event landed, not the whole history. */
-const FETCH_LIMIT = 500;
-
-/** Tauri event name the Rust live feeder (`src-tauri/src/live.rs`) emits on -
- * the SAME event every other bus-consuming view listens for. */
-const LIVE_EVENT = "bus:event";
-
-/** Matches `PolicyView.tsx`'s own periodic re-fetch cadence for the policy
- * list, since the "governance fail-open" zond reads the exact same
- * `policy_list_policies` data that panel's Policies section shows. */
-const POLICIES_REFRESH_MS = 20_000;
-
-/** How often `nowMs` re-ticks so the "bus stale" zond keeps re-evaluating
- * even when no new event arrives to otherwise trigger a render - well under
- * `posture.ts`'s 60s staleness threshold so the badge flips promptly. */
-const NOW_TICK_MS = 5_000;
-
-function parseTsMs(ts: string): number | null {
-  const ms = new Date(ts).getTime();
-  return Number.isNaN(ms) ? null : ms;
-}
 
 function SectionHeader({ title }: { title: string }) {
   return (
@@ -155,21 +119,28 @@ function FindingRow({ finding }: { finding: PostureFinding }) {
 
 /**
  * Posture-lite (docs/PHASE2.md Wave 3) + Posture full (docs/PHASE3.md W4,
- * position 6): a read-only sidebar view listing the 4 v0 stack-sanity zonds
- * plus the 5 identity-plane zonds (`lib/posture.ts`'s
- * `computeStackPostureFindings`/`computeIdentityPostureFindings`), computed
- * entirely from signals this app already fetches elsewhere - the resolved
- * env sources (`usePolicyStatus`/`useMoneyStatus`/`useIdentityStatus`, same
- * hooks the Policy/Money/Identity/Overview views already use),
- * `policy_list_policies()` (same command `PolicyView.tsx`'s own Policies
- * section calls), `identity_list_identities`/`identity_list_alerts` (same
- * commands `IdentityView.tsx`/`Agent360.tsx` already call), and the live bus
+ * position 6) + I3's "Connection & credential health" group: a read-only
+ * sidebar view listing the 4 v0 stack-sanity zonds, the 5 identity-plane
+ * zonds, and the 11 connection/credential-health zonds
+ * (`lib/posture.ts`'s `computeStackPostureFindings`/
+ * `computeIdentityPostureFindings`/`computeConnectionHealthFindings`),
+ * computed entirely from signals this app already fetches elsewhere - the
+ * resolved env sources (same status hooks the Policy/Money/Identity/
+ * Quality/Crypto/Memory/Drills/Copilot/Remote/Overview views already use),
+ * `policy_list_policies()`/`policy_list_approvals()` (same commands
+ * `PolicyView.tsx`'s own Policies/Approvals sections call),
+ * `identity_list_identities`/`identity_list_alerts` (same commands
+ * `IdentityView.tsx`/`Agent360.tsx` already call), `money_runs` (same
+ * command `MoneyView.tsx`/`OverviewView.tsx` already call), and the live bus
  * (the same `fetchRecentEvents` + `bus:event` listener pattern
  * `DecisionStream.tsx`/`BusExplorer.tsx` already follow, unfiltered here
  * since "schema mix" and "bus stale" are properties of the WHOLE bus, not
- * just the wardryx slice). No new Tauri command, no new connector call -
- * `run_events` (this wave's other addition) has no bearing on Posture at
- * all.
+ * just the wardryx slice). No new Tauri command, no new connector call.
+ *
+ * All of that data-fetching now lives in `lib/usePostureData.ts` (extracted
+ * from this component during I3 so `OverviewView.tsx`'s Incident Center, I2,
+ * can consume the SAME live findings instead of re-deriving its own copy);
+ * this component is just that hook's renderer.
  *
  * Deliberately never gated behind a single-plane "ready" check the way
  * `PolicyView`/`OverviewView`/`IdentityView` are: Posture's whole point is
@@ -179,152 +150,8 @@ function FindingRow({ finding }: { finding: PostureFinding }) {
  * specifically needs is available (see `posture.ts`'s doc comment).
  */
 export function PostureView() {
-  const moneyStatus = useMoneyStatus();
-  const policyStatus = usePolicyStatus();
-  const identityStatus = useIdentityStatus();
-
-  const [policies, setPolicies] = useState<PolicyRecord[] | null>(null);
-  const [policiesError, setPoliciesError] = useState<PolicyError | null>(null);
-
-  // Identity: fetched ONCE when the identity plane becomes ready (never on a
-  // periodic timer, unlike `policies` above) - mirrors `IdentityView.tsx`'s
-  // own no-auto-refresh rationale, doubly so here: idryx `serve` never
-  // changes on its own, so a periodic re-fetch would keep resetting
-  // `identitySnapshotAsOfMs` back to "just now", hiding exactly the aging
-  // the `identity_snapshot_age` zond exists to surface. A failed fetch
-  // deliberately leaves `identitySnapshotAsOfMs` at `null` rather than
-  // stamping a "successful" read that never happened.
-  const [identities, setIdentities] = useState<IdryxIdentity[] | null>(null);
-  const [identityAlerts, setIdentityAlerts] = useState<IdryxAlert[] | null>(null);
-  const [identitySnapshotAsOfMs, setIdentitySnapshotAsOfMs] = useState<number | null>(null);
-
-  const [busLoaded, setBusLoaded] = useState(false);
-  const [busEventCount, setBusEventCount] = useState(0);
-  const [lastEventAtMs, setLastEventAtMs] = useState<number | null>(null);
-  const [schemasSeen, setSchemasSeen] = useState<ReadonlySet<string>>(new Set());
-
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (identityStatus?.state !== "ready") return;
-    let cancelled = false;
-    void Promise.all([fetchIdentities(), fetchAlerts()])
-      .then(([ids, alerts]) => {
-        if (cancelled) return;
-        setIdentities(ids);
-        setIdentityAlerts(alerts);
-        setIdentitySnapshotAsOfMs(Date.now());
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setIdentities([]);
-        setIdentityAlerts([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [identityStatus?.state]);
-
-  // Policies: only once Wardryx is actually ready (mirrors PolicyView.tsx's
-  // own `ready` gate for the exact same read), then on the same 20s cadence.
-  useEffect(() => {
-    if (policyStatus?.state !== "ready") return;
-    let cancelled = false;
-    const load = () => {
-      fetchPolicies()
-        .then((p) => {
-          if (cancelled) return;
-          setPolicies(p);
-          setPoliciesError(null);
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) setPoliciesError(err as PolicyError);
-        });
-    };
-    load();
-    const id = window.setInterval(load, POLICIES_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [policyStatus?.state]);
-
-  // Bus signals, initial batch: same read DecisionStream/BusExplorer make,
-  // unfiltered (every source, not just wardryx - both bus-derived zonds
-  // concern the whole bus).
-  useEffect(() => {
-    let cancelled = false;
-    void fetchRecentEvents(FETCH_LIMIT).then((res) => {
-      if (cancelled) return;
-      setBusEventCount(res.events.length);
-      setSchemasSeen(new Set(res.events.map((e) => e.schema)));
-      // `fetchRecentEvents` is newest-first (mirrors `Store::recent_events`),
-      // so the first element is the most recent - see `events.rs`'s doc.
-      const newest = res.events[0];
-      setLastEventAtMs(newest ? parseTsMs(newest.ts) : null);
-      setBusLoaded(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Bus signals, live updates: same listener DecisionStream/BusExplorer
-  // subscribe to, folded into the running signals rather than kept as a
-  // growing list (Posture never needs to render individual rows).
-  useEffect(() => {
-    if (!hasBackend()) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-
-    subscribeBackend<UiEvent>(LIVE_EVENT, (payload) => {
-      const e = payload;
-      setBusEventCount((n) => n + 1);
-      setSchemasSeen((prev) => (prev.has(e.schema) ? prev : new Set(prev).add(e.schema)));
-      const ms = parseTsMs(e.ts);
-      if (ms !== null) {
-        setLastEventAtMs((prev) => (prev === null || ms > prev ? ms : prev));
-      }
-    })
-      .then((fn) => {
-        if (cancelled) {
-          fn();
-          return;
-        }
-        unlisten = fn;
-      })
-      .catch((err: unknown) => {
-        // eslint-disable-next-line no-console
-        console.error(`subscribe(${LIVE_EVENT}) failed (posture):`, err);
-      });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNowMs(Date.now()), NOW_TICK_MS);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const postureInput = {
-    moneyStatus,
-    policyStatus,
-    policies,
-    busLoaded,
-    busEventCount,
-    lastEventAtMs,
-    schemasSeen,
-    nowMs,
-    identityStatus,
-    identities,
-    identityAlerts,
-    identitySnapshotAsOfMs,
-  };
-  const stackFindings = computeStackPostureFindings(postureInput);
-  const identityFindings = computeIdentityPostureFindings(postureInput);
+  const { moneyStatus, policyStatus, identityStatus, policiesError, stackFindings, identityFindings, connectionFindings } =
+    usePostureData();
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
@@ -353,6 +180,15 @@ export function PostureView() {
         <SectionHeader title="Identity + Wardryx admin" />
         <div className="flex flex-col gap-2">
           {identityFindings.map((f) => (
+            <FindingRow key={f.id} finding={f} />
+          ))}
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Connection & credential health" />
+        <div className="flex flex-col gap-2">
+          {connectionFindings.map((f) => (
             <FindingRow key={f.id} finding={f} />
           ))}
         </div>
