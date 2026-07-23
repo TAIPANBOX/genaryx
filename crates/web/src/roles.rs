@@ -141,6 +141,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "remote_hetzner_list",
     "remote_ssh_check_reachable",
     "remote_status",
+    "routines_history",
+    "routines_status",
     "run_events",
 ];
 
@@ -217,6 +219,8 @@ mod tests {
         "remote_status",
         "remote_wg_connect",
         "remote_wg_disconnect",
+        "routines_history",
+        "routines_status",
         "run_events",
     ];
 

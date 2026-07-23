@@ -22,6 +22,7 @@ import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
 import { QualityView } from "./QualityView";
 import { RemoteView } from "./RemoteView";
+import { RoutinesView } from "./RoutinesView";
 import { RunReplayView } from "./RunReplayView";
 
 /** How long a notification's deep-link target stays "focused" (drives
@@ -250,6 +251,7 @@ export function AppShell() {
       )}
       {view === "posture" && <PostureView />}
       {view === "bus" && <BusExplorer />}
+      {view === "routines" && <RoutinesView />}
       {view === "copilot" && (
         <CopilotView explainRequest={explainRequest} onExplainRequestHandled={onExplainRequestHandled} />
       )}

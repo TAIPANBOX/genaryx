@@ -428,6 +428,11 @@ pub fn run() {
             commands::copilot::copilot_ask,
             commands::copilot::copilot_explain,
             commands::copilot::copilot_log_proposal_approved,
+            // Routines (I7b "Routines tab"): stateless like Onboard/Pocket
+            // above - every call re-resolves $STACK_UP_HOME/routines fresh,
+            // so there is nothing to `app.manage` in `setup` for this plane.
+            commands::routines::routines_status,
+            commands::routines::routines_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Genaryx desktop application");

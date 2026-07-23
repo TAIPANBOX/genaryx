@@ -743,3 +743,30 @@ pub mod copilot {
         .await
     }
 }
+
+pub mod routines {
+    use genaryx_api::routines::commands::*;
+    #[allow(unused_imports)]
+    use genaryx_api::routines::env::*;
+    #[allow(unused_imports)]
+    use genaryx_api::{bus::AppState, bus::BusMode, events::UiEvent};
+    #[allow(unused_imports)]
+    use genaryx_connectors::*;
+
+    /// Read-only, like Onboard/Pocket above: every call re-resolves
+    /// `$STACK_UP_HOME/routines` and re-reads its files fresh, so there is
+    /// nothing for `setup` to `app.manage` here (see `genaryx_api::routines`'s
+    /// module doc).
+    #[tauri::command]
+    pub async fn routines_status() -> Result<RoutinesStatusDto, ()> {
+        genaryx_api::routines::commands::routines_status().await
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn routines_history(
+        routine: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<RoutinesHistoryDto, ()> {
+        genaryx_api::routines::commands::routines_history(routine, limit).await
+    }
+}
