@@ -20,6 +20,11 @@ import {
   type CredentialsStatus,
   type GatewayKeysReport,
 } from "../lib/credentials";
+import { buildAccessRows } from "../lib/access";
+import { AccessMatrixTable } from "./AccessMatrixTable";
+import { describePolicyError, fetchPolicies } from "../lib/policy";
+import { usePolicyStatus } from "../lib/usePolicyStatus";
+import type { PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info", "none"] as const;
 
@@ -177,6 +182,105 @@ function CredentialsSection({
   );
 }
 
+/**
+ * The Access matrix (I5): one row per agent identity - permissions granted
+ * vs used, MCP reach (sanctioned vs shadow), and the Wardryx overlay -
+ * assembled client-side by `lib/access.ts` from the SAME `identities`/
+ * `alerts` this view already loaded above, plus an independent one-shot
+ * Wardryx `policies` read (own `usePolicyStatus()`/`fetchPolicies()`,
+ * mirroring the Credentials section's own "independent plane, own status
+ * hook" precedent just above - an environment can have idryx up and
+ * wardryx down, or vice versa, and this section's identity-derived columns
+ * stay meaningful either way).
+ *
+ * Rendered unconditionally, like `CredentialsSection` - NOT gated behind
+ * this view's own idryx `ready` - so "identity plane not ready" has
+ * somewhere to actually say so (nesting it inside the `ready` branch the
+ * way Identities/Alerts/Remediations are would mean this section simply
+ * never renders when identity is not ready, and the honesty requirement
+ * would never be reachable). The wardryx-derived column group (denied
+ * tools/domains/flags) degrades independently: `buildAccessRows` is only
+ * ever given a real `policies` array once `policyReady && policies !==
+ * null`, otherwise `null` - which `AccessMatrixTable` renders as "policy
+ * plane unavailable" per cell, never a fabricated zero (see
+ * `lib/access.ts`'s `AccessRow.policy` doc comment for why those two must
+ * never look the same).
+ */
+function AccessMatrixSection({
+  identityReady,
+  identityStatus,
+  identities,
+  alerts,
+  policyStatus,
+  policiesError,
+  policies,
+  hhmm,
+  onOpenAgent,
+}: {
+  identityReady: boolean;
+  identityStatus: IdentityStatus | null;
+  identities: IdryxIdentity[] | null;
+  alerts: IdryxAlert[] | null;
+  policyStatus: PolicyStatus | null;
+  policiesError: PolicyError | null;
+  policies: PolicyRecord[] | null;
+  hhmm: string | undefined;
+  onOpenAgent: (agentId: string) => void;
+}) {
+  const policyReady = policyStatus?.state === "ready";
+  const policiesAvailable = policyReady && policies !== null && policiesError === null;
+
+  let policyNote: string | null = null;
+  if (!policiesAvailable) {
+    if (!policyStatus || policyStatus.state === "bootstrapping") policyNote = "policy plane connecting...";
+    else if (policyStatus.state === "no_environment") policyNote = "policy plane not configured";
+    else if (policyStatus.state === "unreachable") policyNote = `policy plane unreachable: ${policyStatus.reason}`;
+    else if (policiesError) policyNote = describePolicyError(policiesError);
+    else policyNote = "policy plane unavailable";
+  }
+
+  const rows =
+    identityReady && identities !== null && alerts !== null
+      ? buildAccessRows(identities, alerts, policiesAvailable ? policies : null)
+      : null;
+
+  return (
+    <Section
+      title="Access matrix"
+      right={
+        <div className="flex items-center gap-2">
+          {policyNote && (
+            <span className="chip" style={cssVar("dot", "var(--faint)")} title={policyNote}>
+              <span className="dot" aria-hidden="true" />
+              {policyNote}
+            </span>
+          )}
+          <FreshBadge
+            variant="snapshot"
+            detail={hhmm}
+            title="Built from the same idryx identities/alerts snapshot as the sections above, plus a one-shot Wardryx policies read"
+          />
+        </div>
+      }
+    >
+      {!identityReady ? (
+        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+          {!identityStatus || identityStatus.state === "bootstrapping"
+            ? "connecting to the identity plane"
+            : identityStatus.state === "no_environment"
+              ? "no identity plane found"
+              : "could not reach idryx"}{" "}
+          - the access matrix needs idryx's identities/alerts snapshot to build any row.
+        </div>
+      ) : rows === null ? (
+        <Loading />
+      ) : (
+        <AccessMatrixTable rows={rows} onOpenAgent={onOpenAgent} />
+      )}
+    </Section>
+  );
+}
+
 /** 30s poll cadence for the Credentials card (I15) - the gateway's key
  * report changes as calls come in, unlike idryx's load-once snapshot above,
  * so this one genuinely benefits from a periodic re-fetch. */
@@ -295,6 +399,39 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
     ? keysReport.keys.filter((k) => isKeyIssue(deriveKeyStatus(k, keysReport, nowMs))).length
     : 0;
 
+  // Access matrix (I5): an entirely independent plane/status hook from idryx
+  // above, same pattern as Credentials - see `AccessMatrixSection`'s doc
+  // comment for why it is never gated behind `ready`. One-shot fetch, no
+  // interval: wardryx policies are not a live-changing feed the way the
+  // gateway's key report is, and this view's own "no new polling loops"
+  // rule (I5 spec) applies here just as it does to the idryx-backed
+  // sections above.
+  const policyStatus = usePolicyStatus();
+  const policyReady = policyStatus?.state === "ready";
+  const [policies, setPolicies] = useState<PolicyRecord[] | null>(null);
+  const [policiesError, setPoliciesError] = useState<PolicyError | null>(null);
+
+  useEffect(() => {
+    if (!policyReady) return;
+    let cancelled = false;
+    setPolicies(null);
+    setPoliciesError(null);
+    void fetchPolicies()
+      .then((p) => {
+        if (!cancelled) setPolicies(p);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setPolicies(null);
+        setPoliciesError(err as PolicyError);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [policyReady]);
+
+  const hhmm = asOfMs !== null ? formatHm(asOfMs) : undefined;
+
   const credentialsSection = (
     <CredentialsSection
       status={credentialsStatus}
@@ -304,10 +441,25 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
     />
   );
 
+  const accessMatrixSection = (
+    <AccessMatrixSection
+      identityReady={ready}
+      identityStatus={status}
+      identities={identities}
+      alerts={alerts}
+      policyStatus={policyStatus}
+      policiesError={policiesError}
+      policies={policies}
+      hhmm={hhmm}
+      onOpenAgent={onOpenAgent}
+    />
+  );
+
   if (!ready) {
     return (
       <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
         <IdentityEmptyState status={status} />
+        {accessMatrixSection}
         {credentialsSection}
       </div>
     );
@@ -315,7 +467,6 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
 
   const attestationAlerts = (alerts ?? []).filter((a) => ATTESTATION_DETECTORS.has(a.detector));
   const privilegedCount = (identities ?? []).filter((i) => i.privileged).length;
-  const hhmm = asOfMs !== null ? formatHm(asOfMs) : undefined;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
@@ -446,6 +597,7 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
         )}
       </Section>
 
+      {accessMatrixSection}
       {credentialsSection}
     </div>
   );
