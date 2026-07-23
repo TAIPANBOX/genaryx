@@ -745,17 +745,20 @@ async fn exit_gate_hold_grant_token_allow_e2e() {
                     .unwrap_or_else(|e| panic!("copy scenario {name}: {e}"));
             }
 
+            // Key via MOCKRYX_API_KEY, not an --api-key argv flag: the same
+            // secret-hygiene reason MockryxClient::run uses (a key on argv is
+            // readable from the host process table); mockryx reads this env
+            // var as the flag's own default.
             let output = Command::new(&mockryx_bin)
                 .args([
                     "run",
                     "--gateway",
                     &discovered.gateway_url,
-                    "--api-key",
-                    &discovered.wardryx_admin_bearer,
                     scenarios_dir
                         .to_str()
                         .expect("scenarios dir path is valid UTF-8"),
                 ])
+                .env("MOCKRYX_API_KEY", &discovered.wardryx_admin_bearer)
                 .output()
                 .expect("spawn `mockryx run`");
             println!(

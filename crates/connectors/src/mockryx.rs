@@ -207,15 +207,23 @@ impl MockryxClient {
         self
     }
 
-    /// `mockryx run --gateway <gateway> --format json [--api-key K]
-    /// [--fail-on-skip] [--save P] <scenario_dir>` -> the parsed
-    /// [`MockryxReport`]. Exit `0|1` both yield a report (exit 1 = gaps found,
-    /// a normal result); exit `2`/other is a real [`MockryxError::Cli`].
+    /// `mockryx run --gateway <gateway> --format json [--fail-on-skip]
+    /// [--save P] <scenario_dir>` -> the parsed [`MockryxReport`]. Exit `0|1`
+    /// both yield a report (exit 1 = gaps found, a normal result); exit
+    /// `2`/other is a real [`MockryxError::Cli`].
     ///
     /// `gateway` is the TokenFuse gateway base URL to rehearse against
     /// (required by mockryx; an empty one makes mockryx exit 2). `save_path`,
     /// when given, also writes the JSON report there for later `report`/Evidence
     /// use; the return value is parsed from stdout regardless.
+    ///
+    /// `api_key`, when given, is passed to the child via the `MOCKRYX_API_KEY`
+    /// environment variable, never as an `--api-key` argv flag: mockryx reads
+    /// that env var as the flag's own default (`cmd/mockryx/main.go`,
+    /// `firstNonEmpty(--api-key, $MOCKRYX_API_KEY)`), and a secret on a
+    /// process's argv is readable by anything that can list the process table
+    /// on the host for the child's lifetime. The env is set only on this child
+    /// process, not on the console's own environment.
     pub fn run(
         &self,
         scenario_dir: &Path,
@@ -227,10 +235,6 @@ impl MockryxClient {
         let dir = scenario_dir.to_string_lossy();
         let save = save_path.map(|p| p.to_string_lossy());
         let mut args: Vec<&str> = vec!["run", "--gateway", gateway, "--format", "json"];
-        if let Some(key) = api_key {
-            args.push("--api-key");
-            args.push(key);
-        }
         if fail_on_skip {
             args.push("--fail-on-skip");
         }
@@ -242,6 +246,9 @@ impl MockryxClient {
 
         let mut cmd = std::process::Command::new(&self.bin);
         cmd.args(&args);
+        if let Some(key) = api_key {
+            cmd.env("MOCKRYX_API_KEY", key);
+        }
         if let Some(events) = &self.events_path {
             cmd.env("MOCKRYX_EVENTS_PATH", events);
         }
@@ -405,5 +412,68 @@ mod tests {
         .expect("null results parses as empty");
         assert!(rep.results.is_empty());
         assert!(!rep.has_gaps());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn api_key_rides_the_env_never_argv() {
+        // A fake "mockryx" that records both its argv and its MOCKRYX_API_KEY
+        // env into files, then prints a valid empty report so `run` returns
+        // Ok. Proves the secret reaches the child through the environment and
+        // never lands on argv, where anything reading the host process table
+        // could see it. Mirrors the admission plane's fake-verdryx secret test.
+        use std::os::unix::fs::PermissionsExt;
+
+        let base =
+            std::env::temp_dir().join(format!("genaryx-mockryx-keytest-{}", std::process::id()));
+        let script = base.with_extension("sh");
+        let argv_out = base.with_extension("argv");
+        let env_out = base.with_extension("env");
+        let scenarios = base.with_extension("scenarios");
+        std::fs::create_dir_all(&scenarios).expect("make scenarios dir");
+
+        // `"$@"` records every argument on its own line; `$MOCKRYX_API_KEY`
+        // records what the env carried. Then a minimal valid report on stdout.
+        let body = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > {argv}\nprintf '%s' \"$MOCKRYX_API_KEY\" > {env}\nprintf '{{\"run_id\":\"r\",\"gateway\":\"g\",\"generated_at\":\"t\",\"results\":[]}}'\nexit 0\n",
+            argv = argv_out.display(),
+            env = env_out.display(),
+        );
+        std::fs::write(&script, body).expect("write fake mockryx");
+        let mut perms = std::fs::metadata(&script).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).expect("chmod +x");
+
+        let secret = "sk-mockryx-do-not-leak-42";
+        let rep = MockryxClient::new(&script)
+            .run(
+                &scenarios,
+                "http://127.0.0.1:4100",
+                Some(secret),
+                false,
+                None,
+            )
+            .expect("fake mockryx returns an empty report");
+        assert!(rep.results.is_empty());
+
+        let argv = std::fs::read_to_string(&argv_out).expect("read argv capture");
+        let env = std::fs::read_to_string(&env_out).expect("read env capture");
+        assert!(
+            !argv.contains(secret),
+            "the api key must never appear on mockryx's argv: {argv:?}"
+        );
+        assert!(
+            !argv.contains("--api-key"),
+            "the --api-key flag must not be passed at all: {argv:?}"
+        );
+        assert_eq!(
+            env, secret,
+            "the api key must reach mockryx via MOCKRYX_API_KEY"
+        );
+
+        let _ = std::fs::remove_file(&script);
+        let _ = std::fs::remove_file(&argv_out);
+        let _ = std::fs::remove_file(&env_out);
+        let _ = std::fs::remove_dir_all(&scenarios);
     }
 }
