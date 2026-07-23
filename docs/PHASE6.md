@@ -160,3 +160,48 @@ All gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D
 Paid Genaryx only. The crate lives in this proprietary workspace; the open stack stays
 fully operable without it (the copilot only consumes public plane APIs, adds none). The
 trial ships the copilot hard-locked to local providers (`allow_non_local_endpoints=false`).
+
+## I10 - Felyx optimization recommendations (post-C3 addition)
+
+Gives Felyx two more READ tools so it can analyze TokenFuse cost/savings and recommend
+optimizations, without adding any new action kind or touching enforcement:
+
+- `savings_breakdown` - blocked/cache/router savings and budget breaks, read straight off the
+  local TokenFuse Parquet trace via `tokenfuse savings`
+  (`crates/connectors/src/tokenfuse.rs::TokenfuseClient::savings`). Overlaps in SHAPE with the
+  pre-existing `savings` tool (`tools/cloud.rs`, sourced from Cloud's own `/v1/savings`
+  ledger) - a deliberate, flagged duplication rather than a silently-reconciled one:
+  `savings_breakdown` still works when Cloud is not configured, and doubles as a cross-check
+  against it.
+- `cost_per_action` - cost, call count, and tool-call totals per model and per agent, via two
+  FIXED `tokenfuse sql` aggregate queries (`TokenfuseClient::cost_per_action`). Honest about
+  the `tool_calls` column being nullable (I1): a row reports `tool_calls_known_rows == 0`
+  rather than fabricating a zero when the underlying trace predates that column, and
+  `cost_per_tool_call_microusd` is `null` in exactly that case.
+
+Both tools are strictly READ. An "enable the semantic cache" or "route to a cheaper model"
+recommendation can only ever be informational text in Felyx's answer - the console has no way
+to mutate gateway config, and this crate still holds no signer (`crates/copilot/tests/
+no_signer.rs` still passes unchanged). A recommendation that DOES map to an existing action
+(e.g. "cap this wasteful agent's budget") is left entirely to the model's own judgment to raise
+via the EXISTING `propose_budget` tool after reading these numbers - neither new tool
+auto-emits a proposal.
+
+Wiring: `crates/copilot/src/tools/optimize.rs` (the two tools, over the same `spawn_blocking`
+bridge `crypto_scan` established for a CLI connector); `Clients::tokenfuse: Option<
+TokenfuseTraces>` (`tools/mod.rs`) gates their registration; `crates/api/src/copilot/
+state.rs::resolve_tokenfuse` resolves the bin+traces-dir pair by reusing the Evidence Center's
+OWN `evidence::env::discover_tokenfuse` - no new binary-path convention was needed, Evidence
+already resolves `~/.taipan/bin/tokenfuse-gateway` plus the newest `<name>.traces/gateway`
+dir.
+
+Parse fragility, stated plainly: `tokenfuse sql` has no JSON/machine-readable output mode as of
+this reading - it only ever prints DataFusion/Arrow's `pretty_format_batches` box-drawing
+table, so `cost_per_action` text-scrapes that table. To keep the blast radius of that fragility
+small, the two SQL queries are FIXED constants in `tokenfuse.rs`, never operator- or
+model-supplied text - `cost_per_action` takes no arguments at all. `tokenfuse savings`'s
+human-readable report is scraped the same way. Both parses hard-fail
+(`TokenfuseError::Parse`) rather than guess when the shape does not match; validated
+2026-07-23 against a live `tokenfuse-gateway` binary and two real local trace directories
+(`crates/connectors/src/tokenfuse.rs`'s tests embed the captured bytes, plus a skip-graceful
+live test that re-runs the real CLI end to end when that binary/trace happen to be present).

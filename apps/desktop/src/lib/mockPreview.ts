@@ -1117,6 +1117,26 @@ function mockOnboardGenerate(args?: Record<string, unknown>) {
 // --- Felyx (copilot) canned answers, keyed loosely by the question ---
 function mockCopilotAnswer(question: string) {
   const q = question.toLowerCase();
+  // I10 "Felyx optimization recommendations" - checked BEFORE the generic
+  // cost/spend branch below, since an optimization question ("how can I
+  // reduce cost") would otherwise also match that looser regex. Mirrors the
+  // real `savings_breakdown`/`cost_per_action` tools' shape
+  // (`crates/copilot/src/tools/optimize.rs`) so this mock is a faithful
+  // stand-in, not just a plausible-looking guess.
+  if (/optimi[sz]e|optimization|savings breakdown|cost per (tool call|action)|reduce (my |the )?(cost|spend)/.test(q)) {
+    return {
+      text:
+        "From the local TokenFuse trace: budget protection blocked $38.90 of runaway spend across 3 budget breaks, the semantic cache served $4.10 for free, and the model router saved $2.25 by downgrading eligible calls. By model, claude-opus-4-5 runs about $0.62 per tool call across 640 calls, versus $0.004 for claude-haiku - opus is spending a lot for comparatively little tool-calling work. By agent, finops/unit-economics-analyst accounts for most of that opus cost. I can't turn on more caching or re-route models myself (the console has no such control, and cache/router tuning is gateway config I cannot touch) - but I can propose tightening that agent's budget so the pattern is bounded.",
+      tool_trace: [
+        { name: "savings_breakdown", ok: true, result_preview: "blocked $38.90, cache $4.10, router $2.25, 3 budget breaks" },
+        { name: "cost_per_action", ok: true, result_preview: "claude-opus-4-5 $0.62/tool-call (640 calls); claude-haiku $0.004/tool-call" },
+      ],
+      proposals: [
+        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: 60 }, rationale: "Opus cost per tool call here is far above the fleet average and this agent has no cap today; $60/day bounds it without blocking its weekly unit-cost run.", confidence: 0.68, evidence_refs: ["cost_per_action:claude-opus-4-5"], policy_context: ["finops-spend-cap"] },
+      ],
+      usage: { prompt_tokens: 850 + question.length * 3, completion_tokens: 175 },
+    };
+  }
   if (/runaway|expensive|cost|most|spend/.test(q)) {
     return {
       text:

@@ -36,4 +36,4 @@ pub use provider::{
     ToolSpec, Usage, build_provider,
 };
 pub use service::CopilotService;
-pub use tools::{Clients, ToolError, ToolRegistry};
+pub use tools::{Clients, TokenfuseTraces, ToolError, ToolRegistry};
