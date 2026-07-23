@@ -425,6 +425,24 @@ function mockPolicies() {
     pol({ id: "data-pii-attestation", name: "data-pii-attestation", target: `agent://${ORG}/data/*`, deny_if_unattested: true }),
     pol({ id: "platform-secret-dlp", name: "platform-secret-dlp", target: `agent://${ORG}/platform/secret-scanner`, deny_tool: ["external_send"] }),
     pol({ id: "rca-max-steps", name: "rca-max-steps", target: `agent://${ORG}/sre/rca-copilot`, max_steps: 12 }),
+    // I5 "Access matrix" fixtures: two `allow_domains` policies whose targets
+    // glob-match the same fixture agent (a platform-wide one plus a narrower
+    // exact-target one), so `lib/access.ts`'s effective-intersection logic
+    // has a genuinely non-trivial case to render under `dev:mock` (the
+    // platform-wide list's `api.github.com` is NOT in the narrower list, so
+    // the effective allowed set is the one domain both share).
+    pol({
+      id: "platform-egress-allowlist",
+      name: "platform-egress-allowlist",
+      target: `agent://${ORG}/platform/*`,
+      allow_domains: ["api.github.com", "registry.npmjs.org"],
+    }),
+    pol({
+      id: "dependency-upgrader-domains",
+      name: "dependency-upgrader-domains",
+      target: `agent://${ORG}/platform/dependency-upgrader`,
+      allow_domains: ["registry.npmjs.org"],
+    }),
   ];
 }
 
@@ -439,8 +457,94 @@ function dateStamp(msAgo: number) {
   return new Date(now - msAgo).toISOString().slice(0, 10);
 }
 
+/**
+ * I5 "Access matrix" fixtures: per-agent permission overrides, keyed by
+ * agent id, so `dev:mock` has real (non-empty) `IdryxPermission[]` to build
+ * a meaningful matrix from - every other fixture agent stays at `[]`
+ * (granted 0, a legitimately empty row) rather than inventing permissions
+ * for the whole 42-agent fleet. Three cases the spec calls for by name:
+ *
+ * - `incident-triage-copilot`: a used/unused mix INCLUDING an unused admin
+ *   permission (`pagerduty_admin`) - the escalated "Unused" state, and its
+ *   `pagerduty_read`/`pagerduty_admin` overlap the sanctioned MCP server
+ *   below (sanctioned MCP reach).
+ * - `alert-correlator`: every permission has `used: false` and NONE has
+ *   `used: true` - the honesty-gate "no usage signal" state (not "2
+ *   unused"), mirroring idryx's own `least_privilege` detector staying
+ *   silent here.
+ * - `dependency-upgrader`: `scratch_notes_write` overlaps the SHADOW MCP
+ *   server below (shadow MCP reach), paired with the `agent_shadow_tool`
+ *   alert further down so the two signals agree, per the task spec ("do not
+ *   special-case it, but include the alert count in the row model").
+ */
+const FIXTURE_PERMISSIONS: Record<string, { name: string; admin: boolean; used: boolean }[]> = {
+  [`agent://${ORG}/sre/incident-triage-copilot`]: [
+    { name: "pagerduty_read", admin: false, used: true },
+    { name: "logs_read", admin: false, used: true },
+    { name: "pagerduty_admin", admin: true, used: false },
+    { name: "incident_write", admin: false, used: false },
+  ],
+  [`agent://${ORG}/sre/alert-correlator`]: [
+    { name: "metrics_read", admin: false, used: false },
+    { name: "alerts_dedupe", admin: false, used: false },
+  ],
+  [`agent://${ORG}/platform/dependency-upgrader`]: [
+    { name: "deps_read", admin: false, used: true },
+    { name: "scratch_notes_write", admin: false, used: true },
+  ],
+};
+
+/** I5 fixtures: two `mcp_server` identities - one sanctioned, one shadow
+ * (flagged by the `shadow_mcp` alert in `mockAlerts` below, since idryx
+ * exposes no shadow flag over REST). Their own `permissions` are what
+ * `lib/access.ts`'s name-intersection join checks fixture agents' own
+ * permissions against - see {@link FIXTURE_PERMISSIONS}'s doc comment for
+ * which agent overlaps which server. */
+function mockMcpServerIdentities() {
+  return [
+    {
+      id: `mcp://${ORG}/sanctioned/pagerduty-connector`,
+      type: "mcp_server",
+      privileged: false,
+      source: "mcp",
+      owner: userId("j.carter"),
+      created: utcStamp(90 * DAY),
+      last_used: utcStamp(2 * 60_000),
+      runtime: "mcp-server",
+      on_behalf_of: [] as string[],
+      permissions: [
+        { name: "pagerduty_read", admin: false, used: true },
+        { name: "pagerduty_admin", admin: true, used: true },
+      ],
+      remediation: null,
+      rotation: null,
+      events: 812,
+      alerts: 0,
+    },
+    {
+      id: `mcp://${ORG}/shadow/scratch-notes`,
+      type: "mcp_server",
+      privileged: false,
+      source: "mcp",
+      owner: userId("t.osei"),
+      created: utcStamp(6 * DAY),
+      last_used: utcStamp(11 * 60_000),
+      runtime: "mcp-server",
+      on_behalf_of: [] as string[],
+      permissions: [
+        { name: "scratch_notes_write", admin: false, used: true },
+        { name: "scratch_notes_admin", admin: true, used: false },
+      ],
+      remediation: null,
+      rotation: null,
+      events: 44,
+      alerts: 1,
+    },
+  ];
+}
+
 function mockIdentities() {
-  return FLEET.map((a) => ({
+  const agents = FLEET.map((a) => ({
     id: agentId(a),
     type: "agent",
     privileged: a.team === "sre" || a.name.includes("secret") || a.name.includes("pii"),
@@ -450,13 +554,14 @@ function mockIdentities() {
     last_used: utcStamp(Math.random() * 60_000),
     runtime: a.model,
     on_behalf_of: [userId(a.owner)],
-    permissions: [],
+    permissions: FIXTURE_PERMISSIONS[agentId(a)] ?? [],
     remediation: null,
     rotation: null,
     events: a.calls,
     alerts: a.closed ? 2 : 0,
     team: a.team,
   }));
+  return [...agents, ...mockMcpServerIdentities()];
 }
 
 function mockAlerts() {
@@ -466,6 +571,13 @@ function mockAlerts() {
     { detector: "excessive_agency", identity: agentId(ra), severity: "medium", time: ago(40 * 60_000), summary: "excessive_agency: agent opened 22 sub-runs in one window" },
     { detector: "over_privileged_nhi", identity: `agent://${ORG}/platform/secret-scanner`, severity: "low", time: ago(3 * DAY), summary: "over_privileged_nhi: secret-scanner holds unused repo_write" },
     { detector: "attestation_missing", identity: `agent://${ORG}/data/pii-scanner`, severity: "medium", time: ago(2 * DAY), summary: "attestation_missing: attestation=none on a data agent under data-pii-attestation" },
+    // I5 "Access matrix" fixtures: the shadow_mcp alert is what MAKES the
+    // scratch-notes server shadow (idryx exposes no shadow flag over REST -
+    // see `lib/access.ts`'s `shadowServerIds` doc comment), and the paired
+    // agent_shadow_tool alert is idryx's own detector output for the same
+    // join `lib/access.ts` derives independently - both must agree here.
+    { detector: "shadow_mcp", identity: `mcp://${ORG}/shadow/scratch-notes`, severity: "high", time: ago(11 * 60_000), summary: "unsanctioned MCP server in use (shadow MCP)" },
+    { detector: "agent_shadow_tool", identity: `agent://${ORG}/platform/dependency-upgrader`, severity: "high", time: ago(9 * 60_000), summary: "agent uses tool(s) from an unsanctioned MCP server: scratch_notes_write" },
   ];
 }
 

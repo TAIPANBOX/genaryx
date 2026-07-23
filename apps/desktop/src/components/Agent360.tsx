@@ -8,13 +8,14 @@ import { formatTimestamp, formatUsd } from "../lib/format";
 import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph";
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
 import { describeMoneyError, fetchRuns } from "../lib/money";
-import { describePolicyError, fetchApprovals } from "../lib/policy";
+import { describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
+import { effectiveOverlay, matchedPolicies, mcpReachForAgent, mcpServerIdentities, permissionRollup, shadowServerIds } from "../lib/access";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { usePolicyStatus } from "../lib/usePolicyStatus";
 import type { ViewId } from "../lib/views";
 import type { MoneyError, Run } from "../moneyTypes";
-import type { Approval, PolicyError } from "../policyTypes";
+import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 import type { UiEvent } from "../types";
 import { DelegationGraphView } from "./DelegationGraphView";
 import { SeverityBadge } from "./SeverityBadge";
@@ -89,17 +90,174 @@ function OpenPanelButton({ label, onClick }: { label: string; onClick: () => voi
 }
 
 /**
+ * The "Access" section's body (I5), once this agent's idryx record is
+ * confirmed to exist - split out from the ternary chain at its call site
+ * purely so the permission/MCP/policy computations below get a real
+ * `IdryxIdentity`, not an `IdryxIdentity | null | undefined` that would need
+ * a non-null assertion at every call site. Entirely derived by
+ * `lib/access.ts` from data already fetched by the Identity/Policy sections
+ * above (`identity.permissions`, `allIdentities`/`allAlerts` for MCP reach,
+ * `policies` for the Wardryx overlay) - no new fetch of its own. Read-only:
+ * no action here mutates anything, matching this whole card's own rule (see
+ * the footer note at the bottom of `Agent360`).
+ */
+function AccessSectionBody({
+  identity,
+  mcpServers,
+  shadowIds,
+  policyStatus,
+  policyError,
+  policies,
+  onOpenAgent,
+  onNavigate,
+}: {
+  identity: IdryxIdentity;
+  mcpServers: IdryxIdentity[];
+  shadowIds: ReadonlySet<string>;
+  policyStatus: PolicyStatus | null;
+  policyError: PolicyError | null;
+  policies: PolicyRecord[] | null;
+  onOpenAgent: (agentId: string) => void;
+  onNavigate: (view: ViewId) => void;
+}) {
+  const policyReady = policyStatus?.state === "ready";
+  const rollup = permissionRollup(identity.permissions);
+  const reach = mcpReachForAgent(
+    identity.permissions.map((p) => p.name),
+    mcpServers,
+    shadowIds,
+  );
+  const matched = policyReady && policies !== null ? matchedPolicies(identity.id, policies) : null;
+  const overlay = matched !== null ? effectiveOverlay(matched) : null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {rollup.granted === 0 ? (
+        <PlaneNote>this identity carries no permissions in the current idryx snapshot.</PlaneNote>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {identity.permissions.map((p) => (
+            <div key={p.name} className="flex items-center gap-2 min-w-0">
+              <span className="mono text-[11.5px] truncate" style={{ color: "var(--fg)" }}>
+                {p.name}
+              </span>
+              {p.admin && (
+                <span className="badge" style={cssVar("tone", "var(--sev-medium)")}>
+                  admin
+                </span>
+              )}
+              {!rollup.hasUsageSignal ? (
+                <span
+                  className="badge"
+                  style={cssVar("tone", "var(--faint)")}
+                  title="idryx has recorded no usage signal for this identity's permissions"
+                >
+                  no usage signal
+                </span>
+              ) : p.used ? (
+                <span className="badge" style={cssVar("tone", "var(--mint)")}>
+                  used
+                </span>
+              ) : (
+                <span className="badge" style={cssVar("tone", p.admin ? "var(--sev-high)" : "var(--sev-medium)")}>
+                  unused{p.admin ? " · admin" : ""}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+          MCP reach:
+        </span>
+        <span className="badge" style={cssVar("tone", "var(--sev-info)")}>
+          {reach.sanctionedTools.length} sanctioned
+        </span>
+        <span className="badge" style={cssVar("tone", reach.shadowTools.length > 0 ? "var(--sev-high)" : "var(--faint)")}>
+          {reach.shadowTools.length} shadow
+        </span>
+      </div>
+      {(reach.sanctionedServers.length > 0 || reach.shadowServers.length > 0) && (
+        <div className="flex flex-col gap-1">
+          {[...reach.shadowServers, ...reach.sanctionedServers].map((s) => (
+            <div key={s.serverId} className="flex items-center gap-2 min-w-0">
+              <AgentChip id={s.serverId} onOpen={onOpenAgent} />
+              <span className="mono text-[11px] truncate" style={{ color: "var(--dim)" }} title={s.tools.join(", ")}>
+                {s.tools.join(", ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!policyReady ? (
+        <PlaneNote>
+          {!policyStatus || policyStatus.state === "bootstrapping"
+            ? "connecting to the policy plane..."
+            : "policy plane not connected (wardryx overlay unavailable)."}
+        </PlaneNote>
+      ) : policyError ? (
+        <PlaneNote>{describePolicyError(policyError)}</PlaneNote>
+      ) : matched === null ? (
+        <PlaneNote>loading...</PlaneNote>
+      ) : matched.length === 0 ? (
+        <PlaneNote>no wardryx policy targets this agent.</PlaneNote>
+      ) : (
+        overlay && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {matched.map((p) => (
+                <span key={p.id} className="chip" style={cssVar("dot", "var(--src-wardryx)")} title={`target ${p.target}`}>
+                  <span className="dot" aria-hidden="true" />
+                  {p.name || p.target}
+                </span>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+              <Field label="denied tools" value={overlay.deniedTools.length > 0 ? overlay.deniedTools.join(", ") : "none"} />
+              <Field
+                label="domains"
+                value={
+                  overlay.allowDomains.effective.kind === "unrestricted"
+                    ? "unrestricted"
+                    : overlay.allowDomains.effective.domains.length > 0
+                      ? overlay.allowDomains.effective.domains.join(", ")
+                      : "none in common (matched policies contradict)"
+                }
+              />
+              <Field label="max steps" value={overlay.maxSteps !== null ? String(overlay.maxSteps) : "-"} />
+              <Field label="human above" value={overlay.requireHumanAboveUsd !== null ? formatUsd(overlay.requireHumanAboveUsd) : "-"} />
+              <Field label="deny above" value={overlay.denyAboveUsd !== null ? formatUsd(overlay.denyAboveUsd) : "-"} />
+              <Field label="unattested" value={overlay.denyIfUnattested ? "denied" : "allowed"} />
+            </div>
+          </div>
+        )
+      )}
+
+      <div className="flex items-center gap-2">
+        <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
+        <OpenPanelButton label="Open Policy panel" onClick={() => onNavigate("policy")} />
+      </div>
+    </div>
+  );
+}
+
+/**
  * Agent 360 (docs/PHASE3.md W3, position 4): a read-only, cross-plane card
  * for one `agent_id`, assembled from every plane this shell can reach -
  * Delegation (`agent_slice` + a mini-focus of the graph), Events
  * (`agent_events`), Identity (this agent's row + alerts from the W2 Idryx
- * panel), Money (this agent's runs, from the existing `money_runs`), and
- * Policy (this agent's `wardryx.*` decisions, filtered out of the same
- * `agent_events` result, plus its approvals). Every section has its own
- * honest empty/error state - never a shared spinner, never silently blank -
- * mirroring `MoneyEmptyState`/`PolicyEmptyState`/`IdentityEmptyState`'s
- * tone but inline, since a card this dense cannot afford a full panel-sized
- * empty state per section.
+ * panel), Access (I5: this agent's permission rollup, MCP reach, and
+ * Wardryx overlay - `lib/access.ts`), Money (this agent's runs, from the
+ * existing `money_runs`), and Policy (this agent's `wardryx.*` decisions,
+ * filtered out of the same `agent_events` result, plus its approvals).
+ * Every section has its own honest empty/error state - never a shared
+ * spinner, never silently blank - mirroring
+ * `MoneyEmptyState`/`PolicyEmptyState`/`IdentityEmptyState`'s tone but
+ * inline, since a card this dense cannot afford a full panel-sized empty
+ * state per section.
  *
  * Deliberately a VIEW, not an actions surface: kill/approve are not
  * reimplemented here (see the footer note) - `onNavigate` links out to the
@@ -159,6 +317,14 @@ export function Agent360({
   const [identity, setIdentity] = useState<IdryxIdentity | null | undefined>(undefined);
   const [identityAlerts, setIdentityAlerts] = useState<IdryxAlert[]>([]);
   const [identityError, setIdentityError] = useState<IdentityError | null>(null);
+  // Access (I5): the SAME identity-plane read above already returns every
+  // identity/alert - captured here too (zero extra fetches) so the Access
+  // section below can compute this agent's MCP reach (needs every
+  // `mcp_server` identity, not just this one) and derive the shadow set
+  // (needs every `shadow_mcp` alert, which typically names a DIFFERENT
+  // identity than this agent's own filtered `identityAlerts` above).
+  const [allIdentities, setAllIdentities] = useState<IdryxIdentity[]>([]);
+  const [allAlerts, setAllAlerts] = useState<IdryxAlert[]>([]);
 
   useEffect(() => {
     if (!identityReady) return;
@@ -170,11 +336,15 @@ export function Agent360({
         if (cancelled) return;
         setIdentity(ids.find((i) => i.id === agentId) ?? null);
         setIdentityAlerts(alerts.filter((a) => a.identity === agentId));
+        setAllIdentities(ids);
+        setAllAlerts(alerts);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setIdentity(null);
         setIdentityAlerts([]);
+        setAllIdentities([]);
+        setAllAlerts([]);
         setIdentityError(err as IdentityError);
       });
     return () => {
@@ -212,19 +382,27 @@ export function Agent360({
   const policyReady = policyStatus?.state === "ready";
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
   const [policyError, setPolicyError] = useState<PolicyError | null>(null);
+  // Access (I5): this agent's matched Wardryx policies need the full policy
+  // set (matched against `agentId`'s own glob, client-side) - fetched
+  // alongside approvals on the same effect/readiness gate below, since both
+  // are reads of the same policy plane.
+  const [policies, setPolicies] = useState<PolicyRecord[] | null>(null);
 
   useEffect(() => {
     if (!policyReady) return;
     let cancelled = false;
     setApprovals(null);
     setPolicyError(null);
-    void fetchApprovals()
-      .then((a) => {
-        if (!cancelled) setApprovals(a.filter((ap) => ap.agent_id === agentId));
+    void Promise.all([fetchApprovals(), fetchPolicies()])
+      .then(([a, p]) => {
+        if (cancelled) return;
+        setApprovals(a.filter((ap) => ap.agent_id === agentId));
+        setPolicies(p);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setApprovals([]);
+        setPolicies(null);
         setPolicyError(err as PolicyError);
       });
     return () => {
@@ -235,6 +413,10 @@ export function Agent360({
   const policyEvents = (events ?? []).filter((e) => e.source === "wardryx");
   const attestationAlerts = identityAlerts.filter((a) => ATTESTATION_DETECTORS.has(a.detector));
   const totalSpentUsd = (runs ?? []).reduce((sum, r) => sum + r.spent_usd, 0);
+  // Access (I5): derived from the SAME identity-plane read the Identity
+  // section above already made (`allIdentities`/`allAlerts`) - no new fetch.
+  const mcpServers = mcpServerIdentities(allIdentities);
+  const shadowIds = shadowServerIds(allAlerts);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Agent 360: ${agentId}`}>
@@ -405,6 +587,35 @@ export function Agent360({
               )}
               <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
             </div>
+          )}
+        </section>
+
+        {/* ---- Access (I5: agent access matrix) ---- */}
+        <section className="flex flex-col gap-2">
+          <SectionHeader title="Access" />
+          {!identityReady ? (
+            <PlaneNote>
+              {!identityStatus || identityStatus.state === "bootstrapping"
+                ? "connecting to the identity plane..."
+                : "identity plane not connected."}
+            </PlaneNote>
+          ) : identityError ? (
+            <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
+          ) : identity === undefined ? (
+            <PlaneNote>loading...</PlaneNote>
+          ) : identity === null ? (
+            <PlaneNote>no idryx identity record for this agent - nothing to assemble an access matrix from.</PlaneNote>
+          ) : (
+            <AccessSectionBody
+              identity={identity}
+              mcpServers={mcpServers}
+              shadowIds={shadowIds}
+              policyStatus={policyStatus}
+              policyError={policyError}
+              policies={policies}
+              onOpenAgent={onOpenAgent}
+              onNavigate={onNavigate}
+            />
           )}
         </section>
 

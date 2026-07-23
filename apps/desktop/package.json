@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "dev:web": "vite --mode web",
     "dev:mock": "vite --mode mock",
-    "build:web": "tsc && vite build --mode web --outDir dist-web"
+    "build:web": "tsc && vite build --mode web --outDir dist-web",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.6",
@@ -27,6 +28,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
   }
 }
