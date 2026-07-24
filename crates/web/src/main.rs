@@ -19,6 +19,11 @@ mod dispatch;
 mod doctor;
 mod oidc;
 mod roles;
+// The WebAuthn ceremony core (D15 B3 part 2). The routes + the command gate
+// that consume it land in the next increment of this same branch; the allow
+// below is removed with them.
+#[allow(dead_code)]
+mod webauthn;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;

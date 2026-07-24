@@ -62,9 +62,24 @@ clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# WebAuthn per-action ceremony (D15 B3 part 2, docs/CONSOLE-IDP.md). Deliberately
+# NOT webauthn-rs: that crate mandates OpenSSL (webauthn-attestation-ca is a hard,
+# non-feature-gated dependency of webauthn-rs-core), and this workspace's crypto
+# is pure Rust. Instead the ceremony reuses genaryx-signing's ES256 verify (the
+# exact p256 path device-pairing already trusts) and adds only the WebAuthn
+# envelope parsing: ciborium for the COSE key / attestationObject CBOR, plus the
+# base64/sha2 the workspace already pins. ES256-only, attestation "none".
+genaryx-signing = { path = "../signing" }
+ciborium = "0.2"
+base64 = { workspace = true }
+sha2 = { workspace = true }
+
 [dev-dependencies]
 # Drive the router directly in tests via `oneshot` (the auth + role gate),
 # instead of only binding it to a socket. Same tower/http-body family axum 0.8
 # already pulls in, so no new stack.
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# webauthn.rs tests play the AUTHENTICATOR side (mint a key, DER-sign like a
+# browser); the shipped code only verifies, via genaryx-signing.
+p256 = { workspace = true }
