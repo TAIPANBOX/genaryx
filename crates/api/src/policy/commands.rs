@@ -1,4 +1,4 @@
-//! Tauri commands for the Policy view: two reads (`policy_list_approvals`/
+//! Console commands for the Policy view: two reads (`policy_list_approvals`/
 //! `policy_list_policies`), one privileged mutation
 //! (`policy_decide_approval`), plus `policy_status` so the frontend can
 //! render a clean "no policy plane" / "unreachable" state up front instead
@@ -8,8 +8,8 @@
 //! Wardryx type, same convention `money::commands`'s `RunDto`/`IncidentDto`
 //! already use for `genaryx_connectors::CloudClient` DTOs: the connector's
 //! own types only derive `Deserialize` (they exist to parse Wardryx's
-//! responses), never `Serialize`, so they cannot cross the Tauri IPC
-//! boundary as-is.
+//! responses), never `Serialize`, so they cannot be handed to the frontend
+//! as-is.
 //!
 //! Fail-closed mutation contract, identical in spirit to
 //! `money::commands::finish_mutation`: `policy_decide_approval` calls the
@@ -89,8 +89,10 @@ impl From<&Approval> for ApprovalDto {
 /// One row of the Policy view. Flattened mirror of `PolicyRecord` (itself
 /// already flattened over `Policy` on Wardryx's own wire, see
 /// `genaryx_connectors::PolicyRecord`'s doc comment) - `#[serde(flatten)]`
-/// on the connector side becomes plain named fields here, since Tauri's IPC
-/// has no reason to reproduce Go's embedded-struct wire quirk.
+/// on the connector side becomes plain named fields here, since this app's
+/// own wire format has no reason to reproduce Go's embedded-struct wire quirk
+/// (true of the former Tauri shell's IPC, and just as true of JSON over HTTP
+/// today).
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyRecordDto {
     pub id: String,
@@ -483,8 +485,9 @@ pub async fn policy_list_policies(
 // ============================================================================
 
 /// Grant or deny a pending approval. A privileged mutation: the frontend
-/// gates this behind an explicit confirm ceremony (`ConfirmButton`, Wave-2's
-/// Tauri-track substitute for SwiftUI's Touch ID gate - PHASE2.md).
+/// gates this behind an explicit confirm ceremony (`ConfirmButton`, the web
+/// console's confirm-dialog substitute for the former desktop Touch ID gate -
+/// PHASE2.md).
 ///
 /// Journals a `console_command` via `genaryx_core::command::record`
 /// regardless of Wardryx's verdict (`action`
@@ -548,9 +551,9 @@ mod tests {
     // A minimal, dependency-free base64url-no-pad encoder for building a
     // syntactically valid (never cryptographically verified - see
     // `ApprovalTokenClaims::decode`'s own doc comment) synthetic
-    // `approval_token` in tests. `genaryx-desktop` does not otherwise depend
-    // on a base64 crate, and pulling one in just for this one test seemed
-    // like the wrong trade - this is ~15 lines and only ever compiled for
+    // `approval_token` in tests. This crate does not otherwise depend on a
+    // base64 crate, and pulling one in just for this one test seemed like
+    // the wrong trade - this is ~15 lines and only ever compiled for
     // `cfg(test)`.
     fn b64url_nopad(bytes: &[u8]) -> String {
         const ALPHABET: &[u8; 64] =

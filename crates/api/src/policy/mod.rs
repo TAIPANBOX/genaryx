@@ -1,7 +1,8 @@
 //! Policy + Approvals: the Phase-2 wave-2 policy-plane surface over Wardryx
-//! (docs/PHASE2.md, "Wave 2 data contract + UX"), Track A (Tauri/Web) of a
-//! two-shell parallel build - the SwiftUI half lives in `crates/ffi/src/wardryx/`
-//! + `apps/macos`, built independently against the same data contract.
+//! (docs/PHASE2.md, "Wave 2 data contract + UX"), originally built as Track A
+//! (Tauri/Web) of a two-shell parallel build; the SwiftUI Track B left with
+//! the desktop shells (it lived in `crates/ffi/src/wardryx/` + `apps/macos`,
+//! built independently against the same data contract).
 //!
 //! Mirrors `crate::money`'s module shape exactly (`env`/`state`/`commands`,
 //! same non-blocking bootstrap-in-`setup` wiring), reusing every convention

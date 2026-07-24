@@ -1,4 +1,4 @@
-//! Tauri commands for the Remote (Distance) view (docs/PHASE4.md W4):
+//! Console commands for the Remote (Distance) view (docs/PHASE4.md W4):
 //! `remote_status` plus [`remote_set_environment`] (save the operator's WG
 //! peer + SSH target + `wireguard-go` path), the read-only
 //! [`remote_hetzner_list`], the WG [`remote_wg_connect`]/
@@ -39,15 +39,15 @@
 //! [`TailSink::line`] once per line, then [`TailSink::ended`] once on
 //! EOF/error - mirrors `bus::feed::EventSink`'s identical generic-sink shape
 //! for the live bus feed (a caller-supplied destination the feeder loop never
-//! needs to know is a Tauri window event or an SSE broadcast), adapted here
-//! from a periodic poll to an unbounded read loop over a real child's pipe.
-//! `S: TailSink` is a per-call generic argument rather than something
+//! needs to know the concrete delivery of: today the web shell's SSE
+//! broadcast; the removed desktop shell's was a Tauri window event), adapted
+//! here from a periodic poll to an unbounded read loop over a real child's
+//! pipe. `S: TailSink` is a per-call generic argument rather than something
 //! `RemoteState` stores: the sink only needs to outlive the spawned reader
-//! thread, not the whole panel, so each shell hands in its own per call
-//! rather than this module holding one long-lived trait object - the desktop
-//! shell's wraps a Tauri window event, the web shell's pushes onto an SSE
-//! broadcast (see each shell's own wrapper for which). The child itself is
-//! kept in the `tail` cell so [`remote_ssh_tail_stop`] (or a fresh
+//! thread, not the whole panel, so the caller hands in its own per call
+//! rather than this module holding one long-lived trait object (see the web
+//! shell's own wrapper, which pushes onto an SSE broadcast). The child
+//! itself is kept in the `tail` cell so [`remote_ssh_tail_stop`] (or a fresh
 //! `remote_ssh_tail_start`) can kill it (only ever a process this panel
 //! itself spawned, never a `ps`/`lsof`-discovered PID).
 //!
@@ -310,10 +310,10 @@ impl From<CloudCliError> for RemoteError {
 
 /// One streamed line from an in-flight remote log tail - what
 /// [`remote_ssh_tail_start`]'s reader thread hands to a [`TailSink`] per
-/// line read. Plain data with no opinion on delivery: the Tauri event name
-/// (`remote:tail-line`) the desktop shell emits this under is that shell's
-/// own detail, not this crate's, so it lives with that shell's wrapper
-/// instead of here.
+/// line read. Plain data with no opinion on delivery: which named event
+/// (`remote:tail-line` on the web shell today) carries it is that shell's
+/// own wrapper's detail, not this crate's, so it lives there instead of
+/// here.
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteTailLine {
     pub path: String,
@@ -330,10 +330,9 @@ pub struct RemoteTailEnded {
 }
 
 /// A destination for one remote-tail event at a time, so
-/// [`remote_ssh_tail_start`]'s reader thread never needs to know whether it
-/// is running inside the desktop shell (a Tauri window event) or the web
-/// shell (an SSE broadcast to subscribers) - mirrors `bus::feed::EventSink`'s
-/// identical role and rationale for the live bus feed, generalized from one
+/// [`remote_ssh_tail_start`]'s reader thread never needs to know the sink's
+/// own delivery mechanism - mirrors `bus::feed::EventSink`'s identical role
+/// and rationale for the live bus feed, generalized from one
 /// payload type to the tail's two-shaped stream (any number of lines, then
 /// exactly one ended marker). Neither method takes a `Result`: a delivery
 /// failure is each sink's own concern to log, the same way
@@ -389,7 +388,7 @@ fn require(field: &'static str, value: &str) -> Result<(), RemoteError> {
 /// Which `wireguard-go` to bring the tunnel up with: the environment's own
 /// saved override if non-blank, else the auto-discovered `default_bin` -
 /// `None` when neither resolves (docs/PHASE4.md W4: "absent -> Connect fails
-/// honestly"). Pure, so the fallback rule is unit-tested without any Tauri
+/// honestly"). Pure, so the fallback rule is unit-tested without any console
 /// state.
 fn resolve_wireguard_go_bin(
     env: &RemoteEnvironmentConfig,
@@ -408,7 +407,7 @@ fn resolve_wireguard_go_bin(
 /// environment + the console's private key hex. Factored out so the
 /// interface-naming rule (`utun` on macOS, a fixed name on Linux -
 /// `crates/connectors/src/wg.rs`'s own doc comment) is unit-tested without
-/// any Tauri state.
+/// any console state.
 fn build_wg_bring_up_args(
     env: &RemoteEnvironmentConfig,
     private_key_hex: String,
@@ -1149,7 +1148,7 @@ mod tests {
         }
     }
 
-    // ---- ready_client (via a hand-built RemoteState, no Tauri app needed) ----
+    // ---- ready_client (via a hand-built RemoteState, no running app needed) ----
 
     #[tokio::test]
     async fn ready_client_reports_bootstrapping_before_bootstrap_resolves() {

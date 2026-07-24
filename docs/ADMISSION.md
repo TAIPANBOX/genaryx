@@ -41,16 +41,15 @@ gateway process.
   `crates/web/src/roles.rs` (`admission_status`/`admission_check` are
   viewer reads, `admission_baseline` is admin-only, the same floor
   `drills_run` sits at).
-- Tauri shell: `apps/desktop/src-tauri/src/commands.rs`'s `admission` module,
-  registered in `apps/desktop/src-tauri/src/lib.rs`.
-- UI (shared by web + Tauri): a new "Verify (admission gate)" section in
+- UI: a new "Verify (admission gate)" section in
   `components/OnboardView.tsx`, its guts factored into
   `components/AdmissionVerify.tsx` + `lib/admission.ts` + `admissionTypes.ts`
   (mirrors `onboardTypes.ts`'s file split), reachable either right after a
   fresh Generate or via a per-row "Verify" action on an existing provisioned
   passport.
-- SwiftUI shell: NOT in scope (2026-07-21 web-first pivot; `apps/macos` is
-  untouched by this branch).
+- The Tauri desktop shell and the SwiftUI shell this doc's history once
+  named were removed from this repo with the 2026-07-21 web-only pivot; the
+  web shell above is the only shell-side wiring this plane has today.
 
 ## Command contract (exact)
 
@@ -223,7 +222,7 @@ The proposal text (copy-paste, changes nothing on its own):
 
 - The per-row "Verify" action on a provisioned passport (`OnboardView.tsx`)
   cannot be exercised under `pnpm dev:mock` today, because
-  `apps/desktop/src/lib/mockPreview.ts` has NO fixture arm for
+  `apps/web/src/lib/mockPreview.ts` has NO fixture arm for
   `onboard_status` at all (a pre-existing gap in onboard's own mock
   fidelity, found while building this feature, not introduced by it - see
   that file's `mockInvoke` switch, which falls through `onboard_status` to

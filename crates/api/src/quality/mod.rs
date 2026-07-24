@@ -1,8 +1,9 @@
 //! Quality: the Phase-4 wave-1 quality-plane surface over Verdryx
-//! (docs/PHASE4.md "W1 - Quality (Verdryx) + Crypto (Qryx) panels"), Track A
-//! (Tauri/Web) of a two-shell parallel build - the SwiftUI half lives in
+//! (docs/PHASE4.md "W1 - Quality (Verdryx) + Crypto (Qryx) panels"),
+//! originally built as Track A (Tauri/Web) of a two-shell parallel build;
+//! the SwiftUI Track B left with the desktop shells (it lived in
 //! `crates/ffi` + `apps/macos`, built independently against the same
-//! grounded contract.
+//! grounded contract).
 //!
 //! Mirrors `crate::identity`'s module shape (`env`/`state`/`commands`, the
 //! same non-blocking bootstrap-in-`setup` wiring) - see each submodule's doc

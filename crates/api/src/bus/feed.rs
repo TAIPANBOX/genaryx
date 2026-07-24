@@ -1,11 +1,12 @@
 //! The live path: fills `genaryx-core`'s real `Store` at startup and keeps a
 //! background thread forwarding new events to an [`EventSink`], so the Bus
-//! Explorer updates without a reload in either shell (Phase-0 exit gate:
-//! "both shells show the same live event stream from the shared core"). This
-//! module runs identically for both shells: only the final delivery differs,
-//! via whichever [`EventSink`] the caller hands to [`bootstrap`] (the desktop
-//! shell's is a Tauri window event, see `apps/desktop/src-tauri/src/live.rs`;
-//! the web shell's is an SSE broadcast to its subscribers).
+//! Explorer updates without a reload (Phase-0 exit gate: "both shells show
+//! the same live event stream from the shared core" - back when there were
+//! two shells to keep in sync; today there is one). This module ran
+//! identically for both shells while both existed: only the final delivery
+//! differed, via whichever [`EventSink`] the caller handed to [`bootstrap`]
+//! (the old desktop shell's was a Tauri window event; the web shell's, still
+//! in use today, is an SSE broadcast to its subscribers).
 //!
 //! There are two ways that stream can be obtained, and which one is in use is
 //! never hidden from the operator (see [`BusMode`]):
@@ -18,8 +19,9 @@
 //!    ~2s. Useful for a first look and for screenshots, and labelled as demo
 //!    everywhere it surfaces.
 //!
-//! Until 2026-07-21 only path 2 existed, unconditionally, in both shells: the
-//! Phase-0 scaffold was never replaced, so every console on every machine
+//! Until 2026-07-21 only path 2 existed, unconditionally, in every shell this
+//! project shipped at the time: the Phase-0 scaffold was never replaced, so
+//! every console on every machine
 //! showed a fabricated stream while the descriptor sitting in
 //! `~/.taipan/environments/` already carried the real `events.dir`. The rule
 //! that follows from fixing it is worth stating, because it is the whole
@@ -30,12 +32,11 @@
 //! Ownership: `Store`/`IngestService` wrap a `rusqlite::Connection`, which is
 //! `Send` but not `Sync` (see `genaryx_core::ingest` module docs). Rather than
 //! share one behind a lock, this module hands the `IngestService` to exactly
-//! one background thread for the rest of the process's life. Each shell's own
-//! `recent_events` read path (a Tauri command in the desktop shell's
-//! `lib.rs`, an HTTP handler in the web shell) never touches that instance;
-//! it opens its own short-lived reader `Store` instead, which is safe because
-//! `Store::open` always sets `journal_mode=WAL` (readers never block on the
-//! writer).
+//! one background thread for the rest of the process's life. The web shell's
+//! own `recent_events` read path (an HTTP handler) never touches that
+//! instance; it opens its own short-lived reader `Store` instead, which is
+//! safe because `Store::open` always sets `journal_mode=WAL` (readers never
+//! block on the writer).
 
 use super::BusMode;
 use crate::events::UiEvent;
@@ -48,12 +49,10 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 /// A destination for one [`UiEvent`] at a time, so the feeder loop below
-/// never needs to know whether it is running inside the desktop shell (a
-/// Tauri window event) or the web shell (an SSE broadcast to subscribers) -
-/// see this module's header. `emit` takes no `Result`: a delivery failure
-/// (say, a closed Tauri window or a dropped SSE subscriber) is each sink's
-/// own concern to log, the same way the desktop's `TauriSink` logs a failed
-/// `app.emit` call itself rather than this generic loop trying to.
+/// never needs to know the sink's own delivery mechanism - see this module's
+/// header for what that is today. `emit` takes no `Result`: a delivery
+/// failure (say, a dropped SSE subscriber) is each sink's own concern to log,
+/// not this generic loop's job.
 pub trait EventSink: Send + Sync + 'static {
     fn emit(&self, event: crate::events::UiEvent);
 }
@@ -79,9 +78,10 @@ const FEEDER_INTERVAL: Duration = Duration::from_secs(2);
 /// Live if an environment resolves, demo if none does, and never a mixture:
 /// see this module's header for why a resolved-but-empty environment must not
 /// fall back to fixtures. The caller degrades to mock data on `Err` rather
-/// than failing app startup. Generic over `S: EventSink` so each shell can
-/// hand in its own way of delivering a [`UiEvent`] (a Tauri window event, an
-/// SSE broadcast, ...) without this module knowing, or needing to know, which.
+/// than failing app startup. Generic over `S: EventSink` so the caller can
+/// hand in its own way of delivering a [`UiEvent`] without this module
+/// knowing, or needing to know, the concrete mechanism (the module header
+/// covers what that has meant across shells).
 pub fn bootstrap<S: EventSink>(sink: S) -> genaryx_core::Result<BusBootstrap> {
     match genaryx_core::bus::discover() {
         Some(resolved) => bootstrap_live(sink, resolved),
@@ -332,9 +332,8 @@ fn run_feeder<S: EventSink>(
 /// `genaryx_core::ingest`'s own `run_blocking` doc comment); a lagged
 /// receiver just logs the gap rather than panicking, though at one
 /// subscriber and a 2s cadence it is not expected to happen. `EventSink::emit`
-/// takes no `Result`, so a delivery failure (say, a closed Tauri window or a
-/// dropped SSE subscriber) is the sink's own concern to log, not this generic
-/// loop's.
+/// takes no `Result`, so a delivery failure (say, a dropped SSE subscriber)
+/// is the sink's own concern to log, not this generic loop's.
 fn drain_and_emit<S: EventSink>(receiver: &mut broadcast::Receiver<ConsoleEvent>, sink: &S) {
     loop {
         match receiver.try_recv() {
@@ -420,7 +419,8 @@ fn feeder_line(tick: u64) -> (&'static str, String) {
 mod tests {
     //! Sanity check for the seeding half of [`bootstrap`]'s generic path
     //! (everything up to the point an event would reach an `EventSink`,
-    //! which each shell verifies against its own sink instead): this crate
+    //! which the web shell verifies against its own sink instead - each
+    //! former desktop shell did the same against its own): this crate
     //! has no Tauri dependency, or any other shell's dependency, at all, so
     //! this exercises `demo::generate` -> `Store` ->
     //! `IngestService::add_file_source` -> `poll_once` directly and asserts

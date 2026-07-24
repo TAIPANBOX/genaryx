@@ -8,7 +8,6 @@ members = [
     "crates/api",
     "crates/core",
     "crates/connectors",
-    "crates/ffi",
     "crates/signing",
     "crates/relay",
     "crates/web",
@@ -37,15 +36,13 @@ tokio = { version = "1.52.4", features = ["rt-multi-thread", "macros", "sync", "
 notify = "8"
 regex = "1.13.1"
 # Phase-0 spike #6 (06 §7): genaryx-connectors' CloudSse client. Versions
-# pinned to what genaryx-ffi's uniffi `cli`-feature bindgen tooling already
-# resolves transitively (docs/PHASE0.md F-04), so this does not add a second
-# version of either crate to the tree, only a new direct edge to each.
+# originally pinned against the (since-removed) desktop FFI bindgen tree
+# (docs/PHASE0.md F-04) so only one version of each crate exists in the tree.
 reqwest = { version = "0.13.4", features = ["stream"] }
 futures-util = "0.3.32"
 # Phase-0 spike #2 (06 §7): ES256 device-pairing signatures in genaryx-signing.
 # `p256` is pinned to the exact version tokenfuse-cloud's devices.rs verifies
-# with; base64 and the two Apple-framework crates already resolve transitively
-# (reqwest's native-tls stack), so those add direct edges, not new families.
+# with, so the unit tests here exercise the server's own verification path.
 p256 = "0.13.2"
 # Phase-4 wave 4 (crates/connectors/src/wg.rs): Curve25519 (X25519) keys for the
 # WireGuard console peer (decision D11). Pure Rust, no C/kernel dep, matching
@@ -65,8 +62,6 @@ getrandom = "0.2.17"
 # console's IdP login. Static JWKS only, no network fetch - the exact crate
 # and posture tokenfuse-cloud's oidc.rs uses, so this adds no new auth stack.
 jsonwebtoken = "9"
-security-framework = "3.7.0"
-core-foundation = "0.10.1"
 # Phase-6 (D13 Felyx, crates/copilot): the copilot's LlmProvider + Tool traits
 # are dyn-dispatched (a swappable provider incl. the test MockProvider, a fixed
 # registry of read tools), so their async methods need `async-trait` to stay

@@ -1,12 +1,13 @@
 //! Everything a request might need, resolved once at startup.
 //!
-//! The shape deliberately mirrors what the desktop shell hands to Tauri's
-//! managed state, because it IS the same state: one client per plane, plus
-//! the console's own bus. Each plane is created in its `pending()` form
-//! immediately and resolved in the background, exactly as `lib.rs`'s `setup`
-//! does, so a slow or absent Cloud delays nothing and every command has
-//! something to read from the first request onward. A plane that never
-//! resolves renders as a clean "no environment" state, never as an error.
+//! The shape deliberately mirrors the former desktop shell's Tauri-managed
+//! state, which is why it lines up field for field with genaryx-api's own
+//! plane states: one client per plane, plus the console's own bus. Each plane
+//! is created in its `pending()` form immediately and resolved in the
+//! background, the same way the desktop shell's `setup` hook once did, so a
+//! slow or absent Cloud delays nothing and every command has something to
+//! read from the first request onward. A plane that never resolves renders
+//! as a clean "no environment" state, never as an error.
 
 use crate::auth::{Operator, Sessions};
 use crate::config::Config;

@@ -1,4 +1,4 @@
-//! Remote-panel Tauri managed state: the operator-defined remote environment
+//! Remote-panel console-managed state: the operator-defined remote environment
 //! (WG peer + SSH target + `wireguard-go` binary path), the console's own WG
 //! identity, and the two LONG-LIVED connections this panel owns for the
 //! app's whole lifetime once created - a [`WgTunnel`] and an [`SshClient`]
@@ -136,7 +136,7 @@ pub enum RemoteInner {
     Ready(RemoteClient),
 }
 
-/// Tauri-managed state wrapping [`RemoteInner`] in an async mutex, mirroring
+/// Console-managed state wrapping [`RemoteInner`] in an async mutex, mirroring
 /// every other panel's identical shape.
 pub struct RemoteState {
     pub inner: AsyncMutex<RemoteInner>,

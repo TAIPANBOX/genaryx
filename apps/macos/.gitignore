@@ -1,7 +1,0 @@
-# Everything below is produced by build-ffi.sh; regenerate, never commit.
-# Mirrors crates/ffi/.gitignore.
-Sources/GenaryxCoreFFI/Generated/
-Binary/
-
-# built app bundle (screenshot/demo artifact, not source)
-Genaryx.app/

@@ -1,4 +1,4 @@
-//! Crypto-panel Tauri managed state: a resolved `QryxClient` (or an honest
+//! Crypto-panel console-managed state: a resolved `QryxClient` (or an honest
 //! record that no qryx binary was found), plus the default on-demand scan
 //! target.
 //!
@@ -40,7 +40,7 @@ pub enum CryptoInner {
     Ready(CryptoClient),
 }
 
-/// Tauri-managed state wrapping [`CryptoInner`] in an async mutex, mirroring
+/// Console-managed state wrapping [`CryptoInner`] in an async mutex, mirroring
 /// `IdentityState`'s identical shape.
 pub struct CryptoState {
     pub inner: Mutex<CryptoInner>,

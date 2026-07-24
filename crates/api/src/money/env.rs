@@ -59,7 +59,7 @@ pub struct ResolvedEnv {
 // ---- descriptor / keyfile wire shapes (read-only mirror) ------------------
 // Deliberately NOT a dependency on the `taipan` binary crate (a sibling repo,
 // not part of this workspace): this is the same kind of narrow, field-for-
-// field wire mirror `src-tauri/src/events.rs`'s `UiEvent` already is for
+// field wire mirror `crate::events`'s `UiEvent` already is for
 // `genaryx_core::store::StoredEvent`. Only the fields this module actually
 // reads are modeled; `#[serde(default)]`/unknown-field tolerance throughout
 // so a descriptor with extra fields (`unavailable`, `logs_dir`, more

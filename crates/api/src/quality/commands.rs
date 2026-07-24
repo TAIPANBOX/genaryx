@@ -1,4 +1,4 @@
-//! Tauri commands for the Quality view: `quality_status` plus three plain
+//! Console commands for the Quality view: `quality_status` plus three plain
 //! reads over Verdryx's quality plane (docs/PHASE4.md W1) -
 //! [`quality_list_run_summaries`] (eval-run history, each row pre-joined
 //! with its own case_count/mean_score/total_cost so the Eval-runs table
@@ -149,8 +149,8 @@ pub async fn quality_status(state: &QualityState) -> Result<QualityStatusDto, ()
 /// Eval-runs history table AND the Run-detail header once a row is
 /// selected, in one round trip (docs/PHASE4.md W1 positions 1-2). Composes
 /// `VerdryxClient::list_eval_runs` + `run_summary` over ONE connection - not
-/// a connector change, this is the Tauri layer combining two existing public
-/// reads, same as `graph::build_agent_graph` composes
+/// a connector change, this is the console layer combining two existing
+/// public reads, same as `graph::build_agent_graph` composes
 /// `DelegationGraph::from_store` + `layout_view` from core.
 pub async fn quality_list_run_summaries(
     state: &QualityState,

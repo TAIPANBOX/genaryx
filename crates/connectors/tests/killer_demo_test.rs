@@ -19,11 +19,13 @@
 //!    binaries from `~/Development/tokenfuse`, waits for both `/healthz`,
 //!    writes the descriptor + keyfile.
 //! 2. Auto-discovery: read the descriptor and follow it into the keyfile,
-//!    the same two-file shape `crates/ffi/src/cloud/env.rs::discover` and
-//!    `apps/desktop/src-tauri/src/money/env.rs::discover` both implement.
-//!    This crate cannot depend on either (both depend on `genaryx-connectors`,
-//!    not the reverse), so the algorithm is mirrored here directly against
-//!    the real files `taipan` just wrote, instead of re-imported.
+//!    the same two-file shape `crates/api/src/money/env.rs::discover`
+//!    implements (the Tauri and SwiftUI shells' own former twins of this
+//!    function were removed along with those shells; this one survives as
+//!    the web shell's). This crate cannot depend on it (`genaryx-api`
+//!    depends on `genaryx-connectors`, not the reverse), so the algorithm is
+//!    mirrored here directly against the real files `taipan` just wrote,
+//!    instead of re-imported.
 //! 3. Build a `CloudClient`, pair a `SoftwareSigner` against the discovered
 //!    bearer (`CloudClient::pair`) - the exact call that used to 401 - then
 //!    `summary()` and a signed `kill_run()`.
@@ -96,11 +98,12 @@ fn port_is_closed(port: u16) -> bool {
 }
 
 // ---- descriptor / keyfile wire shapes (read-only mirror of env::discover) --
-// A behavioral mirror of `crates/ffi/src/cloud/env.rs` /
-// `apps/desktop/src-tauri/src/money/env.rs`'s identical discovery twins:
-// same two fields read off the descriptor, same "follow the ref's trailing
-// label into the sibling keyfile" resolution. Only the fields actually read
-// are modeled, same tolerance for unknown fields those modules document.
+// A behavioral mirror of `crates/api/src/money/env.rs::discover` (the
+// Tauri/SwiftUI shells' own former twins of this function were removed
+// along with those shells): same two fields read off the descriptor, same
+// "follow the ref's trailing label into the sibling keyfile" resolution.
+// Only the fields actually read are modeled, same tolerance for unknown
+// fields that module documents.
 
 #[derive(Debug, Deserialize)]
 struct DescriptorService {

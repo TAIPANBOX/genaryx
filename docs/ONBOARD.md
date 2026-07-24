@@ -31,12 +31,11 @@ once and never persisted by the console.
   identity map + passports dir; no network, no descriptor dependency).
 - Web shell: three `POST /api/command/onboard_*` arms in
   `crates/web/src/dispatch.rs`.
-- Tauri shell: `apps/desktop/src-tauri/src/commands/onboard.rs` wrappers.
-- UI (shared by web + Tauri): `components/OnboardView.tsx` + `lib/onboard.ts`
-  + `onboardTypes.ts`, a new "Onboard" view in the shell.
-- SwiftUI shell: deferred per the 2026-07-21 web-first pivot (the parity CI
-  gate checks shell presence, not per-feature parity). Listed under "not
-  built yet", not silently skipped.
+- UI: `components/OnboardView.tsx` + `lib/onboard.ts` + `onboardTypes.ts`,
+  a new "Onboard" view in the shell.
+- The Tauri desktop shell and the SwiftUI shell this doc's history once
+  named were removed from this repo with the 2026-07-21 web-only pivot; the
+  web shell above is the only shell-side wiring this plane has today.
 
 ## Command contract (exact)
 
@@ -292,7 +291,7 @@ with sensible defaults for that framework - "a catalog of one agent" inside
 onboarding, without an actual registry or marketplace behind it.
 
 **Purely client-side.** A preset is a fixed object in
-`apps/desktop/src/lib/onboardPresets.ts` (`PRESETS`); applying it only sets
+`apps/web/src/lib/onboardPresets.ts` (`PRESETS`); applying it only sets
 `OnboardView.tsx`'s own form state before Generate is clicked. No backend
 call, no new command, no new validation - `onboard_generate` above cannot
 tell a preset-filled request from a hand-typed one, because there is no

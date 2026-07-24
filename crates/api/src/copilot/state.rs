@@ -1,4 +1,4 @@
-//! Copilot-panel Tauri managed state (Phase 6 - docs/PHASE6.md,
+//! Copilot-panel console-managed state (Phase 6 - docs/PHASE6.md,
 //! itrat-console/13): the `genaryx-copilot` `CopilotService`, behind the
 //! same non-blocking `pending()`-then-spawn-`bootstrap()` shape every other
 //! panel's state module uses (mirrors `identity::state` most closely).
@@ -59,7 +59,7 @@ pub enum CopilotInner {
     Failed(String),
 }
 
-/// Tauri-managed state wrapping [`CopilotInner`] in an async mutex,
+/// Console-managed state wrapping [`CopilotInner`] in an async mutex,
 /// mirroring every other panel's identical shape.
 pub struct CopilotState {
     pub inner: Mutex<CopilotInner>,
@@ -84,8 +84,10 @@ impl CopilotState {
 /// this `config` regardless of what `clients` holds (see
 /// [`CopilotInner::Failed`]'s doc comment: `provider = none` short-circuits
 /// `build_provider` to `Ok(None)` before `clients` is ever inspected), but
-/// still an `async fn` run through `tauri::async_runtime::spawn` from
-/// `lib.rs`'s `setup`, matching every other panel's non-blocking shape - see
+/// still an `async fn` spawned on the async runtime at startup
+/// (`crates/web`'s `Ctx::resolve`, the web shell's equivalent of the former
+/// desktop shell's `lib.rs` `setup` hook), matching every other panel's
+/// non-blocking shape - see
 /// [`resolve_clients`]'s doc comment for why resolving `clients` itself
 /// stays cheap (no network round trip) for every plane except Engram. Never
 /// panics.
@@ -120,11 +122,11 @@ pub async fn bootstrap() -> CopilotInner {
 /// to which planes happened to resolve).
 ///
 /// Deliberately does NOT reuse the live `MoneyState`/`IdentityState`/
-/// `PolicyState`/`CryptoState`/`QualityState`/`MemoryState` `tauri::State`
-/// handles those panels' own `bootstrap`s already build: this task runs
+/// `PolicyState`/`CryptoState`/`QualityState`/`MemoryState` console-managed
+/// state handles those panels' own `bootstrap`s already build: this task runs
 /// concurrently with (no ordering guarantee relative to) every other panel's
-/// own background bootstrap (see `lib.rs`'s `setup`), so depending on
-/// another panel's ALREADY-RESOLVED state here would be a race. Calling each
+/// own background bootstrap (see `crates/web`'s `Ctx::resolve`), so depending
+/// on another panel's ALREADY-RESOLVED state here would be a race. Calling each
 /// plane's `env::discover()` fresh is cheap (local filesystem/JSON only,
 /// mirrors every `env.rs` module's own "never touches the network"
 /// contract), and building a client from the result is likewise free of any
@@ -191,7 +193,7 @@ fn resolve_tokenfuse() -> Option<TokenfuseTraces> {
 /// long-lived process (see [`resolve_clients`]'s doc comment for why
 /// borrowing another panel's live state is not an option here). A second
 /// process is deliberately accepted rather than plumbed through: the
-/// alternative (sharing one process across two independent Tauri managed
+/// alternative (sharing one process across two independent console-managed
 /// states with no ordering guarantee between their bootstraps) is real
 /// cross-panel coupling this codebase otherwise avoids everywhere, while a
 /// second `engram-mcp` is cheap to spawn - the real cost

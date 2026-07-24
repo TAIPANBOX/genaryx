@@ -27,7 +27,7 @@ futures-util = { workspace = true }
 # runtime (see cloud_sse.rs module docs for why it is not driven from
 # `EventSource::poll()` directly). Phase-1's CloudClient also uses it for
 # `#[tokio::test]` in its own unit tests and is awaited directly by whatever
-# async context (Tauri command, FFI bridge) calls it in the real shells.
+# async context (a genaryx-api command, in practice) calls it.
 tokio = { workspace = true }
 # Phase-1 wave 1: CloudClient's typed DTOs (store.rs/http.rs response shapes)
 # and mutation request bodies.

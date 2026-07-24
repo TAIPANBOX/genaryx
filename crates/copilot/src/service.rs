@@ -1,8 +1,9 @@
-//! `CopilotService`: the one assembly entry point the hosts call, so the shells
-//! (Tauri commands, the FFI handle) stay thin (06 §0.9). It turns a
-//! [`CopilotConfig`] plus the connector [`Clients`] into a ready [`Felyx`], or a
-//! disabled service when `provider = "none"` (the honest default on a box with
-//! no local model configured).
+//! `CopilotService`: the one assembly entry point the hosts call, so every
+//! shell stays thin (06 §0.9) - today genaryx-api's console commands; before
+//! the desktop shells were removed, Tauri commands and the FFI handle. It
+//! turns a [`CopilotConfig`] plus the connector [`Clients`] into a ready
+//! [`Felyx`], or a disabled service when `provider = "none"` (the honest
+//! default on a box with no local model configured).
 //!
 //! The residency gate still runs inside [`build_provider`], so a misconfigured
 //! non-local endpoint fails HERE, at construction, not at first use.

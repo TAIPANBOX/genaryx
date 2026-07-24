@@ -23,8 +23,10 @@
 //! its own dedicated thread and runtime. `CloudClient` has no such mismatch to
 //! bridge: every method is one request/response round trip, so it is a plain
 //! `async fn` over `reqwest`, awaited directly by whatever async context calls
-//! it (a Tauri command, or the same async-to-sync bridge `crates/ffi` already
-//! uses at the UniFFI boundary, docs/PHASE0.md F-04). This keeps the client
+//! it (today, genaryx-api's console commands on the web shell's tokio
+//! runtime; the removed desktop shells called it from a Tauri command, or
+//! the same async-to-sync bridge `crates/ffi` used at the UniFFI boundary,
+//! docs/PHASE0.md F-04). This keeps the client
 //! itself free of extra channel/thread machinery, and matches how
 //! `crates/signing/examples/pair_ack.rs` already drives the identical wire
 //! protocol (`#[tokio::main]` + direct `.await`s) - proof this shape is

@@ -1,4 +1,4 @@
-//! Policy-panel Tauri managed state: a [`WardryxClient`] (or an honest
+//! Policy-panel console-managed state: a [`WardryxClient`] (or an honest
 //! record of why there isn't one yet), plus everything a decision needs to
 //! journal a `console_command` onto the same bus the Bus Explorer tails.
 //!
@@ -138,7 +138,7 @@ pub enum PolicyInner {
     Ready(PolicyClient),
 }
 
-/// Tauri-managed state wrapping [`PolicyInner`] in an async mutex, mirroring
+/// Console-managed state wrapping [`PolicyInner`] in an async mutex, mirroring
 /// `money::state::MoneyState`'s identical shape (minus the budget-override
 /// map, which has no Policy-panel equivalent).
 pub struct PolicyState {

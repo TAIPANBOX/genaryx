@@ -5,9 +5,9 @@
 //!   `taipan up` descriptor under `~/.taipan/environments/`, or a local dev
 //!   fallback), with no usable environment being a normal, renderable state
 //!   rather than an error.
-//! - [`state`] bootstraps a paired `CloudClient` into Tauri managed state
-//!   ([`state::MoneyState`]): `lib.rs`'s `setup` hook manages
-//!   [`state::MoneyState::pending`] immediately, then spawns
+//! - [`state`] bootstraps a paired `CloudClient` into console-managed state
+//!   ([`state::MoneyState`]): `crates/web`'s `Ctx::bootstrap` creates
+//!   [`state::MoneyState::pending`] immediately, then `Ctx::resolve` spawns
 //!   [`state::bootstrap`] in the background to resolve it (non-blocking on
 //!   purpose - see `state.rs`'s module docs).
 //! - [`commands`] are the commands the Overview/Money frontend

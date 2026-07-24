@@ -79,8 +79,9 @@ pub struct GraphEdge {
     pub to: String,
 }
 
-/// A serializable snapshot of the graph, the shape that crosses to the shells
-/// (Tauri IPC / SwiftUI FFI) and feeds the layout engine.
+/// A serializable snapshot of the graph, the shape that crosses to the shell
+/// (JSON over HTTP to the web frontend today; it crossed via Tauri IPC or
+/// SwiftUI FFI back when those shells existed) and feeds the layout engine.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GraphView {
     pub nodes: Vec<GraphNode>,
@@ -90,7 +91,7 @@ pub struct GraphView {
 /// One agent's immediate delegation neighborhood, for the Agent 360 card's
 /// delegation section (PHASE3 W3): the node itself (`None` if this agent has
 /// never been seen on the bus), its direct delegators (`parents`), and its
-/// direct delegatees (`children`). Serializable, so both shells render it from
+/// direct delegatees (`children`). Serializable, so the shell renders it from
 /// one core call rather than re-deriving edges client-side.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentSlice {

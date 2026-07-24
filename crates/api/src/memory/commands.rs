@@ -1,4 +1,4 @@
-//! Tauri commands for the Memory view: `memory_status` plus three plain
+//! Console commands for the Memory view: `memory_status` plus three plain
 //! reads over the long-lived `engram-mcp` process (docs/PHASE4.md W2):
 //!
 //! - [`memory_stats`] - store-wide counts + fact validity + entities/

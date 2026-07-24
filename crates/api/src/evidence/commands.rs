@@ -1,4 +1,4 @@
-//! Tauri commands for the Evidence Center view (docs/PHASE4.md W3):
+//! Console commands for the Evidence Center view (docs/PHASE4.md W3):
 //! `evidence_status` plus [`evidence_build`] - the one on-demand "Build
 //! evidence pack" action that assembles + signs a zip via the frozen
 //! `genaryx_connectors::build_evidence_pack`.
@@ -59,12 +59,14 @@
 //! ## Blocking discipline
 //!
 //! `build_evidence_pack`'s own module doc sanctions calling it directly from
-//! "a Tauri async command" - the subprocess sources it gathers run
-//! synchronously inline, but briefly blocking one worker thread of Tauri's
-//! async runtime for an explicit, rare, operator-initiated "Build evidence
-//! pack" click (never on a hot path) is the accepted cost that contract
-//! already signs off on, unlike Crypto/Drills' fully-synchronous connector
-//! calls which each need their own `spawn_blocking` wrapper.
+//! an async command handler that tolerates blocking - the subprocess sources
+//! it gathers run synchronously inline, but briefly blocking one worker
+//! thread of the web shell's tokio runtime for an explicit, rare,
+//! operator-initiated "Build evidence pack" click (never on a hot path) is
+//! the accepted cost that contract already signs off on (the same cost the
+//! removed desktop shells accepted on Tauri's async runtime), unlike
+//! Crypto/Drills' fully-synchronous connector calls which each need their own
+//! `spawn_blocking` wrapper.
 
 use super::state::{EvidenceEnv, EvidenceInner, EvidenceState};
 use crate::money::state::{MoneyClient, MoneyInner, MoneyState};
@@ -170,8 +172,9 @@ pub struct EvidenceBuildRequest {
 }
 
 /// [`evidence_build`]'s successful result: the pack, ready for the frontend
-/// to trigger a browser download of (a Blob + a temporary `<a download>`, no
-/// Tauri dialog plugin), plus the manifest for the contents view and the
+/// to trigger a browser download of (a Blob + a temporary `<a download>` -
+/// the desktop shell, before it was removed, used a Tauri dialog plugin for
+/// the same job), plus the manifest for the contents view and the
 /// journaling outcome. `cloud_included`/`journal_error` are honest additions
 /// beyond the task's minimum field list (mirrors `MutationOutcome`'s own
 /// `bus_recorded`/`bus_error` pairing) so the panel can show exactly what
@@ -282,8 +285,9 @@ fn journal_build(
         env: "local".to_string(),
         // `console.<action>` dotted form, matching this shell's own money
         // mutations (`console.kill_run`/`console.set_budget`/`console.ack_incident`)
-        // and the SwiftUI shell's `console.evidence_built`, so the bus carries
-        // one event type across both shells.
+        // - the same convention the removed SwiftUI shell's
+        // `console.evidence_built` used, so the bus carried one event type
+        // across both shells while both existed.
         action: "console.evidence_built".to_string(),
         target: sha256.to_string(),
         params: json!({

@@ -1,4 +1,4 @@
-//! Tauri commands for the Identity view: three plain reads
+//! Console commands for the Identity view: three plain reads
 //! (`identity_list_identities`/`identity_list_alerts`/
 //! `identity_list_remediations`) plus [`identity_rescan`] (an on-demand
 //! `idryx detect --format json` batch, run off the async executor thread -
@@ -13,8 +13,8 @@
 //! returns a `genaryx_connectors::Idryx*` DTO directly: unlike
 //! `WardryxClient`'s types (`Deserialize`-only, since they exist only to
 //! parse Wardryx's responses), idryx's connector DTOs already derive
-//! `Serialize` too (`crates/connectors/src/idryx.rs`), so they cross the
-//! Tauri IPC boundary as-is with no UI-facing mirror struct needed.
+//! `Serialize` too (`crates/connectors/src/idryx.rs`), so they can be handed
+//! to the frontend as-is with no UI-facing mirror struct needed.
 
 use super::env::EnvSource;
 use super::state::{IdentityClient, IdentityInner, IdentityState};

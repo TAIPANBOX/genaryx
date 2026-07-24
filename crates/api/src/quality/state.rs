@@ -1,4 +1,4 @@
-//! Quality-panel Tauri managed state: a resolved `verdryx.db` path (or an
+//! Quality-panel console-managed state: a resolved `verdryx.db` path (or an
 //! honest record of why there isn't one), confirmed openable once at
 //! bootstrap.
 //!
@@ -59,7 +59,7 @@ pub enum QualityInner {
     Ready(QualityClient),
 }
 
-/// Tauri-managed state wrapping [`QualityInner`] in an async mutex,
+/// Console-managed state wrapping [`QualityInner`] in an async mutex,
 /// mirroring `IdentityState`'s identical shape.
 pub struct QualityState {
     pub inner: Mutex<QualityInner>,

@@ -3,11 +3,9 @@ name: ci
 on:
   push:
     branches: [main, "phase-*"]
-    # Tags run the FULL matrix, including the macOS job below: a phase tag is
-    # exactly the moment the SwiftUI shell must be proven to still build.
     tags: ["*"]
   pull_request:
-  # Manual full run (the way to get the macOS job on demand between tags).
+  # Manual full run.
   workflow_dispatch:
 
 concurrency:
@@ -49,76 +47,15 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-  # Parity checklist v0 (09 §3, 06 §0.9): a feature is done only when it lands in
-  # BOTH shells within the same phase. This job fails if one shell exists without
-  # the other, so parity drift is caught in CI rather than silently.
-  parity:
-    name: shell parity (v0)
+  # The browser console. `cargo --workspace` cannot see a TypeScript frontend,
+  # so it gets its own job: install, typecheck, unit tests, production build.
+  # (The native desktop shells and their macOS/parity jobs left with the
+  # web-only pivot: this and `core` are the whole matrix now.)
+  web-ui:
+    name: web ui (typescript)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Both shells present or both absent
-        run: |
-          macos=0; desktop=0
-          [ -e apps/macos/Package.swift ] || [ -d apps/macos/*.xcodeproj ] 2>/dev/null && macos=1
-          [ -e apps/desktop/package.json ] && desktop=1
-          echo "macos=$macos desktop=$desktop"
-          if [ "$macos" != "$desktop" ]; then
-            echo "::error::Shell parity broken: SwiftUI ($macos) and Tauri ($desktop) must land together (09 §3)."
-            exit 1
-          fi
-          echo "Parity OK (both=$macos)."
-
-  # Both-shell build smoke (Phase-0 spike #5). Build-level smoke: both shells
-  # compile in CI, including the UniFFI xcframework for the SwiftUI shell. Full
-  # UI-driver smoke (tauri-driver + XCUITest) is deferred to F1; compiling both
-  # shells from the shared core is the Phase-0 bar (docs/PHASE0.md row 5).
-  swiftui-shell:
-    name: swiftui shell (macos)
-    runs-on: macos-14
-    # macOS minutes bill at 10x on this private repo and this job burned most
-    # of the account's free Actions pool in early July (billing note,
-    # 2026-07-23). It now runs only on tags and manual dispatch; every push/PR
-    # still builds the shared core and the Tauri shell on Linux, and the
-    # SwiftUI shell is deferred post-pivot anyway (README "not built yet"
-    # keeps its screen work parked). Flip this back when the spending limit
-    # or the pivot changes.
-    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Rust toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      - name: Select full Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-macos-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-macos-
-      # Generates Sources/GenaryxCoreFFI/Generated + Binary/GenaryxFFI.xcframework
-      # (both gitignored), then builds the SwiftUI app against the real binding.
-      - name: Build FFI bindings + xcframework
-        working-directory: apps/macos
-        run: bash build-ffi.sh
-      - name: swift build
-        working-directory: apps/macos
-        run: swift build
-
-  tauri-shell:
-    name: tauri shell (linux)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: WebKit system deps (tauri/wry)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
-      - name: Rust toolchain
-        run: rustup show active-toolchain || rustup toolchain install
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -126,13 +63,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/desktop/pnpm-lock.yaml
-      - name: Frontend (install + typecheck + build)
-        working-directory: apps/desktop
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - name: Install + typecheck + test + build
+        working-directory: apps/web
         run: |
           pnpm install --frozen-lockfile
           pnpm exec tsc --noEmit
+          pnpm test
           pnpm build
-      - name: Build src-tauri (against the path-dep core)
-        working-directory: apps/desktop/src-tauri
-        run: cargo build

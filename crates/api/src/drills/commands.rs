@@ -1,4 +1,4 @@
-//! Tauri commands for the Drills view: `drills_status` plus [`drills_run`]
+//! Console commands for the Drills view: `drills_status` plus [`drills_run`]
 //! (docs/PHASE4.md W2) - a `mockryx run --format json` batch, off the async
 //! executor thread (mockryx's own process spawn+wait is blocking IO, same
 //! discipline `crypto::commands`'s qryx scans follow).

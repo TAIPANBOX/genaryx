@@ -1,11 +1,12 @@
-//! Tauri commands for the Pocket panel (docs/PHASE5.md W2, itrat-console/13
+//! Console commands for the Pocket panel (docs/PHASE5.md W2, itrat-console/13
 //! D12.2a): [`pocket_status`] (idle/paired/relay-unreachable), [`pocket_connect`]
 //! ("Connect TokenFuse Pocket": mint a code for the phone and one for the
 //! watch at the Cloud, arm both of the relay's pairing windows, return the
 //! QR content carrying both codes), and [`pocket_disconnect`].
 //!
-//! Flow (D12.2a steps 1-3, 10, extended to two devices), mirrored exactly by
-//! `crates/ffi/src/pocket/mod.rs` for the SwiftUI shell:
+//! Flow (D12.2a steps 1-3, 10, extended to two devices), mirrored exactly,
+//! before the desktop shells were removed, by `crates/ffi/src/pocket/mod.rs`
+//! for the SwiftUI shell:
 //!
 //! 1. [`pocket_connect`] resolves the Cloud admin key
 //!    (`crate::money::env::discover`, the SAME two-tier discovery Money's

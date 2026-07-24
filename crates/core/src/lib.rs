@@ -1,4 +1,6 @@
-//! genaryx-core: all Genaryx logic lives here; the SwiftUI and Tauri shells are thin.
+//! genaryx-core: all Genaryx logic lives here; every shell stays thin - the
+//! web shell today, the SwiftUI and Tauri shells before the desktop apps were
+//! removed.
 //!
 //! Design principle 06 §0.9 (one core, two shells): every feature is implemented
 //! once in this crate and merely rendered by the shells. Shells collect intents;

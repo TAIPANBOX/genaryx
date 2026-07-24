@@ -5,14 +5,14 @@
 # and one function per command. It deliberately does NOT depend on `tauri`.
 #
 # Rule D2/06 §0.9 says all logic lives in the core and the shells stay thin.
-# The desktop shell had drifted from that (14k lines of command bodies inside
-# `src-tauri`), which is exactly what stopped the same commands being served
-# over HTTP. Both shells now wrap this crate instead of owning the logic:
+# The (since-removed) desktop shell had drifted from that, which is exactly
+# what stopped the same commands being served over HTTP; lifting the command
+# bodies into this crate is what made the web console possible. The shell
+# wraps this crate instead of owning the logic:
 #
-#   apps/desktop/src-tauri  ->  #[tauri::command] wrappers  ->  genaryx-api
-#   crates/web (genaryx-web) ->  POST /api/command/<name>   ->  genaryx-api
+#   crates/web (genaryx-web)  ->  POST /api/command/<name>  ->  genaryx-api
 #
-# so a command cannot behave differently depending on which shell called it.
+# so a command's behavior lives in exactly one place.
 [package]
 name = "genaryx-api"
 version.workspace = true
@@ -21,7 +21,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 publish = false
-description = "Genaryx console command layer, shared by the desktop and web shells."
+description = "Genaryx console command layer, wrapped by the web shell."
 
 [dependencies]
 genaryx-core = { path = "../core" }

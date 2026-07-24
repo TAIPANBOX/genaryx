@@ -3,11 +3,11 @@
 //! the phone and one for the watch at the Cloud, arms both of the relay's
 //! pairing windows, renders the QR (both codes) the phone scans (a later
 //! wave, W3, hands the watch its own code over WatchConnectivity), and
-//! shows the paired device(s) + Disconnect. Track A (Tauri/React) of the
-//! two-shell parallel build; the SwiftUI half lives in `crates/ffi::pocket`
-//! + `apps/macos`.
+//! shows the paired device(s) + Disconnect. Originally built as Track A
+//! (Tauri/React) of the two-shell parallel build; the SwiftUI Track B left
+//! with the desktop shells (it lived in `crates/ffi::pocket` + `apps/macos`).
 //!
-//! Unlike every other panel in this app, Pocket holds NO Tauri managed
+//! Unlike every other panel in this app, Pocket holds NO console-managed
 //! state at all: every command resolves its own Cloud admin key (reusing
 //! `crate::money::env::discover` directly - minting a pairing code needs
 //! exactly the same admin bearer Money's own device pairing does) and its

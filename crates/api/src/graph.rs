@@ -1,4 +1,4 @@
-//! Tauri commands for the delegation graph + Agent 360 (docs/PHASE3.md W3):
+//! Console commands for the delegation graph + Agent 360 (docs/PHASE3.md W3):
 //! [`agent_graph`] (the whole laid-out graph, Canvas2D-ready), [`agent_slice`]
 //! (one agent's immediate delegation neighborhood), and [`agent_events`] (one
 //! agent's recent bus events - the Agent 360 card's events slice, and, once
@@ -13,8 +13,10 @@
 //!
 //! Layout is computed once per call, in core (`genaryx_core::layout_view`),
 //! never in a shell (PHASE3 §5.3, decided: "layout in core, dumb Canvas2D
-//! renderers in the shells" - the WebGL-parity trap this avoids, since WebGL
-//! exists in the Tauri webview but not natively in SwiftUI). Every DTO here
+//! renderers in the shells" - this avoided a WebGL-parity trap back when two
+//! native shells existed, since WebGL existed in the Tauri webview but not
+//! natively in SwiftUI; the choice still stands for the web shell today).
+//! Every DTO here
 //! (`LayoutView`, `AgentSlice`) is a genaryx-core type re-exported at the
 //! crate root and already derives `Serialize`, so - like idryx's connector
 //! DTOs in `identity::commands` - no UI-facing mirror struct is needed;

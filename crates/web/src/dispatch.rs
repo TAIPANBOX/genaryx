@@ -1,16 +1,17 @@
 //! One HTTP route for every console command: `POST /api/command/<name>`.
 //!
-//! The contract is a deliberate mirror of Tauri's `invoke`, because the same
-//! React code calls both through `apps/desktop/src/lib/transport.ts`: the
-//! request body is the args object the frontend already passes, a 2xx body is
-//! the command's Ok value, and a non-2xx body is the command's Err value
-//! itself (not wrapped, not restringified), so each plane's existing error
-//! normaliser keeps working unchanged.
+//! The contract is a deliberate mirror of what this app's Tauri shell once
+//! exposed as `invoke` (that shell is gone; the React frontend now reaches
+//! this through `apps/web/src/lib/transport.ts` instead): the request body is
+//! the args object the frontend already passes, a 2xx body is the command's
+//! Ok value, and a non-2xx body is the command's Err value itself (not
+//! wrapped, not restringified), so each plane's existing error normaliser
+//! keeps working unchanged.
 //!
-//! Every arm is generated from the same signatures the Tauri wrappers are
-//! generated from, so the two shells cannot drift: a command added to one and
-//! forgotten in the other shows up as a compile error, not as a route that
-//! quietly 404s in the browser.
+//! Every arm calls straight into the same `genaryx-api` function signature
+//! the command is defined with: a command added there and forgotten here
+//! shows up as a compile error, not as a route that quietly 404s in the
+//! browser.
 //!
 //! `remote_ssh_tail_start` is the one arm that is not a plain passthrough:
 //! its reader thread streams through a generic `TailSink` rather than

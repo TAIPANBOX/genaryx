@@ -1,8 +1,8 @@
 //! Identity: the Phase-3 wave-2 identity-plane surface over Idryx
-//! (docs/PHASE3.md, "W2 - Identity panel"), Track A (Tauri/Web) of a
-//! two-shell parallel build - the SwiftUI half lives in
-//! `crates/ffi/src/idryx/` + `apps/macos`, built independently against the
-//! same grounded contract.
+//! (docs/PHASE3.md, "W2 - Identity panel"), originally built as Track A
+//! (Tauri/Web) of a two-shell parallel build; the SwiftUI Track B left with
+//! the desktop shells (it lived in `crates/ffi/src/idryx/` + `apps/macos`,
+//! built independently against the same grounded contract).
 //!
 //! Mirrors `crate::policy`'s module shape (`env`/`state`/`commands`, same
 //! non-blocking bootstrap-in-`setup` wiring), reusing every convention that
