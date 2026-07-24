@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CopilotExplainRequest } from "../copilotTypes";
+import { usePopover } from "../lib/popover";
 import type { ApprovalAlert } from "../lib/notifications";
 import { muteKey } from "../lib/notifications";
 import { useApprovalNotifications } from "../lib/useApprovalNotifications";
@@ -24,6 +25,8 @@ import { QualityView } from "./QualityView";
 import { RemoteView } from "./RemoteView";
 import { RoutinesView } from "./RoutinesView";
 import { RunReplayView } from "./RunReplayView";
+import { UnitCard } from "./UnitCard";
+import { WatchDock } from "./WatchDock";
 
 /** How long a notification's deep-link target stays "focused" (drives
  * `ApprovalsInbox.tsx`'s scroll-to + `.approval-focused` highlight) before
@@ -32,6 +35,36 @@ import { RunReplayView } from "./RunReplayView";
  * happened" rather than a permanent marker. The row stays fully visible and
  * interactive either way; only the highlight fades. */
 const FOCUS_HIGHLIGHT_MS = 6_000;
+
+/** Agent 360 compare (below this width there is no honest way to show two
+ * 760px-wide cards - see `Agent360.tsx`'s own width comment - side by side
+ * without one running off-screen), so the shell falls back to rendering
+ * only the most-recently-focused card. An approximate, product-picked
+ * threshold, not derived from the 760px card width itself. */
+const COMPARE_MIN_WIDTH = 1200;
+
+/** Left-rail collapse state (Yurii, 2026-07-24): persisted so a reload keeps
+ * the operator's own choice rather than always reopening at full width. */
+const RAIL_COLLAPSED_KEY = "genaryx.railCollapsed";
+
+function readStoredFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "true";
+  } catch {
+    // Storage unavailable (private mode, disabled) - the rail just always
+    // starts expanded for that session rather than failing to render.
+    return false;
+  }
+}
+
+function writeStoredFlag(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, value ? "true" : "false");
+  } catch {
+    // Best-effort only - the toggle still works for the rest of this
+    // session, it just will not be remembered across a reload.
+  }
+}
 
 /**
  * App root: owns the theme (persisted to `document.documentElement.dataset`
@@ -73,6 +106,19 @@ const FOCUS_HIGHLIGHT_MS = 6_000;
 export function AppShell() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [view, setView] = useState<ViewId>("overview");
+  const { open } = usePopover();
+
+  // Left rail collapse/expand (Yurii, 2026-07-24): lives here (not inside
+  // `AppHeader.tsx` itself) for the same reason `focusedAgentIds` does -
+  // persisted, whole-app chrome state, not a view's own concern.
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readStoredFlag(RAIL_COLLAPSED_KEY));
+  const onToggleRail = useCallback(() => {
+    setRailCollapsed((prev) => {
+      const next = !prev;
+      writeStoredFlag(RAIL_COLLAPSED_KEY, next);
+      return next;
+    });
+  }, []);
 
   const [mutedKeys, setMutedKeys] = useState<ReadonlySet<string>>(new Set());
   const [unseenAlerts, setUnseenAlerts] = useState<readonly ApprovalAlert[]>([]);
@@ -87,15 +133,65 @@ export function AppShell() {
   // itself. Setting it never changes `view`; closing it never clears `view`
   // either, so opening a 360 card and dismissing it always returns the
   // operator to exactly the panel they were on.
-  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
-  const onOpenAgent = useCallback((agentId: string) => setFocusedAgentId(agentId), []);
-  const onCloseAgent360 = useCallback(() => setFocusedAgentId(null), []);
+  //
+  // Compare addition: up to TWO agents can be focused at once, so the
+  // operator can put two Agent 360 cards side by side. `focusedAgentIds[0]`
+  // is the "first"/anchor card - it is pinned nearest the screen edge and is
+  // never displaced by opening a new agent. `focusedAgentIds[1]`, when
+  // present, is the "second"/compare card immediately to its left - this is
+  // the slot a new `onOpenAgent` call fills or replaces. Order carries
+  // meaning here; this is not an unordered set of open ids.
+  const [focusedAgentIds, setFocusedAgentIds] = useState<string[]>([]);
+
+  // Open/replace rule for the two slots above, deliberately just three
+  // branches:
+  // - the id is already shown (either slot) -> no-op, and returns the SAME
+  //   array reference so React bails out of the re-render - the existing
+  //   card never remounts (no lost scroll position, no re-fetch of any of
+  //   its five sections).
+  // - nothing open -> the id becomes the first/anchor card.
+  // - one OR two cards already open -> the id becomes (or replaces) the
+  //   SECOND card; the first/anchor card is never displaced by a
+  //   newly-opened id. This is the "pin the primary, swap the comparison"
+  //   rule: comparing agent A against B, then clicking a delegate C inside
+  //   either card, keeps A anchored and swaps C in for B, rather than
+  //   silently dropping the agent the operator opened first.
+  const onOpenAgent = useCallback((agentId: string) => {
+    setFocusedAgentIds((prev) => {
+      if (prev.includes(agentId)) return prev;
+      if (prev.length === 0) return [agentId];
+      return [prev[0], agentId];
+    });
+  }, []);
+  // Closes exactly one card - the render site below binds each card's own
+  // `onClose` to its own `agentId`, so a card's close button only ever
+  // removes itself, never its neighbor. Whichever id remains keeps its
+  // existing slot: closing the anchor while a compare card is open leaves
+  // the compare card standing alone (it renders pinned to the screen edge,
+  // exactly like any single open card - no slide animation to write or
+  // maintain), and closing the compare card leaves the anchor exactly as it
+  // was. With one card open, closing it clears the overlay entirely.
+  const onCloseAgent360 = useCallback((agentId: string) => {
+    setFocusedAgentIds((prev) => prev.filter((id) => id !== agentId));
+  }, []);
   // Agent 360's "Open <plane> panel" links (docs/PHASE3.md: actions link to
   // the existing panels rather than re-implement a mutation in the card) -
-  // switch the active view AND dismiss the overlay in one operator gesture.
+  // switch the active view AND dismiss BOTH cards in one operator gesture.
   const onNavigateFromAgent360 = useCallback((next: ViewId) => {
     setView(next);
-    setFocusedAgentId(null);
+    setFocusedAgentIds([]);
+  }, []);
+
+  // Below `COMPARE_MIN_WIDTH`, the render site further down only shows the
+  // most-recently-focused card (see `visibleAgentIds`). Both ids stay in
+  // `focusedAgentIds` regardless of viewport width, so widening the window
+  // back past the threshold brings the second card straight back without
+  // the operator having to reopen it.
+  const [isNarrowForCompare, setIsNarrowForCompare] = useState(() => window.innerWidth < COMPARE_MIN_WIDTH);
+  useEffect(() => {
+    const onResize = () => setIsNarrowForCompare(window.innerWidth < COMPARE_MIN_WIDTH);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   // Phase-3 wave-4 addition (docs/PHASE3.md "W4 - replay + posture"): Run
@@ -110,11 +206,12 @@ export function AppShell() {
   const onOpenReplay = useCallback((runId: string) => {
     setReplayRunId(runId);
     setView("replay");
-    // Closes Agent 360 when the "Replay" affordance was clicked from inside
-    // its Money section - a harmless no-op when there was no overlay open
-    // (e.g. the affordance was clicked straight from the Money panel's own
-    // RunsTable), mirroring `onNavigateFromAgent360`'s identical double duty.
-    setFocusedAgentId(null);
+    // Closes both Agent 360 cards when the "Replay" affordance was clicked
+    // from inside one of their Money sections - a harmless no-op when
+    // neither was open (e.g. the affordance was clicked straight from the
+    // Money panel's own RunsTable), mirroring `onNavigateFromAgent360`'s
+    // identical double duty.
+    setFocusedAgentIds([]);
   }, []);
 
   // "Explain with Felyx" (C1, docs/PHASE6-C1.md): the Incidents surface (the
@@ -209,6 +306,25 @@ export function AppShell() {
     [armFocus, unseenAlerts],
   );
 
+  // Both ids stay in `focusedAgentIds` on a narrow viewport (see
+  // `isNarrowForCompare` above) - only the render is limited to the single
+  // most-recent card here, via a plain slice with no state mutation.
+  const visibleAgentIds = isNarrowForCompare ? focusedAgentIds.slice(-1) : focusedAgentIds;
+
+  // Watch dock (Yurii, 2026-07-24): a pinned unit's row opens the SAME
+  // `UnitCard` every other unit link in the app opens (`AgentDetailCard`'s
+  // own "business unit" field, `Agent360.tsx`'s eventual equivalent), via
+  // this shell's own `usePopover()` - centered (no anchor rect) since the
+  // click comes from a narrow side rail with no nearby content to anchor
+  // beside; `usePopover`'s own placement already falls back to centering
+  // when no anchor is given (see `lib/popover.tsx`).
+  const onOpenUnit = useCallback(
+    (unitId: string) => {
+      open(<UnitCard team={unitId} onOpenFullAgent={onOpenAgent} />);
+    },
+    [open, onOpenAgent],
+  );
+
   return (
     <div className="app">
       <AppHeader
@@ -217,6 +333,8 @@ export function AppShell() {
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         policyAlertCount={unseenAlerts.length}
+        railCollapsed={railCollapsed}
+        onToggleRail={onToggleRail}
       />
       <div className="main-col">
         {view === "overview" && (
@@ -258,15 +376,45 @@ export function AppShell() {
         )}
       </div>
 
-      {focusedAgentId && (
-        <Agent360
-          key={focusedAgentId}
-          agentId={focusedAgentId}
-          onClose={onCloseAgent360}
-          onOpenAgent={onOpenAgent}
-          onNavigate={onNavigateFromAgent360}
-          onOpenReplay={onOpenReplay}
-        />
+      <WatchDock onOpenAgent={onOpenAgent} onOpenUnit={onOpenUnit} />
+
+      {visibleAgentIds.length > 0 && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Plain overlay chrome, not itself a dialog - each `Agent360`
+              below declares its own `role="dialog"`/`aria-label`, since it
+              is the actual dialog surface; this wrapper only supplies the
+              shared backdrop and the side-by-side layout. One backdrop
+              behind however many cards are open (never one per card) - a
+              single click always dismisses ALL of them together, matching
+              each card's own Escape handler, which does the same when more
+              than one is mounted. */}
+          <button
+            type="button"
+            aria-label="Close Agent 360"
+            className="absolute inset-0"
+            style={{ background: "color-mix(in srgb, var(--ink) 55%, transparent)", cursor: "default" }}
+            onClick={() => setFocusedAgentIds([])}
+          />
+          <div className="relative flex items-stretch" style={{ height: "100%" }}>
+            {/* DOM order is reversed (second, then first) so the row reads
+                left to right as [second][first], with the first/anchor
+                card flush against the screen edge - "the second immediately
+                left of the first, both pinned to the right, no overlap". */}
+            {visibleAgentIds
+              .slice()
+              .reverse()
+              .map((agentId) => (
+                <Agent360
+                  key={agentId}
+                  agentId={agentId}
+                  onClose={() => onCloseAgent360(agentId)}
+                  onOpenAgent={onOpenAgent}
+                  onNavigate={onNavigateFromAgent360}
+                  onOpenReplay={onOpenReplay}
+                />
+              ))}
+          </div>
+        </div>
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import { usePopover, PopoverHeader } from "../lib/popover";
 import { cssVar } from "../lib/cssVars";
 import { AgentDetailCard } from "./AgentDetailCard";
 import { UserCard } from "./UserCard";
+import { WatchToggleButton } from "./WatchDock";
 
 /**
  * A business unit's fleet: every agent in the unit, the owners running them,
@@ -27,6 +28,9 @@ export function UnitCard({ team, onOpenFullAgent }: { team: string; onOpenFullAg
   return (
     <div className="flex flex-col">
       <PopoverHeader kicker="Business unit" title={rec?.team ?? team} />
+      <div className="flex items-center" style={{ padding: "0 16px 8px" }}>
+        <WatchToggleButton kind="unit" id={team} label={team} />
+      </div>
       {rec === undefined ? (
         <div className="text-[12px]" style={{ color: "var(--faint)", padding: "8px 16px 16px" }}>
           loading...
