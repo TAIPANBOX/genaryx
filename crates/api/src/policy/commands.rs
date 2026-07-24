@@ -515,6 +515,10 @@ pub async fn policy_decide_approval(
     let (http_status, verify_result, token, summary) =
         describe_decision_result(decision, &id, &result);
 
+    // The web shell's per-action WebAuthn ceremony when one confirmed this
+    // request (docs/CONSOLE-IDP.md B3/2), else this client's own
+    // transport-signing fields - same override pattern as the operator above.
+    let (sig_alg, sig_fpr) = crate::console_actor::signature_or(client.sig_alg, client.sig_fpr);
     let rec = CommandRecord {
         operator: operator.clone(),
         env: "local".to_string(),
@@ -522,8 +526,8 @@ pub async fn policy_decide_approval(
         target: id.clone(),
         params: json!({}),
         decision: "allow".to_string(),
-        sig_alg: client.sig_alg.to_string(),
-        sig_fpr: client.sig_fpr.to_string(),
+        sig_alg,
+        sig_fpr,
         http_status,
         verify_result: verify_result.clone(),
     };

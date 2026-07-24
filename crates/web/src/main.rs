@@ -19,14 +19,17 @@ mod dispatch;
 mod doctor;
 mod oidc;
 mod roles;
+mod webauthn;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use clap::{Parser, Subcommand};
 use config::Config;
 use ctx::Ctx;
@@ -205,6 +208,10 @@ fn app(ctx: Arc<Ctx>) -> Router {
         .route("/auth/session", get(session))
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
+        .route("/webauthn/passkeys", get(webauthn_list))
+        .route("/webauthn/register/start", post(webauthn_register_start))
+        .route("/webauthn/register/finish", post(webauthn_register_finish))
+        .route("/webauthn/action/start", post(webauthn_action_start))
         .route("/command/{name}", post(command))
         .route("/events", get(events));
 
@@ -375,6 +382,377 @@ fn guard(ctx: &Arc<Ctx>, jar: &CookieJar) -> Result<auth::SessionInfo, Response>
 }
 
 // ---------------------------------------------------------------------------
+// WebAuthn ceremony (docs/CONSOLE-IDP.md, B3/2)
+// ---------------------------------------------------------------------------
+
+/// The commands whose dispatch REQUIRES a fresh per-action assertion once the
+/// caller has a passkey enrolled: the kill and the budget mutation (the two
+/// break-glass carriers) and the approval grant/deny. The policy PUT/DELETE
+/// editor joins this list the day it becomes routable (it is "v1, not built"
+/// today); an unknown name is already fail-closed to admin by the role gate.
+const SENSITIVE_COMMANDS: &[&str] = &[
+    "money_kill_run",
+    "money_set_budget",
+    "policy_decide_approval",
+];
+
+/// `POST /api/webauthn/action/start`'s body: which command the operator is
+/// about to confirm, with the exact args the later dispatch will carry.
+#[derive(Deserialize)]
+struct ActionStart {
+    command: String,
+    #[serde(default)]
+    args: Value,
+}
+
+/// The assertion envelope the browser sends back in `x-genaryx-webauthn`
+/// (base64url of this JSON): the WebAuthn response's raw fields, each
+/// base64url exactly as the frontend encodes the API's ArrayBuffers.
+#[derive(Deserialize)]
+struct AssertionEnvelope {
+    credential_id: String,
+    client_data_json: String,
+    authenticator_data: String,
+    signature: String,
+}
+
+/// `POST /api/webauthn/register/finish`'s body.
+#[derive(Deserialize)]
+struct RegisterFinish {
+    #[serde(default)]
+    label: String,
+    credential_id: String,
+    client_data_json: String,
+    attestation_object: String,
+}
+
+/// The caller's enrolled passkeys (public metadata only) plus whether the
+/// ceremony is required for them - the frontend's one probe before rendering
+/// either the "confirm with your passkey" flow or the software-signed badge.
+async fn webauthn_list(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response {
+    let session = match guard(&ctx, &jar) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let store = match ctx.passkeys.as_ref() {
+        Ok(s) => s,
+        Err(e) => return store_unavailable(e),
+    };
+    let keys: Vec<_> = store
+        .for_user(&session.user)
+        .into_iter()
+        .map(|k| {
+            json!({
+                "credential_id": k.credential_id,
+                "label": k.label,
+                "created_at": k.created_at,
+            })
+        })
+        .collect();
+    Json(json!({ "passkeys": keys, "webauthn_required": !keys.is_empty() })).into_response()
+}
+
+/// Mint a registration challenge and return the exact
+/// `PublicKeyCredentialCreationOptions` the frontend spreads into
+/// `navigator.credentials.create` (decoding challenge/user.id browser-side).
+async fn webauthn_register_start(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response {
+    let session = match guard(&ctx, &jar) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if let Err(e) = ctx.passkeys.as_ref() {
+        return store_unavailable(e);
+    }
+    let challenge = match ctx
+        .webauthn_pending
+        .mint(&session.user, webauthn::Purpose::Register)
+    {
+        Ok(c) => c,
+        Err(e) => return ceremony_refused(&e),
+    };
+    Json(json!({
+        "challenge": challenge,
+        "rp": { "id": ctx.webauthn_rp.rp_id, "name": "Genaryx" },
+        "user": {
+            "id": B64URL.encode(session.user.as_bytes()),
+            "name": session.user,
+            "displayName": session.user,
+        },
+        "pubKeyCredParams": [ { "type": "public-key", "alg": -7 } ],
+        "timeout": 120000,
+        "attestation": "none",
+        "authenticatorSelection": { "userVerification": "preferred" }
+    }))
+    .into_response()
+}
+
+/// Verify a `navigator.credentials.create` response and enroll the passkey.
+async fn webauthn_register_finish(
+    State(ctx): State<Arc<Ctx>>,
+    jar: CookieJar,
+    Json(body): Json<RegisterFinish>,
+) -> Response {
+    let session = match guard(&ctx, &jar) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let store = match ctx.passkeys.as_ref() {
+        Ok(s) => s,
+        Err(e) => return store_unavailable(e),
+    };
+    let Ok(client_data) = B64URL.decode(&body.client_data_json) else {
+        return bad_request("client_data_json is not base64url");
+    };
+    let Ok(attestation) = B64URL.decode(&body.attestation_object) else {
+        return bad_request("attestation_object is not base64url");
+    };
+    let Some(challenge) = challenge_of(&client_data) else {
+        return bad_request("clientDataJSON carries no challenge");
+    };
+    match ctx.webauthn_pending.take(&session.user, &challenge) {
+        Ok(webauthn::Purpose::Register) => {}
+        Ok(_) => return ceremony_refused(&webauthn::WebAuthnError::Mismatch("ceremony purpose")),
+        Err(e) => return ceremony_refused(&e),
+    }
+    let verified = match webauthn::verify_registration(
+        &ctx.webauthn_rp,
+        &challenge,
+        &client_data,
+        &attestation,
+    ) {
+        Ok(v) => v,
+        Err(e) => return ceremony_refused(&e),
+    };
+    if verified.credential_id != body.credential_id {
+        return ceremony_refused(&webauthn::WebAuthnError::Mismatch("credential id"));
+    }
+    let record = webauthn::PasskeyRecord {
+        credential_id: verified.credential_id,
+        public_key_x963: verified.public_key_x963,
+        sign_count: verified.sign_count,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        label: if body.label.trim().is_empty() {
+            "passkey".into()
+        } else {
+            body.label.trim().to_string()
+        },
+    };
+    let credential_id = record.credential_id.clone();
+    if let Err(e) = store.add(&session.user, record) {
+        return ceremony_refused(&e);
+    }
+    tracing::info!(
+        user = %session.user, credential = %credential_id,
+        user_verified = verified.user_verified,
+        "webauthn passkey enrolled"
+    );
+    Json(json!({ "enrolled": true, "credential_id": credential_id })).into_response()
+}
+
+/// Mint a per-action challenge bound to the exact command + args the operator
+/// is about to confirm, and say which credentials may answer it.
+async fn webauthn_action_start(
+    State(ctx): State<Arc<Ctx>>,
+    jar: CookieJar,
+    Json(body): Json<ActionStart>,
+) -> Response {
+    let session = match guard(&ctx, &jar) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let store = match ctx.passkeys.as_ref() {
+        Ok(s) => s,
+        Err(e) => return store_unavailable(e),
+    };
+    let keys = store.for_user(&session.user);
+    if keys.is_empty() {
+        return bad_request("no passkey enrolled; enroll one before starting an action ceremony");
+    }
+    if !SENSITIVE_COMMANDS.contains(&body.command.as_str()) {
+        return bad_request("this command carries no webauthn ceremony");
+    }
+    let args_sha256 = genaryx_signing::body_sha256_hex(canonical_args(&body.args).as_bytes());
+    let challenge = match ctx.webauthn_pending.mint(
+        &session.user,
+        webauthn::Purpose::Action {
+            command: body.command.clone(),
+            args_sha256,
+        },
+    ) {
+        Ok(c) => c,
+        Err(e) => return ceremony_refused(&e),
+    };
+    Json(json!({
+        "challenge": challenge,
+        "rp_id": ctx.webauthn_rp.rp_id,
+        "timeout": 120000,
+        "user_verification": "preferred",
+        "allow_credentials": keys
+            .iter()
+            .map(|k| json!({ "type": "public-key", "id": k.credential_id }))
+            .collect::<Vec<_>>(),
+    }))
+    .into_response()
+}
+
+/// The per-action gate. Runs AFTER the role gate and BEFORE dispatch, only
+/// for [`SENSITIVE_COMMANDS`]. Fail-closed everywhere: a corrupt store, a
+/// stale/foreign/replayed challenge, a binding mismatch, or a bad signature
+/// all refuse. The only pass-throughs are a verified assertion, or a caller
+/// with no passkey enrolled at all - the documented trial fallback, which the
+/// next increment records as "software-signed" in the command journal.
+// A ready-made `Response` IS the refusal here, same shape and same rationale
+// as `guard` above - see its comment on why boxing it would be worse.
+#[allow(clippy::result_large_err)]
+fn webauthn_gate(
+    ctx: &Arc<Ctx>,
+    session: &auth::SessionInfo,
+    name: &str,
+    args: &Value,
+    headers: &HeaderMap,
+) -> Result<Option<genaryx_api::console_actor::ConsoleSignature>, Response> {
+    let store = match ctx.passkeys.as_ref() {
+        Ok(s) => s,
+        Err(e) => return Err(store_unavailable(e)),
+    };
+    if !store.has_any(&session.user) {
+        // No override: the plane's own transport-signing fields stay, which
+        // on this shell honestly read "software-signed".
+        tracing::info!(
+            user = %session.user, command = %name,
+            "webauthn: no passkey enrolled; software-signed fallback"
+        );
+        return Ok(None);
+    }
+    let Some(header) = headers.get("x-genaryx-webauthn") else {
+        return Err((
+            StatusCode::PRECONDITION_REQUIRED,
+            Json(json!({
+                "error": "a webauthn assertion is required for this command",
+                "webauthn": "required",
+            })),
+        )
+            .into_response());
+    };
+    let envelope: AssertionEnvelope = match header
+        .to_str()
+        .ok()
+        .and_then(|s| B64URL.decode(s).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+    {
+        Some(e) => e,
+        None => return Err(bad_request("x-genaryx-webauthn is not base64url(JSON)")),
+    };
+    let Ok(client_data) = B64URL.decode(&envelope.client_data_json) else {
+        return Err(bad_request("client_data_json is not base64url"));
+    };
+    let Ok(auth_data) = B64URL.decode(&envelope.authenticator_data) else {
+        return Err(bad_request("authenticator_data is not base64url"));
+    };
+    let Ok(signature) = B64URL.decode(&envelope.signature) else {
+        return Err(bad_request("signature is not base64url"));
+    };
+    let Some(challenge) = challenge_of(&client_data) else {
+        return Err(bad_request("clientDataJSON carries no challenge"));
+    };
+    let purpose = ctx
+        .webauthn_pending
+        .take(&session.user, &challenge)
+        .map_err(|e| ceremony_refused(&e))?;
+    let (bound_command, bound_args) = match purpose {
+        webauthn::Purpose::Action {
+            command,
+            args_sha256,
+        } => (command, args_sha256),
+        webauthn::Purpose::Register => {
+            return Err(ceremony_refused(&webauthn::WebAuthnError::Mismatch(
+                "ceremony purpose",
+            )));
+        }
+    };
+    if bound_command != name {
+        return Err(ceremony_refused(&webauthn::WebAuthnError::Mismatch(
+            "bound command",
+        )));
+    }
+    if bound_args != genaryx_signing::body_sha256_hex(canonical_args(args).as_bytes()) {
+        return Err(ceremony_refused(&webauthn::WebAuthnError::Mismatch(
+            "bound arguments",
+        )));
+    }
+    let record = match store
+        .for_user(&session.user)
+        .into_iter()
+        .find(|k| k.credential_id == envelope.credential_id)
+    {
+        Some(r) => r,
+        None => return Err(ceremony_refused(&webauthn::WebAuthnError::WrongUser)),
+    };
+    let verified = webauthn::verify_assertion(
+        &ctx.webauthn_rp,
+        &challenge,
+        &record,
+        &client_data,
+        &auth_data,
+        &signature,
+    )
+    .map_err(|e| ceremony_refused(&e))?;
+    if let Err(e) =
+        store.update_sign_count(&session.user, &record.credential_id, verified.sign_count)
+    {
+        // The signature already verified; a failed counter persist weakens
+        // only the clone heuristic, so say so loudly rather than refusing an
+        // action the operator just physically confirmed.
+        tracing::warn!(error = %e, "webauthn: could not persist sign count");
+    }
+    tracing::info!(
+        user = %session.user, command = %name, credential = %record.credential_id,
+        user_verified = verified.user_verified,
+        "webauthn assertion verified"
+    );
+    Ok(Some(genaryx_api::console_actor::ConsoleSignature {
+        alg: "webauthn-es256".to_string(),
+        fpr: record.credential_id.clone(),
+    }))
+}
+
+/// The canonical serialization both `action/start` and the gate hash:
+/// `serde_json::Value` maps are key-sorted, so the same parsed args always
+/// serialize to the same bytes and the binding cannot drift on key order.
+fn canonical_args(args: &Value) -> String {
+    args.to_string()
+}
+
+/// Pull the echoed challenge string out of a raw clientDataJSON.
+fn challenge_of(client_data_json: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(client_data_json)
+        .ok()?
+        .get("challenge")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn store_unavailable(why: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({"error": format!("passkey store unavailable: {why}")})),
+    )
+        .into_response()
+}
+
+fn bad_request(msg: &str) -> Response {
+    (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response()
+}
+
+fn ceremony_refused(e: &webauthn::WebAuthnError) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"error": format!("webauthn: {e}")})),
+    )
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
 // commands and live events
 // ---------------------------------------------------------------------------
 
@@ -382,6 +760,7 @@ async fn command(
     State(ctx): State<Arc<Ctx>>,
     jar: CookieJar,
     Path(name): Path<String>,
+    headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Response {
     let session = match guard(&ctx, &jar) {
@@ -402,12 +781,32 @@ async fn command(
     }
 
     let args = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+
+    // Per-action WebAuthn ceremony (docs/CONSOLE-IDP.md, B3/2): the
+    // privileged few need a fresh hardware assertion on top of the role,
+    // AFTER the role gate and BEFORE dispatch. Signing in gets you the
+    // console; it does not get you the kill. A verified ceremony rides into
+    // the command journal as sig_alg/sig_fpr (the assertion's algorithm +
+    // credential id); the no-passkey trial fallback keeps the plane's own
+    // honest "software-signed" fields.
+    let webauthn_signature = if SENSITIVE_COMMANDS.contains(&name.as_str()) {
+        match webauthn_gate(&ctx, &session, &name, &args, &headers) {
+            Ok(sig) => sig,
+            Err(refusal) => return refusal,
+        }
+    } else {
+        None
+    };
     // Attribute any journaled mutation to the signed-in human, not the OS
-    // account running this process (genaryx_api::console_actor). The desktop
-    // shell never sets this, so its behavior is unchanged.
+    // account running this process, and carry the WebAuthn ceremony's
+    // signature fields alongside (both genaryx_api::console_actor task-locals;
+    // a None signature is simply no override).
     let result = genaryx_api::console_actor::with_actor(
         Some(session.user.clone()),
-        dispatch::dispatch(&ctx, &name, args),
+        genaryx_api::console_actor::with_signature(
+            webauthn_signature,
+            dispatch::dispatch(&ctx, &name, args),
+        ),
     )
     .await;
     match result {
@@ -597,6 +996,174 @@ mod tests {
         let sid_a = ctx.sessions.create("alice", Role::Admin, Method::Local);
         assert_ne!(
             post_command(&ctx, "no_such_command", Some(&sid_a)).await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    // -- the per-action WebAuthn gate (docs/CONSOLE-IDP.md, B3/2) ------------
+
+    use crate::webauthn::test_support;
+
+    /// POST a command with an optional `x-genaryx-webauthn` header and body.
+    async fn post_command_with(
+        ctx: &Arc<Ctx>,
+        name: &str,
+        cookie: &str,
+        assertion: Option<&str>,
+        body: &str,
+    ) -> StatusCode {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/command/{name}"))
+            .header("content-type", "application/json")
+            .header("cookie", format!("{}={}", auth::COOKIE, cookie));
+        if let Some(a) = assertion {
+            req = req.header("x-genaryx-webauthn", a);
+        }
+        let req = req.body(Body::from(body.to_string())).unwrap();
+        app(Arc::clone(ctx)).oneshot(req).await.unwrap().status()
+    }
+
+    /// Drive `POST /api/webauthn/action/start` through the real router and
+    /// return the minted challenge.
+    async fn start_action(ctx: &Arc<Ctx>, cookie: &str, command: &str, args: &str) -> String {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/webauthn/action/start")
+            .header("content-type", "application/json")
+            .header("cookie", format!("{}={}", auth::COOKIE, cookie))
+            .body(Body::from(format!(
+                "{{\"command\":\"{command}\",\"args\":{args}}}"
+            )))
+            .unwrap();
+        let resp = app(Arc::clone(ctx)).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "action/start must succeed");
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        v["challenge"].as_str().unwrap().to_string()
+    }
+
+    /// Build the browser-side assertion header for `challenge`, signed by the
+    /// test authenticator.
+    fn assertion_header(ctx: &Arc<Ctx>, challenge: &str) -> String {
+        let s = test_support::signer();
+        let cd = test_support::client_data("webauthn.get", challenge, &ctx.webauthn_rp.origin);
+        let ad = test_support::auth_data(&ctx.webauthn_rp.rp_id, 0x01, 1, None);
+        let sig = test_support::assert_sign(&s, &ad, &cd);
+        let envelope = json!({
+            "credential_id": test_support::enrolled(&s, 0).credential_id,
+            "client_data_json": B64URL.encode(&cd),
+            "authenticator_data": B64URL.encode(&ad),
+            "signature": B64URL.encode(&sig),
+        });
+        B64URL.encode(envelope.to_string())
+    }
+
+    fn enroll_test_passkey(ctx: &Arc<Ctx>, user: &str) {
+        let s = test_support::signer();
+        ctx.passkeys
+            .as_ref()
+            .expect("test store opens")
+            .add(user, test_support::enrolled(&s, 0))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_sensitive_command_with_a_passkey_and_no_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_eq!(
+            post_command_with(&ctx, "money_kill_run", &sid, None, "{}").await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sensitive_command_with_no_passkey_falls_back_software_signed() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        // No enrollment: the gate lets dispatch answer (trial fallback).
+        let status = post_command_with(&ctx, "money_kill_run", &sid, None, "{}").await;
+        assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
+        assert_ne!(status, StatusCode::FORBIDDEN);
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_read_command_never_asks_for_an_assertion() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_ne!(
+            post_command_with(&ctx, "money_status", &sid, None, "{}").await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn the_role_gate_still_runs_before_the_webauthn_gate() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("carol", Role::Viewer, Method::Oidc);
+        enroll_test_passkey(&ctx, "carol");
+        // A viewer gets the ROLE refusal, never a webauthn 428: privilege
+        // first, ceremony second.
+        assert_eq!(
+            post_command_with(&ctx, "money_kill_run", &sid, None, "{}").await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn the_full_ceremony_passes_and_its_challenge_is_one_shot() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+
+        let challenge = start_action(&ctx, &sid, "money_kill_run", "{}").await;
+        let header = assertion_header(&ctx, &challenge);
+
+        // A genuine assertion passes the gate; the pending plane answers
+        // downstream (whatever it answers, it is not the gate's refusals).
+        let status = post_command_with(&ctx, "money_kill_run", &sid, Some(&header), "{}").await;
+        assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
+        assert_ne!(status, StatusCode::FORBIDDEN);
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+
+        // Replaying the SAME assertion must refuse: the challenge was
+        // consumed by the first dispatch.
+        assert_eq!(
+            post_command_with(&ctx, "money_kill_run", &sid, Some(&header), "{}").await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn an_assertion_bound_to_another_command_or_args_is_refused() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+
+        // Bound to money_set_budget, replayed against money_kill_run.
+        let challenge = start_action(&ctx, &sid, "money_set_budget", "{}").await;
+        let header = assertion_header(&ctx, &challenge);
+        assert_eq!(
+            post_command_with(&ctx, "money_kill_run", &sid, Some(&header), "{}").await,
+            StatusCode::FORBIDDEN
+        );
+
+        // Bound to one args shape, dispatched with another.
+        let challenge = start_action(&ctx, &sid, "money_kill_run", "{\"run_id\":\"a\"}").await;
+        let header = assertion_header(&ctx, &challenge);
+        assert_eq!(
+            post_command_with(
+                &ctx,
+                "money_kill_run",
+                &sid,
+                Some(&header),
+                "{\"run_id\":\"b\"}"
+            )
+            .await,
             StatusCode::FORBIDDEN
         );
     }

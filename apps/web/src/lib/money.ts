@@ -1,4 +1,5 @@
 import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
+import { invokeWithCeremony } from "./webauthn";
 import type {
   Incident,
   MoneyError,
@@ -36,6 +37,20 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
   try {
     return await invokeBackend<T>(command, args);
+  } catch (err) {
+    throw toMoneyError(err);
+  }
+}
+
+/** Same contract as {@link call}, but for the two sensitive money commands
+ * (docs/CONSOLE-IDP.md B3/2): dispatches through the per-action WebAuthn
+ * ceremony (`lib/webauthn.ts`'s `invokeWithCeremony`) instead of invoking
+ * directly, so every caller of `killRun`/`setBudget` inherits the hardware
+ * confirmation with no change of their own. */
+async function callWithCeremony<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
+  try {
+    return await invokeWithCeremony<T>(command, args);
   } catch (err) {
     throw toMoneyError(err);
   }
@@ -79,10 +94,10 @@ export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings
 // blank one rather than trusting the frontend alone (fail-closed, 06 §0.5).
 
 export const killRun = (runId: string, reason: string): Promise<MutationOutcome> =>
-  call<MutationOutcome>("money_kill_run", { run_id: runId, reason });
+  callWithCeremony<MutationOutcome>("money_kill_run", { run_id: runId, reason });
 
 export const setBudget = (runId: string, budgetUsd: number, reason: string): Promise<MutationOutcome> =>
-  call<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd, reason });
+  callWithCeremony<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd, reason });
 
 /** NOT break-glass: acknowledging an incident overrides no governance
  * decision, so this carries no reason and the Rust side journals it as

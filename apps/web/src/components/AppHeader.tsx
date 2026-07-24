@@ -1,8 +1,10 @@
 import { cssVar } from "../lib/cssVars";
+import { usePopover } from "../lib/popover";
 import type { ConsoleRole } from "../lib/session";
 import { useSession } from "../lib/useSession";
 import type { ViewId } from "../lib/views";
 import { VIEWS } from "../lib/views";
+import { PasskeySettings } from "./PasskeySettings";
 
 /** The shared TAIPANBOX/IT-RAT bolt glyph (it-rat2 topbar brand mark),
  * inline SVG, no raster. */
@@ -59,9 +61,16 @@ const ROLE_TONE: Record<ConsoleRole, string> = {
  * `WebGate.tsx`'s own gate never runs for it either), so this renders nothing
  * rather than an empty placeholder - the ONE guard that keeps a header shared
  * with the sessionless desktop shell honest.
+ *
+ * The "Passkeys" entry (D15 B3/2, docs/CONSOLE-IDP.md) opens `PasskeySettings`
+ * as a popover window (`usePopover`, the same mechanism `UserCard`/
+ * `AgentDetailCard` use) - it lives in this same signed-in-only block since
+ * enrolling or listing a passkey is exactly as session-scoped as the badge
+ * next to it.
  */
 function SessionBadge() {
   const session = useSession();
+  const { open } = usePopover();
   if (!session?.signed_in || !session.role || !session.user) return null;
   return (
     <div
@@ -79,6 +88,17 @@ function SessionBadge() {
           &middot; {session.method}
         </span>
       )}
+      <button
+        type="button"
+        className="icon-btn"
+        style={{ width: "auto", padding: "0 8px", fontSize: 10.5 }}
+        title="Enrolled passkeys - hardware-confirm kill/budget/approval actions"
+        onClick={(e) =>
+          open(<PasskeySettings />, { anchor: e.currentTarget.getBoundingClientRect(), width: 320 })
+        }
+      >
+        Passkeys
+      </button>
     </div>
   );
 }

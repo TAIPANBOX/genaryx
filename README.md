@@ -104,12 +104,22 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
   the audit trail instead of the box's OS account. The local account stays
   the break-glass admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
+- **Per-action WebAuthn ceremony (D15/B3 part 2).** The three privileged
+  commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`)
+  additionally require a fresh, per-action passkey assertion once the
+  operator has enrolled one: a challenge minted for that exact command and
+  its arguments, verified server-side (ES256, attestation "none", no
+  `webauthn-rs`/OpenSSL dependency), and the assertion's algorithm and
+  credential id journaled into the same `CommandRecord` the action already
+  writes (`sig_alg=webauthn-es256`, `sig_fpr=<credential id>`). An operator
+  with no enrolled passkey still passes, journaled software-signed (the
+  documented trial fallback). Frontend (`lib/webauthn.ts`, passkey
+  enrollment from the session area) and server
+  (`crates/web/src/webauthn.rs`) both built; design in
+  [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
 
 ## Not built yet (decided, on the roadmap)
 
-- **Web-side signed kill** (B3 part 2): a WebAuthn passkey ceremony, so the
-  console gets the same hardware-backed story the phone prototype already
-  proved with Face ID.
 - **Email alerts**: a thin consumer of existing bus signals, sent **by the
   box**, always an alert plus a deep link into the authenticated console,
   never a direct-execute button.
@@ -118,11 +128,6 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
 - **Onboard wizard follow-up**: the "provisioned, awaiting first traffic"
   check against the Cloud's per-unit aggregation, together with Identity-tab
   unit grouping.
-- **D15/B3 part 2, the WebAuthn per-action ceremony**: part 1 (OIDC login,
-  roles, named audit actors) is built, see docs/CONSOLE-IDP.md. What remains
-  is a per-action passkey re-sign for kill, budget, policy write, and
-  approval grant; once it lands it absorbs the web-side signed kill bullet
-  above.
 - **Live e2e against a real gateway `/v1/keys`** (I15 "key lifecycle
   health", review-stage check): `crates/connectors/src/gateway.rs`'s DTOs
   are proven against fixtures only; a round trip against an actual running

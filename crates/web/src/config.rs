@@ -50,6 +50,13 @@ impl Config {
         self.state_dir.join("operator.json")
     }
 
+    /// Path of the enrolled-passkeys store (docs/CONSOLE-IDP.md, B3/2). Same
+    /// posture as `operator.json` beside it: authenticator public keys only,
+    /// never people - the customer's IdP stays the identity registry.
+    pub fn passkeys_file(&self) -> PathBuf {
+        self.state_dir.join("passkeys.json")
+    }
+
     /// Say plainly when the bind address reaches beyond this machine.
     ///
     /// Not a refusal: an operator who terminates TLS in front of this, or who
