@@ -92,6 +92,18 @@ pub struct Ctx {
     /// The operator record, re-readable at runtime so setting a password does
     /// not need a restart.
     pub operator: RwLock<Option<Operator>>,
+    /// WebAuthn relying-party identity (docs/CONSOLE-IDP.md, B3/2), resolved
+    /// once from `GENARYX_WEB_RP_ID`/`GENARYX_WEB_ORIGIN` with loopback
+    /// defaults.
+    pub webauthn_rp: crate::webauthn::RpConfig,
+    /// Enrolled passkeys, or WHY the store is unusable. Held as the error
+    /// rather than unwrapped or defaulted: a corrupt store must make the
+    /// privileged-command gate refuse (fail closed), never quietly behave as
+    /// "nobody enrolled".
+    pub passkeys: Result<crate::webauthn::PasskeyStore, String>,
+    /// One-shot WebAuthn challenges, in memory only (a restart invalidates
+    /// them, same posture as `sessions`).
+    pub webauthn_pending: crate::webauthn::PendingCeremonies,
     /// Offline OIDC config for the IdP login path (docs/CONSOLE-IDP.md).
     /// `None` unless `GENARYX_WEB_OIDC_*` is configured at startup, in which
     /// case the login route also accepts a verified ID-token and the local
@@ -122,6 +134,10 @@ impl Ctx {
     pub fn bootstrap(cfg: Config, bus: AppState, events: broadcast::Sender<UiEvent>) -> Self {
         Self {
             operator: RwLock::new(crate::auth::load(&cfg.operator_file())),
+            webauthn_rp: crate::webauthn::RpConfig::from_env(cfg.bind.port()),
+            passkeys: crate::webauthn::PasskeyStore::open(cfg.passkeys_file())
+                .map_err(|e| e.to_string()),
+            webauthn_pending: crate::webauthn::PendingCeremonies::default(),
             oidc: crate::oidc::OidcConfig::from_env(),
             bus,
             money: MoneyState::pending(),

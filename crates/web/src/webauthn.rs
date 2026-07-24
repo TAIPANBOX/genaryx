@@ -622,22 +622,16 @@ fn rp_id_hash(rp_id: &str) -> [u8; 32] {
 // tests
 // ---------------------------------------------------------------------------
 
+/// Test-only builders for the BROWSER/authenticator half of the ceremony,
+/// shared with `main.rs`'s gate tests (which play a whole browser against the
+/// real router). `pub(crate)` and `cfg(test)`: never compiled into the
+/// shipped binary.
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
     use genaryx_signing::es256::{Es256Signer, SoftwareSigner};
 
-    const RP: &str = "localhost";
-    const ORIGIN: &str = "http://localhost:7420";
-
-    fn rp() -> RpConfig {
-        RpConfig {
-            rp_id: RP.into(),
-            origin: ORIGIN.into(),
-        }
-    }
-
-    fn client_data(kind: &str, challenge: &str, origin: &str) -> Vec<u8> {
+    pub(crate) fn client_data(kind: &str, challenge: &str, origin: &str) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "type": kind, "challenge": challenge, "origin": origin,
             "crossOrigin": false
@@ -646,7 +640,7 @@ mod tests {
     }
 
     /// Build a COSE_Key CBOR value from an X9.63 public key.
-    fn cose_key(x963: &[u8]) -> ciborium::Value {
+    pub(crate) fn cose_key(x963: &[u8]) -> ciborium::Value {
         assert_eq!(x963.len(), 65);
         ciborium::Value::Map(vec![
             (
@@ -672,7 +666,12 @@ mod tests {
         ])
     }
 
-    fn auth_data(rp_id: &str, flags: u8, sign_count: u32, cred: Option<(&[u8], &[u8])>) -> Vec<u8> {
+    pub(crate) fn auth_data(
+        rp_id: &str,
+        flags: u8,
+        sign_count: u32,
+        cred: Option<(&[u8], &[u8])>,
+    ) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&rp_id_hash(rp_id));
         out.push(flags);
@@ -688,7 +687,7 @@ mod tests {
         out
     }
 
-    fn attestation_object(fmt: &str, auth_data: &[u8]) -> Vec<u8> {
+    pub(crate) fn attestation_object(fmt: &str, auth_data: &[u8]) -> Vec<u8> {
         let value = ciborium::Value::Map(vec![
             (
                 ciborium::Value::Text("fmt".into()),
@@ -708,11 +707,11 @@ mod tests {
         out
     }
 
-    fn signer() -> SoftwareSigner {
+    pub(crate) fn signer() -> SoftwareSigner {
         SoftwareSigner::from_scalar(&[0x42u8; 32]).unwrap()
     }
 
-    fn enrolled(signer: &SoftwareSigner, sign_count: u32) -> PasskeyRecord {
+    pub(crate) fn enrolled(signer: &SoftwareSigner, sign_count: u32) -> PasskeyRecord {
         PasskeyRecord {
             credential_id: B64URL.encode(b"cred-1"),
             public_key_x963: B64.encode(signer.public_key_x963().unwrap()),
@@ -723,7 +722,11 @@ mod tests {
     }
 
     /// Sign like a browser authenticator: DER ECDSA over authData || sha256(clientData).
-    fn assert_sign(signer: &SoftwareSigner, auth_data: &[u8], client_data: &[u8]) -> Vec<u8> {
+    pub(crate) fn assert_sign(
+        signer: &SoftwareSigner,
+        auth_data: &[u8],
+        client_data: &[u8],
+    ) -> Vec<u8> {
         let mut message = auth_data.to_vec();
         message.extend_from_slice(&Sha256::digest(client_data));
         let raw = signer.sign_raw(&message).unwrap();
@@ -732,6 +735,23 @@ mod tests {
             .to_der()
             .as_bytes()
             .to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::*;
+    use super::*;
+    use genaryx_signing::es256::{Es256Signer, SoftwareSigner};
+
+    const RP: &str = "localhost";
+    const ORIGIN: &str = "http://localhost:7420";
+
+    fn rp() -> RpConfig {
+        RpConfig {
+            rp_id: RP.into(),
+            origin: ORIGIN.into(),
+        }
     }
 
     // ---- registration ----
