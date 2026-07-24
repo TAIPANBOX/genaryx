@@ -1,4 +1,5 @@
 import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
+import { invokeWithCeremony } from "./webauthn";
 import type { Approval, Decision, DecideOutcome, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 
 /** Thrown by every fetcher/mutator below when there is no backend to
@@ -30,6 +31,20 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
+/** Same contract as {@link call}, but for `policy_decide_approval`
+ * (docs/CONSOLE-IDP.md B3/2): dispatches through the per-action WebAuthn
+ * ceremony (`lib/webauthn.ts`'s `invokeWithCeremony`) instead of invoking
+ * directly, so every caller of `decideApproval` inherits the hardware
+ * confirmation with no change of their own. */
+async function callWithCeremony<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
+  try {
+    return await invokeWithCeremony<T>(command, args);
+  } catch (err) {
+    throw toPolicyError(err);
+  }
+}
+
 /** Whole-panel connection state. Never throws: with no backend (or on any
  * transport failure) it resolves to a renderable status instead - mirrors
  * `lib/money.ts`'s `fetchMoneyStatus` exactly. */
@@ -54,7 +69,7 @@ export const fetchPolicies = (): Promise<PolicyRecord[]> => call<PolicyRecord[]>
 // snake_case field names, and `lib/money.ts`'s identical convention for its
 // mutation commands.
 export const decideApproval = (id: string, decision: Decision): Promise<DecideOutcome> =>
-  call<DecideOutcome>("policy_decide_approval", { id, decision });
+  callWithCeremony<DecideOutcome>("policy_decide_approval", { id, decision });
 
 /** Human-readable text for any `PolicyError` - used for the plain error
  * banner (mirrors `lib/money.ts`'s `describeMoneyError`, including the

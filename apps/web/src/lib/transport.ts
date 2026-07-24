@@ -77,10 +77,17 @@ export function requiredRoleFromCommandError(err: unknown): ConsoleRole | null {
  * (never wrapped), so each plane's normaliser keeps working unchanged. Throws
  * a plain `Error` only when there is no backend at all, which callers already
  * guard against with {@link hasBackend}.
+ *
+ * `extraHeaders` merges into the request's headers - added for
+ * `lib/webauthn.ts`'s per-action ceremony, which needs to attach
+ * `x-genaryx-webauthn` to a sensitive command's dispatch without every other
+ * caller knowing that header exists. MOCK mode ignores it: `mockInvoke` has
+ * no request at all to attach a header to.
  */
 export async function invokeBackend<T>(
   command: string,
   args?: Record<string, unknown>,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
   if (MOCK) {
     return mockInvoke<T>(command, args);
@@ -92,7 +99,7 @@ export async function invokeBackend<T>(
   }
   const resp = await fetch(`${WEB_API_BASE}/command/${command}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
     body: JSON.stringify(args ?? {}),
     // The console authenticates with a session cookie set at login.
     credentials: "include",

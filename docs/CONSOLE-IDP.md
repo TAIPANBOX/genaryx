@@ -1,8 +1,8 @@
 # Console IdP, roles, and named audit actors (D15/B3, part 1)
 
-Status: built on branch `feat/console-idp-roles`. Design record and the exact
-contract. Part 1 of B3 (itrat-console/15); the WebAuthn per-action ceremony
-is part 2, a separate branch.
+Status: part 1 built on branch `feat/console-idp-roles`. Design record and
+the exact contract. Part 2 (the WebAuthn per-action ceremony) is ALSO built,
+on branch `feat/webauthn-per-action`, documented at the end of this file.
 
 Defensive intent: this is about knowing WHO drove a privileged console action
 and constraining who may drive one. It only ever reads the customer's own
@@ -136,18 +136,127 @@ paths (set => named actor; unset => OS-user default).
   beyond the one-time verification. A revoked IdP user keeps their console
   session until it idles out or the process restarts (restart cuts all
   sessions, the same control the local account has).
-- Roles gate the console's command surface; they are NOT a second signature.
-  A destructive action is still only a session away in part 1. Part 2
-  (WebAuthn) is what re-signs each destructive action with a hardware-backed
-  passkey; until it lands, the box's exposure is still "session opens the
-  console" (docs/WEB-SHELL.md), now narrowed by role.
+- Roles gate the console's command surface; they are NOT a second signature
+  by themselves. Part 2 (WebAuthn, below) re-signs `money_kill_run` /
+  `money_set_budget` / `policy_decide_approval` with a hardware-backed
+  passkey once the operator has enrolled one; a caller with none enrolled
+  still has the part-1 exposure only - "session opens the console"
+  (docs/WEB-SHELL.md), narrowed by role - the documented trial fallback, not
+  a bypass.
 
-## Part 2 (next branch): WebAuthn per-action ceremony
+## Part 2: WebAuthn per-action ceremony (built, branch `feat/webauthn-per-action`)
 
-Passkey registration in an authenticated session; a per-action assertion
-required for kill / break-glass / budget / policy write / approval grant;
-server-side verification; the assertion (alg + credential id) recorded in the
-CommandRecord, giving the browser the same hardware-attested story the
-desktop Touch ID and the phone Face ID already have. Fixture-tested with a
-software authenticator; real hardware is the live-pending step (like APNs in
-D12). Absorbs the "web-side signed kill" item from the genaryx README.
+Signing in gets you the console; it does not get you the kill. Three
+privileged commands carry the ceremony today
+(`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`): `money_kill_run`,
+`money_set_budget`, `policy_decide_approval`. Each additionally requires a
+fresh, per-action WebAuthn assertion once the caller has enrolled a passkey -
+the operator's authenticator (Touch ID, Windows Hello, a roaming key) signs a
+challenge minted FOR THAT ONE COMMAND, and the assertion is verified
+server-side before the command ever dispatches.
+
+Deliberately not `webauthn-rs` (that crate hard-depends on OpenSSL, a second
+crypto backend this pure-Rust workspace does not want): a hand-parsed,
+narrowly-scoped ceremony instead, ES256 only (`-7`, the one algorithm every
+passkey provider ships) and attestation "none" (see
+`crates/web/src/webauthn.rs`'s module doc for the full reasoning). Fail-closed
+throughout: any parse or verify failure is a refusal, never a pass.
+
+### Endpoints
+
+- `GET /api/webauthn/passkeys` -> `{passkeys: [{credential_id, label,
+  created_at}], webauthn_required: bool}`. The one probe the frontend reads
+  before rendering either the confirm-with-passkey flow or the
+  software-signed badge; `webauthn_required` is simply "does this caller have
+  at least one enrolled passkey".
+- `POST /api/webauthn/register/start` -> a
+  `PublicKeyCredentialCreationOptions`-shaped JSON (`challenge` and
+  `user.id` as base64url strings; the browser decodes them into
+  `ArrayBuffer`s before calling `navigator.credentials.create`).
+- `POST /api/webauthn/register/finish` `{label, credential_id,
+  client_data_json, attestation_object}` (each base64url; `credential_id` is
+  the base64url `rawId`) -> `{enrolled: true, credential_id}` on success.
+- `POST /api/webauthn/action/start` `{command, args}` -> `{challenge, rp_id,
+  timeout, user_verification, allow_credentials: [{type, id}]}`. Mints a
+  challenge bound to the exact command name and a SHA-256 of the exact args
+  JSON that dispatch will carry (`args_sha256`) - an assertion for "kill run
+  A" can never be replayed to authorize "kill run B", or the same command
+  with different arguments.
+
+### The header
+
+Sensitive command dispatch (`POST /api/command/<name>`) carries the
+assertion in an `x-genaryx-webauthn` request header: base64url of a JSON
+envelope `{credential_id, client_data_json, authenticator_data, signature}`,
+each field itself base64url of the raw bytes `navigator.credentials.get`
+returned. Missing or malformed:
+
+- No enrolled passkey at all: no header required, the command dispatches
+  (the trial fallback below).
+- A passkey is enrolled but no header was sent: `428 {"error": "a webauthn
+  assertion is required for this command", "webauthn": "required"}`. The
+  frontend (`lib/webauthn.ts`'s `invokeWithCeremony`) treats this exact shape
+  as its retry signal: run the ceremony once, resend once.
+- A header was sent but verification failed for any reason (a stale,
+  replayed or foreign challenge, the wrong command or args binding, a bad
+  signature, a cloned authenticator's regressed counter, ...): `403
+  {"error": "webauthn: <reason>"}`.
+
+### Relying-party configuration
+
+`GENARYX_WEB_RP_ID` / `GENARYX_WEB_ORIGIN`, defaulting to the loopback
+deployment: `rp_id = "localhost"`, `origin = "http://localhost:<bind
+port>"`. A TLS-fronted console overrides both to its real domain; `rp_id`
+must be the domain the browser addresses (WebAuthn scopes credentials to it)
+and `origin` must be the exact `scheme://host[:port]` the browser reports in
+`clientDataJSON.origin` - a mismatch on either is a refused ceremony, not a
+silent pass.
+
+### Secure-context deployment (the one real constraint)
+
+`navigator.credentials` exists only in a secure context, so the ceremony
+works when the console is reached as `localhost` (the default loopback bind,
+or an `ssh -L` forward over the operator's tunnel) or behind TLS. A bare
+`http://10.x.x.x` has no WebAuthn at all - not a degraded mode, an absent
+one. The frontend's `webauthnAvailable()` (`lib/webauthn.ts`) is how the UI
+knows this and says so honestly (`PasskeySettings`'s own hint line) instead
+of showing an "Add passkey" button that would only fail.
+
+### Trial fallback (no passkey enrolled)
+
+A caller with no enrolled passkey passes the gate without a ceremony -
+`CommandRecord`'s own transport-signing fields stay exactly as they already
+are on this shell, which read honestly as "software-signed". Nothing is
+silently weakened: this is the documented, intentional bridge for an
+operator who has not yet enrolled a passkey, not a bypass.
+`PasskeySettings` explains exactly this to an operator with zero passkeys,
+so enrolling the first one is framed as an upgrade, not a chore.
+
+### The journal
+
+A verified ceremony rides into the same `CommandRecord` the action already
+journals: `sig_alg = "webauthn-es256"`, `sig_fpr = <credential id>` (the
+exact enrolled credential that confirmed the action - an auditor can say
+WHICH passkey, not just "a passkey"). The trial-fallback path leaves the
+plane's own software-signing fields untouched, so the two stories are told
+the same way a desktop Secure-Enclave kill and a software-signed one always
+were.
+
+### Frontend (`apps/web`)
+
+`lib/webauthn.ts` is the one ceremony module: base64url helpers,
+`webauthnAvailable()`, `listPasskeys()` (cached per page load,
+`invalidatePasskeysCache()` after enrollment), `enrollPasskey(label)`, and
+`invokeWithCeremony(command, args)` - the wrapper `lib/money.ts`'s
+`killRun`/`setBudget` and `lib/policy.ts`'s `decideApproval` call instead of
+`invokeBackend` directly, so every existing caller of those three commands
+inherits the ceremony with no panel-side change. `PasskeySettings.tsx`
+(opened from the session area in `AppHeader.tsx`) lists enrolled passkeys
+and adds new ones; a plain operator cancel of the platform's own passkey
+prompt is treated as "say nothing", never an error banner.
+
+Fixture-tested with a software authenticator
+(`crates/web/src/webauthn.rs`'s `test_support`, `crates/web/src/main.rs`'s
+gate tests, `apps/web/src/lib/webauthn.test.ts`); real hardware is the
+live-pending step, the same posture D12's APNs push had before its own live
+exit gate. Absorbs the "web-side signed kill" item from the genaryx README.
