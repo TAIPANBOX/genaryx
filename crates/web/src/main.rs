@@ -2,12 +2,12 @@
 //! customer's own perimeter.
 //!
 //! This process runs beside the customer's stack, on their box. It reads the
-//! same `~/.taipan/environments/` descriptors the desktop console reads and
-//! answers every request by calling `genaryx-api`, the same functions the
-//! Tauri shell wraps. No run, spend figure, identity or policy decision
-//! leaves the customer's network to render this UI, and it-rat.com has no
-//! route to it: the site sells and licenses the product, it never sees the
-//! data.
+//! same `~/.taipan/environments/` descriptors the former desktop console once
+//! read, and answers every request by calling `genaryx-api` directly - the
+//! same functions the Tauri shell used to wrap. No run, spend figure,
+//! identity or policy decision leaves the customer's network to render this
+//! UI, and it-rat.com has no route to it: the site sells and licenses the
+//! product, it never sees the data.
 //!
 //! Reaching it is the operator's own tunnel (D11). The default bind is
 //! loopback for exactly that reason, and binding wider says so out loud.
@@ -419,15 +419,15 @@ async fn command(
 /// The live bus, as Server-Sent Events, plus (multiplexed onto the SAME
 /// connection) any live remote-tail lines.
 ///
-/// The desktop shell delivers the bus feed as a Tauri event; in a browser it
-/// is an `EventSource`. Same payload, same cadence, so the panels that redraw
-/// on a new event behave identically in both shells. The bus rides the
+/// The browser receives the bus feed as an `EventSource` (the removed
+/// desktop shell delivered the same feed as a Tauri event, with an identical
+/// payload and cadence, so the panels that redraw on a new event needed no
+/// change when the web shell became the only one). The bus rides the
 /// `bus`-named SSE event, unchanged from before the Remote panel moved here;
 /// a remote tail's lines/ended marker ride their own `remote:tail-line`/
 /// `remote:tail-ended` named events instead of being folded into the `bus`
 /// shape they do not fit (see `ctx::RemoteTailEvent`'s own doc comment) - one
-/// `EventSource` in the browser, one `addEventListener` per name, exactly the
-/// desktop shell's two independent Tauri events over one process.
+/// `EventSource` in the browser, one `addEventListener` per name.
 async fn events(
     State(ctx): State<Arc<Ctx>>,
     jar: CookieJar,

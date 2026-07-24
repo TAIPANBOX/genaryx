@@ -1,11 +1,12 @@
 //! Deterministic, seeded force-directed layout for the delegation graph.
 //!
 //! Architecture position (PHASE3 §5.3, decided): the graph LAYOUT is computed
-//! in genaryx-core; both shells are dumb Canvas2D renderers of the result. This
-//! avoids the WebGL parity trap (WebGL exists in the Tauri webview but not
-//! natively in SwiftUI) and keeps the pilot-scale graph (tens-to-hundreds of
-//! agents) trivial to draw. WebGL is only revisited if a bench proves Canvas2D
-//! insufficient.
+//! in genaryx-core; the web frontend is a dumb Canvas2D renderer of the
+//! result. This design chose canvas-friendly layout to avoid per-shell
+//! rendering drift back when two native shells still existed (WebGL existed
+//! in the Tauri webview but not natively in SwiftUI); the choice stands and
+//! keeps the pilot-scale graph (tens-to-hundreds of agents) trivial to draw.
+//! WebGL is only revisited if a bench proves Canvas2D insufficient.
 //!
 //! Determinism is a hard requirement, exactly like the site sims' rule ("pure
 //! function of the seed, never `Math.random`/wall-clock"): given the same

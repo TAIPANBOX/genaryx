@@ -1,4 +1,4 @@
-//! Drills-panel Tauri managed state: a resolved `MockryxClient` (or an
+//! Drills-panel console-managed state: a resolved `MockryxClient` (or an
 //! honest record that no drills plane was found), plus the gateway/api-key/
 //! scenario-dir a run needs.
 //!
@@ -47,7 +47,7 @@ pub enum DrillsInner {
     Ready(DrillsClient),
 }
 
-/// Tauri-managed state wrapping [`DrillsInner`] in an async mutex, mirroring
+/// Console-managed state wrapping [`DrillsInner`] in an async mutex, mirroring
 /// `CryptoState`'s identical shape.
 pub struct DrillsState {
     pub inner: Mutex<DrillsInner>,

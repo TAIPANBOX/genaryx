@@ -1,8 +1,8 @@
 //! Crypto: the Phase-4 wave-1 crypto-plane surface over Qryx
-//! (docs/PHASE4.md "W1 - Quality (Verdryx) + Crypto (Qryx) panels"), Track A
-//! (Tauri/Web) of a two-shell parallel build - the SwiftUI half lives in
-//! `crates/ffi` + `apps/macos`, built independently against the same
-//! grounded contract.
+//! (docs/PHASE4.md "W1 - Quality (Verdryx) + Crypto (Qryx) panels"),
+//! originally built as Track A (Tauri/Web) of a two-shell parallel build; the
+//! SwiftUI Track B left with the desktop shells (it lived in `crates/ffi` +
+//! `apps/macos`, built independently against the same grounded contract).
 //!
 //! Mirrors `crate::identity`'s module shape (`env`/`state`/`commands`) but
 //! simpler still: qryx is a pure on-demand CLI with no serve process and no

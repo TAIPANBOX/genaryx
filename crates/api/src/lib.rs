@@ -13,17 +13,18 @@
 //! signature: a command takes `&MoneyState` directly, so it is callable (and
 //! testable) without a window, an app handle, or a running event loop.
 //!
-//! Deliberately NOT here: anything that needs a shell to exist. The tray
-//! stays in its shell (only the desktop has one at all). The live bus feeder
+//! Deliberately NOT here: anything that needs a shell to exist (the removed
+//! desktop shell's tray was the canonical example). The live bus feeder
 //! and the Remote panel's SSH tail are both a partial exception of the same
 //! shape: the tailer, the demo feeder, and the live-vs-demo decision
 //! ([`bus::feed`]), and the tail's reader thread
 //! ([`remote::commands::remote_ssh_tail_start`]), both live here, each
 //! generic over a small sink trait each shell implements for its own surface
-//! ([`bus::feed::EventSink`], [`remote::commands::TailSink`] - a Tauri window
-//! event, an SSE broadcast) - only that one final delivery call stays in the
-//! shell. The DATA every plane reads ([`bus::AppState`], [`bus::BusMode`],
-//! [`events::UiEvent`]) lives here too, because both shells read it.
+//! ([`bus::feed::EventSink`], [`remote::commands::TailSink`] - today the web
+//! shell's SSE broadcast; the removed desktop shell's was a Tauri window
+//! event, which is why this seam exists) - only that one final delivery call
+//! stays in the shell. The DATA every plane reads ([`bus::AppState`], [`bus::BusMode`],
+//! [`events::UiEvent`]) lives here too, because every shell reads it.
 
 pub mod bus;
 pub mod console_actor;

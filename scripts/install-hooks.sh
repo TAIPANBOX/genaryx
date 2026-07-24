@@ -9,11 +9,11 @@
 # anything else. The full gate stays a deliberate `bash scripts/check-all.sh`
 # (and, once GitHub Actions is unblocked, CI running the same script).
 #
-# What the hook buys: `--fast` compiles the workspace, the Tauri shell's Rust
-# and the frontend's types. That is exactly the class of breakage that went
+# What the hook buys: `--fast` compiles the workspace and type-checks the
+# frontend (`tsc --noEmit`). That is exactly the class of breakage that went
 # unnoticed for four days in July 2026 (see check-all.sh's header). It does
-# not run the test suites or build the SwiftUI xcframework, so it stays in
-# the tens of seconds rather than the minutes.
+# not run the test suites or the frontend's `vitest`/`vite build`, so it
+# stays in the tens of seconds rather than the minutes.
 #
 # Bypass for a deliberate WIP push: `git push --no-verify`.
 

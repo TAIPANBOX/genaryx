@@ -1,4 +1,4 @@
-//! Tauri commands for the Copilot view (Phase 6, C0 - docs/PHASE6.md,
+//! Console commands for the Copilot view (Phase 6, C0 - docs/PHASE6.md,
 //! itrat-console/13): [`copilot_status`] (a flat DTO for the residency
 //! banner) and [`copilot_ask`] (one question/answer round trip through
 //! Felyx, the hand-rolled agent loop `genaryx-copilot` owns).
@@ -266,10 +266,10 @@ pub async fn copilot_ask(state: &CopilotState, question: String) -> Result<Answe
 /// assistant note by the frontend rather than a crash.
 ///
 /// `rename_all = "snake_case"` (unlike `copilot_ask`'s single-word
-/// `question`): `incident_id` has an underscore, and this app's IPC
-/// convention keeps every argument key snake_case rather than Tauri's
-/// camelCase default (mirrors `money::commands::money_kill_run`'s identical
-/// pin and rationale).
+/// `question`): `incident_id` has an underscore, and this app's
+/// command-argument convention keeps every key snake_case - a pin that
+/// predates the web shell, from back when Tauri's default was camelCase
+/// (mirrors `money::commands::money_kill_run`'s identical pin and rationale).
 pub async fn copilot_explain(state: &CopilotState, incident_id: String) -> Result<Answer, String> {
     let service = ready_service(&state).await?;
     service

@@ -1,8 +1,9 @@
 //! Memory: the Phase-4 wave-2 memory-plane surface over Engram's
 //! `engram-mcp` MCP stdio server (docs/PHASE4.md "W2 - Memory (Engram MCP) +
-//! Drills (Mockryx) panels"), Track A (Tauri/React) of a two-shell parallel
-//! build - the SwiftUI half lives in `crates/ffi` + `apps/macos`, built
-//! independently against the same grounded contract.
+//! Drills (Mockryx) panels"), originally built as Track A (Tauri/React) of a
+//! two-shell parallel build; the SwiftUI Track B left with the desktop
+//! shells (it lived in `crates/ffi` + `apps/macos`, built independently
+//! against the same grounded contract).
 //!
 //! Mirrors `crate::identity`'s module shape (`env`/`state`/`commands`, the
 //! same non-blocking bootstrap-in-`setup` wiring) with one structural twist

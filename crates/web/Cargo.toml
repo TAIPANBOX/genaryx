@@ -1,9 +1,8 @@
 # genaryx-web: the console served over HTTP, ON THE CUSTOMER'S OWN BOX.
 #
-# This is the web shell of the same console the desktop app ships (D2, "one
-# core, two shells"). It holds no product logic of its own: every request it
-# answers is a call into `genaryx-api`, the exact functions the Tauri shell
-# wraps, so the two shells cannot drift.
+# This is the console's one shell (web-only since the desktop shells were
+# removed). It holds no product logic of its own: every request it answers is
+# a call into `genaryx-api`, so the UI and the command layer cannot drift.
 #
 # WHERE IT RUNS is the whole point of the web-first pivot. The server is
 # co-located with the customer's stack, inside their perimeter, reading the

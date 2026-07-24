@@ -1,8 +1,9 @@
 //! Evidence Center: the Phase-4 wave-3 evidence-assembly surface
-//! (docs/PHASE4.md W3), Track A (Tauri/React) of a two-shell parallel build -
-//! the SwiftUI half lives in `crates/ffi` + `apps/macos`, built independently
+//! (docs/PHASE4.md W3), originally built as Track A (Tauri/React) of a
+//! two-shell parallel build; the SwiftUI Track B left with the desktop
+//! shells (it lived in `crates/ffi` + `apps/macos`, built independently
 //! against the same frozen `genaryx_connectors::build_evidence_pack`
-//! contract.
+//! contract).
 //!
 //! Unlike every prior panel, this one does NOT introduce a new plane
 //! connection of its own: it ASSEMBLES a pack from sources every other panel

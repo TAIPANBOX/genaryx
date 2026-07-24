@@ -1,4 +1,4 @@
-//! Evidence-panel Tauri managed state: the independently-resolved local-tool
+//! Evidence-panel console-managed state: the independently-resolved local-tool
 //! sources (qryx / idryx / tokenfuse) a pack can draw from - see `env.rs`'s
 //! module doc for how each is resolved. Cloud is deliberately absent from
 //! this state entirely: the Evidence build command reuses the Money plane's
@@ -70,7 +70,7 @@ pub enum EvidenceInner {
     Ready(EvidenceEnv),
 }
 
-/// Tauri-managed state wrapping [`EvidenceInner`] in an async mutex,
+/// Console-managed state wrapping [`EvidenceInner`] in an async mutex,
 /// mirroring every sibling panel's identical shape.
 pub struct EvidenceState {
     pub inner: Mutex<EvidenceInner>,

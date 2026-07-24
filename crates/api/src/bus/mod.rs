@@ -1,8 +1,9 @@
 //! Where the console's bus lives and how it is being fed.
 //!
-//! Plain data, deliberately shell-free: the desktop shell manages it as Tauri
-//! state and the web shell holds it in its `Arc<AppCtx>`, but neither shape
-//! belongs to either shell, and a command reading it cannot tell them apart.
+//! Plain data, deliberately shell-free: the web shell holds it in its
+//! `Arc<AppCtx>`, the same way the removed desktop shell used to manage it as
+//! Tauri state, but neither shape belongs to either shell, and a command
+//! reading it cannot tell them apart.
 
 use std::path::PathBuf;
 

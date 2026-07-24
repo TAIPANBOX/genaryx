@@ -1,9 +1,10 @@
 //! Remote: the Phase-4 wave-4 "Distance" surface over Hetzner (read-only
 //! inventory) + WireGuard (the primary console<->Cloud channel, decision
 //! D11) + SSH (ops: reachability, remote descriptor read, remote log tail)
-//! (docs/PHASE4.md "W4 - Distance"), Track A (Tauri/Web) of a two-shell
-//! parallel build - the SwiftUI half lives in `crates/ffi` + `apps/macos`,
-//! built independently against the same grounded contract.
+//! (docs/PHASE4.md "W4 - Distance"), originally built as Track A (Tauri/Web)
+//! of a two-shell parallel build; the SwiftUI Track B left with the desktop
+//! shells (it lived in `crates/ffi` + `apps/macos`, built independently
+//! against the same grounded contract).
 //!
 //! Mirrors `crate::identity`/`crate::memory`'s module shape (`env`/`state`/
 //! `commands`) with one twist beyond Memory's own "first stateful connector"
@@ -31,8 +32,9 @@
 //!   remote log lines through a caller-supplied [`commands::TailSink`]
 //!   instead of returning them in one batch, mirroring `bus::feed::EventSink`'s
 //!   identical generic-sink shape for the live bus feed - each shell hands in
-//!   its own delivery: a Tauri window event on desktop, an SSE broadcast on
-//!   web).
+//!   its own delivery: today the web shell's SSE broadcast; the removed
+//!   desktop shell's was a Tauri window event, which is why this seam
+//!   exists).
 //!
 //! ## v1 scope (docs/PHASE4.md W4)
 //!

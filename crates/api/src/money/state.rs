@@ -1,18 +1,18 @@
-//! Money-panel Tauri managed state: a paired `CloudClient` (or an honest
+//! Money-panel console-managed state: a paired `CloudClient` (or an honest
 //! record of why there isn't one yet), plus everything a mutation needs to
 //! journal a `console_command` onto the same bus the Bus Explorer tails.
 //!
-//! Bootstrap is non-blocking by design: `lib.rs`'s `setup` hook calls
+//! Bootstrap is non-blocking by design: `crates/web`'s `Ctx::bootstrap` calls
 //! [`MoneyState::pending`] synchronously (managed immediately, so every
 //! command has *something* to read from the instant the app starts) and
-//! then `tauri::async_runtime::spawn`s [`bootstrap`] in the background,
-//! swapping the real result in once it resolves. This deliberately avoids
-//! `tauri::async_runtime::block_on` inside `setup`: pairing is a network
-//! round trip, and blocking app startup on it (or risking a
-//! runtime-within-a-runtime panic if `setup` ever turns out to already run
-//! inside Tauri's own async context) is worse than a brief
-//! [`MoneyInner::Bootstrapping`] window the frontend can render as
-//! "connecting...".
+//! then `Ctx::resolve` spawns [`bootstrap`] on the async runtime in the
+//! background, swapping the real result in once it resolves. This
+//! deliberately avoids blocking inside `Ctx::bootstrap` itself: pairing is a
+//! network round trip, and blocking app startup on it (or, back when this
+//! ran inside the removed Tauri shell, risking a runtime-within-a-runtime
+//! panic if `setup` ever turned out to already run inside Tauri's own async
+//! context) is worse than a brief [`MoneyInner::Bootstrapping`] window the
+//! frontend can render as "connecting...".
 //!
 //! Flow: [`env::discover`] -> build a [`CloudClient`] -> pair a fresh
 //! [`SoftwareSigner`] -> `attach_device`. Every step is fallible and none of
@@ -122,7 +122,7 @@ pub enum MoneyInner {
     Ready(MoneyClient),
 }
 
-/// Tauri-managed state wrapping [`MoneyInner`] in an async mutex so a later
+/// Console-managed state wrapping [`MoneyInner`] in an async mutex so a later
 /// reconnect (not wired to a command yet, but the shape supports one) can
 /// atomically swap the whole state, while individual read/mutation commands
 /// only hold the lock long enough to clone out a [`MoneyClient`] (see this

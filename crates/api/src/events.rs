@@ -49,7 +49,8 @@ pub struct UiEvent {
 // `live::bootstrap`) and maps rows through the `From<StoredEvent>` impl just
 // below. The `live` module's background thread additionally re-polls the
 // same `IngestService` on a timer and forwards whatever it just broadcast to
-// the frontend as a Tauri `"bus:event"` event, converted via the
+// the frontend as an SSE `"bus"` event (before the desktop shell was removed,
+// the same broadcast reached it as a Tauri event instead), converted via the
 // `From<ConsoleEvent>` impl further down (a `ConsoleEvent` has no database id
 // yet at broadcast time, so that impl assigns a synthetic one; see
 // `NEXT_LIVE_ID`). Everything downstream (`UiEvent`, the whole `src/`

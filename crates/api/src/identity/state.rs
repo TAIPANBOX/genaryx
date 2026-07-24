@@ -1,4 +1,4 @@
-//! Identity-panel Tauri managed state: an [`IdryxClient`] (or an honest
+//! Identity-panel console-managed state: an [`IdryxClient`] (or an honest
 //! record of why there isn't one yet), plus the two extra, best-effort
 //! resolutions Rescan needs (docs/PHASE3.md W2): the `idryx` binary and the
 //! taipan events dir's per-source ndjson files.
@@ -96,7 +96,7 @@ pub enum IdentityInner {
     Ready(IdentityClient),
 }
 
-/// Tauri-managed state wrapping [`IdentityInner`] in an async mutex,
+/// Console-managed state wrapping [`IdentityInner`] in an async mutex,
 /// mirroring `PolicyState`'s identical shape.
 pub struct IdentityState {
     pub inner: Mutex<IdentityInner>,

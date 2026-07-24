@@ -1,9 +1,9 @@
 //! genaryx-signing: signing and verification ceremonies.
 //!
-//! The core prepares the canonical string; the shell's Signer adapter signs
-//! (SwiftUI natively via CryptoKit/Secure Enclave; Tauri via
-//! `security-framework`; YubiKey PIV cross-platform). Server verification
-//! already exists in `tokenfuse-cloud` device-pairing: ES256 over
+//! The core prepares the canonical string; a signer implementation signs it
+//! (today the portable [`es256::SoftwareSigner`]; the paired phone signs with
+//! its own hardware key). Server verification already exists in
+//! `tokenfuse-cloud` device-pairing: ES256 over
 //! `METHOD\nPATH\nsha256(body)hex\nTS\nNONCE` (06 §2, 07 §4.2).
 //!
 //! Spike #4 (06 §7) landed in [`mldsa`] (ML-DSA verify). Spike #2 landed in

@@ -1,8 +1,9 @@
 //! `build_evidence_pack`: the Evidence Center's gather + sign orchestration
-//! (docs/PHASE4.md W3). This is the ONE function both shells call to produce a
-//! pack, so the gathering, the honest missing-source accounting, the ES256
-//! signing, and the zip assembly are defined once here (not duplicated across
-//! the Tauri and SwiftUI shells). It lives in `genaryx-connectors` because that
+//! (docs/PHASE4.md W3). This is the ONE function every caller uses to produce
+//! a pack, so the gathering, the honest missing-source accounting, the ES256
+//! signing, and the zip assembly are defined once here, never duplicated
+//! across shells (originally the Tauri and SwiftUI shells, today genaryx-api
+//! on behalf of the web shell). It lives in `genaryx-connectors` because that
 //! is the layer that has every service client plus the device signer; the pure
 //! zip/manifest half is `genaryx_core::evidence`.
 //!
@@ -100,8 +101,10 @@ pub struct EvidencePack {
 /// contract.
 ///
 /// On-demand batch operation: the subprocess sources (Qryx/idryx/TokenFuse) run
-/// synchronously inline, so callers invoke this off the UI thread (a Tauri async
-/// command / an FFI handle's owned runtime), never on a hot path.
+/// synchronously inline, so callers invoke this from a context that tolerates
+/// blocking (today, genaryx-api's async command handler on the web shell's
+/// tokio runtime; the removed desktop shells used a Tauri async command or an
+/// FFI handle's owned runtime), never on a hot path.
 pub async fn build_evidence_pack(
     cloud: &CloudClient,
     inputs: EvidenceInputs<'_>,

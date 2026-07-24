@@ -1,4 +1,4 @@
-//! Tauri commands for the Crypto view (docs/PHASE4.md W1): `crypto_status`
+//! Console commands for the Crypto view (docs/PHASE4.md W1): `crypto_status`
 //! plus four qryx-backed reads/actions - [`crypto_scan_ncsc`] (the PQC
 //! readiness timeline + its quantum-vulnerable findings), [`crypto_scan_cbom`]
 //! (the CycloneDX crypto-component inventory), [`crypto_scan_evidence`] (a

@@ -1,4 +1,4 @@
-//! Tauri commands for the Overview + Money views: four reads
+//! Console commands for the Overview + Money views: four reads
 //! (`money_overview`/`money_runs`/`money_incidents`/`money_savings`) and
 //! three signed mutations (`money_kill_run`/`money_set_budget`/
 //! `money_ack_incident`), plus `money_status` so the frontend can render a
@@ -550,12 +550,13 @@ pub async fn money_savings(state: &MoneyState) -> Result<SavingsDto, MoneyError>
 // ============================================================================
 // commands: signed mutations
 // ============================================================================
-// `rename_all = "snake_case"` on every mutation below: Tauri's default
-// argument case is camelCase (converted from the Rust parameter name), but
-// every other wire shape in this app (`UiEvent`, and every DTO above) is
-// snake_case, matching the core's own convention. Pinning the argument case
-// keeps the whole IPC surface consistently snake_case instead of mixing
-// conventions between args and return values.
+// `rename_all = "snake_case"` on every mutation below: a pin that predates
+// the web shell, from back when Tauri's default argument case was camelCase
+// (converted from the Rust parameter name). Every other wire shape in this
+// app (`UiEvent`, and every DTO above) is snake_case, matching the core's own
+// convention, so pinning the argument case keeps the whole command surface
+// consistently snake_case instead of mixing conventions between args and
+// return values.
 
 /// Kill a run: a break-glass operator override (Phase-2 wave 3B) - `reason`
 /// is mandatory (checked before the Cloud is ever called, see

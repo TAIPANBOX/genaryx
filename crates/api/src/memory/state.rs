@@ -1,4 +1,4 @@
-//! Memory-panel Tauri managed state: a resolved, spawned, long-lived
+//! Memory-panel console-managed state: a resolved, spawned, long-lived
 //! `EngramClient` (or an honest record of why there isn't one), behind a
 //! blocking mutex.
 //!
@@ -73,7 +73,7 @@ pub enum MemoryInner {
     Ready(MemoryClient),
 }
 
-/// Tauri-managed state wrapping [`MemoryInner`] in an async mutex, mirroring
+/// Console-managed state wrapping [`MemoryInner`] in an async mutex, mirroring
 /// every other panel's identical shape.
 pub struct MemoryState {
     pub inner: tokio::sync::Mutex<MemoryInner>,

@@ -8,8 +8,8 @@
 //! `genaryx_core::DelegationGraph`, events from `Store::events_for_agent`) has
 //! real, joined data on every plane, not a per-plane guess.
 //!
-//! Grounded exactly like `wardryx_test.rs` and the ffi crate's own idryx live
-//! test: a real bus is generated with `genaryx_core::demo::generate` (the same
+//! Grounded exactly like `wardryx_test.rs` (and the removed ffi crate's idryx
+//! live test): a real bus is generated with `genaryx_core::demo::generate` (the same
 //! campaign the rest of the stack trusts, so idryx's `tokenfuse.Load` sees the
 //! real schema, never hand-crafted JSON that could drift), idryx is built from
 //! `~/Development/idryx` (`go build`, source of truth) or the `taipan
@@ -21,8 +21,8 @@
 //! The console side (the graph + the Store) is built from the SAME demo bus via
 //! `genaryx_core`'s own ingest path (`demo::generate` -> `Store` ->
 //! `IngestService::poll_once`), then `DelegationGraph::from_store`, mirroring
-//! how the Tauri shell's `graph::agent_graph` command and the ffi
-//! `FleetHandle` build theirs at runtime.
+//! how the console's `graph::agent_graph` command (and, before the desktop
+//! shells were removed, the ffi `FleetHandle`) builds it at runtime.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -221,8 +221,9 @@ async fn try_start() -> Option<(Harness, String, PathBuf)> {
 
 /// Build the console's own bus-derived state (the Store + the delegation graph)
 /// from the SAME demo events idryx loaded, via `genaryx_core`'s ingest path -
-/// exactly how the Tauri `graph` commands and the ffi `FleetHandle` build theirs
-/// at runtime. Returns an open in-memory-file Store plus the graph over it.
+/// exactly how the console's `graph` commands (and, before the desktop shells
+/// were removed, the ffi `FleetHandle`) build it at runtime. Returns an open
+/// in-memory-file Store plus the graph over it.
 fn build_console_side(events_dir: &Path) -> (Store, DelegationGraph) {
     let db = events_dir.join("console.sqlite");
     let store = Store::open(&db).expect("open console store");

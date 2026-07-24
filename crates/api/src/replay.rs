@@ -1,4 +1,4 @@
-//! Tauri command for Run Replay (docs/PHASE3.md W4, position 5):
+//! Console command for Run Replay (docs/PHASE3.md W4, position 5):
 //! [`run_events`] returns one run's events, OLDEST-first, ready for a
 //! playback clock to scrub through client-side. Mirrors
 //! `graph::agent_events` exactly: same `AppState.events_dir` ->
