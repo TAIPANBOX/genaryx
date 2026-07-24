@@ -6,10 +6,12 @@
 //! C0 built `CopilotConfig::default()` (provider "none", the honest "no LLM
 //! configured on this box" state) over `Clients::default()` (no connector
 //! clients at all - the disabled service never calls a tool, so there was
-//! nothing to wire yet). C1 (docs/PHASE6-C1.md C1-W2) still builds
-//! `CopilotConfig::default()` - this shell has no `[copilot]` config source
-//! wired in yet, so the service itself stays disabled by default exactly
-//! like C0 - but [`bootstrap`] now resolves a REAL [`Clients`] by reusing
+//! nothing to wire yet). The shell's `[copilot]` config source is the
+//! process environment: [`config_from_env`] reads `GENARYX_COPILOT_*` (the
+//! same variable names `genaryx-copilot`'s own live demo-runner documents),
+//! and with no `GENARYX_COPILOT_PROVIDER` set the service stays disabled by
+//! default exactly like C0. C1 (docs/PHASE6-C1.md C1-W2) made [`bootstrap`]
+//! resolve a REAL [`Clients`] by reusing
 //! each existing panel's own `env::discover()` (`crate::money`/`identity`/
 //! `policy`/`crypto`/`quality`/`memory`) instead of `Clients::default()`, so
 //! the day a provider IS configured, Felyx's tools already have real
@@ -34,7 +36,7 @@
 //! one `Arc<CopilotService>` directly.
 
 use genaryx_connectors::{CloudClient, EngramClient, IdryxClient, WardryxClient};
-use genaryx_copilot::{Clients, CopilotConfig, CopilotService, TokenfuseTraces};
+use genaryx_copilot::{Clients, CopilotConfig, CopilotService, ProviderKind, TokenfuseTraces};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -76,9 +78,9 @@ impl CopilotState {
     }
 }
 
-/// Build the copilot service: [`CopilotConfig::default`] (provider "none" -
-/// this shell has no `[copilot]` config source yet, so the service stays
-/// disabled by default exactly like C0) over a REAL [`Clients`] resolved by
+/// Build the copilot service: [`config_from_env`] (provider "none" unless
+/// `GENARYX_COPILOT_PROVIDER` names one, so the service stays disabled by
+/// default exactly like C0) over a REAL [`Clients`] resolved by
 /// [`resolve_clients`] (docs/PHASE6-C1.md C1-W2) rather than C0's
 /// `Clients::default()`. Construction itself stays provably infallible for
 /// this `config` regardless of what `clients` holds (see
@@ -92,11 +94,46 @@ impl CopilotState {
 /// stays cheap (no network round trip) for every plane except Engram. Never
 /// panics.
 pub async fn bootstrap() -> CopilotInner {
-    let config = CopilotConfig::default();
+    let config = config_from_env();
     let clients = resolve_clients().await;
     match CopilotService::from_config_and_clients(&config, clients) {
         Ok(service) => CopilotInner::Ready(Arc::new(service)),
         Err(e) => CopilotInner::Failed(e.to_string()),
+    }
+}
+
+/// The shell's `[copilot]` config source: process environment, one variable
+/// per [`CopilotConfig`] field, the same names `genaryx-copilot`'s live
+/// demo-runner already documents. `GENARYX_COPILOT_PROVIDER` selects the
+/// provider (`ollama`/`lmstudio`/`openai_compat` local-first;
+/// `anthropic`/`openrouter` BYO-cloud); unset or unrecognized keeps the
+/// honest provider-"none" default. The residency gate keeps its config-file
+/// semantics untouched: a non-local `base_url` still fails construction
+/// unless `GENARYX_COPILOT_ALLOW_REMOTE=1` states the BYO-cloud opt-in
+/// explicitly, so an operator cannot leak a prompt off-box by setting only
+/// a URL. Spend/loop ceilings stay at their defaults - the config-file form
+/// remains the place for tuning those, this is deliberately the minimal
+/// provider surface.
+fn config_from_env() -> CopilotConfig {
+    let provider = match std::env::var("GENARYX_COPILOT_PROVIDER")
+        .unwrap_or_default()
+        .as_str()
+    {
+        "anthropic" => ProviderKind::Anthropic,
+        "ollama" => ProviderKind::Ollama,
+        "openrouter" => ProviderKind::OpenRouter,
+        "openai_compat" => ProviderKind::OpenAiCompat,
+        "lmstudio" => ProviderKind::LmStudio,
+        _ => return CopilotConfig::default(),
+    };
+    CopilotConfig {
+        provider,
+        base_url: std::env::var("GENARYX_COPILOT_BASE_URL").ok(),
+        model: std::env::var("GENARYX_COPILOT_MODEL").ok(),
+        api_key_ref: std::env::var("GENARYX_COPILOT_API_KEY_REF").ok(),
+        allow_non_local_endpoints: std::env::var("GENARYX_COPILOT_ALLOW_REMOTE")
+            .is_ok_and(|v| v == "1"),
+        ..CopilotConfig::default()
     }
 }
 
@@ -290,6 +327,49 @@ mod tests {
         if let Some(tf) = resolved {
             assert!(!tf.bin.as_os_str().is_empty());
             assert!(!tf.traces_dir.as_os_str().is_empty());
+        }
+    }
+
+    /// One sequential test for the whole env config source: process env is
+    /// global, so splitting these cases across #[test] fns would race under
+    /// the parallel test runner.
+    #[test]
+    fn config_from_env_reads_the_provider_surface() {
+        // SAFETY (edition-2024 env contract, same as the copilot crate's own
+        // `secret_ref_env_is_trimmed` test): no other test in this binary
+        // reads or writes GENARYX_COPILOT_*, so these mutations cannot race
+        // a concurrent getenv of the same variables.
+        unsafe {
+            // Unset (or garbage) provider: the honest disabled default,
+            // exactly the pre-config-source behavior.
+            std::env::remove_var("GENARYX_COPILOT_PROVIDER");
+            assert_eq!(config_from_env().provider, ProviderKind::None);
+            std::env::set_var("GENARYX_COPILOT_PROVIDER", "not-a-provider");
+            assert_eq!(config_from_env().provider, ProviderKind::None);
+
+            // A local provider picks up the minimal surface; the residency
+            // gate stays closed and the tuning knobs keep their defaults.
+            std::env::set_var("GENARYX_COPILOT_PROVIDER", "ollama");
+            std::env::set_var("GENARYX_COPILOT_BASE_URL", "http://127.0.0.1:11434/v1");
+            std::env::set_var("GENARYX_COPILOT_MODEL", "qwen2.5:3b");
+            std::env::remove_var("GENARYX_COPILOT_ALLOW_REMOTE");
+            let cfg = config_from_env();
+            assert_eq!(cfg.provider, ProviderKind::Ollama);
+            assert_eq!(cfg.base_url.as_deref(), Some("http://127.0.0.1:11434/v1"));
+            assert_eq!(cfg.model.as_deref(), Some("qwen2.5:3b"));
+            assert!(!cfg.allow_non_local_endpoints);
+            assert_eq!(cfg.max_usd_per_day, CopilotConfig::default().max_usd_per_day);
+
+            // The BYO-cloud opt-in is the literal "1", nothing looser.
+            std::env::set_var("GENARYX_COPILOT_ALLOW_REMOTE", "true");
+            assert!(!config_from_env().allow_non_local_endpoints);
+            std::env::set_var("GENARYX_COPILOT_ALLOW_REMOTE", "1");
+            assert!(config_from_env().allow_non_local_endpoints);
+
+            for var in ["GENARYX_COPILOT_PROVIDER", "GENARYX_COPILOT_BASE_URL",
+                        "GENARYX_COPILOT_MODEL", "GENARYX_COPILOT_ALLOW_REMOTE"] {
+                std::env::remove_var(var);
+            }
         }
     }
 }
