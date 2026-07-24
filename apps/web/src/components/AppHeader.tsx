@@ -3,7 +3,7 @@ import { usePopover } from "../lib/popover";
 import type { ConsoleRole } from "../lib/session";
 import { useSession } from "../lib/useSession";
 import type { ViewId } from "../lib/views";
-import { VIEWS } from "../lib/views";
+import { NAV_SECTIONS } from "../lib/views";
 import { PasskeySettings } from "./PasskeySettings";
 
 /** The shared TAIPANBOX/IT-RAT bolt glyph (it-rat2 topbar brand mark),
@@ -74,24 +74,26 @@ function SessionBadge() {
   if (!session?.signed_in || !session.role || !session.user) return null;
   return (
     <div
-      className="flex items-center gap-1.5"
+      className="flex flex-col gap-1.5"
       title={`Signed in as ${session.user}${session.method ? ` (${session.method} account)` : ""}`}
     >
-      <span className="badge" style={cssVar("tone", ROLE_TONE[session.role])}>
-        {session.role}
-      </span>
-      <span className="mono truncate" style={{ fontSize: 11.5, color: "var(--dim)", maxWidth: 140 }}>
-        {session.user}
-      </span>
-      {session.method && (
-        <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>
-          &middot; {session.method}
+      <div className="flex items-center gap-1.5">
+        <span className="badge" style={cssVar("tone", ROLE_TONE[session.role])}>
+          {session.role}
         </span>
-      )}
+        <span className="mono truncate" style={{ fontSize: 11.5, color: "var(--dim)", maxWidth: 118 }}>
+          {session.user}
+        </span>
+        {session.method && (
+          <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>
+            &middot; {session.method}
+          </span>
+        )}
+      </div>
       <button
         type="button"
         className="icon-btn"
-        style={{ width: "auto", padding: "0 8px", fontSize: 10.5 }}
+        style={{ width: "auto", padding: "5px 8px", fontSize: 10.5, justifyContent: "flex-start" }}
         title="Enrolled passkeys - hardware-confirm kill/budget/approval actions"
         onClick={(e) =>
           open(<PasskeySettings />, { anchor: e.currentTarget.getBoundingClientRect(), width: 320 })
@@ -104,26 +106,22 @@ function SessionBadge() {
 }
 
 /**
- * Persistent app chrome: brand mark, view nav (Overview / Money / Policy /
- * Posture / Bus Explorer), the signed-in session badge, and the theme toggle
- * - shown once regardless of which view is active, replacing the Bus
- * Explorer's former standalone header now that it is one of several views
- * instead of the whole app (see `BusStatusBar` for what stayed behind,
- * scoped to the Bus view).
+ * Persistent app chrome, a LEFT RAIL (Yurii, 2026-07-24: eighteen views no
+ * longer fit across the top): brand mark and title at the top, the view nav
+ * grouped by [`NAV_SECTIONS`] (Operate / Investigate / Assure / Set up, most
+ * used first and rare setup last), then the signed-in session badge, the
+ * Passkeys action and the theme toggle pinned to the foot. Shown once
+ * regardless of which view is active.
  *
  * `policyAlertCount` (docs/PHASE2.md Wave 3, "Actionable notifications"): a
  * small unread-count badge on the Policy nav item, owned by `AppShell.tsx`.
- * This IS the working half of the notification deep link on this desktop
- * build (see `lib/notifications.ts`'s doc comment for the grounded reason a
- * real OS notification-click callback does not fire here) - clicking Policy
- * while the badge shows a count always scrolls to and highlights the
- * relevant Approvals Inbox row (`AppShell.tsx`'s `onSelectView`).
+ * Clicking Policy while the badge shows a count always scrolls to and
+ * highlights the relevant Approvals Inbox row (`AppShell.tsx`'s
+ * `onSelectView`).
  *
  * `SessionBadge` (docs/CONSOLE-IDP.md, part 1 - IdP login + roles): the
- * web build's signed-in user, role and sign-in method, next to the theme
- * toggle. Renders nothing in the desktop shell or in any web session without
- * a role, so this header stays the one shared component both shells mount
- * unmodified.
+ * signed-in user, role and sign-in method. Renders nothing in any session
+ * without a role, so this rail stays honest when there is no console session.
  */
 export function AppHeader({
   view,
@@ -139,85 +137,113 @@ export function AppHeader({
   policyAlertCount: number;
 }) {
   return (
-    <header
-      className="flex items-center gap-3 px-4 shrink-0"
+    <nav
+      className="flex flex-col shrink-0"
+      aria-label="Views"
       style={{
-        height: 52,
-        borderBottom: "1px solid var(--line)",
+        width: 194,
+        height: "100%",
+        borderRight: "1px solid var(--line)",
         background: "color-mix(in srgb, var(--panel) 55%, transparent)",
         backdropFilter: "blur(12px) saturate(1.2)",
         WebkitBackdropFilter: "blur(12px) saturate(1.2)",
       }}
     >
-      <BrandMark />
-      <div className="flex flex-col leading-none">
-        <span style={{ fontFamily: "var(--font-d)", fontSize: 14, fontWeight: 750, color: "var(--fg)" }}>
-          Genaryx
-        </span>
-        <span
-          className="mono"
-          style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--faint)", marginTop: 3 }}
-        >
-          Control Room
-        </span>
+      <div className="flex items-center gap-2.5 px-4 shrink-0" style={{ height: 60 }}>
+        <BrandMark />
+        <div className="flex flex-col leading-none">
+          <span style={{ fontFamily: "var(--font-d)", fontSize: 14, fontWeight: 750, color: "var(--fg)" }}>
+            Genaryx
+          </span>
+          <span
+            className="mono"
+            style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--faint)", marginTop: 3 }}
+          >
+            Control Room
+          </span>
+        </div>
       </div>
 
-      <nav className="flex items-center gap-1 ml-3" aria-label="Views">
-        {VIEWS.map((item) => {
-          const active = item.id === view;
-          const alertCount = item.id === "policy" ? policyAlertCount : 0;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelectView(item.id)}
-              aria-current={active ? "page" : undefined}
-              className="mono inline-flex items-center gap-1.5"
+      <div className="flex-1 min-h-0 overflow-y-auto px-2.5 pb-2" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label} className="flex flex-col" style={{ gap: 2 }}>
+            <span
+              className="mono px-2"
               style={{
-                fontSize: 11.5,
-                padding: "6px 12px",
-                borderRadius: 8,
-                border: `1px solid ${active ? "var(--line-2)" : "transparent"}`,
-                background: active ? "var(--panel-3)" : "transparent",
-                color: active ? "var(--fg)" : "var(--dim)",
-                cursor: "pointer",
+                fontSize: 9,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "var(--faint)",
+                marginBottom: 3,
               }}
             >
-              {item.label}
-              {alertCount > 0 && (
-                <span
-                  aria-label={`${alertCount} approval alert${alertCount === 1 ? "" : "s"} awaiting review`}
+              {section.label}
+            </span>
+            {section.items.map((item) => {
+              const active = item.id === view;
+              const alertCount = item.id === "policy" ? policyAlertCount : 0;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelectView(item.id)}
+                  aria-current={active ? "page" : undefined}
+                  className="mono flex items-center"
                   style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    lineHeight: 1,
-                    padding: "2.5px 5.5px",
-                    borderRadius: 999,
-                    background: "var(--sev-medium)",
-                    color: "var(--ink)",
+                    fontSize: 12,
+                    padding: "6.5px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${active ? "var(--line-2)" : "transparent"}`,
+                    background: active ? "var(--panel-3)" : "transparent",
+                    color: active ? "var(--fg)" : "var(--dim)",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    width: "100%",
                   }}
                 >
-                  {alertCount}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </nav>
+                  <span className="flex-1">{item.label}</span>
+                  {alertCount > 0 && (
+                    <span
+                      aria-label={`${alertCount} approval alert${alertCount === 1 ? "" : "s"} awaiting review`}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        padding: "2.5px 5.5px",
+                        borderRadius: 999,
+                        background: "var(--sev-medium)",
+                        color: "var(--ink)",
+                      }}
+                    >
+                      {alertCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
 
-      <div className="flex-1" />
-
-      <SessionBadge />
-
-      <button
-        type="button"
-        className="icon-btn"
-        onClick={onToggleTheme}
-        aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      <div
+        className="flex flex-col gap-2 px-3 py-3 shrink-0"
+        style={{ borderTop: "1px solid var(--line)" }}
       >
-        {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-      </button>
-    </header>
+        <SessionBadge />
+        <button
+          type="button"
+          className="icon-btn"
+          style={{ width: "auto", padding: "5px 8px", fontSize: 10.5, justifyContent: "flex-start", gap: 8 }}
+          onClick={onToggleTheme}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        >
+          {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--dim)" }}>
+            {theme === "dark" ? "Light" : "Dark"}
+          </span>
+        </button>
+      </div>
+    </nav>
   );
 }

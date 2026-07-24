@@ -218,43 +218,45 @@ export function AppShell() {
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         policyAlertCount={unseenAlerts.length}
       />
-      {view === "overview" && (
-        <OverviewView onOpenAgent={onOpenAgent} onSelectView={onSelectView} onExplainIncident={onExplainIncident} />
-      )}
-      {view === "money" && (
-        <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} onExplainIncident={onExplainIncident} />
-      )}
-      {view === "policy" && (
-        <PolicyView
-          focusApprovalId={focusApprovalId}
-          mutedKeys={mutedKeys}
-          onToggleMuteAgent={onToggleMuteAgent}
-          onOpenAgent={onOpenAgent}
-        />
-      )}
-      {view === "identity" && <IdentityView onOpenAgent={onOpenAgent} />}
-      {view === "onboard" && <OnboardView />}
-      {view === "quality" && <QualityView onOpenAgent={onOpenAgent} />}
-      {view === "crypto" && <CryptoView />}
-      {view === "memory" && <MemoryView onOpenAgent={onOpenAgent} />}
-      {view === "drills" && <DrillsView />}
-      {view === "evidence" && <EvidenceView />}
-      {view === "remote" && <RemoteView />}
-      {view === "pocket" && <PocketView />}
-      {view === "graph" && (
-        <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
-          <DelegationGraphView onOpenAgent={onOpenAgent} fill />
-        </div>
-      )}
-      {view === "replay" && (
-        <RunReplayView key={replayRunId ?? "picker"} presetRunId={replayRunId} onOpenAgent={onOpenAgent} />
-      )}
-      {view === "posture" && <PostureView />}
-      {view === "bus" && <BusExplorer />}
-      {view === "routines" && <RoutinesView />}
-      {view === "copilot" && (
-        <CopilotView explainRequest={explainRequest} onExplainRequestHandled={onExplainRequestHandled} />
-      )}
+      <div className="main-col">
+        {view === "overview" && (
+          <OverviewView onOpenAgent={onOpenAgent} onSelectView={onSelectView} onExplainIncident={onExplainIncident} />
+        )}
+        {view === "money" && (
+          <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} onExplainIncident={onExplainIncident} />
+        )}
+        {view === "policy" && (
+          <PolicyView
+            focusApprovalId={focusApprovalId}
+            mutedKeys={mutedKeys}
+            onToggleMuteAgent={onToggleMuteAgent}
+            onOpenAgent={onOpenAgent}
+          />
+        )}
+        {view === "identity" && <IdentityView onOpenAgent={onOpenAgent} />}
+        {view === "onboard" && <OnboardView />}
+        {view === "quality" && <QualityView onOpenAgent={onOpenAgent} />}
+        {view === "crypto" && <CryptoView />}
+        {view === "memory" && <MemoryView onOpenAgent={onOpenAgent} />}
+        {view === "drills" && <DrillsView />}
+        {view === "evidence" && <EvidenceView />}
+        {view === "remote" && <RemoteView />}
+        {view === "pocket" && <PocketView />}
+        {view === "graph" && (
+          <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
+            <DelegationGraphView onOpenAgent={onOpenAgent} fill />
+          </div>
+        )}
+        {view === "replay" && (
+          <RunReplayView key={replayRunId ?? "picker"} presetRunId={replayRunId} onOpenAgent={onOpenAgent} />
+        )}
+        {view === "posture" && <PostureView />}
+        {view === "bus" && <BusExplorer />}
+        {view === "routines" && <RoutinesView />}
+        {view === "copilot" && (
+          <CopilotView explainRequest={explainRequest} onExplainRequestHandled={onExplainRequestHandled} />
+        )}
+      </div>
 
       {focusedAgentId && (
         <Agent360
