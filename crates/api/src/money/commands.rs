@@ -424,17 +424,21 @@ fn finish_mutation<T>(
         Err(e) => (status_of(e), format!("error: {e}"), String::new()),
     };
 
+    // The web shell's per-action WebAuthn ceremony when one confirmed this
+    // request (docs/CONSOLE-IDP.md B3/2), else this client's own
+    // transport-signing fields - same override pattern as the operator below.
+    let (sig_alg, sig_fpr) = crate::console_actor::signature_or("es256", client.sig_fpr);
     let rec = CommandRecord {
         // The web shell's signed-in principal when set (docs/CONSOLE-IDP.md),
-        // else this client's own default (the desktop shell's OS user).
+        // else this client's own default (the OS user).
         operator: crate::console_actor::operator_or(&client.operator),
         env: "local".to_string(),
         action: action.to_string(),
         target: target.to_string(),
         params,
         decision: decision.to_string(),
-        sig_alg: "es256".to_string(),
-        sig_fpr: client.sig_fpr.to_string(),
+        sig_alg,
+        sig_fpr,
         http_status,
         verify_result: verify_result.clone(),
     };

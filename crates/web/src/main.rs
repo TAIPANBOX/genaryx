@@ -610,17 +610,19 @@ fn webauthn_gate(
     name: &str,
     args: &Value,
     headers: &HeaderMap,
-) -> Result<(), Response> {
+) -> Result<Option<genaryx_api::console_actor::ConsoleSignature>, Response> {
     let store = match ctx.passkeys.as_ref() {
         Ok(s) => s,
         Err(e) => return Err(store_unavailable(e)),
     };
     if !store.has_any(&session.user) {
+        // No override: the plane's own transport-signing fields stay, which
+        // on this shell honestly read "software-signed".
         tracing::info!(
             user = %session.user, command = %name,
             "webauthn: no passkey enrolled; software-signed fallback"
         );
-        return Ok(());
+        return Ok(None);
     }
     let Some(header) = headers.get("x-genaryx-webauthn") else {
         return Err((
@@ -708,7 +710,10 @@ fn webauthn_gate(
         user_verified = verified.user_verified,
         "webauthn assertion verified"
     );
-    Ok(())
+    Ok(Some(genaryx_api::console_actor::ConsoleSignature {
+        alg: "webauthn-es256".to_string(),
+        fpr: record.credential_id.clone(),
+    }))
 }
 
 /// The canonical serialization both `action/start` and the gate hash:
@@ -780,18 +785,28 @@ async fn command(
     // Per-action WebAuthn ceremony (docs/CONSOLE-IDP.md, B3/2): the
     // privileged few need a fresh hardware assertion on top of the role,
     // AFTER the role gate and BEFORE dispatch. Signing in gets you the
-    // console; it does not get you the kill.
-    if SENSITIVE_COMMANDS.contains(&name.as_str())
-        && let Err(refusal) = webauthn_gate(&ctx, &session, &name, &args, &headers)
-    {
-        return refusal;
-    }
+    // console; it does not get you the kill. A verified ceremony rides into
+    // the command journal as sig_alg/sig_fpr (the assertion's algorithm +
+    // credential id); the no-passkey trial fallback keeps the plane's own
+    // honest "software-signed" fields.
+    let webauthn_signature = if SENSITIVE_COMMANDS.contains(&name.as_str()) {
+        match webauthn_gate(&ctx, &session, &name, &args, &headers) {
+            Ok(sig) => sig,
+            Err(refusal) => return refusal,
+        }
+    } else {
+        None
+    };
     // Attribute any journaled mutation to the signed-in human, not the OS
-    // account running this process (genaryx_api::console_actor). The desktop
-    // shell never sets this, so its behavior is unchanged.
+    // account running this process, and carry the WebAuthn ceremony's
+    // signature fields alongside (both genaryx_api::console_actor task-locals;
+    // a None signature is simply no override).
     let result = genaryx_api::console_actor::with_actor(
         Some(session.user.clone()),
-        dispatch::dispatch(&ctx, &name, args),
+        genaryx_api::console_actor::with_signature(
+            webauthn_signature,
+            dispatch::dispatch(&ctx, &name, args),
+        ),
     )
     .await;
     match result {
