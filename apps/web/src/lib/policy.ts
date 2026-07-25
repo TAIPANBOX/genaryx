@@ -1,6 +1,14 @@
 import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
 import { invokeWithCeremony } from "./webauthn";
-import type { Approval, Decision, DecideOutcome, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
+import type {
+  Approval,
+  Decision,
+  DecideOutcome,
+  PolicyError,
+  PolicyRecord,
+  PolicyStatus,
+  WardryxStatus,
+} from "../policyTypes";
 
 /** Thrown by every fetcher/mutator below when there is no backend to
  * talk to (a plain `vite build`/browser preview) - mirrors `lib/money.ts`'s
@@ -64,6 +72,15 @@ export async function fetchPolicyStatus(): Promise<PolicyStatus> {
 
 export const fetchApprovals = (): Promise<Approval[]> => call<Approval[]>("policy_list_approvals");
 export const fetchPolicies = (): Promise<PolicyRecord[]> => call<PolicyRecord[]>("policy_list_policies");
+
+/** What the policy plane is ACTUALLY enforcing, from Wardryx's `/v1/status`.
+ *
+ * Not a variant of {@link fetchPolicies}. That lists the STORE's
+ * operator-managed policies, which is empty on every deployment whose rules
+ * come from a `-policy` file - while all of those rules are enforced. Judging
+ * enforcement by that list reports a guarded fleet as wide open. */
+export const fetchEnforcementStatus = (): Promise<WardryxStatus> =>
+  call<WardryxStatus>("policy_enforcement_status");
 
 // snake_case argument keys on purpose, matching the Rust side's own
 // snake_case field names, and `lib/money.ts`'s identical convention for its

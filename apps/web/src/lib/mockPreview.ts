@@ -2646,6 +2646,16 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
 
     case "policy_list_approvals": return r(mockApprovals());
     case "policy_list_policies": return r(mockPolicies());
+    // The preview's rules are file-loaded, exactly like a real seeded box: they
+    // are enforced and do NOT appear in policy_list_policies. Reporting them
+    // here is what keeps the posture panel from claiming a fail-open that the
+    // rest of this preview contradicts.
+    case "policy_enforcement_status": return r({
+      policy_version: "3eba33b697e4",
+      base_policies: mockPolicies().length,
+      store_policies: 0,
+      effective_policies: mockPolicies().length,
+    });
     case "policy_decide_approval": {
       const id = String(args?.id ?? "");
       const decision: "grant" | "deny" = args?.decision === "grant" ? "grant" : "deny";

@@ -6,7 +6,7 @@ import type { CryptoStatus } from "../cryptoTypes";
 import type { DrillsStatus } from "../drillsTypes";
 import type { MemoryStatus } from "../memoryTypes";
 import type { MoneyStatus, Run } from "../moneyTypes";
-import type { Approval, PolicyRecord, PolicyStatus } from "../policyTypes";
+import type { Approval, PolicyRecord, PolicyStatus, WardryxStatus } from "../policyTypes";
 import type { QualityStatus } from "../qualityTypes";
 import type { RemoteStatus } from "../remoteTypes";
 import type { Severity } from "../types";
@@ -31,7 +31,9 @@ import type { Severity } from "../types";
  * new backend command or connector change:
  *
  * 1. devkey in use - `money_status`/`policy_status`'s own `org_domain`.
- * 2. Governance fail-open - `policy_list_policies()` returned zero policies.
+ * 2. Governance fail-open - the PDP is evaluating zero rules (from
+ *    `policy_enforcement_status`, NOT the policy list: file-loaded rules are
+ *    enforced without ever appearing there).
  * 3. Schema mix v0.1 + v0.2 - both envelope versions observed on the bus.
  * 4. Bus stale - no bus event observed recently, or the feed is empty.
  *
@@ -150,6 +152,10 @@ export interface PostureInput {
    * ever attempted once `policyStatus.state === "ready"`, mirroring
    * `PolicyView.tsx`'s own `ready` gate). */
   policies: PolicyRecord[] | null;
+  /** `null` until `policy_enforcement_status` has resolved. This, not
+   * {@link policies}, is what says whether anything is enforced: file-loaded
+   * rules never appear in the policy list. */
+  enforcement: WardryxStatus | null;
   /** Whether the initial bus read (`fetchRecentEvents`, the same call
    * `DecisionStream.tsx`/`BusExplorer.tsx` make) has resolved - lets the
    * bus-derived zonds report `unknown` while still loading rather than a
@@ -307,17 +313,26 @@ function devkeyFinding(input: PostureInput): PostureFinding {
 }
 
 function governanceFinding(input: PostureInput): PostureFinding {
+  // Judged on what the PDP actually evaluates against, NOT on the policy list.
+  // `policy_list_policies` returns the store's operator-managed rules only, so
+  // a stack whose policies come from a `-policy` file shows an empty list while
+  // enforcing every one of them. This check used to read that list and told
+  // operators their fleet was unguarded while shell_exec was being denied by
+  // name - the single most corrosive thing a posture panel can do, because an
+  // operator who disproves one warning stops reading the rest.
   let state: FindingState = "unknown";
-  if (input.policyStatus?.state === "ready" && input.policies !== null) {
-    state = input.policies.length === 0 ? "triggered" : "ok";
+  if (input.policyStatus?.state === "ready" && input.enforcement !== null) {
+    state = input.enforcement.effective_policies === 0 ? "triggered" : "ok";
   }
   return {
     id: "governance_fail_open",
     title: "Governance fail-open: no policies",
     severity: "high",
     state,
-    whyItMatters: "Wardryx is reachable but list_policies() is empty, so every agent action is currently allowed.",
-    howToFix: "PUT policies onto Wardryx, or bring the stack up with taipan up --with wardryx and a seeded -policy.",
+    whyItMatters:
+      "Wardryx is reachable and evaluating zero rules, so every agent action is currently allowed.",
+    howToFix:
+      "Seed the plane with a -policy file, or PUT policies onto Wardryx through the console.",
   };
 }
 

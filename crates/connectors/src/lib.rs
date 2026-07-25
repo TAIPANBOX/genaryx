@@ -162,7 +162,7 @@ pub use verdryx::{
 };
 pub use wardryx::{
     Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, DecideRequest,
-    DecideResponse, Policy, PolicyRecord, WardryxClient, WardryxError,
+    DecideResponse, Policy, PolicyRecord, WardryxClient, WardryxError, WardryxStatus,
 };
 pub use wg::{WgConfig, WgError, WgInterfaceAddr, WgKeypair, WgPeer, WgTunnel};
 pub use wg_uapi::{

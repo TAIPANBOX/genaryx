@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import type { CopilotStatus } from "../copilotTypes";
 import type { IdentityStatus, IdryxAlert, IdryxIdentity } from "../identityTypes";
 import type { MoneyStatus, Run } from "../moneyTypes";
-import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
+import type { Approval, PolicyError, PolicyRecord, PolicyStatus, WardryxStatus } from "../policyTypes";
 import type { UiEvent } from "../types";
 import { fetchCopilotStatus } from "./copilot";
 import { fetchCredentialsKeys, type GatewayKeysReport } from "./credentials";
 import { fetchAlerts, fetchIdentities } from "./identity";
 import { fetchRuns } from "./money";
-import { fetchApprovals, fetchPolicies } from "./policy";
+import { fetchApprovals, fetchEnforcementStatus, fetchPolicies } from "./policy";
 import {
   computeConnectionHealthFindings,
   computeIdentityPostureFindings,
@@ -116,6 +116,9 @@ export function usePostureData(): PostureData {
   }, []);
 
   const [policies, setPolicies] = useState<PolicyRecord[] | null>(null);
+  // Separate from `policies` on purpose: this is the enforcement truth
+  // (file-loaded rules included), while `policies` is the editable store list.
+  const [enforcement, setEnforcement] = useState<WardryxStatus | null>(null);
   const [policiesError, setPoliciesError] = useState<PolicyError | null>(null);
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
 
@@ -175,6 +178,17 @@ export function usePostureData(): PostureData {
         })
         .catch((err: unknown) => {
           if (!cancelled) setPoliciesError(err as PolicyError);
+        });
+      // Its own request, deliberately not chained onto the one above: the
+      // governance finding depends on THIS value, and a failure to list the
+      // editable policies must not decide whether enforcement is reported.
+      fetchEnforcementStatus()
+        .then((e) => {
+          if (!cancelled) setEnforcement(e);
+        })
+        .catch(() => {
+          // Leave as-is (or null on the first attempt), so the finding stays
+          // "unknown" rather than fabricating a fail-open.
         });
     };
     load();
@@ -328,6 +342,7 @@ export function usePostureData(): PostureData {
     moneyStatus,
     policyStatus,
     policies,
+    enforcement,
     busLoaded,
     busEventCount,
     lastEventAtMs,

@@ -337,6 +337,18 @@ impl WardryxClient {
             .await
     }
 
+    /// `GET /v1/status` - what the PDP actually evaluates against.
+    ///
+    /// Needed because [`Self::list_policies`] answers a narrower question than
+    /// its name suggests: it lists the STORE's operator-managed policies only,
+    /// so a deployment whose rules come from a `-policy` file sees an empty
+    /// list there while every one of those rules is enforced on `/v1/decide`.
+    /// Reading that list to decide whether anything is enforced reports an
+    /// enforcing plane as wide open.
+    pub async fn status(&self) -> Result<WardryxStatus, WardryxError> {
+        self.get_json("/v1/status").await
+    }
+
     /// `GET /v1/approvals` - every approval belonging to the caller's org
     /// (a bare JSON array; `handleListApprovals`, `api.go:389-417`),
     /// sorted by `requested_at` ascending.
@@ -495,6 +507,22 @@ pub struct DecideRequest {
     pub attestation_method: String,
     #[serde(default, skip_serializing_if = "is_default")]
     pub approval_token: String,
+}
+
+/// `GET /v1/status`'s body: how many rules are being enforced and where they
+/// came from. `effective_policies` is the only number that answers "is
+/// anything enforced at all"; zero there, and only there, means every request
+/// is allowed.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct WardryxStatus {
+    pub policy_version: String,
+    /// Loaded from the `-policy` file at startup. Never listed by
+    /// `/v1/policies` and not editable through the API.
+    pub base_policies: usize,
+    /// Operator-managed rules in the store, layered on top of the base.
+    pub store_policies: usize,
+    /// What `/v1/decide` evaluates against.
+    pub effective_policies: usize,
 }
 
 /// `POST /v1/decide` response body. Exact shape of `decideResponseDTO`

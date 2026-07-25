@@ -92,3 +92,17 @@ export interface DecideOutcome {
 /** Mirrors `policy::commands::DecisionDto` (`#[serde(rename_all = "snake_case")]`) -
  * the operator's verdict, sent as the `decision` argument to `policy_decide_approval`. */
 export type Decision = "grant" | "deny";
+
+/** Mirrors `genaryx_connectors::WardryxStatus` (`GET /v1/status`): what the PDP
+ * actually evaluates against, and where those rules came from.
+ *
+ * `effective_policies` is the only field that answers "is anything enforced at
+ * all". `base_policies` are file-loaded rules that never appear in
+ * `policy_list_policies`, which is why judging enforcement by that list reports
+ * an enforcing plane as wide open. */
+export interface WardryxStatus {
+  policy_version: string;
+  base_policies: number;
+  store_policies: number;
+  effective_policies: number;
+}

@@ -673,6 +673,9 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "policy_list_policies" => Ok(reply(
             genaryx_api::policy::commands::policy_list_policies(&ctx.policy).await,
         )),
+        "policy_enforcement_status" => Ok(reply(
+            genaryx_api::policy::commands::policy_enforcement_status(&ctx.policy).await,
+        )),
         "policy_status" => Ok(reply(
             genaryx_api::policy::commands::policy_status(&ctx.policy).await,
         )),

@@ -480,6 +480,24 @@ pub async fn policy_list_policies(
     Ok(policies.iter().map(PolicyRecordDto::from).collect())
 }
 
+/// What the policy plane is ACTUALLY enforcing, from Wardryx's own
+/// `/v1/status`.
+///
+/// This is not a nicer [`policy_list_policies`]. That command lists the
+/// STORE's operator-managed policies, which is an empty list on every
+/// deployment whose rules come from a `-policy` file - while all of those
+/// rules are being enforced on `/v1/decide`. A posture check reading the list
+/// concludes the fleet is unguarded and says so, which is worse than saying
+/// nothing: an operator who verifies that claim once stops believing the rest
+/// of the panel. `effective_policies` is the number that answers the question
+/// the check is actually asking.
+pub async fn policy_enforcement_status(
+    state: &PolicyState,
+) -> Result<genaryx_connectors::WardryxStatus, PolicyError> {
+    let client = ready_client(&state).await?;
+    client.client.status().await.map_err(PolicyError::from)
+}
+
 // ============================================================================
 // commands: the one privileged mutation
 // ============================================================================
