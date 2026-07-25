@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { describeRemoteError, setRemoteEnvironment } from "../lib/remote";
+import { useSession } from "../lib/useSession";
 import { blankRemoteEnvironment } from "../remoteTypes";
 import type { RemoteEnvironment, RemoteError, RemoteStatus } from "../remoteTypes";
 
@@ -59,6 +60,7 @@ export function RemoteEnvironmentForm({
   defaultWireguardGoBin: string | null;
   onSaved: (status: RemoteStatus) => void;
 }) {
+  const session = useSession();
   const [form, setForm] = useState<RemoteEnvironment>(() => environment ?? blankRemoteEnvironment());
   const [allowedIpsText, setAllowedIpsText] = useState(() => (environment?.wg_allowed_ips ?? []).join(", "));
   const [saving, setSaving] = useState(false);
@@ -281,7 +283,7 @@ export function RemoteEnvironmentForm({
 
       {error && (
         <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel)", color: "var(--sev-high)" }}>
-          {describeRemoteError(error)}
+          {describeRemoteError(error, session?.role)}
         </div>
       )}
     </div>

@@ -59,6 +59,7 @@
 use super::state::{
     RemoteClient, RemoteEnvironmentConfig, RemoteInner, RemoteState, TailSession, TunnelState,
 };
+use super::wg_operator::{self, RemoteWgOperatorConfigDto};
 use genaryx_connectors::{
     CloudCliError, CloudListOptions, CloudProvider, CloudServer, HetznerClient, HetznerError,
     HetznerServer, SshClient, SshError, SshTarget, WgConfig, WgError, WgInterfaceAddr, WgKeypair,
@@ -250,6 +251,15 @@ pub enum RemoteError {
     /// guessing a path (docs/PHASE4.md W4: "absent -> Connect fails
     /// honestly").
     NoWireguardGoBinary,
+    /// `remote_operator_wg_config`'s own honest "cannot even attempt this"
+    /// state: the box's own kernel WireGuard server (`iface`) is not up, so
+    /// there is no live server key/port to hand a fresh operator peer - see
+    /// `wg_operator`'s module doc. A normal outcome on a box where WireGuard
+    /// has not been brought up yet, never a panic.
+    WgServerNotConfigured {
+        iface: String,
+        message: String,
+    },
     Wg {
         message: String,
     },
@@ -259,9 +269,9 @@ pub enum RemoteError {
     Hetzner {
         message: String,
     },
-    /// A cloud-inventory CLI failure (`aws`/`gcloud`/`az` missing, not
-    /// authenticated, a non-zero exit, or unparseable JSON) - read-only, so it
-    /// never reflects a mutation.
+    /// A cloud-inventory CLI failure (`aws`/`gcloud`/`az`/`ibmcloud` missing,
+    /// not authenticated, a non-zero exit, or unparseable JSON) - read-only,
+    /// so it never reflects a mutation.
     Cloud {
         message: String,
     },
@@ -300,6 +310,17 @@ impl From<CloudCliError> for RemoteError {
     fn from(e: CloudCliError) -> Self {
         RemoteError::Cloud {
             message: e.to_string(),
+        }
+    }
+}
+
+impl From<wg_operator::WgOperatorError> for RemoteError {
+    fn from(e: wg_operator::WgOperatorError) -> Self {
+        match e {
+            wg_operator::WgOperatorError::ServerNotConfigured { iface, message } => {
+                RemoteError::WgServerNotConfigured { iface, message }
+            }
+            wg_operator::WgOperatorError::Exec { message } => RemoteError::Wg { message },
         }
     }
 }
@@ -684,13 +705,14 @@ pub async fn remote_hetzner_list(
         .map_err(RemoteError::from)
 }
 
-/// List cloud VMs for one provider (`aws` | `gcp` | `azure`) via that
-/// provider's OFFICIAL CLI, STRICTLY READ-ONLY: the connector only ever runs
-/// the provider's describe/list command, never a create/modify/delete. The
-/// console holds none of these providers' credentials - it shells out to the
-/// operator's own already-authenticated CLI (`aws`/`gcloud`/`az`), so an absent
-/// or unauthenticated CLI surfaces honestly as [`RemoteError::Cloud`], never a
-/// fabricated result. An unknown provider is [`RemoteError::Invalid`].
+/// List cloud VMs for one provider (`aws` | `gcp` | `azure` | `ibmcloud`) via
+/// that provider's OFFICIAL CLI, STRICTLY READ-ONLY: the connector only ever
+/// runs the provider's describe/list command, never a create/modify/delete.
+/// The console holds none of these providers' credentials - it shells out to
+/// the operator's own already-authenticated CLI (`aws`/`gcloud`/`az`/
+/// `ibmcloud`), so an absent or unauthenticated CLI surfaces honestly as
+/// [`RemoteError::Cloud`], never a fabricated result. An unknown provider is
+/// [`RemoteError::Invalid`].
 pub async fn remote_cloud_list(
     provider: String,
     options: Option<CloudListOptions>,
@@ -789,6 +811,20 @@ pub async fn remote_wg_disconnect(state: &RemoteState) -> Result<RemoteStatusDto
     .await
     .map_err(|e| join_failed("disconnect", e))??;
     Ok(build_status(&client).await)
+}
+
+/// Mint the signed-in operator a fresh WireGuard peer against THIS box's own
+/// kernel WireGuard server, so their laptop or phone can reach the console
+/// over the tunnel instead of SSH. A thin wrapper: all the real work (and
+/// the full rationale for why this is a DIFFERENT WireGuard direction from
+/// [`remote_wg_connect`] just above, and why it needs no managed state at
+/// all) lives in [`wg_operator`] - mirrors [`remote_hetzner_list`]'s
+/// identical "stateless connector" shape, hence no `&RemoteState` argument
+/// here either.
+pub async fn remote_operator_wg_config() -> Result<RemoteWgOperatorConfigDto, RemoteError> {
+    wg_operator::operator_wg_config()
+        .await
+        .map_err(RemoteError::from)
 }
 
 /// A reachability + host-key-pin + auth probe (docs/PHASE4.md W4 position 4).

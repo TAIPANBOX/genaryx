@@ -1,4 +1,4 @@
-import { hasBackend, invokeBackend } from "./transport";
+import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
 import type {
   CloudListOptions,
   CloudProviderId,
@@ -8,6 +8,7 @@ import type {
   RemoteError,
   RemoteFile,
   RemoteStatus,
+  RemoteWgOperatorConfig,
 } from "../remoteTypes";
 
 /** Thrown by every mutator below when there is no backend to talk to -
@@ -33,8 +34,17 @@ const REMOTE_UNAVAILABLE: RemoteStatus = {
 /** Normalize whatever `invokeBackend()` rejected with into a `RemoteError`. genaryx-web
  * passes a command's `Err` value through as the structured object it was
  * serialized from, so this is normally already a `RemoteError` in disguise;
- * the fallback branch only matters for a transport-level failure. */
+ * the fallback branch only matters for a transport-level failure.
+ *
+ * The role-gate check runs FIRST, exactly as `lib/money.ts`'s `toMoneyError`
+ * and `lib/policy.ts`'s `toPolicyError` do: `genaryx-web`'s command chokepoint
+ * refuses an under-privileged operator with a raw `403 {"error": "role <x>
+ * required"}` that carries no `kind`, so without this it fell through to the
+ * `internal` branch and `String({error: ...})` rendered the literal
+ * "[object Object]" instead of an honest "you need the admin role". */
 function toRemoteError(err: unknown): RemoteError {
+  const role = requiredRoleFromCommandError(err);
+  if (role) return { kind: "role_required", role };
   if (err && typeof err === "object" && "kind" in err) {
     return err as RemoteError;
   }
@@ -116,9 +126,43 @@ export const startRemoteTail = (path: string, fromOffset: number): Promise<Remot
 /** Stop the in-flight remote tail, if any (always safe to call). */
 export const stopRemoteTail = (): Promise<RemoteStatus> => call<RemoteStatus>("remote_ssh_tail_stop");
 
+/** Mint the signed-in operator a fresh WireGuard peer against THIS box's own
+ * kernel WireGuard server (a different direction from `connectTunnel` above,
+ * which dials the console OUT to a remote box - see
+ * `genaryx_api::remote::wg_operator`'s module doc). Side-effect-honest: this
+ * really adds a peer to the live interface, it is not a preview. */
+export const issueOperatorWgConfig = (): Promise<RemoteWgOperatorConfig> =>
+  call<RemoteWgOperatorConfig>("remote_operator_wg_config");
+
+/** Trigger a browser download of an issued operator WireGuard client `.conf`
+ * via a Blob + a temporary `<a download>` - mirrors `lib/evidence.ts`'s
+ * `downloadEvidencePack`, simplified for plain text: `conf` is already the
+ * file's own text, so there is no base64 payload to decode first. */
+export function downloadWgOperatorConfig(result: RemoteWgOperatorConfig, filename: string): void {
+  const blob = new Blob([result.conf], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /** Human-readable text for any `RemoteError` - used for the plain error
- * banner, mirrors every sibling panel's `describe*Error`. */
-export function describeRemoteError(err: RemoteError): string {
+ * banner, mirrors every sibling panel's `describe*Error`.
+ *
+ * `currentRole` is the signed-in operator's OWN role (from `useSession()`),
+ * threaded in by callers that know it so a `role_required` refusal can say who
+ * you are, not just what was needed - optional, so every OTHER existing call
+ * site keeps compiling unchanged and still gets an honest, just less complete,
+ * message (mirrors `lib/money.ts`'s `describeMoneyError` exactly). */
+export function describeRemoteError(err: RemoteError, currentRole?: ConsoleRole | null): string {
   switch (err.kind) {
     case "bootstrapping":
       return "Still resolving the Remote panel.";
@@ -128,6 +172,8 @@ export function describeRemoteError(err: RemoteError): string {
       return err.message;
     case "no_wireguard_go_binary":
       return "No wireguard-go binary resolved - set its path in the environment form.";
+    case "wg_server_not_configured":
+      return err.message;
     case "wg":
       return err.message;
     case "ssh":
@@ -138,5 +184,9 @@ export function describeRemoteError(err: RemoteError): string {
       return err.message;
     case "internal":
       return err.message;
+    case "role_required": {
+      const need = `This action needs the ${err.role} role.`;
+      return currentRole ? `${need} You are signed in as ${currentRole}.` : need;
+    }
   }
 }

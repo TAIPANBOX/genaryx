@@ -1,0 +1,176 @@
+import { useCallback, useState } from "react";
+import { cssVar } from "../lib/cssVars";
+import { PopoverHeader } from "../lib/popover";
+import { describeRemoteError, downloadWgOperatorConfig, issueOperatorWgConfig } from "../lib/remote";
+import { useSession } from "../lib/useSession";
+import type { RemoteError, RemoteWgOperatorConfig } from "../remoteTypes";
+
+/** A filesystem-safe slug for the downloaded `.conf`'s filename, from the
+ * signed-in operator's own session username - falls back to "operator" when
+ * there is no session yet (the mock preview has none, `lib/useSession.ts`'s
+ * own doc comment) or the username has no safe characters at all. */
+function safeFileSlug(name: string | null | undefined): string {
+  const slug = (name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "operator";
+}
+
+/**
+ * "Connect this machine": issue the signed-in operator a fresh WireGuard
+ * peer against THIS box's own kernel WireGuard server, so their laptop or
+ * phone can reach the console over the tunnel instead of SSH - the OPPOSITE
+ * direction from `RemoteTunnelPanel`'s Connect/Disconnect, which dials the
+ * console itself OUT to a remote box (see `genaryx_api::remote::wg_operator`'s
+ * module doc for the full rationale).
+ *
+ * Content-only, no title of its own, so it drops unchanged into `RemoteView`'s
+ * own `SectionHeader` (the must-have placement) and into a popover window's
+ * `PopoverHeader` via [`RemoteWgOperatorPopoverCard`] below (the post-login
+ * nice-to-have, opened from `AppHeader`'s session area, matching how
+ * `PasskeySettings` opens as a popover window rather than living inline in
+ * the rail).
+ *
+ * Side-effect-honest: "Issue WireGuard config" really adds a peer to the box's
+ * live interface, it is not a preview - matches
+ * `genaryx_api::remote::wg_operator::operator_wg_config`'s own contract.
+ * Never renders the client's private key as plain page text: it only ever
+ * leaves this component inside the QR image and the downloaded `.conf`,
+ * both of which the operator explicitly asked for.
+ */
+export function RemoteWgOperatorCard() {
+  const session = useSession();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<RemoteError | null>(null);
+  const [result, setResult] = useState<RemoteWgOperatorConfig | null>(null);
+
+  const onIssue = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const config = await issueOperatorWgConfig();
+      setResult(config);
+    } catch (err) {
+      setError(err as RemoteError);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy]);
+
+  const onDownload = useCallback(() => {
+    if (!result) return;
+    downloadWgOperatorConfig(result, `genaryx-${safeFileSlug(session?.user)}.conf`);
+  }, [result, session?.user]);
+
+  return (
+    <div className="panel px-4 py-3 flex flex-col gap-2.5" style={{ background: "var(--panel-2)" }}>
+      <span className="text-[11.5px]" style={{ color: "var(--dim)", lineHeight: 1.5, maxWidth: 640 }}>
+        This connects your own laptop or phone to this box over WireGuard, so you can reach the console through the
+        tunnel instead of SSH. Import the config into the official WireGuard app, or scan the QR, then open the
+        console at the tunnel URL below.
+      </span>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          className="icon-btn"
+          style={{ width: "auto", padding: "0 14px", fontSize: 11 }}
+          onClick={() => void onIssue()}
+          disabled={busy}
+        >
+          {busy ? "Issuing..." : "Issue WireGuard config"}
+        </button>
+        {result && (
+          <span className="chip" style={cssVar("dot", "var(--sev-low)")}>
+            <span className="dot" aria-hidden="true" />
+            issued at {result.client_ip}
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div
+          className="panel px-3 py-2 mono text-[11.5px]"
+          style={{ background: "var(--panel)", color: "var(--sev-high)" }}
+        >
+          {describeRemoteError(error, session?.role)}
+        </div>
+      )}
+
+      {result && (
+        <div className="flex items-start gap-4 flex-wrap pt-1">
+          {result.qr_png_base64 ? (
+            <img
+              src={`data:image/png;base64,${result.qr_png_base64}`}
+              alt="WireGuard config QR code"
+              width={220}
+              height={220}
+              style={{ borderRadius: 8, border: "1px solid var(--line-2)", background: "#fff" }}
+            />
+          ) : (
+            <div
+              className="flex items-center justify-center mono text-[10.5px] text-center"
+              style={{
+                width: 220,
+                height: 220,
+                borderRadius: 8,
+                border: "1px dashed var(--line-2)",
+                color: "var(--faint)",
+                padding: 12,
+              }}
+            >
+              no QR available in this preview
+            </div>
+          )}
+          <div className="flex flex-col gap-2.5" style={{ minWidth: 220 }}>
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 14px", fontSize: 11, alignSelf: "flex-start" }}
+              onClick={onDownload}
+            >
+              Download WireGuard config
+            </button>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                tunnel address
+              </span>
+              <code className="mono text-[11.5px]" style={{ color: "var(--fg)" }}>
+                {result.client_ip}
+              </code>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                console over the tunnel, once connected
+              </span>
+              <code className="mono text-[11.5px]" style={{ color: "var(--fg)" }}>
+                {result.console_tunnel_url}
+              </code>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * [`RemoteWgOperatorCard`], wrapped with its own `PopoverHeader` - opened
+ * from `AppHeader`'s session area (`usePopover`), matching how
+ * `PasskeySettings` opens as a popover window rather than living inline in
+ * the rail (the post-login nice-to-have placement; the Remote-view card
+ * above is the must-have one).
+ */
+export function RemoteWgOperatorPopoverCard() {
+  return (
+    <div className="flex flex-col">
+      <PopoverHeader kicker="Session" title="Connect this machine" />
+      <div style={{ padding: "0 16px 16px" }}>
+        <RemoteWgOperatorCard />
+      </div>
+    </div>
+  );
+}

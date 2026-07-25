@@ -1,10 +1,11 @@
 //! Multi-cloud VM inventory: a STRICTLY READ-ONLY connector over each cloud
-//! provider's OWN OFFICIAL CLI (`aws`, `gcloud`, `az`) - the AWS/GCP/Azure
-//! extension of decision D11's "Hetzner is read-only, v1" (docs/PHASE4.md §4)
-//! to the rest of the multi-cloud inventory. Mirrors [`crate::HetznerClient`]'s
-//! read-only guarantee: there is deliberately no create/start/stop/resize/
-//! delete method on this module at all, by construction, so it cannot mutate
-//! cloud infrastructure through it - only ever list what already exists.
+//! provider's OWN OFFICIAL CLI (`aws`, `gcloud`, `az`, `ibmcloud`) - the
+//! AWS/GCP/Azure/IBM extension of decision D11's "Hetzner is read-only, v1"
+//! (docs/PHASE4.md §4) to the rest of the multi-cloud inventory. Mirrors
+//! [`crate::HetznerClient`]'s read-only guarantee: there is deliberately no
+//! create/start/stop/resize/delete method on this module at all, by
+//! construction, so it cannot mutate cloud infrastructure through it - only
+//! ever list what already exists.
 //!
 //! ## Why shell the official CLI, not each provider's REST API
 //!
@@ -17,10 +18,11 @@
 //! - AWS: `aws ec2 describe-instances --output json`
 //! - GCP: `gcloud compute instances list --format=json`
 //! - Azure: `az vm list -d --output json`
+//! - IBM: `ibmcloud is instances --output json` (VPC virtual server instances)
 //!
-//! None of these three commands can create, start, stop, resize, or delete
+//! None of these four commands can create, start, stop, resize, or delete
 //! anything; each is the provider's own read verb. This connector adds only
-//! scoping flags (region/project/subscription/profile) on top.
+//! scoping flags (region/project/subscription/profile/resource_group) on top.
 //!
 //! ## Auth is the CLI's problem, not ours
 //!
@@ -66,6 +68,7 @@ pub enum CloudProvider {
     Aws,
     Gcp,
     Azure,
+    Ibm,
 }
 
 impl CloudProvider {
@@ -76,18 +79,21 @@ impl CloudProvider {
             CloudProvider::Aws => "aws",
             CloudProvider::Gcp => "gcp",
             CloudProvider::Azure => "azure",
+            CloudProvider::Ibm => "ibmcloud",
         }
     }
 
     /// Parse a provider name, case-insensitively (`"AWS"`, `"Aws"`, `"aws"`
     /// all match). `None` for anything else - callers never default a bad
     /// string into a provider, mirroring [`crate::RelayDeviceKind::parse`]'s
-    /// contract exactly.
+    /// contract exactly. IBM accepts both its canonical wire spelling
+    /// (`"ibmcloud"`, matching [`Self::as_str`]) and the shorter `"ibm"` alias.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.to_ascii_lowercase().as_str() {
             "aws" => Some(CloudProvider::Aws),
             "gcp" => Some(CloudProvider::Gcp),
             "azure" => Some(CloudProvider::Azure),
+            "ibmcloud" | "ibm" => Some(CloudProvider::Ibm),
             _ => None,
         }
     }
@@ -98,6 +104,7 @@ impl CloudProvider {
             CloudProvider::Aws => "aws",
             CloudProvider::Gcp => "gcloud",
             CloudProvider::Azure => "az",
+            CloudProvider::Ibm => "ibmcloud",
         }
     }
 }
@@ -151,7 +158,7 @@ fn json_err(e: serde_json::Error) -> CloudCliError {
 /// [`crate::HetznerServer`].
 #[derive(Debug, Clone, Serialize)]
 pub struct CloudServer {
-    /// `"aws"` | `"gcp"` | `"azure"` ([`CloudProvider::as_str`]).
+    /// `"aws"` | `"gcp"` | `"azure"` | `"ibmcloud"` ([`CloudProvider::as_str`]).
     pub provider: String,
     pub id: String,
     pub name: String,
@@ -163,13 +170,16 @@ pub struct CloudServer {
 }
 
 /// Provider-scoping options for [`list_servers`]. Every field is optional and
-/// consumed by exactly one provider (see each field's doc); the default
-/// ([`CloudListOptions::default`]) asks each CLI to list whatever its own
-/// already-configured default scope covers.
+/// consumed by exactly one provider - except `region`, which both AWS and IBM
+/// read (see each field's doc); the default ([`CloudListOptions::default`])
+/// asks each CLI to list whatever its own already-configured default scope
+/// covers.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CloudListOptions {
-    /// AWS only: appended as `--region <r>`. `None` lets `aws` fall back to
-    /// its own configured default region.
+    /// AWS: appended as `--region <r>`. IBM: also appended as `--region <r>`
+    /// (an `ibmcloud is instances` flag, scoping the listing to that region
+    /// for this one invocation - no persistent `ibmcloud target` needed).
+    /// `None` lets the CLI fall back to its own configured default region.
     pub region: Option<String>,
     /// GCP only: appended as `--project <p>`. `None` lets `gcloud` fall back
     /// to its own configured default project.
@@ -180,6 +190,9 @@ pub struct CloudListOptions {
     /// AWS only: appended as `--profile <p>`. `None` lets `aws` fall back to
     /// its default profile (or `$AWS_PROFILE`).
     pub profile: Option<String>,
+    /// IBM only: appended as `--resource-group-name <rg>`. `None` lets
+    /// `ibmcloud` fall back to its own currently targeted resource group.
+    pub resource_group: Option<String>,
 }
 
 // ---- public API --------------------------------------------------------------
@@ -227,6 +240,7 @@ fn list_servers_blocking(
         CloudProvider::Aws => parse_aws(&text),
         CloudProvider::Gcp => parse_gcp(&text),
         CloudProvider::Azure => parse_azure(&text),
+        CloudProvider::Ibm => parse_ibm(&text),
     }
 }
 
@@ -237,6 +251,15 @@ fn list_servers_blocking(
 /// - AWS: `ec2 describe-instances --output json [--region R] [--profile P]`
 /// - GCP: `compute instances list --format=json [--project P]`
 /// - Azure: `vm list -d --output json [--subscription S]`
+/// - IBM: `is instances --output json [--region R] [--resource-group-name G]`
+///
+/// IBM's `--region` is appended directly on this one invocation rather than
+/// via a separate, persistent `ibmcloud target -r <region>` step first: this
+/// connector only ever runs a single `std::process::Command` per call (see
+/// `run_cli`), with no shell to sequence two commands with `&&`, so scoping
+/// the region as a flag on `is instances` itself - which `ibmcloud is`
+/// subcommands accept - keeps the IBM arm the same one-shot shape as the
+/// other three.
 fn build_args(provider: CloudProvider, opts: &CloudListOptions) -> Vec<String> {
     match provider {
         CloudProvider::Aws => {
@@ -273,6 +296,21 @@ fn build_args(provider: CloudProvider, opts: &CloudListOptions) -> Vec<String> {
             if let Some(sub) = &opts.subscription {
                 args.push("--subscription".to_string());
                 args.push(sub.clone());
+            }
+            args
+        }
+        CloudProvider::Ibm => {
+            let mut args: Vec<String> = ["is", "instances", "--output", "json"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            if let Some(region) = &opts.region {
+                args.push("--region".to_string());
+                args.push(region.clone());
+            }
+            if let Some(rg) = &opts.resource_group {
+                args.push("--resource-group-name".to_string());
+                args.push(rg.clone());
             }
             args
         }
@@ -350,6 +388,7 @@ fn auth_hint(cli: &str) -> String {
         "aws" => "run `aws configure` (or set AWS_PROFILE)".to_string(),
         "gcloud" => "run `gcloud auth login`".to_string(),
         "az" => "run `az login`".to_string(),
+        "ibmcloud" => "run `ibmcloud login` (or `ibmcloud login --sso` for a federated org)".to_string(),
         other => format!("authenticate the `{other}` CLI"),
     }
 }
@@ -533,6 +572,75 @@ fn parse_azure(json: &str) -> Result<Vec<CloudServer>, CloudCliError> {
     Ok(out)
 }
 
+// ---- IBM: `ibmcloud is instances --output json` --------------------------------
+
+/// `primary_network_interface.primary_ip.address` - IBM VPC's private,
+/// always-on reserved IP for the instance's primary interface. `None` only if
+/// the shape is missing entirely (e.g. an instance still provisioning).
+fn ibm_private_ip(instance: &serde_json::Value) -> Option<String> {
+    instance
+        .get("primary_network_interface")?
+        .get("primary_ip")?
+        .get("address")?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// `primary_network_interface.floating_ips[0].address` - the public-facing
+/// floating IP, if one is bound to the primary interface. `None` for a
+/// private-only instance (no floating IP attached), the common case.
+fn ibm_floating_ip(instance: &serde_json::Value) -> Option<String> {
+    instance
+        .get("primary_network_interface")?
+        .get("floating_ips")?
+        .as_array()?
+        .first()?
+        .get("address")?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Parse `ibmcloud is instances --output json`'s top-level array (IBM Cloud
+/// VPC virtual server instances). `public_ip` prefers the bound floating IP,
+/// falling back to the private `primary_ip` when no floating IP is attached -
+/// so the one address column the Remote panel renders still shows *something*
+/// reachable for the common VPC-private-only instance, instead of always
+/// reading "no public ip"; `private_ip` always holds the private `primary_ip`
+/// on its own, same as every other arm's `private_ip`.
+fn parse_ibm(json: &str) -> Result<Vec<CloudServer>, CloudCliError> {
+    let root: serde_json::Value = serde_json::from_str(json).map_err(json_err)?;
+    let empty = Vec::new();
+    let instances = root.as_array().unwrap_or(&empty);
+
+    let mut out = Vec::new();
+    for instance in instances {
+        let server_type = instance
+            .get("profile")
+            .map(|p| str_field(p, "name"))
+            .unwrap_or_default();
+        let region = instance
+            .get("zone")
+            .map(|z| str_field(z, "name"))
+            .unwrap_or_default();
+        let private_ip = ibm_private_ip(instance);
+        let public_ip = ibm_floating_ip(instance).or_else(|| private_ip.clone());
+
+        out.push(CloudServer {
+            provider: CloudProvider::Ibm.as_str().to_string(),
+            id: str_field(instance, "id"),
+            name: str_field(instance, "name"),
+            status: str_field(instance, "status"),
+            public_ip,
+            private_ip,
+            server_type,
+            region,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,16 +728,46 @@ mod tests {
       }
     ]"#;
 
+    const IBM_FIXTURE: &str = r#"[
+      {
+        "id": "0717_e4b2a1c8-9d3f-4a56-8b12-3c4d5e6f7089",
+        "name": "taipan-live-1",
+        "status": "running",
+        "profile": { "name": "bx2-2x8" },
+        "zone": { "name": "us-south-1" },
+        "primary_network_interface": {
+          "primary_ip": { "address": "10.240.0.6" },
+          "floating_ips": [
+            { "address": "150.238.15.20" }
+          ]
+        }
+      },
+      {
+        "id": "0717_a9c8b7d6-5e4f-4321-9a8b-7c6d5e4f3210",
+        "name": "taipan-private-1",
+        "status": "stopped",
+        "profile": { "name": "cx2-2x4" },
+        "zone": { "name": "us-south-2" },
+        "primary_network_interface": {
+          "primary_ip": { "address": "10.240.0.11" }
+        }
+      }
+    ]"#;
+
     #[test]
     fn provider_as_str_and_parse_round_trip_case_insensitively() {
         assert_eq!(CloudProvider::Aws.as_str(), "aws");
         assert_eq!(CloudProvider::Gcp.as_str(), "gcp");
         assert_eq!(CloudProvider::Azure.as_str(), "azure");
+        assert_eq!(CloudProvider::Ibm.as_str(), "ibmcloud");
 
         assert_eq!(CloudProvider::parse("aws"), Some(CloudProvider::Aws));
         assert_eq!(CloudProvider::parse("AWS"), Some(CloudProvider::Aws));
         assert_eq!(CloudProvider::parse("Gcp"), Some(CloudProvider::Gcp));
         assert_eq!(CloudProvider::parse("AZURE"), Some(CloudProvider::Azure));
+        assert_eq!(CloudProvider::parse("ibmcloud"), Some(CloudProvider::Ibm));
+        assert_eq!(CloudProvider::parse("IBM"), Some(CloudProvider::Ibm));
+        assert_eq!(CloudProvider::parse("IbmCloud"), Some(CloudProvider::Ibm));
         assert_eq!(CloudProvider::parse("digitalocean"), None);
     }
 
@@ -699,6 +837,32 @@ mod tests {
     }
 
     #[test]
+    fn ibm_parses_profile_zone_and_prefers_floating_ip_over_private_fallback() {
+        let out = parse_ibm(IBM_FIXTURE).expect("parse");
+        assert_eq!(out.len(), 2);
+
+        let a = &out[0];
+        assert_eq!(a.provider, "ibmcloud");
+        assert_eq!(a.id, "0717_e4b2a1c8-9d3f-4a56-8b12-3c4d5e6f7089");
+        assert_eq!(a.name, "taipan-live-1");
+        assert_eq!(a.status, "running");
+        // A floating IP is bound -> public_ip is the floating IP, not the
+        // private primary_ip.
+        assert_eq!(a.public_ip.as_deref(), Some("150.238.15.20"));
+        assert_eq!(a.private_ip.as_deref(), Some("10.240.0.6"));
+        assert_eq!(a.server_type, "bx2-2x8");
+        assert_eq!(a.region, "us-south-1");
+
+        // No floating_ips at all -> public_ip falls back to the private
+        // primary_ip (still shows a reachable address), never an error.
+        let b = &out[1];
+        assert_eq!(b.public_ip.as_deref(), Some("10.240.0.11"));
+        assert_eq!(b.private_ip.as_deref(), Some("10.240.0.11"));
+        assert_eq!(b.server_type, "cx2-2x4");
+        assert_eq!(b.region, "us-south-2");
+    }
+
+    #[test]
     fn empty_top_level_shapes_parse_to_empty_vecs() {
         assert!(
             parse_aws(r#"{"Reservations":[]}"#)
@@ -707,6 +871,7 @@ mod tests {
         );
         assert!(parse_gcp("[]").expect("parse").is_empty());
         assert!(parse_azure("[]").expect("parse").is_empty());
+        assert!(parse_ibm("[]").expect("parse").is_empty());
     }
 
     #[test]
@@ -721,6 +886,10 @@ mod tests {
         ));
         assert!(matches!(
             parse_azure("not json"),
+            Err(CloudCliError::Json { .. })
+        ));
+        assert!(matches!(
+            parse_ibm("not json"),
             Err(CloudCliError::Json { .. })
         ));
     }
@@ -740,12 +909,17 @@ mod tests {
             build_args(CloudProvider::Azure, &none),
             vec!["vm", "list", "-d", "--output", "json"]
         );
+        assert_eq!(
+            build_args(CloudProvider::Ibm, &none),
+            vec!["is", "instances", "--output", "json"]
+        );
 
         let scoped = CloudListOptions {
             region: Some("eu-west-1".to_string()),
             project: Some("my-proj".to_string()),
             subscription: Some("sub-id".to_string()),
             profile: Some("prod".to_string()),
+            resource_group: Some("default".to_string()),
         };
         assert_eq!(
             build_args(CloudProvider::Aws, &scoped),
@@ -783,6 +957,19 @@ mod tests {
                 "sub-id"
             ]
         );
+        assert_eq!(
+            build_args(CloudProvider::Ibm, &scoped),
+            vec![
+                "is",
+                "instances",
+                "--output",
+                "json",
+                "--region",
+                "eu-west-1",
+                "--resource-group-name",
+                "default"
+            ]
+        );
     }
 
     #[test]
@@ -793,6 +980,9 @@ mod tests {
         ));
         assert!(looks_unauthenticated(
             "You do not currently have an active account selected. Please run: gcloud auth login"
+        ));
+        assert!(looks_unauthenticated(
+            "FAILED\nYou are not logged in. Use 'ibmcloud login' to log in."
         ));
         assert!(!looks_unauthenticated("InvalidParameterValue: bad region"));
     }
