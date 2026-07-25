@@ -82,9 +82,15 @@ pub fn discover_qryx() -> Option<ResolvedQryx> {
     if !qryx_bin.is_file() {
         return None;
     }
+    // Mirror crypto::env::discover: a focused default scan target (via
+    // GENARYX_SCAN_TARGET, else $HOME) so building an evidence pack does not
+    // walk all of $HOME and stall the whole console.
+    let default_target = std::env::var_os("GENARYX_SCAN_TARGET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.clone());
     Some(ResolvedQryx {
         qryx_bin,
-        default_target: home,
+        default_target,
     })
 }
 

@@ -46,9 +46,15 @@ pub fn discover() -> Option<ResolvedEnv> {
     if !qryx_bin.is_file() {
         return None;
     }
+    // A focused default scan target keeps the Crypto/Evidence panels snappy:
+    // scanning all of $HOME can walk huge build/trace trees and stall the
+    // console. GENARYX_SCAN_TARGET overrides it; it falls back to $HOME.
+    let default_target = std::env::var_os("GENARYX_SCAN_TARGET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.clone());
     Some(ResolvedEnv {
         qryx_bin,
-        default_target: home,
+        default_target,
     })
 }
 

@@ -18,7 +18,6 @@ import { MemoryView } from "./MemoryView";
 import { MoneyView } from "./MoneyView";
 import { OnboardView } from "./OnboardView";
 import { OverviewView } from "./OverviewView";
-import { PocketView } from "./PocketView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
 import { QualityView } from "./QualityView";
@@ -37,10 +36,10 @@ import { WatchDock } from "./WatchDock";
 const FOCUS_HIGHLIGHT_MS = 6_000;
 
 /** Agent 360 compare (below this width there is no honest way to show two
- * 760px-wide cards - see `Agent360.tsx`'s own width comment - side by side
+ * 720px-wide cards - see `Agent360.tsx`'s own width comment - side by side
  * without one running off-screen), so the shell falls back to rendering
  * only the most-recently-focused card. An approximate, product-picked
- * threshold, not derived from the 760px card width itself. */
+ * threshold, not derived from the 720px card width itself. */
 const COMPARE_MIN_WIDTH = 1200;
 
 /** Left-rail collapse state (Yurii, 2026-07-24): persisted so a reload keeps
@@ -359,7 +358,6 @@ export function AppShell() {
         {view === "drills" && <DrillsView />}
         {view === "evidence" && <EvidenceView />}
         {view === "remote" && <RemoteView />}
-        {view === "pocket" && <PocketView />}
         {view === "graph" && (
           <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-3">
             <DelegationGraphView onOpenAgent={onOpenAgent} fill />
@@ -395,11 +393,32 @@ export function AppShell() {
             style={{ background: "color-mix(in srgb, var(--ink) 55%, transparent)", cursor: "default" }}
             onClick={() => setFocusedAgentIds([])}
           />
-          <div className="relative flex items-stretch" style={{ height: "100%" }}>
+          <div
+            className="relative flex items-stretch"
+            style={{ height: "100%", flexDirection: "row", flexWrap: "nowrap", justifyContent: "flex-end" }}
+          >
             {/* DOM order is reversed (second, then first) so the row reads
                 left to right as [second][first], with the first/anchor
                 card flush against the screen edge - "the second immediately
-                left of the first, both pinned to the right, no overlap". */}
+                left of the first, both pinned to the right, no overlap".
+                `flexDirection: "row"` + `flexWrap: "nowrap"` (each card's own
+                `flexShrink: 0` in `Agent360.tsx` does the rest) keeps both
+                cards in a single in-flow row at their own declared width,
+                never one absolutely-positioned sibling overlapping another.
+                `inCompare` below is the OTHER half of the fix: a SOLO card's
+                `min(720px, 94vw)` width (see `Agent360.tsx`'s own width
+                comment) is already pinned flat at the literal 720px for
+                EVERY viewport >=1200px (94vw only undercuts 720px below
+                ~766px, well under `COMPARE_MIN_WIDTH`) - so two solo-style
+                cards side by side would demand a fixed 1440px, which
+                overflows any compare-eligible viewport from 1200px up to
+                1440px even though `COMPARE_MIN_WIDTH` already allowed
+                compare mode from 1200px. `inCompare` swaps the vw fallback
+                to 46vw instead, so two cards total `min(720px, 46vw) x 2`,
+                which is <=92vw for every viewport this branch can ever
+                render at (verified: 92vw < 100vw always) - both cards stay
+                fully visible side by side rather than the second one
+                running off the left edge in that 1200-1440px band. */}
             {visibleAgentIds
               .slice()
               .reverse()
@@ -407,6 +426,7 @@ export function AppShell() {
                 <Agent360
                   key={agentId}
                   agentId={agentId}
+                  inCompare={visibleAgentIds.length > 1}
                   onClose={() => onCloseAgent360(agentId)}
                   onOpenAgent={onOpenAgent}
                   onNavigate={onNavigateFromAgent360}

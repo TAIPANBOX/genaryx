@@ -11,6 +11,7 @@ import {
 } from "../lib/admission";
 import { useAdmissionStatus } from "../lib/useAdmissionStatus";
 import { lastSeenLabel, totalCalls } from "../lib/credentials";
+import { prettyUnit } from "../lib/views";
 import type { AdmissionBaseline, AdmissionCheck, AdmissionError } from "../admissionTypes";
 import { describeDrillsError, runDrills } from "../lib/drills";
 import { hasGaps } from "../drillsTypes";
@@ -403,7 +404,7 @@ export function AdmissionVerify({ seed }: { seed: AdmissionSeed | null }) {
                 <YesNoBadge label="bound" yes={check.key.bound} />
               </div>
               <span className="text-[11px]" style={{ color: "var(--dim)" }}>
-                unit: {check.key.unit ?? "none"}
+                unit: {check.key.unit ? prettyUnit(check.key.unit) : "none"}
               </span>
             </div>
           )}

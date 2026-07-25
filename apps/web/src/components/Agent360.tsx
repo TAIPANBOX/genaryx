@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { AgentSlice } from "../graphTypes";
 import { ATTESTATION_DETECTORS } from "../identityTypes";
@@ -10,11 +10,14 @@ import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
 import { isQualityDriftEvent } from "../lib/incidents";
 import { describeMoneyError, fetchRuns } from "../lib/money";
+import { runBlockedState, StateBadge } from "../lib/lifecycle";
 import { describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
 import { effectiveOverlay, matchedPolicies, mcpReachForAgent, mcpServerIdentities, permissionRollup, shadowServerIds } from "../lib/access";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { usePolicyStatus } from "../lib/usePolicyStatus";
+import { usePopover } from "../lib/popover";
+import { prettyUnit, unitForTeam } from "../lib/views";
 import type { ViewId } from "../lib/views";
 import type { MoneyError, Run } from "../moneyTypes";
 import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
@@ -23,6 +26,7 @@ import { DelegationGraphView } from "./DelegationGraphView";
 import { Sparkline } from "./dash";
 import { SeverityBadge } from "./SeverityBadge";
 import { SourceChip } from "./SourceChip";
+import { UnitCard } from "./UnitCard";
 import { WatchToggleButton } from "./WatchDock";
 
 /** How many events/policy rows this compact card shows inline before
@@ -127,6 +131,21 @@ function PlaneNote({ children }: { children: ReactNode }) {
     </span>
   );
 }
+
+/** Plain-text-looking link button for the "business unit" row below - same
+ * look AgentDetailCard's own `linkStyle` uses for its unit/owner rows, so the
+ * affordance reads the same wherever it appears. */
+const linkStyle: CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  cursor: "pointer",
+  color: "var(--fg)",
+  font: "inherit",
+  textDecoration: "underline",
+  textDecorationColor: "var(--line-2)",
+  textUnderlineOffset: 2,
+};
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -354,12 +373,26 @@ function AccessSectionBody({
  */
 export function Agent360({
   agentId,
+  inCompare = false,
   onClose,
   onOpenAgent,
   onNavigate,
   onOpenReplay,
 }: {
   agentId: string;
+  /** True when `AppShell.tsx` is rendering this card alongside a SECOND
+   * Agent 360 in its compare overlay (`visibleAgentIds.length > 1`) - false
+   * for the ordinary one-card case. Gates ONLY the width's vw fallback
+   * below (see `AppShell.tsx`'s own overlay-container comment for the full
+   * derivation): a solo card's `min(720px, 94vw)` is already pinned flat at
+   * the literal 720px cap for every viewport `COMPARE_MIN_WIDTH` (1200px)
+   * ever lets this render at, so two solo-style cards side by side would
+   * demand a fixed 1440px - overflowing any compare-eligible viewport
+   * narrower than that. `inCompare` swaps the fallback to 46vw instead, so
+   * two cards together are always <=92vw (never overflows); everything
+   * else about the card - the 720px cap itself, height, layout - is
+   * identical either way. */
+  inCompare?: boolean;
   onClose: () => void;
   onOpenAgent: (agentId: string) => void;
   onNavigate: (view: ViewId) => void;
@@ -367,6 +400,8 @@ export function Agent360({
    * with one of this agent's runs, from the Money section below. */
   onOpenReplay: (runId: string) => void;
 }) {
+  const { open } = usePopover();
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -523,6 +558,12 @@ export function Agent360({
     .slice()
     .sort((a, b) => sevRank(b.severity) - sevRank(a.severity) || Date.parse(b.time) - Date.parse(a.time));
   const spendTrend = spendSeries(runs ?? []);
+  // Business unit (same derivation AgentDetailCard/UserCard use): the console
+  // only ever learns an agent's team from its id path
+  // (`agent://org/<team>/<name>`), so the unit shown here comes from that
+  // path segment, not from any plane fetch above.
+  const teamSeg = /^agent:\/\/[^/]+\/([^/]+)\//.exec(agentId)?.[1] ?? null;
+  const unit = teamSeg ? unitForTeam(teamSeg) : null;
 
   return (
     <div
@@ -531,7 +572,9 @@ export function Agent360({
       aria-modal="true"
       aria-label={`Agent 360: ${agentId}`}
       style={{
-        width: "min(760px, 94vw)",
+        width: inCompare ? "min(720px, 46vw)" : "min(720px, 94vw)",
+        flexShrink: 0,
+        flexGrow: 0,
         height: "100%",
         background: "var(--bg)",
         borderLeft: "1px solid var(--line-2)",
@@ -558,6 +601,21 @@ export function Agent360({
           &times;
         </button>
       </div>
+
+      {unit && (
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+            business unit
+          </span>
+          <button
+            type="button"
+            style={linkStyle}
+            onClick={(e) => open(<UnitCard team={unit} onOpenFullAgent={onOpenAgent} />, { anchor: e.currentTarget.getBoundingClientRect() })}
+          >
+            {prettyUnit(unit)} &rsaquo;
+          </button>
+        </div>
+      )}
 
       {/* ---- Delegation ---- */}
       <section className="flex flex-col gap-2">
@@ -763,11 +821,10 @@ export function Agent360({
                     {r.budget_usd !== null ? formatUsd(r.budget_usd) : "-"}
                   </span>
                   <span>
-                    {r.killed && (
-                      <span className="badge" style={cssVar("tone", "var(--faint)")}>
-                        killed
-                      </span>
-                    )}
+                    {(() => {
+                      const blocked = runBlockedState(r);
+                      return blocked ? <StateBadge state={blocked} /> : null;
+                    })()}
                   </span>
                   <span className="flex justify-end">
                     <button

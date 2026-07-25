@@ -48,17 +48,17 @@
 }
 
 :root[data-theme="light"] {
-  --ink: #ffffff;
-  --bg: #f3f5f8;
-  --bg2: #eceff3;
-  --panel: #ffffff;
-  --panel-2: #f8f9fb;
-  --panel-3: #eef1f5;
-  --line: rgba(10, 14, 20, 0.09);
-  --line-2: rgba(10, 14, 20, 0.16);
-  --fg: #10161f;
-  --dim: #495566;
-  --faint: #8a97a6;
+  --ink: #fdfbf6;
+  --bg: #e6ddcd;
+  --bg2: #ddd3c0;
+  --panel: #fefcf8;
+  --panel-2: #eee5d4;
+  --panel-3: #ddd2bd;
+  --line: rgba(58, 46, 28, 0.16);
+  --line-2: rgba(58, 46, 28, 0.26);
+  --fg: #201c15;
+  --dim: #5a5345;
+  --faint: #928774;
 
   --sev-info: #3f5670;
   --sev-low: #0d8f61;
@@ -79,17 +79,17 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --ink: #ffffff;
-    --bg: #f3f5f8;
-    --bg2: #eceff3;
-    --panel: #ffffff;
-    --panel-2: #f8f9fb;
-    --panel-3: #eef1f5;
-    --line: rgba(10, 14, 20, 0.09);
-    --line-2: rgba(10, 14, 20, 0.16);
-    --fg: #10161f;
-    --dim: #495566;
-    --faint: #8a97a6;
+    --ink: #fdfbf6;
+    --bg: #e6ddcd;
+    --bg2: #ddd3c0;
+    --panel: #fefcf8;
+    --panel-2: #eee5d4;
+    --panel-3: #ddd2bd;
+    --line: rgba(58, 46, 28, 0.16);
+    --line-2: rgba(58, 46, 28, 0.26);
+    --fg: #201c15;
+    --dim: #5a5345;
+    --faint: #928774;
 
     --sev-info: #3f5670;
     --sev-low: #0d8f61;
@@ -674,6 +674,16 @@ body {
   color: var(--faint);
   border-color: var(--line-2);
   background: color-mix(in srgb, var(--ink) 40%, transparent);
+}
+.d-pill.stopped {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 34%, transparent);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+.d-pill.frozen {
+  color: var(--iris);
+  border-color: color-mix(in srgb, var(--iris) 34%, transparent);
+  background: color-mix(in srgb, var(--iris) 10%, transparent);
 }
 
 /* interactive rows table (runs, identities, policies, ...) */

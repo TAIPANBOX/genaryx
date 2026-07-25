@@ -1,3 +1,4 @@
+import { useCallback, useRef, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { usePopover } from "../lib/popover";
 import type { ConsoleRole } from "../lib/session";
@@ -5,6 +6,43 @@ import { useSession } from "../lib/useSession";
 import type { ViewId } from "../lib/views";
 import { NAV_SECTIONS } from "../lib/views";
 import { PasskeySettings } from "./PasskeySettings";
+import { RemoteWgOperatorPopoverCard } from "./RemoteWgOperatorCard";
+
+/** Persisted, drag-resizable rail width (Yurii, 2026-07-24), alongside the
+ * existing collapse/expand toggle - collapse is a binary owned by
+ * `AppShell.tsx` (it also gates the rest of the layout), width is a plain
+ * continuous value nothing outside this component reads, so it lives here
+ * instead of being threaded through another prop pair. Same clamp-and-persist
+ * shape as `WatchDock.tsx`'s own width, on the opposite edge of the screen. */
+const RAIL_WIDTH_KEY = "genaryx.railWidth";
+const RAIL_MIN_WIDTH = 140;
+const RAIL_MAX_WIDTH = 360;
+const RAIL_DEFAULT_WIDTH = 194;
+
+function clampWidth(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function readStoredWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? clampWidth(parsed, min, max) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredWidth(key: string, value: number): void {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    // Storage unavailable - the resize still applies for the rest of this
+    // session via React state, it just will not survive a reload, same
+    // best-effort tolerance every other localStorage write in this app has.
+  }
+}
 
 /** The shared TAIPANBOX/IT-RAT bolt glyph (it-rat2 topbar brand mark),
  * inline SVG, no raster. */
@@ -119,6 +157,17 @@ function SessionBadge() {
       >
         Passkeys
       </button>
+      <button
+        type="button"
+        className="icon-btn"
+        style={{ width: "auto", padding: "5px 8px", fontSize: 10.5, justifyContent: "flex-start" }}
+        title="Reach this console from your own laptop or phone over WireGuard, instead of SSH"
+        onClick={(e) =>
+          open(<RemoteWgOperatorPopoverCard />, { anchor: e.currentTarget.getBoundingClientRect(), width: 460 })
+        }
+      >
+        Connect this machine
+      </button>
     </div>
   );
 }
@@ -222,6 +271,47 @@ function NavItemButton({
   );
 }
 
+/** The drag handle itself: a thin, invisible-until-hover strip on the rail's
+ * inner (right) edge - `WatchDock.tsx` renders the mirror image of this on
+ * its own inner (left) edge. Pure pointer-events plumbing (no drag math of
+ * its own); `onPointerDown` captures the pointer on the handle element
+ * itself so move/up keep firing even once the cursor leaves the thin strip
+ * mid-drag, exactly as a native scrollbar/resizer would. */
+function RailResizeHandle({
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}: {
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize navigation rail"
+      title="Drag to resize"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        right: 0,
+        width: 6,
+        cursor: "col-resize",
+        zIndex: 1,
+        touchAction: "none",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "color-mix(in srgb, var(--iris) 35%, transparent)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    />
+  );
+}
+
 /**
  * Persistent app chrome, a LEFT RAIL (Yurii, 2026-07-24: eighteen views no
  * longer fit across the top): brand mark and title at the top, the view nav
@@ -250,6 +340,15 @@ function NavItemButton({
  * session badge and Passkeys action are dropped when collapsed (there is no
  * legible way to show a role/username/action row in 52px); the theme toggle
  * stays as an icon-only button.
+ *
+ * `railWidth` (Yurii, 2026-07-24: "resizable in addition to collapsible"):
+ * unlike `railCollapsed`, this width is owned and persisted right here
+ * (`genaryx.railWidth`, clamped [`RAIL_MIN_WIDTH`, `RAIL_MAX_WIDTH`]) rather
+ * than threaded through `AppShell.tsx` - nothing outside this component reads
+ * the number, so there is no reason to lift it. Dragging [`RailResizeHandle`]
+ * on the rail's inner (right) edge updates it live; only collapsing hides the
+ * handle, matching `WatchDock.tsx`'s identical width/handle pair on the
+ * opposite edge of the screen.
  */
 export function AppHeader({
   view,
@@ -268,21 +367,70 @@ export function AppHeader({
   railCollapsed: boolean;
   onToggleRail: () => void;
 }) {
+  const [railWidth, setRailWidth] = useState<number>(() =>
+    readStoredWidth(RAIL_WIDTH_KEY, RAIL_DEFAULT_WIDTH, RAIL_MIN_WIDTH, RAIL_MAX_WIDTH),
+  );
+  // `dragging` (Yurii, 2026-07-24) suppresses the width transition below
+  // while a drag is live, so the rail tracks the pointer 1:1 instead of
+  // visibly lagging behind it through a 0.16s ease - real state (not a ref)
+  // since the render itself reads it. The start point/width live in a plain
+  // ref: written on every pointermove (dozens of times per drag) and never
+  // read by render, so a ref avoids re-running this whole component's render
+  // once per pixel of movement the way state would.
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const onHandlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragRef.current = { startX: e.clientX, startWidth: railWidth };
+      setDragging(true);
+    },
+    [railWidth],
+  );
+  const onHandlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    // Dragging right (positive delta) widens the rail - its handle sits on
+    // the RIGHT inner edge, so moving toward the main content grows it.
+    setRailWidth(clampWidth(drag.startWidth + (e.clientX - drag.startX), RAIL_MIN_WIDTH, RAIL_MAX_WIDTH));
+  }, []);
+  const onHandlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    setRailWidth((w) => {
+      writeStoredWidth(RAIL_WIDTH_KEY, w);
+      return w;
+    });
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Already released (e.g. the pointer left the window mid-drag) -
+      // nothing left to clean up.
+    }
+  }, []);
+
   return (
     <nav
       className="flex flex-col shrink-0"
       aria-label="Views"
       style={{
-        width: railCollapsed ? 52 : 194,
+        position: "relative",
+        width: railCollapsed ? 52 : railWidth,
         height: "100%",
         borderRight: "1px solid var(--line)",
         background: "color-mix(in srgb, var(--panel) 55%, transparent)",
         backdropFilter: "blur(12px) saturate(1.2)",
         WebkitBackdropFilter: "blur(12px) saturate(1.2)",
-        transition: "width 0.16s ease",
+        transition: dragging ? undefined : "width 0.16s ease",
         overflow: "hidden",
       }}
     >
+      {!railCollapsed && (
+        <RailResizeHandle onPointerDown={onHandlePointerDown} onPointerMove={onHandlePointerMove} onPointerUp={onHandlePointerUp} />
+      )}
       <div
         className={railCollapsed ? "flex flex-col items-center gap-2 px-2 shrink-0" : "flex items-center gap-2.5 px-4 shrink-0"}
         style={{ height: railCollapsed ? "auto" : 60, paddingTop: railCollapsed ? 12 : undefined, paddingBottom: railCollapsed ? 10 : undefined }}

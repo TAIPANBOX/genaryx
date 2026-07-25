@@ -46,6 +46,11 @@ export interface AgentRecord {
    * what the agent spent while it was theirs. */
   segments?: AttributionSegment[];
   blocked?: boolean;
+  /** Effective operator-lifecycle state (MOCK-ONLY enrichment): killed (run
+   * killed or closed-for-cause) / frozen (this agent frozen) / stopped (its
+   * unit or owner stopped) / live. A real box omits it and the card derives
+   * the badge from `blocked`/`closed` instead. See `lib/lifecycleTypes.ts`. */
+  lifecycle?: import("./lifecycleTypes").EntityLifecycleState;
   history: LifecycleEntry[];
   closed?: { by: string; reason: string; wrongdoing: string; ts: string };
 }

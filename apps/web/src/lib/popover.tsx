@@ -343,10 +343,10 @@ function FloatingWindow({
       style={{
         position: "fixed",
         zIndex: win.z,
-        background: "var(--bg)",
+        background: "var(--panel)",
         border: "1px solid var(--line-2)",
         borderRadius: 12,
-        boxShadow: "0 24px 60px color-mix(in srgb, var(--ink) 55%, transparent)",
+        boxShadow: "0 18px 48px rgba(28, 20, 8, 0.26), 0 4px 12px rgba(28, 20, 8, 0.16)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -405,7 +405,7 @@ export function PopoverHeader({
         userSelect: "none",
         position: "sticky",
         top: 0,
-        background: "var(--bg)",
+        background: "var(--panel)",
         zIndex: 1,
         borderBottom: "1px solid transparent",
       }}

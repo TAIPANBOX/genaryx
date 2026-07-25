@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { formatTimestamp, formatUsd } from "../lib/format";
 import { fetchRuns } from "../lib/money";
@@ -14,6 +14,12 @@ import { EventRow } from "./EventRow";
  * events); large enough that a real production run's whole history still
  * fits in one fetch, matching `Agent360.tsx`'s `EVENTS_LIMIT` rationale. */
 const EVENTS_LIMIT = 2_000;
+
+/** The picker renders at most this many rows. A month-scale money plane holds
+ * tens of thousands of runs; mapping all of them to DOM rows freezes the tab
+ * (that is the "loading..." hang). Show the most recent N here and let the
+ * run-ID field below reach any run by id - `run_events` looks it up directly. */
+const PICKER_LIMIT = 150;
 
 /** Stable empty-array reference so `useReplayClock`'s `[events]` reset
  * effect never sees a "new" list on every render while nothing has loaded
@@ -86,6 +92,12 @@ function RunPicker({ onReplay }: { onReplay: (runId: string) => void }) {
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [manualId, setManualId] = useState("");
 
+  // Most-recent-first, capped, computed once per runs load (not per keystroke).
+  const shown = useMemo(
+    () => (runs ? [...runs].sort((a, b) => (b.last_seen ?? "").localeCompare(a.last_seen ?? "")).slice(0, PICKER_LIMIT) : null),
+    [runs],
+  );
+
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
@@ -137,7 +149,15 @@ function RunPicker({ onReplay }: { onReplay: (runId: string) => void }) {
                 </span>
               ))}
             </div>
-            {runs.map((r) => (
+            {runs.length > (shown?.length ?? 0) && (
+              <div
+                className="px-4 py-2 mono text-[11px]"
+                style={{ color: "var(--faint)", borderBottom: "1px solid var(--line-2)" }}
+              >
+                showing the {shown?.length ?? 0} most recent of {runs.length.toLocaleString("en-US")} runs - type a run ID below for any other
+              </div>
+            )}
+            {(shown ?? []).map((r) => (
               <RunPickerRow key={r.run_id} run={r} onReplay={onReplay} />
             ))}
           </div>

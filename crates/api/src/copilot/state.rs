@@ -281,28 +281,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bootstrap_resolves_to_a_ready_disabled_service_by_default() {
-        // The C0 default config has no LLM configured on this box
-        // (provider = "none"), so bootstrap must resolve to `Ready` with a
-        // disabled `CopilotService` - never `Failed` (see this module's doc
-        // comment for why that is provably infallible here) and never stuck
-        // in `Bootstrapping`.
-        match bootstrap().await {
-            CopilotInner::Ready(service) => {
-                assert!(!service.is_enabled());
-                assert!(service.descriptor().is_none());
-                assert!(service.disabled_reason().is_some());
-            }
-            CopilotInner::Bootstrapping => {
-                panic!("bootstrap must resolve past its own pending state")
-            }
-            CopilotInner::Failed(reason) => {
-                panic!("expected the infallible default config to succeed, got: {reason}")
-            }
-        }
-    }
-
-    #[tokio::test]
     async fn resolve_clients_never_panics() {
         // Best-effort, like every other `~/.taipan`-dependent resolution in
         // this codebase (see e.g.
@@ -330,11 +308,18 @@ mod tests {
         }
     }
 
-    /// One sequential test for the whole env config source: process env is
-    /// global, so splitting these cases across #[test] fns would race under
-    /// the parallel test runner.
-    #[test]
-    fn config_from_env_reads_the_provider_surface() {
+    /// One sequential test for the whole env config source AND the
+    /// disabled-by-default `bootstrap` that reads through it: process env is
+    /// global, so splitting these cases across separate `#[test]` /
+    /// `#[tokio::test]` fns would race under the parallel test runner.
+    /// `bootstrap` reaches the same `GENARYX_COPILOT_*` vars via
+    /// `config_from_env`, so a standalone bootstrap test would read
+    /// `GENARYX_COPILOT_PROVIDER` at the instant this test has it set to
+    /// `ollama` and spuriously observe an ENABLED service; folding that
+    /// assertion in here (after the vars are cleared) keeps the SAFETY note's
+    /// "no other test reads or writes GENARYX_COPILOT_*" premise true.
+    #[tokio::test]
+    async fn config_from_env_reads_the_provider_surface() {
         // SAFETY (edition-2024 env contract, same as the copilot crate's own
         // `secret_ref_env_is_trimmed` test): no other test in this binary
         // reads or writes GENARYX_COPILOT_*, so these mutations cannot race
@@ -369,6 +354,29 @@ mod tests {
             for var in ["GENARYX_COPILOT_PROVIDER", "GENARYX_COPILOT_BASE_URL",
                         "GENARYX_COPILOT_MODEL", "GENARYX_COPILOT_ALLOW_REMOTE"] {
                 std::env::remove_var(var);
+            }
+        }
+
+        // Env is now back to the honest C0 default (every GENARYX_COPILOT_*
+        // var removed just above, provider = "none"), so `bootstrap` - which
+        // reads that same env through `config_from_env` - must resolve to a
+        // `Ready`, DISABLED service: never `Failed` (provably infallible for
+        // the default config, see this module's doc comment) and never stuck
+        // in `Bootstrapping`. This assertion previously lived in its own
+        // `bootstrap_resolves_to_a_ready_disabled_service_by_default`
+        // `#[tokio::test]`, which raced these env mutations under the parallel
+        // runner.
+        match bootstrap().await {
+            CopilotInner::Ready(service) => {
+                assert!(!service.is_enabled());
+                assert!(service.descriptor().is_none());
+                assert!(service.disabled_reason().is_some());
+            }
+            CopilotInner::Bootstrapping => {
+                panic!("bootstrap must resolve past its own pending state")
+            }
+            CopilotInner::Failed(reason) => {
+                panic!("expected the infallible default config to succeed, got: {reason}")
             }
         }
     }
