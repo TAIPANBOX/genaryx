@@ -66,6 +66,12 @@ impl TailSink for SseTailSink {
 pub struct Ctx {
     pub cfg: Config,
     pub bus: AppState,
+    /// Operator lifecycle blocks (freeze an agent, stop a unit): the
+    /// console's own single source of truth, projected into every run read so
+    /// a block shows app-wide. See [`crate::lifecycle`]. `RwLock` (not the
+    /// plane states' `tokio::Mutex`) because every read only holds it for a
+    /// synchronous membership check, never across an `.await`.
+    pub lifecycle: RwLock<crate::lifecycle::LifecycleStore>,
     pub money: MoneyState,
     pub policy: PolicyState,
     pub identity: IdentityState,
@@ -140,6 +146,7 @@ impl Ctx {
             webauthn_pending: crate::webauthn::PendingCeremonies::default(),
             oidc: crate::oidc::OidcConfig::from_env(),
             bus,
+            lifecycle: RwLock::new(crate::lifecycle::LifecycleStore::default()),
             money: MoneyState::pending(),
             policy: PolicyState::pending(),
             identity: IdentityState::pending(),
@@ -191,5 +198,37 @@ impl Ctx {
         resolve!(evidence, genaryx_api::evidence::bootstrap());
         resolve!(remote, genaryx_api::remote::bootstrap());
         resolve!(copilot, genaryx_api::copilot::bootstrap());
+
+        // Lifecycle blocks are durable in wardryx, not here: a restarted
+        // console must not present a fleet an operator stopped as running
+        // again. Rebuild the store from the policies this console wrote (see
+        // `lifecycle::rehydrate`), and cache the agent-to-owner map the
+        // stopped-user projection needs. Retried a few times because both
+        // planes resolve in the background alongside this task, and skipped
+        // silently when there is no wardryx at all - a box without a policy
+        // plane simply has no blocks to restore.
+        {
+            let ctx = std::sync::Arc::clone(self);
+            tokio::spawn(async move {
+                for _ in 0..5 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let Ok(mut store) = crate::lifecycle::rehydrate().await else {
+                        continue;
+                    };
+                    if let Ok(identities) =
+                        genaryx_api::identity::commands::identity_list_identities(&ctx.identity)
+                            .await
+                    {
+                        for identity in identities {
+                            if identity.id.starts_with("agent://") && !identity.owner.is_empty() {
+                                store.agent_owners.insert(identity.id, identity.owner);
+                            }
+                        }
+                    }
+                    *ctx.lifecycle.write().expect("lifecycle store lock") = store;
+                    break;
+                }
+            });
+        }
     }
 }

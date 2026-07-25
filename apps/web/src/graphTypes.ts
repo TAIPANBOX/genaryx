@@ -56,6 +56,11 @@ export interface PositionedNode {
   event_count: number;
   x: number;
   y: number;
+  /** Effective operator-lifecycle state of this node's agent (MOCK-ONLY
+   * enrichment): when present and not `live`, the renderer tints the node so a
+   * stopped/frozen/killed agent is visible on the graph too. A real box omits
+   * it (nodes render by `kind` only). See `lib/lifecycleTypes.ts`. */
+  lifecycle?: import("./lib/lifecycleTypes").EntityLifecycleState;
 }
 
 /** Mirrors `genaryx_core::layout::LayoutView` - the full laid-out graph a

@@ -1,6 +1,8 @@
 import { formatUsd } from "../lib/format";
 import { agentShortName } from "../lib/dashData";
 import type { Run } from "../moneyTypes";
+import { runBlockedState } from "../lib/lifecycle";
+import { LIFECYCLE_BADGE, lifecyclePillClass } from "../lib/lifecycleTypes";
 import { BudgetEditor } from "./BudgetEditor";
 import { ConfirmButton } from "./ConfirmButton";
 import { FuseBar } from "./FuseBar";
@@ -47,8 +49,17 @@ export function RunsBoard({
       </div>
       {runs.map((r) => {
         const frac = r.budget_usd && r.budget_usd > 0 ? r.spent_usd / r.budget_usd : 0;
-        const status = r.killed ? "dead" : frac >= 1 ? "over" : frac >= 0.8 ? "near" : "live";
-        const statusLabel = r.killed ? "killed" : frac >= 1 ? "over cap" : frac >= 0.8 ? "near cap" : "live";
+        // A blocked run (STOPPED/FROZEN/KILLED) shows its precise lifecycle
+        // pill; a live run keeps the utilisation-driven live/near/over pill.
+        const blocked = runBlockedState(r);
+        const status = blocked ? lifecyclePillClass(blocked)! : frac >= 1 ? "over" : frac >= 0.8 ? "near" : "live";
+        const statusLabel = blocked
+          ? LIFECYCLE_BADGE[blocked].label.toLowerCase()
+          : frac >= 1
+            ? "over cap"
+            : frac >= 0.8
+              ? "near cap"
+              : "live";
         return (
           <div
             className="d-tr"
@@ -103,8 +114,8 @@ export function RunsBoard({
               >
                 Replay
               </button>
-              {r.killed ? (
-                <span className="d-pill dead">killed</span>
+              {blocked ? (
+                <span className={`d-pill ${lifecyclePillClass(blocked)}`}>{LIFECYCLE_BADGE[blocked].label.toLowerCase()}</span>
               ) : (
                 <>
                   <BudgetEditor runId={r.run_id} currentUsd={r.budget_usd} onSubmit={onSetBudget} />

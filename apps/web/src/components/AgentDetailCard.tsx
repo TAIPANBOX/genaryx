@@ -9,12 +9,17 @@ import {
   transferAgentOwner,
   type OrgDirectory,
 } from "../lib/agentActions";
-import { fetchAgentSlice, shortAgentLabel } from "../lib/graph";
-import { fetchRuns } from "../lib/money";
+import { shortAgentLabel } from "../lib/graph";
+import { fetchIdentities } from "../lib/identity";
+import { fetchRuns, killRun } from "../lib/money";
+import { agentStateFromRecord, FreezeToggleButton, KillRunButton, StateBadge } from "../lib/lifecycle";
+import { useLifecycleBlocks } from "../lib/lifecycleBlocks";
+import { useConsoleStateVersion } from "../lib/consoleState";
 import { formatTimestamp, formatUsd } from "../lib/format";
 import { cssVar } from "../lib/cssVars";
 import { usePopover, useWindowControls, PopoverHeader } from "../lib/popover";
-import type { AgentSlice } from "../graphTypes";
+import { prettyUnit, unitForTeam } from "../lib/views";
+import type { IdryxIdentity } from "../identityTypes";
 import type { Run } from "../moneyTypes";
 import { UserCard } from "./UserCard";
 import { UnitCard } from "./UnitCard";
@@ -104,14 +109,31 @@ function ApplyRow({ onApply, onCancel }: { onApply: () => void; onCancel: () => 
   );
 }
 
-function SelectForm({ options, current, onApply, onCancel }: { options: string[]; current: string; onApply: (v: string) => void; onCancel: () => void }) {
+function SelectForm({
+  options,
+  current,
+  labelFor,
+  onApply,
+  onCancel,
+}: {
+  options: string[];
+  current: string;
+  /** Optional display-text mapping - the "Reassign unit" picker passes
+   * `prettyUnit` so the dropdown shows business-unit names instead of raw
+   * slugs; every other caller (owner handles) omits it and gets the raw
+   * value back, unchanged. The submitted/current VALUE is always the raw
+   * option string either way - only the rendered `<option>` text changes. */
+  labelFor?: (value: string) => string;
+  onApply: (v: string) => void;
+  onCancel: () => void;
+}) {
   const [v, setV] = useState(current);
   return (
     <div>
       <select style={fieldStyle} value={v} onChange={(e) => setV(e.target.value)}>
         {options.map((o) => (
           <option key={o} value={o}>
-            {o}
+            {labelFor ? labelFor(o) : o}
           </option>
         ))}
       </select>
@@ -167,9 +189,12 @@ export function AgentDetailCard({
   const win = useWindowControls();
   const [record, setRecord] = useState<AgentRecord | null | undefined>(undefined);
   const [runs, setRuns] = useState<Run[]>([]);
-  const [slice, setSlice] = useState<AgentSlice | null>(null);
   const [action, setAction] = useState<null | "owner" | "unit" | "budget" | "behaviour">(null);
   const [dir, setDir] = useState<OrgDirectory | null>(null);
+  const [identities, setIdentities] = useState<IdryxIdentity[]>([]);
+  // Bumps whenever any lifecycle action lands anywhere, so this card re-reads
+  // (a unit/user stop from the dock reflects here even while it is open).
+  const consoleVersion = useConsoleStateVersion();
 
   useEffect(() => {
     void fetchOrgDirectory().then(setDir);
@@ -184,11 +209,11 @@ export function AgentDetailCard({
     let cancelled = false;
     void fetchAgentRecord(agentId).then((r) => !cancelled && setRecord(r));
     void fetchRuns().then((r) => !cancelled && setRuns(r.filter((x) => x.agent_id === agentId))).catch(() => {});
-    void fetchAgentSlice(agentId).then((s) => !cancelled && setSlice(s)).catch(() => {});
+    void fetchIdentities().then((i) => !cancelled && setIdentities(i)).catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [agentId]);
+  }, [agentId, consoleVersion]);
 
   const run = runs[0];
   const spent = record?.spentUsd ?? runs.reduce((s, r) => s + r.spent_usd, 0);
@@ -198,9 +223,25 @@ export function AgentDetailCard({
   const perRunCap = record?.budgetUsd ?? null;
   const util = budget && budget > 0 ? spent / budget : null;
   const closed = Boolean(record?.closed);
-  const blocked = Boolean(record?.blocked);
-  const owner = record ? userHandle(`user://x/${record.owner}`) : slice?.parents[0] ? userHandle(slice.parents[0].id) : null;
-  const unit = record?.team ?? (/^agent:\/\/[^/]+\/([^/]+)\//.exec(agentId)?.[1] ?? null);
+  // The effective lifecycle state (LIVE/STOPPED/FROZEN/KILLED) and the live run
+  // the Kill button targets, from the same shared derivation every surface uses.
+  const serverBlocks = useLifecycleBlocks();
+  const serverFrozen = serverBlocks.agents.includes(agentId);
+  const state = serverFrozen ? "frozen" : agentStateFromRecord(record ?? null);
+  const frozen = state === "frozen";
+  const liveRun = runs.find((r) => !r.killed) ?? null;
+  // The HUMAN owner (a person, with a surname) is this agent's own idryx
+  // identity owner, NOT a delegation parent: a parent is another AGENT, so
+  // slice.parents[0] wrongly surfaced an agent id (e.g. cashflow-forecaster)
+  // in the "owner" row. Fall back to the mock record's owner in preview.
+  const identityOwner = identities.find((i) => i.id === agentId)?.owner;
+  const owner = record
+    ? userHandle(`user://x/${record.owner}`)
+    : identityOwner
+      ? userHandle(identityOwner)
+      : null;
+  const teamSeg = record?.team ?? (/^agent:\/\/[^/]+\/([^/]+)\//.exec(agentId)?.[1] ?? null);
+  const unit = teamSeg ? unitForTeam(teamSeg) : null;
 
   return (
     <div className="flex flex-col">
@@ -220,7 +261,7 @@ export function AgentDetailCard({
               style={linkStyle}
               onClick={(e) => open(<UnitCard team={unit} onOpenFullAgent={onOpenFull} />, { anchor: e.currentTarget.getBoundingClientRect() })}
             >
-              {unit} &rsaquo;
+              {prettyUnit(unit)} &rsaquo;
             </button>
           </Row>
         )}
@@ -237,19 +278,7 @@ export function AgentDetailCard({
         )}
         {record && <Row label="model">{record.model}</Row>}
         <Row label="status">
-          {closed ? (
-            <span className="badge" style={cssVar("tone", "var(--sev-critical)")}>
-              closed
-            </span>
-          ) : blocked ? (
-            <span className="badge" style={cssVar("tone", "var(--amber)")}>
-              blocked
-            </span>
-          ) : (
-            <span className="badge" style={cssVar("tone", "var(--sev-low)")}>
-              running
-            </span>
-          )}
+          <StateBadge state={state} />
         </Row>
       </Section>
 
@@ -275,7 +304,7 @@ export function AgentDetailCard({
             {record.segments.map((s, i) => (
               <div key={i} className="flex items-center gap-2 min-w-0">
                 <span className="text-[11.5px] truncate" style={{ color: "var(--fg)", flex: 1 }}>
-                  {s.owner} <span style={{ color: "var(--faint)" }}>· {s.team}</span>
+                  {s.owner} <span style={{ color: "var(--faint)" }}>· {prettyUnit(unitForTeam(s.team))}</span>
                 </span>
                 {s.to === null && (
                   <span className="badge" style={cssVar("tone", "var(--sev-low)")}>
@@ -355,22 +384,16 @@ export function AgentDetailCard({
       {record && (
         <Section title="Manage">
           {!closed && (
-            <div style={{ paddingBottom: 8 }}>
-              <button
-                type="button"
-                onClick={() => void blockAgent(agentId, !blocked).then(applyRecord)}
-                style={{
-                  padding: "5px 12px",
-                  borderRadius: 7,
-                  cursor: "pointer",
-                  border: `1px solid ${blocked ? "var(--mint)" : "var(--sev-high)"}`,
-                  background: blocked ? "color-mix(in srgb, var(--mint) 14%, transparent)" : "color-mix(in srgb, var(--sev-high) 14%, transparent)",
-                  color: "var(--fg)",
-                  fontSize: 12,
-                }}
-              >
-                {blocked ? "Re-enable agent" : "Block agent"}
-              </button>
+            <div className="flex items-center gap-2" style={{ paddingBottom: 8 }}>
+              <FreezeToggleButton
+                frozen={frozen}
+                onToggle={() => blockAgent(agentId, !frozen).then(applyRecord)}
+              />
+              <KillRunButton
+                run={liveRun}
+                detail={liveRun ? `run ${liveRun.run_id} · spent ${formatUsd(liveRun.spent_usd)}` : undefined}
+                onKill={(runId, reason) => killRun(runId, reason).then(() => {})}
+              />
             </div>
           )}
           <div className="flex flex-wrap gap-1.5">
@@ -410,6 +433,7 @@ export function AgentDetailCard({
                 <SelectForm
                   options={dir ? dir.teams.map((t) => t.team) : [record.team]}
                   current={record.team}
+                  labelFor={prettyUnit}
                   onCancel={() => setAction(null)}
                   onApply={(v) => void reassignAgentUnit(agentId, v).then(applyRecord)}
                 />

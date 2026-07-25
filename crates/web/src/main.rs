@@ -17,6 +17,7 @@ mod config;
 mod ctx;
 mod dispatch;
 mod doctor;
+mod lifecycle;
 mod oidc;
 mod roles;
 mod webauthn;
