@@ -58,6 +58,11 @@ sha2 = "0.10.9"
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 base64 = "0.22.1"
 getrandom = "0.2.17"
+# The operator's WireGuard peer config as a scannable QR (crates/api/src/
+# remote/wg_operator.rs). Pure Rust and SVG-only on purpose: the console
+# container ships no `qrencode`, and the `image` feature would drag a PNG
+# encoder in for a picture a browser renders from markup just as well.
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 # B3 part 1 (docs/CONSOLE-IDP.md): offline OIDC/JWT verification for the web
 # console's IdP login. Static JWKS only, no network fetch - the exact crate
 # and posture tokenfuse-cloud's oidc.rs uses, so this adds no new auth stack.

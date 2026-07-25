@@ -112,6 +112,7 @@ mod urlpath;
 mod verdryx;
 mod wardryx;
 mod wg;
+mod wg_uapi;
 
 pub use cloud_cli::{CloudCliError, CloudListOptions, CloudProvider, CloudServer, list_servers};
 pub use cloud_rest::{
@@ -164,6 +165,10 @@ pub use wardryx::{
     DecideResponse, Policy, PolicyRecord, WardryxClient, WardryxError,
 };
 pub use wg::{WgConfig, WgError, WgInterfaceAddr, WgKeypair, WgPeer, WgTunnel};
+pub use wg_uapi::{
+    InterfaceState, PeerState, UapiSocket, WgUapiError, b64_to_hex, hex_to_b64,
+    next_free_client_ip, taken_host_octets,
+};
 
 /// Marker for the connectors crate; real connectors land in F1+.
 pub const CRATE: &str = "genaryx-connectors";

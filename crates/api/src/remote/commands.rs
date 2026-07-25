@@ -321,6 +321,12 @@ impl From<wg_operator::WgOperatorError> for RemoteError {
                 RemoteError::WgServerNotConfigured { iface, message }
             }
             wg_operator::WgOperatorError::Exec { message } => RemoteError::Wg { message },
+            // Both of these are states the operator has to resolve rather than
+            // failures of the call, and each carries the whole explanation in
+            // its message, so they surface as-is instead of being flattened
+            // into a generic error the UI would have to guess at.
+            wg_operator::WgOperatorError::Misconfigured { message } => RemoteError::Wg { message },
+            wg_operator::WgOperatorError::SubnetExhausted { message } => RemoteError::Wg { message },
         }
     }
 }
@@ -823,6 +829,26 @@ pub async fn remote_wg_disconnect(state: &RemoteState) -> Result<RemoteStatusDto
 /// here either.
 pub async fn remote_operator_wg_config() -> Result<RemoteWgOperatorConfigDto, RemoteError> {
     wg_operator::operator_wg_config()
+        .await
+        .map_err(RemoteError::from)
+}
+
+/// Every device currently authorized on the tunnel. A read, so `viewer` may
+/// run it: knowing which devices hold access is exactly the kind of thing a
+/// reviewer should be able to see without being able to change it.
+pub async fn remote_operator_wg_peers() -> Result<wg_operator::RemoteWgPeersDto, RemoteError> {
+    wg_operator::operator_wg_peers()
+        .await
+        .map_err(RemoteError::from)
+}
+
+/// Revoke one device's access to the tunnel. The counterpart to issuing, and
+/// the reason issuing is survivable: without this, the first `.conf` handed
+/// out is permanent access to the control plane.
+pub async fn remote_operator_wg_revoke(
+    public_key: String,
+) -> Result<wg_operator::RemoteWgRevokeDto, RemoteError> {
+    wg_operator::operator_wg_revoke(public_key)
         .await
         .map_err(RemoteError::from)
 }

@@ -723,6 +723,19 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "remote_operator_wg_config" => Ok(reply(
             genaryx_api::remote::commands::remote_operator_wg_config().await,
         )),
+        "remote_operator_wg_peers" => Ok(reply(
+            genaryx_api::remote::commands::remote_operator_wg_peers().await,
+        )),
+        "remote_operator_wg_revoke" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                public_key: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::remote::commands::remote_operator_wg_revoke(a.public_key).await,
+            ))
+        }
         "remote_set_environment" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

@@ -2140,11 +2140,11 @@ function mockHetznerList() {
 // "Connect this machine" (`remote_operator_wg_config`): one fixed example
 // config, the same fake "prod-stack" demo box `SEED_REMOTE_ENV` above already
 // uses (RFC 5737 documentation endpoint, never a real host, and a fake
-// keypair this preview never uses to open a real tunnel). `qr_png_base64` is
+// keypair this preview never uses to open a real tunnel). `qr_svg` is
 // deliberately empty, mirroring `mockEvidenceBuild`'s own `zip_base64: ""`:
-// this preview has no real `qrencode` to shell out to, so there is no real
-// PNG to fake - the card renders its own honest "no QR available" placeholder
-// instead of a fabricated pixel.
+// a QR that scans would hand whoever pointed a phone at it a config for a
+// tunnel that does not exist, so the card renders its own honest "no QR
+// available" placeholder instead.
 function mockOperatorWgConfig() {
   const clientPriv = "eA3mK9pLwQ2vXsZ0tYbNcRf8dGjHu5MoPq1Wn6CiT2E=";
   const clientIp = "10.9.0.2";
@@ -2152,10 +2152,11 @@ function mockOperatorWgConfig() {
   const endpoint = "198.51.100.42:51820";
   return {
     conf: `[Interface]\nPrivateKey = ${clientPriv}\nAddress = ${clientIp}/32\n\n[Peer]\nPublicKey = ${serverPub}\nEndpoint = ${endpoint}\nAllowedIPs = 10.9.0.1/32\nPersistentKeepalive = 25\n`,
-    qr_png_base64: "",
+    qr_svg: "",
     client_ip: clientIp,
     endpoint,
     server_public_key: serverPub,
+    peer_public_key: "Qp7VnK2mX9dLc4RtYw0sZbF6gJhU3oNeM1iA8uEjT5c=",
     console_tunnel_url: "http://10.9.0.1:7420",
   };
 }

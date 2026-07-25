@@ -160,15 +160,51 @@ export interface RemoteWgOperatorConfig {
   /** The complete client `.conf` TEXT, private key included - what the
    * Download button saves verbatim and what the QR code encodes. */
   conf: string;
-  /** A QR-code PNG of `conf`, base64-encoded - render as
-   * `<img src={`data:image/png;base64,${qr_png_base64}`}>`. */
-  qr_png_base64: string;
+  /** The QR as an inline SVG document (the `<svg>` element itself, no XML
+   * prolog). SVG rather than a PNG because the console image ships no image
+   * encoder and no `qrencode`: this is rendered in Rust and inlined here. */
+  qr_svg: string;
   client_ip: string;
   /** `host:port` the client dials. */
   endpoint: string;
   server_public_key: string;
+  /** The issued peer's public key, base64. The handle a later revoke names. */
+  peer_public_key: string;
   /** Where the console answers once the tunnel is up. */
   console_tunnel_url: string;
+}
+
+/** Mirrors `remote::wg_operator::RemoteWgPeerDto`: one device currently
+ * authorized on the tunnel. */
+export interface RemoteWgPeer {
+  public_key: string;
+  allowed_ips: string[];
+  /** Unix seconds of the last completed handshake, `null` if this device has
+   * never connected: issued-and-never-used looks exactly like issued to the
+   * wrong person, so the UI must be able to tell them apart. */
+  last_handshake_unix: number | null;
+  endpoint: string | null;
+  rx_bytes: number;
+  tx_bytes: number;
+}
+
+/** Mirrors `remote::wg_operator::RemoteWgPeersDto`. */
+export interface RemoteWgPeers {
+  iface: string;
+  server_public_key: string | null;
+  listen_port: number | null;
+  /** Which backend answered: `uapi` (the sidecar) or `wg` (a kernel interface
+   * on this host). Shown rather than hidden, so "it works here" is never
+   * mistaken for one uniform mechanism. */
+  backend: string;
+  peers: RemoteWgPeer[];
+}
+
+/** Mirrors `remote::wg_operator::RemoteWgRevokeDto`. */
+export interface RemoteWgRevoke {
+  public_key: string;
+  was_present: boolean;
+  remaining_peers: number;
 }
 
 /** `remote:tail-line` SSE event payload - mirrors `remote::commands::RemoteTailLine`. */

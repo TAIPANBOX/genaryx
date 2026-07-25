@@ -395,6 +395,13 @@ const SENSITIVE_COMMANDS: &[&str] = &[
     "money_kill_run",
     "money_set_budget",
     "policy_decide_approval",
+    // Issuing a WireGuard peer hands out a road into the control plane, and
+    // revoking one takes an operator's access away mid-incident. Both are the
+    // same class of act as a kill: the role gate says who MAY, the ceremony
+    // says the human is present for THIS one. Without this, a stolen console
+    // session could quietly mint itself a permanent tunnel.
+    "remote_operator_wg_config",
+    "remote_operator_wg_revoke",
 ];
 
 /// `POST /api/webauthn/action/start`'s body: which command the operator is

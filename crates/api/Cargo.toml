@@ -37,6 +37,9 @@ sha2 = { workspace = true }
 # The onboard wizard's client-key secret minting (docs/ONBOARD.md): 16 random
 # bytes, hex-encoded. Already a workspace dependency.
 getrandom = { workspace = true }
+# The issued WireGuard peer config rendered as a scannable QR (remote/
+# wg_operator.rs), SVG so no PNG encoder and no `qrencode` binary is needed.
+qrcode = { workspace = true }
 
 [dev-dependencies]
 # Both only for tests that moved here with their planes: money/state.rs's

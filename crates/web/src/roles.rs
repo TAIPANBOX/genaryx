@@ -84,6 +84,10 @@ const ADMIN_COMMANDS: &[&str] = &[
     // that hands out tunnel access to this box, the same posture as every
     // other admin-only Remote command above.
     "remote_operator_wg_config",
+    // Revoking cuts a device's access to the control plane. Listing the peers
+    // is deliberately NOT here: seeing who holds access is a read, and a
+    // reviewer should be able to look without being able to change anything.
+    "remote_operator_wg_revoke",
 ];
 
 /// The minimum role that may run `command`. Everything not named in the
@@ -153,6 +157,9 @@ const VIEWER_COMMANDS: &[&str] = &[
     "recent_events",
     "remote_cloud_list",
     "remote_hetzner_list",
+    // Which devices hold tunnel access is a read. Seeing it without being able
+    // to change it is exactly what a reviewer needs.
+    "remote_operator_wg_peers",
     "remote_ssh_check_reachable",
     "remote_status",
     "routines_history",
@@ -229,6 +236,8 @@ mod tests {
         "remote_cloud_list",
         "remote_hetzner_list",
         "remote_operator_wg_config",
+        "remote_operator_wg_peers",
+        "remote_operator_wg_revoke",
         "remote_set_environment",
         "remote_ssh_check_reachable",
         "remote_ssh_read_file",

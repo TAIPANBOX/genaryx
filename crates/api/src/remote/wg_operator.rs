@@ -1,187 +1,276 @@
-//! Operator-facing WireGuard client provisioning (`remote_operator_wg_config`,
-//! `crate::remote::commands`'s thin wrapper of the same name): mint the
-//! signed-in operator a fresh WireGuard peer against THIS box's own kernel
-//! WireGuard server, so their laptop or phone can reach the console over the
-//! tunnel instead of SSH.
+//! Operator-facing WireGuard peer provisioning: mint the signed-in operator a
+//! fresh peer against THIS box's own WireGuard server, so their laptop or
+//! phone reaches the console over the tunnel instead of an SSH forward, and
+//! revoke that peer when the device is gone.
 //!
 //! ## Not the same WireGuard as `commands::remote_wg_connect`
 //!
-//! [`super::commands::remote_wg_connect`] and its [`super::state::TunnelState`]
-//! dial the console OUT to a remote Hetzner box, over `wireguard-go`
-//! (userspace), using a keypair this console itself owns
-//! (`RemoteClient::console_keypair`). This module is the OPPOSITE direction:
-//! THIS box already runs the WireGuard SERVER (a kernel interface brought up
-//! by the box operator's own `wg-quick`, entirely outside this app's
-//! lifecycle - genaryx never creates or tears it down), and
-//! [`operator_wg_config`] mints a NEW peer, the signed-in human's own
-//! laptop or phone, so it can dial IN. Nothing here reuses `RemoteClient`'s
-//! cells: there is no long-lived connection to hold, just a handful of
-//! `wg`/`wg-quick`/`qrencode` shells against the box's already-running
-//! interface, so this command takes no managed state at all - mirrors
-//! `commands::remote_hetzner_list`'s identical "stateless connector" shape.
+//! [`super::commands::remote_wg_connect`] dials the console OUT to a remote
+//! box over its own `wireguard-go`, using a keypair the console owns. This
+//! module is the OPPOSITE direction: the server already runs here, and these
+//! commands mint a peer so a human's device can dial IN. The two share only
+//! the protocol.
 //!
-//! ## Reading the server identity live, never guessed
+//! ## Two backends, chosen by what is actually reachable
 //!
-//! The server's public key and listen port are read straight off the
-//! running interface (`wg show <iface> public-key`/`listen-port`) rather
-//! than from any saved config, so a rotated key or a changed port is
-//! reflected immediately. Only the endpoint HOST (the box's public IP,
-//! which `wg show` cannot report) and the interface name are configurable,
-//! via `GENARYX_WG_ENDPOINT_HOST`/`GENARYX_WG_IFACE`, each defaulting to
-//! this specific box's own real value - see [`endpoint_host`]/[`iface_name`],
-//! so this stays usable, not hostile, on a differently-addressed deployment.
+//! The console runs in a container on a single-box install, and a container
+//! has no `NET_ADMIN`, no `/dev/net/tun` and no `wg` binary. The previous
+//! version of this module shelled `wg` unconditionally and therefore refused
+//! outright in exactly the deployment the product ships, which left the SSH
+//! forward as the real answer while the UI offered a button that could not
+//! work.
 //!
-//! ## Client IP allocation (v1: fixed, documented, not hidden)
+//! So peer management goes through [`PeerBackend`]:
 //!
-//! [`next_client_ip`] always hands out `10.9.0.2` - the simplest acceptable
-//! v1 for a single operator device rather than a real allocator that scans
-//! `wg show <iface> allowed-ips` for already-taken addresses first (the way
-//! `provisioning/new-device.sh` does for its own, differently-addressed,
-//! class of peer). See that function's own doc comment for the consequence
-//! this simplification has on a second issue.
+//! - [`PeerBackend::Uapi`] talks to `wireguard-go`'s userspace API socket. The
+//!   privileged sidecar holds the tunnel; this process holds a unix socket and
+//!   needs no capability at all. This is the single-box and cluster path.
+//! - [`PeerBackend::Shell`] shells `wg` against a kernel interface, for a
+//!   console running directly on a box whose WireGuard someone brought up with
+//!   `wg-quick`. Unchanged behaviour for that deployment.
 //!
-//! ## Never a private key touches a file
+//! Resolution is by evidence, never by guessing the environment: a socket that
+//! answers wins, then a `wg` binary that runs, then an honest refusal naming
+//! both roads not taken.
 //!
-//! `wg set <iface> private-key <file>` is known to fail on this box with a
-//! permission error under AppArmor when the file lives under `/root`. This
-//! module never makes that call at all: the SERVER's own private key is
-//! never touched (only its PUBLIC key is read, via `wg show`), and the fresh
-//! CLIENT keypair this command mints is generated and consumed entirely in
-//! memory - `wg genkey`'s stdout piped straight into `wg pubkey`'s stdin
-//! ([`generate_client_keypair`]), no temp file ever created for either half
-//! of it. Adding the new peer to the live server (`wg set <iface> peer <pub>
-//! allowed-ips <ip>/32`, [`add_peer`]) takes the public key as a plain
-//! argument, which needs no file either.
+//! ## Nothing shells for keys or QR any more
 //!
-//! ## Where this cannot work, and says so
+//! Keys are Curve25519, generated in memory by
+//! [`genaryx_connectors::WgKeypair`] with exactly `wg genkey`'s clamping, and
+//! the QR is rendered as SVG in Rust. `wg`, `wg genkey`, `wg pubkey` and
+//! `qrencode` are no longer required for the container path at all: three
+//! fewer binaries that the image must ship and that can be missing at 2am.
 //!
-//! Every shell below targets the HOST's kernel interface, so a console running
-//! in a container or a Kubernetes pod has neither the binaries nor the network
-//! namespace to do any of it. [`containerised`] detects that BEFORE shelling
-//! anything and returns [`WgOperatorError::ServerNotConfigured`] with the
-//! reason and the alternative, because the raw failure
-//! (`wg: command not found`) reads like a missing package and sends the
-//! operator to install one that would change nothing. A cluster-native entry
-//! point for the console is a separate component, not this command.
+//! ## Addresses are allocated, not assumed
+//!
+//! The address comes from [`genaryx_connectors::next_free_client_ip`], which
+//! reads the live peer list first. The previous fixed `10.9.0.2` meant the
+//! second device issued silently superseded the first, because WireGuard keeps
+//! one owner per `/32`: the first laptop simply stopped receiving, with
+//! nothing anywhere reporting an error.
+//!
+//! ## The endpoint host is configuration, never a guess
+//!
+//! A client `.conf` must name the address the device dials back on, and no
+//! interface can report it. It comes from `GENARYX_WG_ENDPOINT_HOST`, which
+//! `install.sh` writes. When it is absent this refuses and says so: the
+//! previous default was one specific box's public IP, so every other
+//! deployment issued configs pointing at a machine that was not theirs.
 //!
 //! ## Side-effect honesty
 //!
-//! [`operator_wg_config`] really adds a peer to the live interface - it is
-//! not a preview or a dry run (see [`add_peer`]). Persisting that peer to
-//! `/etc/wireguard/<iface>.conf` (`wg-quick save`, [`persist_best_effort`])
-//! is attempted afterward but is deliberately best-effort: a failure there
-//! is logged and swallowed, never turned into a command failure, because
-//! the peer is already live on the running interface either way.
-//!
-//! The client's private key is returned to the caller exactly once, inside
-//! the DTO the operator's own browser receives over the console's existing
-//! authenticated transport - never logged, never written to disk by this
-//! module.
+//! Issuing really adds a live peer, and revoking really removes one. The
+//! client's private key is returned exactly once, to the browser that asked,
+//! over the console's authenticated transport: never logged, never written to
+//! disk, never recoverable afterwards.
 
+use genaryx_connectors::{
+    InterfaceState, UapiSocket, WgKeypair, WgUapiError, hex_to_b64, next_free_client_ip,
+};
 use serde::Serialize;
-use std::io::Write as _;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
-/// The tunnel subnet's server address - what the issued client's own
-/// `AllowedIPs` names (the one address it routes back through the tunnel),
-/// never itself read off `wg show` (a listen interface reports no notion of
-/// "the subnet base").
+/// The tunnel subnet's server address: what an issued client routes back
+/// through the tunnel, and the address the console answers on from inside it.
 const SERVER_TUNNEL_IP: &str = "10.9.0.1";
 
-/// Where the console itself listens, reachable at this address once the
-/// tunnel is up.
+/// Where the console itself listens.
 const CONSOLE_PORT: u16 = 7420;
 
-/// `GENARYX_WG_IFACE` override; this box's real kernel WireGuard server
-/// interface otherwise.
+/// `GENARYX_WG_IFACE` override, `wg-op` otherwise. The same name `install.sh`
+/// brings the sidecar up with.
 fn iface_name() -> String {
     std::env::var("GENARYX_WG_IFACE").unwrap_or_else(|_| "wg-op".to_string())
 }
 
-/// `GENARYX_WG_ENDPOINT_HOST` override; this box's real public IP otherwise -
-/// `wg show` has no way to report the address a client dials back in on, so
-/// this is the one piece of the client config that cannot be read live.
-fn endpoint_host() -> String {
-    std::env::var("GENARYX_WG_ENDPOINT_HOST").unwrap_or_else(|_| "46.225.171.155".to_string())
-}
-
-/// The next free client tunnel address. ALWAYS `10.9.0.2` for now - the
-/// simplest acceptable v1 (a real allocator would scan `wg show <iface>
-/// allowed-ips` for taken addresses first, the way `provisioning/
-/// new-device.sh` does for its own peer class). One consequence worth
-/// stating rather than hiding: re-issuing a config mints a brand new
-/// keypair at this SAME address, which silently supersedes whatever peer
-/// previously held it (WireGuard's allowed-ips routing keeps only one owner
-/// per exact `/32`) - harmless for the single-operator demo this ships for,
-/// but a real multi-seat rollout needs the scanning allocator instead.
-/// Deliberately a `fn`, not a `const`, so that later allocator slots in
-/// without changing any call site's shape.
-fn next_client_ip() -> String {
-    "10.9.0.2".to_string()
+/// Where the sidecar exposes its UAPI socket directory, overridable so a
+/// differently-mounted deployment (and the tests) can point elsewhere.
+fn uapi_socket() -> UapiSocket {
+    match std::env::var("GENARYX_WG_UAPI_SOCKET") {
+        Ok(path) if !path.is_empty() => UapiSocket::at(path),
+        _ => UapiSocket::for_interface(&iface_name()),
+    }
 }
 
 // ============================================================================
-// DTO
+// DTOs
 // ============================================================================
 
-/// [`operator_wg_config`]'s return - everything the frontend needs to render
-/// the QR code and offer the `.conf` download in one round trip.
+/// [`operator_wg_config`]'s return: everything the frontend needs to show the
+/// QR and offer the `.conf` download in one round trip.
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteWgOperatorConfigDto {
-    /// The complete client `wg0.conf` TEXT, private key included - what the
-    /// Download button saves verbatim and what the QR code encodes.
+    /// The complete client `.conf` TEXT, private key included: what the
+    /// Download button saves and what the QR encodes.
     pub conf: String,
-    /// A QR-code PNG of `conf`, base64-encoded, ready for
-    /// `<img src="data:image/png;base64,...">`.
-    pub qr_png_base64: String,
+    /// The QR as an inline SVG document. The frontend renders it directly or
+    /// wraps it in a `data:image/svg+xml` URI; either way no binary image
+    /// encoder is involved.
+    pub qr_svg: String,
     pub client_ip: String,
     /// `host:port` the client dials.
     pub endpoint: String,
     pub server_public_key: String,
+    /// The peer's public key, base64. The handle a later revoke names, and the
+    /// only part of the issued identity worth keeping.
+    pub peer_public_key: String,
     /// Where the console answers once the tunnel is up.
     pub console_tunnel_url: String,
+}
+
+/// One currently-authorized device.
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteWgPeerDto {
+    /// Base64, the form `wg show` prints and a revoke names.
+    pub public_key: String,
+    pub allowed_ips: Vec<String>,
+    /// Unix seconds of the last completed handshake, `None` if this device has
+    /// never connected. A peer that was issued and never used looks exactly
+    /// like one that was issued to the wrong person.
+    pub last_handshake_unix: Option<u64>,
+    pub endpoint: Option<String>,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteWgPeersDto {
+    pub iface: String,
+    pub server_public_key: Option<String>,
+    pub listen_port: Option<u16>,
+    /// Which backend answered, so the UI can say where this came from rather
+    /// than implying one uniform mechanism.
+    pub backend: &'static str,
+    pub peers: Vec<RemoteWgPeerDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteWgRevokeDto {
+    pub public_key: String,
+    /// False when the key was not configured to begin with. A revoke of an
+    /// absent peer still succeeds (the end state is what was asked for), but
+    /// saying which happened keeps the audit trail honest.
+    pub was_present: bool,
+    pub remaining_peers: usize,
 }
 
 // ============================================================================
 // errors
 // ============================================================================
 
-/// Every failure mode [`operator_wg_config`] can surface, fail-closed -
-/// mirrors `genaryx_connectors::cloud_cli::CloudCliError`'s "shell an
-/// installed CLI" shape, collapsed to the two outcomes this feature's own
-/// caller ([`super::commands::RemoteError`], via the `From` impl in
-/// `commands.rs`) needs to tell apart.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WgOperatorError {
-    /// The box's kernel WireGuard server (`iface`) is not up, so there is no
-    /// live server key/port to hand a fresh peer - a normal, honest outcome
-    /// on a box where WireGuard has not been brought up yet, never a panic.
+    /// No WireGuard server this console can reach, by either backend. Carries
+    /// the reason rather than a raw `command not found`, which reads like a
+    /// missing package and sends the operator to install something that would
+    /// change nothing.
     ServerNotConfigured { iface: String, message: String },
-    /// `wg`/`wg-quick`/`qrencode` shelled, ran, and exited nonzero (or could
-    /// not be spawned at all) for any other reason.
+    /// Reachable, but the operation failed.
     Exec { message: String },
+    /// The deployment is missing a value only it can supply.
+    Misconfigured { message: String },
+    /// Every address in the tunnel subnet is already assigned.
+    SubnetExhausted { message: String },
 }
 
 fn exec_err(message: String) -> WgOperatorError {
     WgOperatorError::Exec { message }
 }
 
+fn not_configured(iface: &str, detail: impl std::fmt::Display) -> WgOperatorError {
+    WgOperatorError::ServerNotConfigured {
+        iface: iface.to_string(),
+        message: format!("{detail}"),
+    }
+}
+
+impl From<WgUapiError> for WgOperatorError {
+    fn from(e: WgUapiError) -> Self {
+        match e {
+            WgUapiError::NoSocket(p) => WgOperatorError::ServerNotConfigured {
+                iface: iface_name(),
+                message: format!(
+                    "the WireGuard tunnel is not running: no UAPI socket at {}. \
+                     On a single-box install this is the `wg` service in compose.yaml; \
+                     start it with `docker compose up -d wg`.",
+                    p.display()
+                ),
+            },
+            other => exec_err(other.to_string()),
+        }
+    }
+}
+
 // ============================================================================
-// shelling wg / wg-quick / qrencode
+// backend selection
 // ============================================================================
 
-/// One `<cli> <args>` invocation's captured, trimmed stdout on a clean exit -
-/// mirrors `genaryx_connectors::cloud_cli::run_cli`'s spawn/exit
-/// classification, simplified to this module's own two-variant error (no
-/// separate "not authenticated" case: none of `wg`/`wg-quick`/`qrencode`
-/// have one).
+/// How this process reaches the WireGuard server.
+#[derive(Debug, Clone)]
+pub enum PeerBackend {
+    /// `wireguard-go`'s userspace API socket, held by a sidecar.
+    Uapi(UapiSocket),
+    /// `wg` against a kernel interface on this same host.
+    Shell { iface: String },
+}
+
+impl PeerBackend {
+    pub fn label(&self) -> &'static str {
+        match self {
+            PeerBackend::Uapi(_) => "uapi",
+            PeerBackend::Shell { .. } => "wg",
+        }
+    }
+}
+
+/// Whether this console is inside a container. Not used to refuse any more,
+/// only to word the refusal: the UAPI backend works perfectly well in one.
+fn containerised() -> Option<&'static str> {
+    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+        return Some("a Kubernetes pod");
+    }
+    if std::path::Path::new("/.dockerenv").exists()
+        || std::path::Path::new("/run/.containerenv").exists()
+    {
+        return Some("a container");
+    }
+    None
+}
+
+/// Pick a backend by evidence: a UAPI socket that exists, else a `wg` binary
+/// that runs, else refuse and name both.
+fn resolve_backend() -> Result<PeerBackend, WgOperatorError> {
+    let iface = iface_name();
+    let sock = uapi_socket();
+    if sock.exists() {
+        return Ok(PeerBackend::Uapi(sock));
+    }
+    if Command::new("wg").arg("--version").output().is_ok() {
+        return Ok(PeerBackend::Shell { iface });
+    }
+    let where_ = containerised().unwrap_or("this host");
+    Err(not_configured(
+        &iface,
+        format!(
+            "no WireGuard server this console can reach. It looked for a userspace API \
+             socket at {} (the `wg` sidecar service, which is how {where_} is meant to \
+             reach one) and for a `wg` binary on PATH (a kernel interface on this host). \
+             Neither answered. On a single-box install: `docker compose up -d wg`.",
+            sock.path().display()
+        ),
+    ))
+}
+
+// ============================================================================
+// backend operations
+// ============================================================================
+
+/// One `<cli> <args>` invocation's trimmed stdout on a clean exit.
 fn run(cli: &str, args: &[&str]) -> Result<String, WgOperatorError> {
     let out = Command::new(cli).args(args).output().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            exec_err(format!(
-                "{cli}: command not found (is it installed and on PATH?)"
-            ))
+            exec_err(format!("{cli}: command not found (is it installed and on PATH?)"))
         } else {
             exec_err(format!("could not run {cli}: {e}"))
         }
@@ -197,371 +286,357 @@ fn run(cli: &str, args: &[&str]) -> Result<String, WgOperatorError> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// `wg pubkey`, fed `private_key` on stdin rather than a file - the
-/// `wg genkey | wg pubkey` idiom, minus the shell pipe (see this module's
-/// doc comment on why no key ever touches disk here).
-fn pubkey_from_private(private_key: &str) -> Result<String, WgOperatorError> {
-    let mut child = Command::new("wg")
-        .arg("pubkey")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                exec_err("wg: command not found (is it installed and on PATH?)".to_string())
-            } else {
-                exec_err(format!("could not run wg pubkey: {e}"))
+/// Parse `wg show <iface> dump` into the same shape the UAPI parser produces,
+/// so everything downstream is backend-agnostic.
+///
+/// The first line is the interface (private key, public key, listen port,
+/// fwmark); every later line is a peer (public key, preshared key, endpoint,
+/// allowed ips, latest handshake, rx, tx, keepalive), tab-separated.
+fn parse_wg_dump(dump: &str) -> InterfaceState {
+    use genaryx_connectors::PeerState;
+    let mut state = InterfaceState::default();
+    for (i, line) in dump.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+        let f: Vec<&str> = line.split('\t').collect();
+        if i == 0 {
+            // Field 0 is the interface's PRIVATE key and is deliberately not
+            // read: nothing here needs it, so it never enters a struct.
+            if let Some(pk) = f.get(1).filter(|s| !s.is_empty() && **s != "(none)") {
+                state.public_key_hex = genaryx_connectors::b64_to_hex(pk).ok();
             }
-        })?;
+            state.listen_port = f.get(2).and_then(|s| s.parse().ok());
+            continue;
+        }
+        let Some(pk_b64) = f.first().filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let Ok(public_key_hex) = genaryx_connectors::b64_to_hex(pk_b64) else {
+            continue;
+        };
+        state.peers.push(PeerState {
+            public_key_hex,
+            allowed_ips: f
+                .get(3)
+                .filter(|s| !s.is_empty() && **s != "(none)")
+                .map(|s| s.split(',').map(|c| c.trim().to_string()).collect())
+                .unwrap_or_default(),
+            last_handshake_unix: f.get(4).and_then(|s| s.parse::<u64>().ok()).filter(|n| *n != 0),
+            endpoint: f
+                .get(2)
+                .filter(|s| !s.is_empty() && **s != "(none)")
+                .map(|s| s.to_string()),
+            rx_bytes: f.get(5).and_then(|s| s.parse().ok()).unwrap_or(0),
+            tx_bytes: f.get(6).and_then(|s| s.parse().ok()).unwrap_or(0),
+        });
+    }
+    state
+}
 
-    // Scoped so `stdin` drops (closing the pipe) before `wait_with_output`
-    // below reads: `wg pubkey` reads exactly one key from stdin until EOF,
-    // then exits.
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| exec_err("wg pubkey: could not open its stdin pipe".to_string()))?;
-        stdin
-            .write_all(private_key.as_bytes())
-            .and_then(|()| stdin.write_all(b"\n"))
-            .map_err(|e| {
-                exec_err(format!(
-                    "wg pubkey: could not write the private key to stdin: {e}"
-                ))
+fn read_state(backend: &PeerBackend) -> Result<InterfaceState, WgOperatorError> {
+    match backend {
+        PeerBackend::Uapi(sock) => Ok(sock.state()?),
+        PeerBackend::Shell { iface } => {
+            let dump = run("wg", &["show", iface, "dump"]).map_err(|e| match e {
+                WgOperatorError::Exec { message } => not_configured(
+                    iface,
+                    format!("interface '{iface}' is not up ({message})"),
+                ),
+                other => other,
             })?;
-    }
-
-    let out = child
-        .wait_with_output()
-        .map_err(|e| exec_err(format!("wg pubkey: could not read its output: {e}")))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(exec_err(format!(
-            "wg pubkey exited {}: {stderr}",
-            out.status.code().unwrap_or(-1)
-        )));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// A fresh WireGuard client keypair: `wg genkey`'s stdout piped directly into
-/// `wg pubkey`'s stdin, entirely in memory.
-fn generate_client_keypair() -> Result<(String, String), WgOperatorError> {
-    let private_key = run("wg", &["genkey"])?;
-    let public_key = pubkey_from_private(&private_key)?;
-    Ok((private_key, public_key))
-}
-
-/// Read the live server identity off the running interface. Either `wg show`
-/// call failing - most commonly because the interface does not exist yet -
-/// is folded into [`WgOperatorError::ServerNotConfigured`]: whatever the
-/// underlying reason, there is no live server identity to hand a fresh peer,
-/// which is the honest framing for this specific read.
-fn read_server_identity(iface: &str) -> Result<(String, u16), WgOperatorError> {
-    let not_configured = |detail: String| WgOperatorError::ServerNotConfigured {
-        iface: iface.to_string(),
-        message: format!(
-            "WireGuard is not configured on this box: interface '{iface}' is not up ({detail})"
-        ),
-    };
-
-    let public_key = run("wg", &["show", iface, "public-key"]).map_err(|e| match e {
-        WgOperatorError::Exec { message } => not_configured(message),
-        other => other,
-    })?;
-    if public_key.is_empty() || public_key == "(none)" {
-        return Err(not_configured("no public key reported".to_string()));
-    }
-
-    let listen_port_raw = run("wg", &["show", iface, "listen-port"]).map_err(|e| match e {
-        WgOperatorError::Exec { message } => not_configured(message),
-        other => other,
-    })?;
-    let listen_port: u16 = listen_port_raw.parse().map_err(|_| {
-        not_configured(format!(
-            "interface reported a non-numeric listen port ({listen_port_raw:?})"
-        ))
-    })?;
-
-    Ok((public_key, listen_port))
-}
-
-/// Add `client_public_key` as a live peer on `iface`, routable only for its
-/// own `/32` - side-effect-honest: a failure here is a real, returned
-/// failure, never swallowed (unlike [`persist_best_effort`] below).
-fn add_peer(iface: &str, client_public_key: &str, client_ip: &str) -> Result<(), WgOperatorError> {
-    let allowed = format!("{client_ip}/32");
-    run(
-        "wg",
-        &[
-            "set",
-            iface,
-            "peer",
-            client_public_key,
-            "allowed-ips",
-            &allowed,
-        ],
-    )?;
-    Ok(())
-}
-
-/// Best-effort `wg-quick save <iface>` so the new peer survives a reboot -
-/// NEVER fails the command: the peer is already live on the running
-/// interface regardless of whether this succeeds. Swallows its own error
-/// after a plain best-effort log line (this crate's established `genaryx:
-/// ...` eprintln convention for a non-fatal background problem, e.g.
-/// `bus::mod`'s fallback-to-mock log).
-fn persist_best_effort(iface: &str) {
-    if let Err(e) = run("wg-quick", &["save", iface]) {
-        eprintln!(
-            "genaryx: wg-quick save {iface} failed, the peer is still live on the running interface: {e:?}"
-        );
+            Ok(parse_wg_dump(&dump))
+        }
     }
 }
 
-/// Render a QR PNG of `text` via `qrencode`, base64-encoded - ready for
-/// `<img src="data:image/png;base64,...">`. Fed on stdin and read back off
-/// stdout, the same no-temp-file shape [`pubkey_from_private`] uses.
-fn qr_png_base64(text: &str) -> Result<String, WgOperatorError> {
-    let mut child = Command::new("qrencode")
-        .args(["-t", "PNG", "-o", "-", "-s", "6", "-m", "2"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                exec_err("qrencode: command not found (is it installed and on PATH?)".to_string())
-            } else {
-                exec_err(format!("could not run qrencode: {e}"))
-            }
-        })?;
-
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| exec_err("qrencode: could not open its stdin pipe".to_string()))?;
-        stdin.write_all(text.as_bytes()).map_err(|e| {
-            exec_err(format!(
-                "qrencode: could not write the config to stdin: {e}"
-            ))
-        })?;
-    }
-
-    let out = child
-        .wait_with_output()
-        .map_err(|e| exec_err(format!("qrencode: could not read its output: {e}")))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(exec_err(format!(
-            "qrencode exited {}: {stderr}",
-            out.status.code().unwrap_or(-1)
-        )));
-    }
-
-    use base64::Engine as _;
-    use base64::engine::general_purpose::STANDARD as B64;
-    Ok(B64.encode(out.stdout))
-}
-
-/// The client `.conf` TEXT this command hands back - both what the Download
-/// button saves and what the QR code encodes.
-fn render_conf(
-    client_private_key: &str,
+fn add_peer(
+    backend: &PeerBackend,
+    public_key_hex: &str,
     client_ip: &str,
-    server_public_key: &str,
+) -> Result<(), WgOperatorError> {
+    let allowed = format!("{client_ip}/32");
+    match backend {
+        PeerBackend::Uapi(sock) => Ok(sock.add_peer(public_key_hex, &[allowed])?),
+        PeerBackend::Shell { iface } => {
+            let b64 = hex_to_b64(public_key_hex).map_err(|e| exec_err(e.to_string()))?;
+            run("wg", &["set", iface, "peer", &b64, "allowed-ips", &allowed])?;
+            // Best effort: the peer is already live either way, so a failure
+            // to persist must not fail the command.
+            if let Err(e) = run("wg-quick", &["save", iface]) {
+                eprintln!("genaryx: wg-quick save {iface} failed, peer is live regardless: {e:?}");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn remove_peer(backend: &PeerBackend, public_key_hex: &str) -> Result<(), WgOperatorError> {
+    match backend {
+        PeerBackend::Uapi(sock) => Ok(sock.remove_peer(public_key_hex)?),
+        PeerBackend::Shell { iface } => {
+            let b64 = hex_to_b64(public_key_hex).map_err(|e| exec_err(e.to_string()))?;
+            run("wg", &["set", iface, "peer", &b64, "remove"])?;
+            if let Err(e) = run("wg-quick", &["save", iface]) {
+                eprintln!("genaryx: wg-quick save {iface} failed, peer is gone regardless: {e:?}");
+            }
+            Ok(())
+        }
+    }
+}
+
+// ============================================================================
+// rendering
+// ============================================================================
+
+/// The address a device dials back on. Configuration only: no interface can
+/// report it, and guessing it hands the operator a config pointing at someone
+/// else's machine.
+fn endpoint_host() -> Result<String, WgOperatorError> {
+    match std::env::var("GENARYX_WG_ENDPOINT_HOST") {
+        Ok(h) if !h.trim().is_empty() => Ok(h.trim().to_string()),
+        _ => Err(WgOperatorError::Misconfigured {
+            message: "GENARYX_WG_ENDPOINT_HOST is not set, so there is no address to put in \
+                      the client config. It is the public address of THIS box, the one a \
+                      phone dials from outside; nothing on the interface can report it. \
+                      install.sh writes it into .env; set it there and restart the console."
+                .to_string(),
+        }),
+    }
+}
+
+/// The client `.conf`: what the Download button saves and the QR encodes.
+fn render_conf(
+    client_private_key_b64: &str,
+    client_ip: &str,
+    server_public_key_b64: &str,
     endpoint: &str,
 ) -> String {
     format!(
-        "[Interface]\nPrivateKey = {client_private_key}\nAddress = {client_ip}/32\n\n[Peer]\nPublicKey = {server_public_key}\nEndpoint = {endpoint}\nAllowedIPs = {SERVER_TUNNEL_IP}/32\nPersistentKeepalive = 25\n"
+        "[Interface]\nPrivateKey = {client_private_key_b64}\nAddress = {client_ip}/32\n\n\
+         [Peer]\nPublicKey = {server_public_key_b64}\nEndpoint = {endpoint}\n\
+         AllowedIPs = {SERVER_TUNNEL_IP}/32\nPersistentKeepalive = 25\n"
     )
 }
 
-// ============================================================================
-// the command's synchronous body + async entry point
-// ============================================================================
-
-/// The whole sequence, entirely synchronous (called only from inside
-/// [`operator_wg_config`]'s `spawn_blocking`): read the live server
-/// identity, mint a client keypair, allocate its tunnel address, add it as a
-/// live peer, persist best-effort, then render the `.conf` and its QR.
-/// Whether this console is running inside a container rather than on the box
-/// whose WireGuard server it would mint a peer against.
-///
-/// This matters because the failure is otherwise unreadable. Everything below
-/// shells `wg`/`wg-quick` against the HOST's kernel interface, and a container
-/// has neither those binaries nor the host's network namespace, so the honest
-/// answer ("this console cannot reach a WireGuard server from in here") would
-/// otherwise reach the operator as `wg: command not found`, which reads like a
-/// missing package on the box and sends them to install one that would change
-/// nothing.
-///
-/// `KUBERNETES_SERVICE_HOST` is set by the kubelet in every pod, and
-/// `/.dockerenv`/`/run/.containerenv` cover a plain container runtime. None of
-/// the three can be true on a box running WireGuard directly, which is the
-/// only place this feature works.
-fn containerised() -> Option<&'static str> {
-    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
-        return Some("a Kubernetes pod");
-    }
-    if std::path::Path::new("/.dockerenv").exists()
-        || std::path::Path::new("/run/.containerenv").exists()
-    {
-        return Some("a container");
-    }
-    None
+/// The config as a scannable QR, SVG. Pure Rust: no `qrencode`, no PNG codec.
+fn render_qr_svg(text: &str) -> Result<String, WgOperatorError> {
+    use qrcode::QrCode;
+    use qrcode::render::svg;
+    let code = QrCode::new(text.as_bytes())
+        .map_err(|e| exec_err(format!("could not encode the config as a QR: {e}")))?;
+    let doc = code
+        .render::<svg::Color>()
+        .min_dimensions(240, 240)
+        .quiet_zone(true)
+        .build();
+    // The renderer emits a standalone XML document. The frontend inlines this
+    // into HTML, where a leading `<?xml ... ?>` declaration is invalid, so the
+    // prolog is trimmed and only the `<svg>` element is handed out.
+    Ok(match doc.find("<svg") {
+        Some(i) => doc[i..].to_string(),
+        None => doc,
+    })
 }
 
-fn build_config_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
+// ============================================================================
+// commands
+// ============================================================================
+
+fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
+    let backend = resolve_backend()?;
     let iface = iface_name();
+    // Resolved BEFORE minting anything: failing after a peer is live would
+    // leave an authorized device nobody holds a config for.
+    let host = endpoint_host()?;
 
-    // Refuse early and explain, rather than shelling a binary that is not
-    // there. Reported as ServerNotConfigured because that is exactly what it
-    // is from the operator's side: no WireGuard server this console can reach.
-    if let Some(where_) = containerised() {
-        return Err(WgOperatorError::ServerNotConfigured {
-            iface: iface.clone(),
-            message: format!(
-                "this console is running in {where_}, so it cannot mint a WireGuard peer: \
-                 the server it would add you to is the HOST's kernel interface, which a \
-                 container has no access to. Reach the console over a tunnel you already \
-                 have to that host (for a cluster, an ssh port-forward onto the node \
-                 running this pod), and enrol a passkey once you are in. A cluster-native \
-                 entry point is a separate component, not this command."
-            ),
-        });
-    }
+    let state = read_state(&backend)?;
+    let server_public_key = state.public_key_b64().ok_or_else(|| {
+        not_configured(
+            &iface,
+            format!("interface '{iface}' reports no public key, so it is not a running server"),
+        )
+    })?;
+    let listen_port = state.listen_port.ok_or_else(|| {
+        not_configured(&iface, format!("interface '{iface}' reports no listen port"))
+    })?;
 
-    let (server_public_key, listen_port) = read_server_identity(&iface)?;
+    let client_ip = next_free_client_ip(&state).ok_or_else(|| WgOperatorError::SubnetExhausted {
+        message: format!(
+            "every address in 10.9.0.0/24 is already assigned ({} peers). \
+             Revoke a device before issuing another; handing out a duplicate address \
+             would break a working device to serve a new one.",
+            state.peers.len()
+        ),
+    })?;
 
-    let client_ip = next_client_ip();
-    let (client_private_key, client_public_key) = generate_client_keypair()?;
+    let keypair = WgKeypair::generate()
+        .map_err(|e| exec_err(format!("could not generate a client keypair: {e}")))?;
+    let client_public_hex = keypair.public_hex();
+    let client_private_b64 =
+        hex_to_b64(&keypair.private_hex()).map_err(|e| exec_err(e.to_string()))?;
+    let client_public_b64 = hex_to_b64(&client_public_hex).map_err(|e| exec_err(e.to_string()))?;
 
-    // Authorize before rendering: if this fails, the operator must not walk
-    // away with a config that was never going to connect (mirrors
-    // `provisioning/new-device.sh`'s identical ordering and its own comment
-    // on why).
-    add_peer(&iface, &client_public_key, &client_ip)?;
-    persist_best_effort(&iface);
+    // Authorize before rendering: the operator must never walk away with a
+    // config that was never going to connect.
+    add_peer(&backend, &client_public_hex, &client_ip)?;
 
-    let endpoint = format!("{}:{listen_port}", endpoint_host());
-    let conf = render_conf(&client_private_key, &client_ip, &server_public_key, &endpoint);
-    let qr_png_base64 = qr_png_base64(&conf)?;
+    let endpoint = format!("{host}:{listen_port}");
+    let conf = render_conf(&client_private_b64, &client_ip, &server_public_key, &endpoint);
+    let qr_svg = render_qr_svg(&conf)?;
 
     Ok(RemoteWgOperatorConfigDto {
         conf,
-        qr_png_base64,
+        qr_svg,
         client_ip,
         endpoint,
         server_public_key,
+        peer_public_key: client_public_b64,
         console_tunnel_url: format!("http://{SERVER_TUNNEL_IP}:{CONSOLE_PORT}"),
     })
 }
 
+fn peers_blocking() -> Result<RemoteWgPeersDto, WgOperatorError> {
+    let backend = resolve_backend()?;
+    let state = read_state(&backend)?;
+    Ok(RemoteWgPeersDto {
+        iface: iface_name(),
+        server_public_key: state.public_key_b64(),
+        listen_port: state.listen_port,
+        backend: backend.label(),
+        peers: state
+            .peers
+            .iter()
+            .map(|p| RemoteWgPeerDto {
+                public_key: hex_to_b64(&p.public_key_hex).unwrap_or_else(|_| p.public_key_hex.clone()),
+                allowed_ips: p.allowed_ips.clone(),
+                last_handshake_unix: p.last_handshake_unix,
+                endpoint: p.endpoint.clone(),
+                rx_bytes: p.rx_bytes,
+                tx_bytes: p.tx_bytes,
+            })
+            .collect(),
+    })
+}
+
+fn revoke_blocking(public_key_b64: &str) -> Result<RemoteWgRevokeDto, WgOperatorError> {
+    let backend = resolve_backend()?;
+    let hex = genaryx_connectors::b64_to_hex(public_key_b64).map_err(|e| {
+        WgOperatorError::Misconfigured {
+            message: format!("not a WireGuard public key: {e}"),
+        }
+    })?;
+    let before = read_state(&backend)?;
+    let was_present = before.has_peer(&hex);
+    remove_peer(&backend, &hex)?;
+    let after = read_state(&backend)?;
+    Ok(RemoteWgRevokeDto {
+        public_key: public_key_b64.to_string(),
+        was_present,
+        remaining_peers: after.peers.len(),
+    })
+}
+
 /// Mint the signed-in operator a fresh WireGuard peer against this box's own
-/// kernel WireGuard server - see this module's doc comment. Runs the actual
-/// shelling inside [`tokio::task::spawn_blocking`], the same bridge every
-/// other blocking connector call in this crate uses.
+/// server. Runs the blocking work on the pool, like every other connector call.
 pub async fn operator_wg_config() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
-    tokio::task::spawn_blocking(build_config_blocking)
+    tokio::task::spawn_blocking(issue_blocking)
         .await
-        .unwrap_or_else(|join_err| {
-            Err(exec_err(format!(
-                "operator wg config task failed to run: {join_err}"
-            )))
-        })
+        .unwrap_or_else(|e| Err(exec_err(format!("operator wg config task failed to run: {e}"))))
+}
+
+/// Every device currently authorized on the tunnel.
+pub async fn operator_wg_peers() -> Result<RemoteWgPeersDto, WgOperatorError> {
+    tokio::task::spawn_blocking(peers_blocking)
+        .await
+        .unwrap_or_else(|e| Err(exec_err(format!("operator wg peers task failed to run: {e}"))))
+}
+
+/// Revoke one device. The key stops completing a handshake as soon as the
+/// daemon applies it.
+pub async fn operator_wg_revoke(
+    public_key_b64: String,
+) -> Result<RemoteWgRevokeDto, WgOperatorError> {
+    tokio::task::spawn_blocking(move || revoke_blocking(&public_key_b64))
+        .await
+        .unwrap_or_else(|e| Err(exec_err(format!("operator wg revoke task failed to run: {e}"))))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_pod_is_told_why_rather_than_that_wg_is_missing() {
-        // The whole point of the preflight: an operator in a cluster must not
-        // be sent to install a package that would change nothing. This asserts
-        // the reason travels, not just that it fails.
-        //
-        // SAFETY: single-threaded test, and the variable is removed again
-        // before it can leak into a sibling test.
-        unsafe { std::env::set_var("KUBERNETES_SERVICE_HOST", "10.43.0.1") };
-        let out = build_config_blocking();
-        unsafe { std::env::remove_var("KUBERNETES_SERVICE_HOST") };
-
-        match out {
-            Err(WgOperatorError::ServerNotConfigured { message, .. }) => {
-                assert!(message.contains("Kubernetes pod"), "names where it is: {message}");
-                assert!(message.contains("tunnel"), "says what to do instead: {message}");
-                assert!(!message.contains("command not found"), "not the raw shell error");
-            }
-            other => panic!("expected an explained ServerNotConfigured, got {other:?}"),
-        }
-    }
+    const SERVER_B64: &str = "6PLBoLPUlYZ3obLD1OX2BxgpOktcbX6PkBI0Vniivt8=";
+    const PEER_B64: &str = "qhG7Iswz3UTuVf9md4iZABEiM0RVZneImZAKq7zN3v8=";
 
     #[test]
-    fn render_conf_matches_the_documented_shape() {
-        let conf = render_conf("PRIVKEY==", "10.9.0.2", "SERVERPUB==", "46.225.171.155:51820");
-        assert_eq!(
-            conf,
-            "[Interface]\nPrivateKey = PRIVKEY==\nAddress = 10.9.0.2/32\n\n[Peer]\nPublicKey = SERVERPUB==\nEndpoint = 46.225.171.155:51820\nAllowedIPs = 10.9.0.1/32\nPersistentKeepalive = 25\n"
+    fn a_wg_dump_parses_into_the_same_shape_as_uapi() {
+        let dump = format!(
+            "PRIVATEKEYPRIVATEKEYPRIVATEKEYPRIVATEKEYPRI=\t{SERVER_B64}\t51820\toff\n\
+             {PEER_B64}\t(none)\t203.0.113.7:54321\t10.9.0.4/32\t1769000000\t4096\t8192\t25\n"
         );
+        let state = parse_wg_dump(&dump);
+        assert_eq!(state.listen_port, Some(51820));
+        assert_eq!(state.public_key_b64().as_deref(), Some(SERVER_B64));
+        assert_eq!(state.peers.len(), 1, "the interface line must not become a peer");
+        let p = &state.peers[0];
+        assert_eq!(p.allowed_ips, vec!["10.9.0.4/32"]);
+        assert_eq!(p.last_handshake_unix, Some(1769000000));
+        assert_eq!((p.rx_bytes, p.tx_bytes), (4096, 8192));
     }
 
     #[test]
-    fn iface_name_defaults_to_wg_op_when_unset() {
-        // SAFETY (edition-2024 env contract, same as `copilot::state`'s own
-        // `config_from_env_reads_the_provider_surface` test): no other test
-        // in this binary reads or writes GENARYX_WG_IFACE, so this mutation
-        // cannot race a concurrent getenv of the same variable.
-        unsafe {
-            std::env::remove_var("GENARYX_WG_IFACE");
+    fn a_dump_never_carries_the_interface_private_key_into_state() {
+        let dump = format!("PRIVATEKEYPRIVATEKEYPRIVATEKEYPRIVATEKEYPRI=\t{SERVER_B64}\t51820\toff\n");
+        let rendered = format!("{:?}", parse_wg_dump(&dump));
+        assert!(!rendered.contains("PRIVATEKEY"));
+    }
+
+    #[test]
+    fn a_never_connected_peer_reports_none_not_the_epoch() {
+        let dump = format!(
+            "priv=\t{SERVER_B64}\t51820\toff\n{PEER_B64}\t(none)\t(none)\t10.9.0.2/32\t0\t0\t0\toff\n"
+        );
+        let state = parse_wg_dump(&dump);
+        assert_eq!(state.peers[0].last_handshake_unix, None);
+        assert_eq!(state.peers[0].endpoint, None, "(none) is not an endpoint");
+    }
+
+    #[test]
+    fn the_conf_routes_only_the_tunnel_not_the_whole_internet() {
+        let conf = render_conf("PRIV=", "10.9.0.3", SERVER_B64, "198.51.100.9:51820");
+        assert!(
+            conf.contains(&format!("AllowedIPs = {SERVER_TUNNEL_IP}/32")),
+            "a 0.0.0.0/0 config would silently route the operator's whole device through the box"
+        );
+        assert!(conf.contains("Address = 10.9.0.3/32"));
+        assert!(conf.contains("Endpoint = 198.51.100.9:51820"));
+        assert!(conf.contains("PersistentKeepalive = 25"));
+    }
+
+    #[test]
+    fn a_missing_endpoint_host_refuses_rather_than_guessing() {
+        // Safety: single-threaded test, and the var is restored below.
+        let saved = std::env::var("GENARYX_WG_ENDPOINT_HOST").ok();
+        unsafe { std::env::remove_var("GENARYX_WG_ENDPOINT_HOST") };
+        let err = endpoint_host().unwrap_err();
+        assert!(matches!(err, WgOperatorError::Misconfigured { .. }));
+        unsafe { std::env::set_var("GENARYX_WG_ENDPOINT_HOST", "  198.51.100.9  ") };
+        assert_eq!(endpoint_host().unwrap(), "198.51.100.9", "trimmed, not raw");
+        match saved {
+            Some(v) => unsafe { std::env::set_var("GENARYX_WG_ENDPOINT_HOST", v) },
+            None => unsafe { std::env::remove_var("GENARYX_WG_ENDPOINT_HOST") },
         }
-        assert_eq!(iface_name(), "wg-op");
     }
 
     #[test]
-    fn endpoint_host_defaults_to_the_real_box_ip_when_unset() {
-        // SAFETY: see `iface_name_defaults_to_wg_op_when_unset` above - this
-        // test owns GENARYX_WG_ENDPOINT_HOST exclusively in this binary.
-        unsafe {
-            std::env::remove_var("GENARYX_WG_ENDPOINT_HOST");
-        }
-        assert_eq!(endpoint_host(), "46.225.171.155");
+    fn the_qr_encodes_the_whole_config_and_is_an_svg() {
+        let conf = render_conf("PRIV=", "10.9.0.3", SERVER_B64, "198.51.100.9:51820");
+        let svg = render_qr_svg(&conf).unwrap();
+        assert!(svg.starts_with("<svg"), "must be inline SVG, no image codec involved");
+        assert!(svg.len() > 500, "a real QR, not an empty canvas");
     }
 
     #[test]
-    fn next_client_ip_is_fixed_at_10_9_0_2_for_v1() {
-        assert_eq!(next_client_ip(), "10.9.0.2");
-    }
-
-    #[test]
-    fn run_against_a_missing_binary_is_a_clean_exec_error_not_a_panic() {
-        match run("definitely-not-a-real-wg-cli-xyz", &[]) {
-            Err(WgOperatorError::Exec { message }) => {
-                assert!(message.contains("not found"));
-            }
-            other => panic!("expected Exec, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn read_server_identity_against_a_missing_or_down_interface_is_server_not_configured() {
-        // Whether `wg` itself is missing from whatever box runs this test, or
-        // `wg` is present but this interface name certainly does not exist,
-        // `run("wg", ...)` fails either way, and `read_server_identity` folds
-        // ANY such failure into `ServerNotConfigured` - the honest framing
-        // for its one call site ("read the server identity, or admit
-        // WireGuard is not configured here"), never a generic `Exec` for
-        // this specific read.
-        match read_server_identity("genaryx-test-nonexistent-iface-xyz") {
-            Err(WgOperatorError::ServerNotConfigured { iface, message }) => {
-                assert_eq!(iface, "genaryx-test-nonexistent-iface-xyz");
-                assert!(!message.is_empty());
-            }
-            other => panic!("expected ServerNotConfigured, got {other:?}"),
-        }
+    fn the_backend_label_names_which_road_answered() {
+        assert_eq!(PeerBackend::Uapi(UapiSocket::at("/x")).label(), "uapi");
+        assert_eq!(PeerBackend::Shell { iface: "wg-op".into() }.label(), "wg");
     }
 }
