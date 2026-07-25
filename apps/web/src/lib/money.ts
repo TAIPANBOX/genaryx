@@ -1,5 +1,6 @@
 import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
 import { invokeWithCeremony } from "./webauthn";
+import { notifyConsoleStateChanged } from "./consoleState";
 import type {
   Incident,
   MoneyError,
@@ -93,8 +94,18 @@ export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings
 // reaches this module empty in normal use, but the Rust side still refuses a
 // blank one rather than trusting the frontend alone (fail-closed, 06 §0.5).
 
+// `killRun` broadcasts app-wide (`notifyConsoleStateChanged`) once the kill
+// settles, so a run killed from the Money board / the watch dock / an agent
+// card is reflected on EVERY other open panel within a beat, not only on the
+// panel that issued it. Only fires on success: a rejected ceremony (or a
+// backend refusal) never reaches the `.then`, so nothing broadcasts a kill
+// that did not happen. In the mock the kill STICKS (no 20s self-heal), so the
+// KILLED state the other panels then re-read persists.
 export const killRun = (runId: string, reason: string): Promise<MutationOutcome> =>
-  callWithCeremony<MutationOutcome>("money_kill_run", { run_id: runId, reason });
+  callWithCeremony<MutationOutcome>("money_kill_run", { run_id: runId, reason }).then((outcome) => {
+    notifyConsoleStateChanged();
+    return outcome;
+  });
 
 export const setBudget = (runId: string, budgetUsd: number, reason: string): Promise<MutationOutcome> =>
   callWithCeremony<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd, reason });

@@ -35,6 +35,11 @@ use genaryx_api::onboard::commands::{
 };
 use genaryx_api::policy::commands::DecisionDto;
 use genaryx_api::remote::commands::RemoteEnvironmentRequest;
+// `remote_cloud_list`'s options come straight from the connectors crate (a
+// direct dependency of this shell), not re-exported through genaryx-api: the
+// same "name the arg type so a shape change is a compile error here" rule as
+// the genaryx-api requests above.
+use genaryx_connectors::CloudListOptions;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -77,6 +82,110 @@ fn decode<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, Response> {
         )
             .into_response()
     })
+}
+
+/// Every agent id idryx knows for one business unit, falling back to the ids
+/// the money plane has seen runs for. Two sources because neither is complete
+/// on its own: an agent with no identity record still spends (so it must be
+/// blockable), and an agent with no runs yet still exists (so it must not be
+/// missed). Ids are deduplicated and returned sorted for a stable audit trail.
+async fn agents_in_unit(ctx: &Arc<Ctx>, team: &str) -> Vec<String> {
+    let mut found: std::collections::BTreeSet<String> = Default::default();
+    if let Ok(identities) = genaryx_api::identity::commands::identity_list_identities(&ctx.identity)
+        .await
+    {
+        for identity in identities {
+            if crate::lifecycle::team_of(&identity.id) == Some(team) {
+                found.insert(identity.id);
+            }
+        }
+    }
+    if let Ok(runs) = genaryx_api::money::commands::money_runs(&ctx.money).await {
+        for run in runs {
+            if crate::lifecycle::team_of(&run.agent_id) == Some(team) {
+                found.insert(run.agent_id);
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// Every agent id idryx says `user` owns. Unlike a unit there is no runs-based
+/// fallback: `RunDto` carries no owner at all, so the identity plane is the
+/// only join. Also refreshes the store's `agent_owners` cache so a stopped
+/// user's agents keep projecting after this call, without an identity fetch
+/// on every read.
+async fn agents_of_user(ctx: &Arc<Ctx>, user: &str) -> Vec<String> {
+    let Ok(identities) =
+        genaryx_api::identity::commands::identity_list_identities(&ctx.identity).await
+    else {
+        return Vec::new();
+    };
+    let mut owned: std::collections::BTreeSet<String> = Default::default();
+    {
+        let mut store = ctx.lifecycle.write().expect("lifecycle store lock");
+        for identity in &identities {
+            if !identity.id.starts_with("agent://") || identity.owner.is_empty() {
+                continue;
+            }
+            store
+                .agent_owners
+                .insert(identity.id.clone(), identity.owner.clone());
+            if owner_matches(&identity.owner, user) {
+                owned.insert(identity.id.clone());
+            }
+        }
+    }
+    owned.into_iter().collect()
+}
+
+/// idryx records an owner as either a bare handle (`d.hayes`) or a full
+/// `user://org/d.hayes` URI, and the console's own watch dock pins the bare
+/// handle. Compare on the last path segment so both forms match.
+fn owner_matches(owner: &str, user: &str) -> bool {
+    let tail = |s: &str| s.rsplit('/').next().unwrap_or(s).to_string();
+    owner == user || tail(owner) == tail(user)
+}
+
+/// Enforce a block/unblock in wardryx, then record it in the console store.
+/// The store is only updated after wardryx accepted the change, so a refused
+/// enforcement can never leave the console claiming an entity is blocked.
+async fn apply_block(
+    ctx: &Arc<Ctx>,
+    kind: &str,
+    key: &str,
+    blocked: bool,
+    members: Vec<String>,
+) -> Result<Value, Value> {
+    let outcome = if blocked {
+        crate::lifecycle::block(kind, key, &members).await
+    } else {
+        crate::lifecycle::unblock(kind, key).await
+    };
+    let affected = outcome.map_err(|e| serde_json::json!({ "error": e }))?;
+
+    {
+        let mut store = ctx.lifecycle.write().expect("lifecycle store lock");
+        let set = match kind {
+            "agent" => &mut store.frozen_agents,
+            "unit" => &mut store.stopped_units,
+            _ => &mut store.stopped_users,
+        };
+        if blocked {
+            set.insert(key.to_string());
+        } else {
+            set.remove(key);
+        }
+    }
+
+    // The durable audit record of this action is the wardryx policy itself:
+    // it carries `console-block:<kind>:<key>` as its name and survives a
+    // console restart (which is also what `lifecycle::rehydrate` reads back).
+    // Mirroring it onto the console's own bus needs the money plane's signing
+    // path (`money::state`'s `console_command_line`), which is not reachable
+    // from here; that mirror is tracked follow-up work, not a silent gap.
+    let _ = affected;
+    Ok(Value::Null)
 }
 
 /// Route one command by name. `Err` here means the name is unknown; a command
@@ -142,7 +251,18 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 a.agent_id, a.limit, &ctx.bus,
             )))
         }
-        "agent_graph" => Ok(ok(genaryx_api::graph::agent_graph(&ctx.bus))),
+        "agent_graph" => {
+            // Same block projection `money_runs` gets: a blocked agent's node
+            // carries `lifecycle`, so the Graph tab tints it like every other
+            // surface rather than showing a stopped fleet as running.
+            let mut graph = serde_json::to_value(genaryx_api::graph::agent_graph(&ctx.bus))
+                .unwrap_or(Value::Null);
+            crate::lifecycle::project_graph(
+                &mut graph,
+                &ctx.lifecycle.read().expect("lifecycle store lock"),
+            );
+            Ok(ok(graph))
+        }
         "agent_slice" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]
@@ -402,12 +522,71 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 genaryx_api::money::commands::money_kill_run(a.run_id, a.reason, &ctx.money).await,
             ))
         }
+        // Lifecycle blocks (Yurii, 2026-07-24). Each of the three toggles
+        // enforces first (a deny-all wardryx policy per affected agent) and
+        // only records the block in `ctx.lifecycle` once wardryx accepted it,
+        // so the console never shows a block that did not actually take. The
+        // reply is `null` on purpose: this box keeps no per-entity record to
+        // return (`agent_record`/`unit_record`/`user_record` are preview-only),
+        // and the frontend re-reads `lifecycle_blocks` + `money_runs` for the
+        // truth rather than trusting a mutation's own echo.
+        "agent_block" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                agent_id: String,
+                blocked: bool,
+            }
+            let a: A = decode(args)?;
+            let done = apply_block(ctx, "agent", &a.agent_id, a.blocked, vec![a.agent_id.clone()])
+                .await;
+            Ok(reply(done))
+        }
+        "unit_block" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                team: String,
+                blocked: bool,
+            }
+            let a: A = decode(args)?;
+            let members = agents_in_unit(ctx, &a.team).await;
+            let done = apply_block(ctx, "unit", &a.team, a.blocked, members).await;
+            Ok(reply(done))
+        }
+        "user_block" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                user: String,
+                blocked: bool,
+            }
+            let a: A = decode(args)?;
+            let members = agents_of_user(ctx, &a.user).await;
+            let done = apply_block(ctx, "user", &a.user, a.blocked, members).await;
+            Ok(reply(done))
+        }
+        "lifecycle_blocks" => {
+            let store = ctx.lifecycle.read().expect("lifecycle store lock");
+            Ok(ok(store.to_json()))
+        }
         "money_overview" => Ok(reply(
             genaryx_api::money::commands::money_overview(&ctx.money).await,
         )),
-        "money_runs" => Ok(reply(
-            genaryx_api::money::commands::money_runs(&ctx.money).await,
-        )),
+        "money_runs" => {
+            // Project the runs through the operator block store so a frozen
+            // agent's runs read not-live and carry a `lifecycle` badge
+            // app-wide (Overview spend-by-agent, the watch dock, Agent 360's
+            // run list all read this same `money_runs`).
+            let projected = genaryx_api::money::commands::money_runs(&ctx.money)
+                .await
+                .map(|runs| {
+                    let mut v = serde_json::to_value(runs).unwrap_or(Value::Null);
+                    crate::lifecycle::project_runs(
+                        &mut v,
+                        &ctx.lifecycle.read().expect("lifecycle store lock"),
+                    );
+                    v
+                });
+            Ok(reply(projected))
+        }
         "money_savings" => Ok(reply(
             genaryx_api::money::commands::money_savings(&ctx.money).await,
         )),
@@ -517,6 +696,18 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "quality_status" => Ok(reply(
             genaryx_api::quality::commands::quality_status(&ctx.quality).await,
         )),
+        "remote_cloud_list" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                provider: String,
+                options: Option<CloudListOptions>,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::remote::commands::remote_cloud_list(a.provider, a.options).await,
+            ))
+        }
         "remote_hetzner_list" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]
@@ -529,6 +720,9 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 genaryx_api::remote::commands::remote_hetzner_list(a.token, a.label_selector).await,
             ))
         }
+        "remote_operator_wg_config" => Ok(reply(
+            genaryx_api::remote::commands::remote_operator_wg_config().await,
+        )),
         "remote_set_environment" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

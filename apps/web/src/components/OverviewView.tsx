@@ -16,8 +16,11 @@ import { UpsellBanner } from "./UpsellBanner";
 import { HeroBand, Hero, KpiTile, DashMain, Section, Bars, Composition, Feed } from "./dash";
 import type { BarItem, CompItem, FeedItem } from "./dash";
 import { sevColor, sevRank, spendByAgent, spendSeries, usd0 } from "../lib/dashData";
+import { agentBlockedStateFromRuns, StateBadge } from "../lib/lifecycle";
+import { useConsoleStateVersion } from "../lib/consoleState";
 import { usePopover } from "../lib/popover";
 import { shortAgentLabel } from "../lib/graph";
+import { prettyUnit, unitForTeam } from "../lib/views";
 import { AgentDetailCard } from "./AgentDetailCard";
 import { MetricDetailCard, type MetricRow } from "./MetricDetailCard";
 import type { IdryxAlert } from "../identityTypes";
@@ -91,6 +94,14 @@ export function OverviewView({
     const id = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [refresh]);
+
+  // Re-read the moment any lifecycle action lands anywhere (a Stop/Freeze/Kill
+  // from the dock or a card), so the spend-by-agent bars and the KPI counts
+  // reflect it within a beat rather than waiting out the 20s poll.
+  const consoleVersion = useConsoleStateVersion();
+  useEffect(() => {
+    void refresh();
+  }, [consoleVersion, refresh]);
 
   // I2 Incident Center's other three sources - each a fresh, independent
   // read this view owns itself (mirrors `PostureView.tsx`'s own "each view
@@ -183,6 +194,9 @@ export function OverviewView({
   );
 
   const agents = useMemo(() => spendByAgent(runs), [runs]);
+  // Per-agent blocked state (STOPPED/FROZEN/KILLED), so a halted agent's spend
+  // bar carries the same badge it shows on every other panel.
+  const blockedByAgent = useMemo(() => agentBlockedStateFromRuns(runs), [runs]);
   const series = useMemo(() => spendSeries(runs), [runs]);
   const topIncidents = useMemo(
     () =>
@@ -208,21 +222,25 @@ export function OverviewView({
   const openAgent = (agentId: string, rect: DOMRect) =>
     open(<AgentDetailCard agentId={agentId} onOpenFull={onOpenAgent} />, { anchor: rect });
 
-  const agentBars: BarItem[] = agents.slice(0, 8).map((a) => ({
-    key: a.agent,
-    label: a.name,
-    sub: a.team,
-    fraction: a.spent / maxAgent,
-    tone: "amber",
-    value: formatUsd(a.spent),
-    onClick: (rect) => openAgent(a.agent, rect),
-  }));
+  const agentBars: BarItem[] = agents.slice(0, 20).map((a) => {
+    const state = blockedByAgent.get(a.agent);
+    return {
+      key: a.agent,
+      label: a.name,
+      sub: prettyUnit(unitForTeam(a.team)),
+      fraction: a.spent / maxAgent,
+      tone: "amber",
+      value: formatUsd(a.spent),
+      badge: state ? <StateBadge state={state} /> : undefined,
+      onClick: (rect) => openAgent(a.agent, rect),
+    };
+  });
 
   // Breakdown rows behind each headline number, so a clicked KPI opens the
   // agents/incidents/levers that make it up, each drillable in turn.
-  const spendRows: MetricRow[] = agents.slice(0, 12).map((a) => ({
+  const spendRows: MetricRow[] = agents.slice(0, 20).map((a) => ({
     key: a.agent,
-    label: `${a.name} · ${a.team}`,
+    label: `${a.name} · ${prettyUnit(unitForTeam(a.team))}`,
     value: formatUsd(a.spent),
     agentId: a.agent,
   }));
@@ -458,7 +476,7 @@ export function OverviewView({
 
           <DashMain
             primary={
-              <Section title="Spend by agent" right={`top ${Math.min(8, agents.length)} of ${agents.length}`}>
+              <Section title="Spend by agent" right={`top ${Math.min(20, agents.length)} of ${agents.length}`}>
                 <Bars items={agentBars} empty="no agent spend yet" />
               </Section>
             }

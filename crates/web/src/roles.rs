@@ -45,6 +45,13 @@ const ADMIN_COMMANDS: &[&str] = &[
     "money_kill_run",
     "money_set_budget",
     "money_ack_incident",
+    // Lifecycle: freezing an agent, or stopping a whole unit or user, writes
+    // deny-all wardryx policies and records the block. A real enforcement
+    // change on the fleet - admin only. Reading the blocks back
+    // (`lifecycle_blocks`) is an ordinary viewer read, listed below.
+    "agent_block",
+    "unit_block",
+    "user_block",
     // Identity: a rescan spawns a detector run.
     "identity_rescan",
     // Drills fire crafted traffic at the operator's own gateway.
@@ -72,6 +79,11 @@ const ADMIN_COMMANDS: &[&str] = &[
     "remote_ssh_read_file",
     "remote_ssh_tail_start",
     "remote_ssh_tail_stop",
+    // Mutates THIS box's own local WireGuard server (adds a peer) rather
+    // than reaching a client-hosted one, but it is still a real mutation
+    // that hands out tunnel access to this box, the same posture as every
+    // other admin-only Remote command above.
+    "remote_operator_wg_config",
 ];
 
 /// The minimum role that may run `command`. Everything not named in the
@@ -119,6 +131,7 @@ const VIEWER_COMMANDS: &[&str] = &[
     "identity_list_identities",
     "identity_list_remediations",
     "identity_status",
+    "lifecycle_blocks",
     "memory_recall",
     "memory_stats",
     "memory_status",
@@ -138,6 +151,7 @@ const VIEWER_COMMANDS: &[&str] = &[
     "quality_run_scores",
     "quality_status",
     "recent_events",
+    "remote_cloud_list",
     "remote_hetzner_list",
     "remote_ssh_check_reachable",
     "remote_status",
@@ -158,6 +172,7 @@ mod tests {
         "admission_baseline",
         "admission_check",
         "admission_status",
+        "agent_block",
         "agent_events",
         "agent_graph",
         "agent_slice",
@@ -182,6 +197,7 @@ mod tests {
         "identity_list_remediations",
         "identity_rescan",
         "identity_status",
+        "lifecycle_blocks",
         "memory_forget",
         "memory_recall",
         "memory_stats",
@@ -210,7 +226,9 @@ mod tests {
         "quality_run_scores",
         "quality_status",
         "recent_events",
+        "remote_cloud_list",
         "remote_hetzner_list",
+        "remote_operator_wg_config",
         "remote_set_environment",
         "remote_ssh_check_reachable",
         "remote_ssh_read_file",
@@ -222,6 +240,8 @@ mod tests {
         "routines_history",
         "routines_status",
         "run_events",
+        "unit_block",
+        "user_block",
     ];
 
     #[test]

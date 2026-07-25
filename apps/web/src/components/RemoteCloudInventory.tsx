@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { describeRemoteError, listCloudServers, listHetznerServers } from "../lib/remote";
+import { useSession } from "../lib/useSession";
 import type { CloudListOptions, CloudServer, HetznerServer, RemoteError } from "../remoteTypes";
 
 const FIELD_STYLE = {
@@ -20,6 +21,7 @@ type ProviderId =
   | "aws"
   | "azure"
   | "gcp"
+  | "ibmcloud"
   | "oracle"
   | "digitalocean"
   | "vultr"
@@ -45,9 +47,9 @@ interface ProviderMeta {
   /** for providers with no standard public CLI: where to read the address in their own panel. */
   panel?: { where: string; addressField: string };
   /** the built-in read-only inventory connector id, when one exists for this
-   * provider (AWS/GCP/Azure): the console lists servers via the operator's own
-   * official CLI, exactly like Hetzner's token flow. */
-  connector?: "aws" | "gcp" | "azure";
+   * provider (AWS/GCP/Azure/IBM Cloud): the console lists servers via the
+   * operator's own official CLI, exactly like Hetzner's token flow. */
+  connector?: "aws" | "gcp" | "azure" | "ibmcloud";
 }
 
 /**
@@ -94,6 +96,18 @@ const PROVIDERS: ProviderMeta[] = [
       command:
         "gcloud compute instances list --format=\"table(name,networkInterfaces[0].accessConfigs[0].natIP,machineType.basename(),status)\"",
       addressField: "external IP",
+    },
+  },
+  {
+    id: "ibmcloud",
+    label: "IBM Cloud",
+    builtIn: false,
+    connector: "ibmcloud",
+    cli: {
+      tool: "IBM Cloud CLI",
+      auth: "ibmcloud login (or ibmcloud login --sso for a federated org)",
+      command: "ibmcloud is instances --output json",
+      addressField: "public IP",
     },
   },
   {
@@ -307,6 +321,7 @@ export function RemoteCloudInventory() {
  * one IPC call.
  */
 function HetznerInventory() {
+  const session = useSession();
   const [token, setToken] = useState("");
   const [labelSelector, setLabelSelector] = useState("");
   const [servers, setServers] = useState<HetznerServer[] | null>(null);
@@ -373,7 +388,7 @@ function HetznerInventory() {
 
       {error && (
         <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel)", color: "var(--sev-high)" }}>
-          {describeRemoteError(error)}
+          {describeRemoteError(error, session?.role)}
         </div>
       )}
 
@@ -458,8 +473,22 @@ function LiveCliInventory({ provider }: { provider: ProviderMeta }) {
   const cli = provider.cli!;
   const connector = provider.connector!;
   const scopeLabel =
-    connector === "aws" ? "region (optional)" : connector === "gcp" ? "project (optional)" : "subscription (optional)";
-  const scopePlaceholder = connector === "aws" ? "eu-central-1" : connector === "gcp" ? "my-project" : "my-subscription";
+    connector === "aws"
+      ? "region (optional)"
+      : connector === "gcp"
+        ? "project (optional)"
+        : connector === "azure"
+          ? "subscription (optional)"
+          : "resource group (optional)";
+  const scopePlaceholder =
+    connector === "aws"
+      ? "eu-central-1"
+      : connector === "gcp"
+        ? "my-project"
+        : connector === "azure"
+          ? "my-subscription"
+          : "Default";
+  const session = useSession();
   const [scope, setScope] = useState("");
   const [servers, setServers] = useState<CloudServer[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -476,17 +505,18 @@ function LiveCliInventory({ provider }: { provider: ProviderMeta }) {
       if (s) {
         if (connector === "aws") opts.region = s;
         else if (connector === "gcp") opts.project = s;
-        else opts.subscription = s;
+        else if (connector === "azure") opts.subscription = s;
+        else opts.resource_group = s;
       }
       const rows = await listCloudServers(connector, opts);
       setServers(rows);
       setListedAtMs(Date.now());
     } catch (err) {
-      setError(describeRemoteError(err as RemoteError));
+      setError(describeRemoteError(err as RemoteError, session?.role));
     } finally {
       setLoading(false);
     }
-  }, [loading, scope, connector]);
+  }, [loading, scope, connector, session?.role]);
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -560,7 +590,7 @@ function LiveCliInventory({ provider }: { provider: ProviderMeta }) {
             {servers.map((s) => (
               <div key={s.id} className="grid items-center gap-3 px-4 py-2 bus-row" style={{ gridTemplateColumns: CLOUD_COLUMNS }}>
                 <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={s.name}>
-                  {s.name || "—"}
+                  {s.name || "-"}
                 </span>
                 <span className="mono truncate text-[11px]" style={{ color: "var(--faint)" }} title={s.id}>
                   {s.id}

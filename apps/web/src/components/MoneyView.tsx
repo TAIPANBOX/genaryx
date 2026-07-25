@@ -11,17 +11,15 @@ import {
 import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { useSession } from "../lib/useSession";
 import { formatUsd } from "../lib/format";
-import { sevColor, sevRank, spendSeries, usd0 } from "../lib/dashData";
+import { sevColor, sevRank } from "../lib/dashData";
 import type { Incident, MoneyError, MutationOutcome, Run, Savings } from "../moneyTypes";
 import { MoneyEmptyState } from "./MoneyEmptyState";
 import { RunsBoard } from "./RunsBoard";
 import { UpsellBanner } from "./UpsellBanner";
-import { HeroBand, Hero, KpiTile, DashMain, Section, Composition, Feed } from "./dash";
+import { DashMain, Section, Composition, Feed } from "./dash";
 import type { CompItem, FeedItem } from "./dash";
 import { usePopover } from "../lib/popover";
-import { shortAgentLabel } from "../lib/graph";
 import { AgentDetailCard } from "./AgentDetailCard";
-import { MetricDetailCard, type MetricRow } from "./MetricDetailCard";
 import { SortBar, type SortDir } from "./SortBar";
 
 const RUN_SORTS = [
@@ -157,7 +155,6 @@ export function MoneyView({
       .sort((a, b) => cmpRun(a, b, sort.key) * sign)
       .slice(0, RUNS_SHOWN);
   }, [runs, sort]);
-  const series = useMemo(() => spendSeries(runs ?? []), [runs]);
   const topIncidents = useMemo(
     () =>
       (incidents ?? [])
@@ -172,39 +169,14 @@ export function MoneyView({
   }
 
   const allRuns = runs ?? [];
-  const totalSpent = allRuns.reduce((s, r) => s + r.spent_usd, 0);
-  const totalCalls = allRuns.reduce((s, r) => s + r.calls, 0);
-  const activeRuns = allRuns.filter((r) => !r.killed).length;
+  // Fleet-wide totals (spend, active runs, calls, saved, open incidents) are
+  // deliberately NOT recomputed here: they are the same numbers Overview's
+  // own KPI band already shows (docs task 2026-07-24, "slim the duplicated
+  // headers") - re-printing them above the Runs table would just repeat
+  // Overview's header a second time. `saved` survives below because the
+  // retained Governed savings breakdown still needs it as the composition
+  // total; nothing else from the old band is kept.
   const saved = savings?.total_saved_usd ?? 0;
-  const gross = totalSpent + saved;
-  const savePct = gross > 0 ? Math.round((saved / gross) * 100) : 0;
-  const blocked = savings?.blocked_spend_usd ?? 0;
-  const openIncidents = (incidents ?? []).filter((i) => !i.acknowledged).length;
-
-  // Breakdown rows behind each headline number (same pattern as Overview), so
-  // a clicked KPI opens the agents/incidents/levers that make it up.
-  const spendRows: MetricRow[] = [...allRuns]
-    .sort((a, b) => b.spent_usd - a.spent_usd)
-    .slice(0, 12)
-    .map((r) => ({ key: r.run_id, label: shortAgentLabel(r.agent_id), value: formatUsd(r.spent_usd), agentId: r.agent_id }));
-  const callRows: MetricRow[] = [...allRuns]
-    .sort((a, b) => b.calls - a.calls)
-    .slice(0, 12)
-    .map((r) => ({ key: r.run_id, label: shortAgentLabel(r.agent_id), value: r.calls.toLocaleString("en-US"), agentId: r.agent_id }));
-  const incidentRows: MetricRow[] = topIncidents.map((inc) => ({
-    key: inc.id,
-    label: inc.kind.replace(/_/g, " "),
-    value: inc.occurrences,
-    valueColor: sevColor(inc.severity),
-    agentId: inc.agent_id ?? undefined,
-  }));
-  const savingsRows: MetricRow[] = savings
-    ? [
-        { key: "blocked", label: "Runaway blocked", value: formatUsd(savings.blocked_spend_usd) },
-        { key: "cache", label: "Semantic cache", value: formatUsd(savings.cache_saved_usd) },
-        { key: "router", label: "Model router", value: formatUsd(savings.router_saved_usd) },
-      ]
-    : [];
 
   const compItems: CompItem[] = savings
     ? [
@@ -270,149 +242,42 @@ export function MoneyView({
           loading money plane...
         </div>
       ) : (
-        <>
-          <HeroBand
-            hero={
-              <Hero
-                cap="AI spend · live fleet"
-                value={usd0(totalSpent)}
-                sub={
-                  <>
-                    governed savings <b>{formatUsd(saved)}</b>
-                  </>
-                }
-                series={series}
-                fuseFraction={gross > 0 ? saved / gross : 0}
-                fuseTone="iris"
-                noteLeft={
-                  <>
-                    prevented <b>{formatUsd(blocked)}</b> runaway spend
-                  </>
-                }
-                noteRight={
-                  <>
-                    recovered <b>{savePct}%</b> of gross draw
-                  </>
-                }
+        // No fleet-wide KPI band here (see the doc comment above `saved`):
+        // Money leads straight with what is unique to it - the Runs table,
+        // the savings breakdown, and Incidents. Overview's own KPI band is
+        // one click away for the AI spend / active runs / model calls /
+        // open incidents totals.
+        <DashMain
+          primary={
+            <Section
+              title="Runs"
+              right={`top ${Math.min(RUNS_SHOWN, allRuns.length)} of ${allRuns.length} · full stream in Bus`}
+            >
+              <div style={{ paddingBottom: 8 }}>
+                <SortBar options={RUN_SORTS} active={sort.key} dir={sort.dir} onChange={(key, dir) => setSort({ key, dir })} />
+              </div>
+              <RunsBoard
+                runs={topRuns}
+                onKill={handleKill}
+                onSetBudget={handleSetBudget}
+                onOpenAgentAt={openAgent}
+                onReplayRun={onOpenReplay}
               />
-            }
-            tiles={
-              <>
-                <KpiTile
-                  label="Active runs"
-                  value={activeRuns.toLocaleString("en-US")}
-                  sub={`${allRuns.length.toLocaleString("en-US")} total in window`}
-                  onClick={(rect) =>
-                    open(
-                      <MetricDetailCard
-                        kicker="Money"
-                        title="Active runs"
-                        value={activeRuns.toLocaleString("en-US")}
-                        description={`Runs still live, out of ${allRuns.length.toLocaleString("en-US")} in the window. Top spenders below; click one to open the agent.`}
-                        rows={spendRows}
-                        rowsTitle="by spend"
-                        onOpenFullAgent={onOpenAgent}
-                      />,
-                      { anchor: rect },
-                    )
-                  }
-                />
-                <KpiTile
-                  label="Model calls"
-                  value={totalCalls.toLocaleString("en-US")}
-                  sub="metered through gateway"
-                  onClick={(rect) =>
-                    open(
-                      <MetricDetailCard
-                        kicker="Money"
-                        title="Model calls"
-                        value={totalCalls.toLocaleString("en-US")}
-                        description="Calls the gateway metered (forwarded or blocked) across the fleet in this window, by agent."
-                        rows={callRows}
-                        rowsTitle="by calls"
-                        onOpenFullAgent={onOpenAgent}
-                      />,
-                      { anchor: rect },
-                    )
-                  }
-                />
-                <KpiTile
-                  label="Governed saved"
-                  value={formatUsd(saved)}
-                  tone="var(--mint)"
-                  sub={`${savings?.budget_breaks ?? 0} budget breaks`}
-                  onClick={(rect) =>
-                    open(
-                      <MetricDetailCard
-                        kicker="Money"
-                        title="Governed saved"
-                        value={formatUsd(saved)}
-                        valueTone="var(--mint)"
-                        description={`Spend prevented or recovered by governance across ${savings?.budget_breaks ?? 0} budget breaks. By lever:`}
-                        rows={savingsRows}
-                        rowsTitle="by lever"
-                      />,
-                      { anchor: rect },
-                    )
-                  }
-                />
-                <KpiTile
-                  label="Open incidents"
-                  value={openIncidents}
-                  tone={openIncidents > 0 ? "var(--sev-high)" : undefined}
-                  sub={`${(incidents ?? []).length} detected`}
-                  onClick={(rect) =>
-                    open(
-                      <MetricDetailCard
-                        kicker="Incidents"
-                        title="Open incidents"
-                        value={openIncidents}
-                        valueTone={openIncidents > 0 ? "var(--sev-high)" : undefined}
-                        description={`Unacknowledged incidents, out of ${(incidents ?? []).length} detected. Worst first; click one to open the agent.`}
-                        rows={incidentRows}
-                        rowsTitle="worst first"
-                        onOpenFullAgent={onOpenAgent}
-                      />,
-                      { anchor: rect },
-                    )
-                  }
-                />
-              </>
-            }
-          />
-
-          <DashMain
-            primary={
-              <Section
-                title="Runs"
-                right={`top ${Math.min(RUNS_SHOWN, allRuns.length)} of ${allRuns.length} · full stream in Bus`}
-              >
-                <div style={{ paddingBottom: 8 }}>
-                  <SortBar options={RUN_SORTS} active={sort.key} dir={sort.dir} onChange={(key, dir) => setSort({ key, dir })} />
-                </div>
-                <RunsBoard
-                  runs={topRuns}
-                  onKill={handleKill}
-                  onSetBudget={handleSetBudget}
-                  onOpenAgentAt={openAgent}
-                  onReplayRun={onOpenReplay}
-                />
-              </Section>
-            }
-            rail={
-              <>
-                {savings && (
-                  <Section title="Governed savings" right="prevented + recovered">
-                    <Composition items={compItems} />
-                  </Section>
-                )}
-                <Section title="Incidents" right="worst first">
-                  <Feed items={incidentFeed} empty="no incidents" />
+            </Section>
+          }
+          rail={
+            <>
+              {savings && (
+                <Section title="Governed savings" right="prevented + recovered">
+                  <Composition items={compItems} />
                 </Section>
-              </>
-            }
-          />
-        </>
+              )}
+              <Section title="Incidents" right="worst first">
+                <Feed items={incidentFeed} empty="no incidents" />
+              </Section>
+            </>
+          }
+        />
       )}
     </div>
   );

@@ -8,6 +8,7 @@ import {
   stopRemoteTail,
 } from "../lib/remote";
 import { hasBackend, subscribeBackend } from "../lib/transport";
+import { useSession } from "../lib/useSession";
 import type { RemoteError, RemoteFile, RemoteStatus, RemoteTailEnded, RemoteTailLine, TailStatus } from "../remoteTypes";
 
 const FIELD_STYLE = {
@@ -47,6 +48,8 @@ export function RemoteSshOps({
   tail: TailStatus | null;
   onStatusChange: (status: RemoteStatus) => void;
 }) {
+  const session = useSession();
+
   // ---- check reachable ----
   const [reachable, setReachable] = useState<ReachableState>("idle");
 
@@ -202,7 +205,7 @@ export function RemoteSshOps({
           )}
           {typeof reachable === "object" && (
             <span className="mono text-[11.5px]" style={{ color: "var(--sev-high)" }}>
-              {describeRemoteError(reachable.error)}
+              {describeRemoteError(reachable.error, session?.role)}
             </span>
           )}
         </div>
@@ -233,7 +236,7 @@ export function RemoteSshOps({
         </div>
         {readError && (
           <span className="mono text-[11.5px]" style={{ color: "var(--sev-high)" }}>
-            {describeRemoteError(readError)}
+            {describeRemoteError(readError, session?.role)}
           </span>
         )}
         {readResult && (
@@ -303,7 +306,7 @@ export function RemoteSshOps({
         </div>
         {tailError && (
           <span className="mono text-[11.5px]" style={{ color: "var(--sev-high)" }}>
-            {describeRemoteError(tailError)}
+            {describeRemoteError(tailError, session?.role)}
           </span>
         )}
         {endedReason && !running && (

@@ -6,6 +6,7 @@ import { RemoteEnvironmentForm } from "./RemoteEnvironmentForm";
 import { RemoteCloudInventory } from "./RemoteCloudInventory";
 import { RemoteSshOps } from "./RemoteSshOps";
 import { RemoteTunnelPanel } from "./RemoteTunnelPanel";
+import { RemoteWgOperatorCard } from "./RemoteWgOperatorCard";
 
 function SectionHeader({ title, detail }: { title: string; detail?: string }) {
   return (
@@ -93,6 +94,14 @@ export function RemoteView() {
           {defaultBin ? `wireguard-go default: ${defaultBin}` : "no wireguard-go default resolved"}
         </span>
       </div>
+
+      <section className="flex flex-col gap-2">
+        <SectionHeader
+          title="Connect this machine"
+          detail="reach this console itself over WireGuard from your own laptop or phone, instead of SSH"
+        />
+        <RemoteWgOperatorCard />
+      </section>
 
       <section className="flex flex-col gap-2">
         <SectionHeader title="Cloud inventory" detail="optional - list your servers to grab an address; the connection itself needs no provider" />

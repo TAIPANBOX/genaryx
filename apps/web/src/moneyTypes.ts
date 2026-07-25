@@ -50,7 +50,13 @@ export interface Overview {
   total_saved_usd: number;
 }
 
-/** Mirrors `money::commands::RunDto`. */
+/** Mirrors `money::commands::RunDto`.
+ *
+ * `lifecycle` is a MOCK-ONLY enrichment (not part of the Rust `RunDto`): the
+ * preview world sets it so a run can read STOPPED/FROZEN precisely, not just
+ * `killed`, when its agent was halted by an operator (its unit/user stopped,
+ * or the agent frozen). A real box omits it, and every consumer falls back to
+ * the `killed` boolean below - see `lib/lifecycleTypes.ts`'s module doc. */
 export interface Run {
   run_id: string;
   model: string;
@@ -62,6 +68,7 @@ export interface Run {
   steps: number;
   last_seen: string;
   killed: boolean;
+  lifecycle?: import("./lib/lifecycleTypes").EntityLifecycleState;
 }
 
 /** Mirrors `money::commands::IncidentDto`. `severity` is a raw lowercase

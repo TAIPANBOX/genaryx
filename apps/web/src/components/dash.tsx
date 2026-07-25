@@ -130,6 +130,11 @@ export interface BarItem {
   fraction: number;
   tone?: FuseTone;
   value: ReactNode;
+  /** An optional small state badge shown beside the label - today a
+   * STOPPED/FROZEN/KILLED lifecycle badge on a blocked agent's spend bar, so
+   * the Overview "spend by agent" reflects the same state as everywhere else.
+   * Omitted for a live row. */
+  badge?: ReactNode;
   /** Drill-down: opens the object's detail in a popover anchored to this row
    * (never switches tab). Receives the row's on-screen rect for placement. */
   onClick?: (rect: DOMRect) => void;
@@ -168,7 +173,10 @@ export function Bars({ items, empty = "no data" }: { items: BarItem[]; empty?: s
           onKeyDown={it.onClick ? rowKeyDown(it.onClick) : undefined}
         >
           <div className="lbl">
-            <div className="nm">{it.label}</div>
+            <div className="nm flex items-center gap-1.5">
+              <span className="truncate">{it.label}</span>
+              {it.badge}
+            </div>
             {it.sub != null && <div className="tm">{it.sub}</div>}
           </div>
           <FuseBar fraction={it.fraction} tone={it.tone ?? "amber"} />

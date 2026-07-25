@@ -8,6 +8,7 @@ import {
   type GatewayKeysReport,
   type KeyStatus,
 } from "../lib/credentials";
+import { prettyUnit } from "../lib/views";
 
 const COLUMNS = "120px 1fr 110px 1fr 100px 110px 80px";
 
@@ -115,7 +116,7 @@ export function CredentialsKeysTable({
             {entry.key_id}
           </span>
           <span className="mono truncate text-[11.5px]" style={{ color: "var(--dim)" }}>
-            {entry.unit ?? "-"}
+            {entry.unit ? prettyUnit(entry.unit) : "-"}
           </span>
           <span
             className="mono truncate text-[11px]"

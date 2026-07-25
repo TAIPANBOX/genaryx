@@ -26,7 +26,7 @@
 //!   whole panel state - see its own doc comment.
 //! - [`commands`] are the commands the Remote frontend calls: `remote_status`,
 //!   `remote_set_environment`, `remote_hetzner_list` (stateless),
-//!   `remote_wg_connect`/`remote_wg_disconnect`, and
+//!   `remote_wg_connect`/`remote_wg_disconnect`,
 //!   `remote_ssh_check_reachable`/`remote_ssh_read_file`/
 //!   `remote_ssh_tail_start`/`remote_ssh_tail_stop` (the last streaming
 //!   remote log lines through a caller-supplied [`commands::TailSink`]
@@ -34,7 +34,15 @@
 //!   identical generic-sink shape for the live bus feed - each shell hands in
 //!   its own delivery: today the web shell's SSE broadcast; the removed
 //!   desktop shell's was a Tauri window event, which is why this seam
-//!   exists).
+//!   exists), and `remote_operator_wg_config` (a thin wrapper of
+//!   [`wg_operator::operator_wg_config`]).
+//! - [`wg_operator`] is the OPPOSITE WireGuard direction from the rest of
+//!   this module: instead of the console dialing OUT to a remote box, it
+//!   mints the signed-in operator a fresh peer against THIS box's own
+//!   already-running kernel WireGuard server, so their laptop or phone can
+//!   reach the console over the tunnel instead of SSH - stateless, like
+//!   `commands::remote_hetzner_list`, so it needs none of this module's
+//!   managed state (see its own doc comment for the full rationale).
 //!
 //! ## v1 scope (docs/PHASE4.md W4)
 //!
@@ -50,5 +58,6 @@
 pub mod commands;
 pub mod env;
 pub mod state;
+pub mod wg_operator;
 
 pub use state::{RemoteState, bootstrap};

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { connectTunnel, describeRemoteError, disconnectTunnel } from "../lib/remote";
+import { useSession } from "../lib/useSession";
 import type { RemoteEnvironment, RemoteError, RemoteStatus, TunnelStatus } from "../remoteTypes";
 
 function tunnelDotColor(tunnel: TunnelStatus): string {
@@ -53,6 +54,7 @@ export function RemoteTunnelPanel({
   tunnel: TunnelStatus;
   onStatusChange: (status: RemoteStatus) => void;
 }) {
+  const session = useSession();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<RemoteError | null>(null);
   const [copied, setCopied] = useState(false);
@@ -172,7 +174,7 @@ export function RemoteTunnelPanel({
 
       {error && (
         <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel)", color: "var(--sev-high)" }}>
-          {describeRemoteError(error)}
+          {describeRemoteError(error, session?.role)}
         </div>
       )}
     </div>

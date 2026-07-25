@@ -99,12 +99,12 @@ export interface HetznerServer {
 
 /** The provider ids that have a built-in read-only cloud inventory connector
  * (mirrors `genaryx_connectors::CloudProvider`). */
-export type CloudProviderId = "aws" | "gcp" | "azure";
+export type CloudProviderId = "aws" | "gcp" | "azure" | "ibmcloud";
 
 /** Mirrors `genaryx_connectors::CloudServer` - one read-only VM inventory row
- * from a provider's own official CLI (`aws`/`gcloud`/`az`). Flat snake_case,
- * same convention as `HetznerServer`. `public_ip`/`private_ip` are `null` when
- * the instance has none. */
+ * from a provider's own official CLI (`aws`/`gcloud`/`az`/`ibmcloud`). Flat
+ * snake_case, same convention as `HetznerServer`. `public_ip`/`private_ip` are
+ * `null` when the instance has none. */
 export interface CloudServer {
   provider: string;
   id: string;
@@ -117,26 +117,59 @@ export interface CloudServer {
 }
 
 /** Mirrors `genaryx_connectors::CloudListOptions` - all-optional provider
- * scoping for a cloud inventory list (region for AWS, project for GCP,
- * subscription for Azure, profile for AWS). */
+ * scoping for a cloud inventory list (region for AWS and IBM, project for
+ * GCP, subscription for Azure, profile for AWS, resource_group for IBM). */
 export interface CloudListOptions {
   region?: string;
   project?: string;
   subscription?: string;
   profile?: string;
+  resource_group?: string;
 }
 
-/** Mirrors `remote::commands::RemoteError` (`#[serde(tag = "kind", rename_all = "snake_case")]`). */
+/** Mirrors `remote::commands::RemoteError` (`#[serde(tag = "kind", rename_all = "snake_case")]`).
+ *
+ * `role_required` is the one variant NOT mirrored from the Rust command's own
+ * `RemoteError` enum: it is `lib/remote.ts`'s `toRemoteError` recognizing
+ * `genaryx-web`'s command-chokepoint role gate (docs/CONSOLE-IDP.md), a 403
+ * that happens BEFORE the command ever reaches `remote::commands` - added here
+ * client-side so the existing error banner can render it honestly. Every
+ * admin-gated `remote_*` command (set_environment, wg_connect/disconnect,
+ * ssh_read_file, ssh_tail_start/stop, operator_wg_config) shares that one 403
+ * shape, so a viewer/approver hitting any of them lands here instead of the
+ * `internal` fallback's `String(err)` (which rendered a raw object as the
+ * literal "[object Object]"). */
 export type RemoteError =
   | { kind: "bootstrapping" }
   | { kind: "no_environment" }
   | { kind: "invalid"; message: string }
   | { kind: "no_wireguard_go_binary" }
+  | { kind: "wg_server_not_configured"; iface: string; message: string }
   | { kind: "wg"; message: string }
   | { kind: "ssh"; message: string }
   | { kind: "hetzner"; message: string }
   | { kind: "cloud"; message: string }
-  | { kind: "internal"; message: string };
+  | { kind: "internal"; message: string }
+  | { kind: "role_required"; role: "viewer" | "approver" | "admin" };
+
+/** Mirrors `remote::wg_operator::RemoteWgOperatorConfigDto` -
+ * `remote_operator_wg_config`'s return. Everything the "Connect this
+ * machine" card needs to render the QR code and offer the `.conf` download
+ * in one round trip. */
+export interface RemoteWgOperatorConfig {
+  /** The complete client `.conf` TEXT, private key included - what the
+   * Download button saves verbatim and what the QR code encodes. */
+  conf: string;
+  /** A QR-code PNG of `conf`, base64-encoded - render as
+   * `<img src={`data:image/png;base64,${qr_png_base64}`}>`. */
+  qr_png_base64: string;
+  client_ip: string;
+  /** `host:port` the client dials. */
+  endpoint: string;
+  server_public_key: string;
+  /** Where the console answers once the tunnel is up. */
+  console_tunnel_url: string;
+}
 
 /** `remote:tail-line` SSE event payload - mirrors `remote::commands::RemoteTailLine`. */
 export interface RemoteTailLine {

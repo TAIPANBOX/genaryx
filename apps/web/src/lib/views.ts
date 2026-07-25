@@ -11,7 +11,6 @@ export type ViewId =
   | "drills"
   | "evidence"
   | "remote"
-  | "pocket"
   | "graph"
   | "replay"
   | "posture"
@@ -63,7 +62,6 @@ export const NAV_SECTIONS: readonly {
     items: [
       { id: "onboard", label: "Onboard" },
       { id: "remote", label: "Remote" },
-      { id: "pocket", label: "Pocket" },
     ],
   },
 ];
@@ -73,3 +71,65 @@ export const NAV_SECTIONS: readonly {
 export const VIEWS: readonly { id: ViewId; label: string }[] = NAV_SECTIONS.flatMap(
   (s) => s.items,
 );
+
+/** Business-unit slug -> display name, for the ten units the post-reseed
+ * console actually carries (Yurii, 2026-07-24). Every reader of a raw unit
+ * id (`WatchDock.tsx`'s pinned units, `UnitCard.tsx`/`AgentDetailCard.tsx`'s
+ * "business unit" field, the OverviewView/UserCard team labels, ...) routes
+ * its DISPLAYED text through this - the raw slug stays the value/key
+ * everywhere (pin lists, popover lookups, `<option>` values), only the
+ * rendered text changes. */
+const UNIT_LABELS: Readonly<Record<string, string>> = {
+  finops: "FinOps",
+  sre: "SRE",
+  data: "Data",
+  devops: "DevOps",
+  platform: "Platform",
+  "financial-crime": "Financial Crime",
+  "credit-risk": "Credit Risk",
+  "customer-support": "Customer Support",
+  "corporate-banking": "Corporate Banking",
+  compliance: "Compliance",
+};
+
+/** Pretty display name for a business-unit id. Known ids (the ten the
+ * console carries post-reseed) use [`UNIT_LABELS`]'s exact copy; anything
+ * else - a stale pin, a demo id, a unit this map has not caught up with yet -
+ * falls back to a generic "split on hyphen, capitalize each word" render
+ * rather than hiding or erroring, matching this app's "never a crash, never a
+ * fabricated value" tolerance for data the current box does not know about. */
+export function prettyUnit(id: string): string {
+  const known = UNIT_LABELS[id];
+  if (known) return known;
+  return id
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/** Which business unit an agent's TEAM rolls up to. The console only ever
+ * learns a team from the agent id path (`agent://org/<team>/<name>`); the unit
+ * is a separate attribution the money plane resolves server-side, so any
+ * frontend that wants to bucket or label by unit needs this map. It mirrors
+ * the seeder's UNIT_OF exactly (5 business departments fed by the banking
+ * teams, 5 IT platform teams whose team name IS their unit). A team this map
+ * does not know is treated as its own unit, so an unmapped IT-style team still
+ * renders sanely instead of collapsing into one bucket. */
+const TEAM_TO_UNIT: Record<string, string> = {
+  fraud: "financial-crime",
+  "kyc-aml": "financial-crime",
+  lending: "credit-risk",
+  support: "customer-support",
+  treasury: "corporate-banking",
+  compliance: "compliance",
+  finops: "finops",
+  sre: "sre",
+  data: "data",
+  devops: "devops",
+  platform: "platform",
+};
+
+export function unitForTeam(team: string): string {
+  return TEAM_TO_UNIT[team] ?? team;
+}

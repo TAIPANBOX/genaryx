@@ -1,6 +1,8 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchAgentGraph, shortAgentLabel } from "../lib/graph";
+import { useConsoleStateVersion } from "../lib/consoleState";
+import type { EntityLifecycleState } from "../lib/lifecycleTypes";
 import type { GraphEdge, LayoutView, NodeKind, PositionedNode } from "../graphTypes";
 
 /** The graph is a live analytic (PHASE3 §5.1: built incrementally in core
@@ -17,11 +19,38 @@ const NODE_KIND_VAR: Record<NodeKind, string> = {
   other: "--faint",
 };
 
+/** A blocked node is tinted by its lifecycle so a stopped/frozen/killed agent
+ * is visible on the graph, not just its `kind` colour. A live node keeps its
+ * kind colour (no override). */
+const NODE_LIFECYCLE_VAR: Record<EntityLifecycleState, string | null> = {
+  live: null,
+  stopped: "--amber",
+  frozen: "--iris",
+  killed: "--sev-critical",
+};
+
 const NODE_KIND_LABEL: Record<NodeKind, string> = {
   user: "user",
   agent: "agent",
   other: "other",
 };
+
+/** The graph's nodes are not all agents: it also carries the human `user`
+ * roots and any `other` principals (see the legend). Summarise the mix by kind
+ * so the header count never claims "N agents" for what includes users. */
+function nodeSummary(nodes: readonly { kind: NodeKind }[]): string {
+  let agents = 0;
+  let users = 0;
+  let other = 0;
+  for (const n of nodes) {
+    if (n.kind === "agent") agents += 1;
+    else if (n.kind === "user") users += 1;
+    else other += 1;
+  }
+  const parts = [`${agents} agents`, `${users} users`];
+  if (other > 0) parts.push(`${other} other`);
+  return parts.join(" · ");
+}
 
 const MIN_RADIUS = 5;
 const MAX_RADIUS = 22;
@@ -217,6 +246,13 @@ export function DelegationGraphView({
     return () => window.clearInterval(id);
   }, [load]);
 
+  // Re-read immediately when any lifecycle action lands, so a stopped/frozen/
+  // killed node re-tints within a beat rather than only on the next 5s poll.
+  const consoleVersion = useConsoleStateVersion();
+  useEffect(() => {
+    void load();
+  }, [consoleVersion, load]);
+
   // Track the container's actual rendered pixel box (starts unmeasured at 0
   // so the fit-to-view effect below never fits against a guessed default).
   // Fires for both the fixed-`height` and `fill` cases identically - this
@@ -298,6 +334,14 @@ export function DelegationGraphView({
       agent: resolveVar(NODE_KIND_VAR.agent),
       other: resolveVar(NODE_KIND_VAR.other),
     };
+    // Resolved once per draw (not per node): a blocked node's fill overrides
+    // its kind colour so STOPPED/FROZEN/KILLED agents read on the graph too.
+    const lifecycleColors: Record<EntityLifecycleState, string | null> = {
+      live: null,
+      stopped: resolveVar(NODE_LIFECYCLE_VAR.stopped!),
+      frozen: resolveVar(NODE_LIFECYCLE_VAR.frozen!),
+      killed: resolveVar(NODE_LIFECYCLE_VAR.killed!),
+    };
 
     const maxCount = Math.max(1, ...layout.nodes.map((n) => n.event_count));
     const highlightSet = hoveredId ? neighborsOf(hoveredId, layout.edges) : null;
@@ -336,7 +380,8 @@ export function DelegationGraphView({
       ctx.globalAlpha = dim ? 0.25 : 1;
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = kindColors[n.kind];
+      const lifecycleFill = n.lifecycle && n.lifecycle !== "live" ? lifecycleColors[n.lifecycle] : null;
+      ctx.fillStyle = lifecycleFill ?? kindColors[n.kind];
       ctx.fill();
       ctx.lineWidth = (isFocus || isHovered ? 2.5 : 1) / transform.scale;
       ctx.strokeStyle = isFocus || isHovered ? fgColor : panelColor;
@@ -453,7 +498,7 @@ export function DelegationGraphView({
           <Legend />
           <div className="flex-1" />
           <span className="mono text-[10.5px]" style={{ color: "var(--faint)" }}>
-            {layout ? `${layout.nodes.length} agents · ${layout.edges.length} links` : "loading..."}
+            {layout ? `${nodeSummary(layout.nodes)} · ${layout.edges.length} links` : "loading..."}
             {asOfMs !== null ? ` · updated ${new Date(asOfMs).toLocaleTimeString()}` : ""}
           </span>
           <button type="button" className="icon-btn" style={{ width: "auto", padding: "0 8px", fontSize: 11 }} onClick={() => void load()}>
@@ -488,7 +533,7 @@ export function DelegationGraphView({
             role="img"
             aria-label={
               layout
-                ? `Delegation graph: ${layout.nodes.length} agents, ${layout.edges.length} delegation links. Drag to pan, scroll to zoom, click a node to open its Agent 360 card.`
+                ? `Delegation graph: ${nodeSummary(layout.nodes)}, ${layout.edges.length} delegation links. Drag to pan, scroll to zoom, click a node to open its Agent 360 card.`
                 : "Delegation graph loading"
             }
             style={{ display: "block", cursor: dragRef.current ? "grabbing" : hoveredId ? "pointer" : "grab" }}

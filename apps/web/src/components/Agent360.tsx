@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { AgentSlice } from "../graphTypes";
 import { ATTESTATION_DETECTORS } from "../identityTypes";
@@ -10,11 +10,14 @@ import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
 import { isQualityDriftEvent } from "../lib/incidents";
 import { describeMoneyError, fetchRuns } from "../lib/money";
+import { runBlockedState, StateBadge } from "../lib/lifecycle";
 import { describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
 import { effectiveOverlay, matchedPolicies, mcpReachForAgent, mcpServerIdentities, permissionRollup, shadowServerIds } from "../lib/access";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { usePolicyStatus } from "../lib/usePolicyStatus";
+import { usePopover } from "../lib/popover";
+import { prettyUnit, unitForTeam } from "../lib/views";
 import type { ViewId } from "../lib/views";
 import type { MoneyError, Run } from "../moneyTypes";
 import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
@@ -23,6 +26,8 @@ import { DelegationGraphView } from "./DelegationGraphView";
 import { Sparkline } from "./dash";
 import { SeverityBadge } from "./SeverityBadge";
 import { SourceChip } from "./SourceChip";
+import { UnitCard } from "./UnitCard";
+import { WatchToggleButton } from "./WatchDock";
 
 /** How many events/policy rows this compact card shows inline before
  * pointing at the fuller panel instead of growing without bound. */
@@ -126,6 +131,21 @@ function PlaneNote({ children }: { children: ReactNode }) {
     </span>
   );
 }
+
+/** Plain-text-looking link button for the "business unit" row below - same
+ * look AgentDetailCard's own `linkStyle` uses for its unit/owner rows, so the
+ * affordance reads the same wherever it appears. */
+const linkStyle: CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  cursor: "pointer",
+  color: "var(--fg)",
+  font: "inherit",
+  textDecoration: "underline",
+  textDecorationColor: "var(--line-2)",
+  textUnderlineOffset: 2,
+};
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -341,18 +361,38 @@ function AccessSectionBody({
  * brief calls for ("Actions may LINK to the existing panels rather than
  * re-implement a mutation here").
  *
- * Rendered as a fixed overlay from `AppShell.tsx` regardless of which nav
- * view is active - the deep-link's "from anywhere" requirement - and closes
- * on Escape, a backdrop click, or the explicit close button.
+ * Rendered as one drawer inside the fixed overlay `AppShell.tsx` owns,
+ * regardless of which nav view is active (the deep-link's "from anywhere"
+ * requirement). `AppShell` is responsible for the fixed positioning, the
+ * shared backdrop, and laying out up to two of these side by side for the
+ * compare view (see its `focusedAgentIds` doc comment) - this component's
+ * own root is just the drawer itself: fixed width, full height, its own
+ * scroll, and the dialog role/label. Each mounted instance still closes on
+ * Escape or its own explicit close button; a shared backdrop click (in
+ * `AppShell`, not here) dismisses every open card at once.
  */
 export function Agent360({
   agentId,
+  inCompare = false,
   onClose,
   onOpenAgent,
   onNavigate,
   onOpenReplay,
 }: {
   agentId: string;
+  /** True when `AppShell.tsx` is rendering this card alongside a SECOND
+   * Agent 360 in its compare overlay (`visibleAgentIds.length > 1`) - false
+   * for the ordinary one-card case. Gates ONLY the width's vw fallback
+   * below (see `AppShell.tsx`'s own overlay-container comment for the full
+   * derivation): a solo card's `min(720px, 94vw)` is already pinned flat at
+   * the literal 720px cap for every viewport `COMPARE_MIN_WIDTH` (1200px)
+   * ever lets this render at, so two solo-style cards side by side would
+   * demand a fixed 1440px - overflowing any compare-eligible viewport
+   * narrower than that. `inCompare` swaps the fallback to 46vw instead, so
+   * two cards together are always <=92vw (never overflows); everything
+   * else about the card - the 720px cap itself, height, layout - is
+   * identical either way. */
+  inCompare?: boolean;
   onClose: () => void;
   onOpenAgent: (agentId: string) => void;
   onNavigate: (view: ViewId) => void;
@@ -360,6 +400,8 @@ export function Agent360({
    * with one of this agent's runs, from the Money section below. */
   onOpenReplay: (runId: string) => void;
 }) {
+  const { open } = usePopover();
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -516,211 +558,377 @@ export function Agent360({
     .slice()
     .sort((a, b) => sevRank(b.severity) - sevRank(a.severity) || Date.parse(b.time) - Date.parse(a.time));
   const spendTrend = spendSeries(runs ?? []);
+  // Business unit (same derivation AgentDetailCard/UserCard use): the console
+  // only ever learns an agent's team from its id path
+  // (`agent://org/<team>/<name>`), so the unit shown here comes from that
+  // path segment, not from any plane fetch above.
+  const teamSeg = /^agent:\/\/[^/]+\/([^/]+)\//.exec(agentId)?.[1] ?? null;
+  const unit = teamSeg ? unitForTeam(teamSeg) : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Agent 360: ${agentId}`}>
-      <button
-        type="button"
-        aria-label="Close Agent 360"
-        className="absolute inset-0"
-        style={{ background: "color-mix(in srgb, var(--ink) 55%, transparent)", cursor: "default" }}
-        onClick={onClose}
-      />
-      <div
-        className="relative flex flex-col gap-5 thin-scroll overflow-y-auto"
-        style={{
-          width: "min(760px, 94vw)",
-          height: "100%",
-          background: "var(--bg)",
-          borderLeft: "1px solid var(--line-2)",
-          padding: "20px 22px 28px",
-          boxShadow: "-24px 0 48px color-mix(in srgb, var(--ink) 35%, transparent)",
-        }}
-      >
-        <div className="flex items-start gap-3">
-          <div className="flex flex-col gap-1 min-w-0">
-            <span className="mono text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-              Agent 360
-            </span>
-            <span className="mono truncate text-[15px]" style={{ color: "var(--fg)" }} title={agentId}>
-              {agentId}
-            </span>
-          </div>
-          <div className="flex-1" />
-          <button type="button" className="icon-btn" aria-label="Close Agent 360" onClick={onClose}>
-            &times;
+    <div
+      className="relative flex flex-col gap-5 thin-scroll overflow-y-auto"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Agent 360: ${agentId}`}
+      style={{
+        width: inCompare ? "min(720px, 46vw)" : "min(720px, 94vw)",
+        flexShrink: 0,
+        flexGrow: 0,
+        height: "100%",
+        background: "var(--bg)",
+        borderLeft: "1px solid var(--line-2)",
+        padding: "20px 22px 28px",
+        boxShadow: "-24px 0 48px color-mix(in srgb, var(--ink) 35%, transparent)",
+      }}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex flex-col gap-1 min-w-0">
+          <span
+            className="mono text-[10px] uppercase tracking-wider"
+            style={{ color: "var(--faint)" }}
+            title="Click another agent to open it beside this one for comparison."
+          >
+            Agent 360
+          </span>
+          <span className="mono truncate text-[15px]" style={{ color: "var(--fg)" }} title={agentId}>
+            {agentId}
+          </span>
+        </div>
+        <div className="flex-1" />
+        <WatchToggleButton kind="agent" id={agentId} label={shortAgentLabel(agentId)} />
+        <button type="button" className="icon-btn" aria-label="Close Agent 360" onClick={onClose}>
+          &times;
+        </button>
+      </div>
+
+      {unit && (
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+            business unit
+          </span>
+          <button
+            type="button"
+            style={linkStyle}
+            onClick={(e) => open(<UnitCard team={unit} onOpenFullAgent={onOpenAgent} />, { anchor: e.currentTarget.getBoundingClientRect() })}
+          >
+            {prettyUnit(unit)} &rsaquo;
           </button>
         </div>
+      )}
 
-        {/* ---- Delegation ---- */}
-        <section className="flex flex-col gap-2">
-          <SectionHeader title="Delegation" />
-          {slice === null ? (
-            <PlaneNote>loading...</PlaneNote>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {slice.node === null && slice.parents.length === 0 && slice.children.length === 0 ? (
-                <PlaneNote>this agent has never been seen on the delegation graph.</PlaneNote>
+      {/* ---- Delegation ---- */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Delegation" />
+        {slice === null ? (
+          <PlaneNote>loading...</PlaneNote>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {slice.node === null && slice.parents.length === 0 && slice.children.length === 0 ? (
+              <PlaneNote>this agent has never been seen on the delegation graph.</PlaneNote>
+            ) : (
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                <Field label="events" value={slice.node ? String(slice.node.event_count) : "0"} />
+                <Field label="last seen" value={slice.node?.last_ts ? formatTimestamp(slice.node.last_ts) : "-"} />
+                <Field label="kind" value={slice.node?.kind ?? "(chain-only)"} />
+              </div>
+            )}
+            {slice.parents.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                  delegated by
+                </span>
+                {slice.parents.map((p) => (
+                  <AgentChip key={p.id} id={p.id} onOpen={onOpenAgent} />
+                ))}
+              </div>
+            )}
+            {slice.children.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                  delegates to
+                </span>
+                {slice.children.map((c) => (
+                  <AgentChip key={c.id} id={c.id} onOpen={onOpenAgent} />
+                ))}
+              </div>
+            )}
+            <DelegationGraphView key={agentId} focusAgentId={agentId} onOpenAgent={onOpenAgent} height={220} compact />
+            <OpenPanelButton label="Open full graph" onClick={() => onNavigate("graph")} />
+          </div>
+        )}
+      </section>
+
+      {/* ---- Events ---- */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Events" />
+        {events === null ? (
+          <PlaneNote>loading...</PlaneNote>
+        ) : events.length === 0 ? (
+          <PlaneNote>no events for this agent yet.</PlaneNote>
+        ) : (
+          <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+            {events.slice(0, EVENTS_SHOWN).map((e) => (
+              <div
+                key={e.id}
+                className="grid items-center gap-3 px-3 py-1.5 bus-row"
+                style={{ gridTemplateColumns: "76px 92px 1fr 140px" }}
+              >
+                <SeverityBadge severity={e.severity} />
+                <SourceChip source={e.source} />
+                <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }} title={e.type}>
+                  {e.type}
+                </span>
+                <span className="mono tabular text-[10.5px] text-right" style={{ color: "var(--faint)" }}>
+                  {formatTimestamp(e.ts)}
+                </span>
+              </div>
+            ))}
+            {events.length > EVENTS_SHOWN && (
+              <div className="px-3 py-1.5 mono text-[10.5px]" style={{ color: "var(--faint)" }}>
+                + {events.length - EVENTS_SHOWN} more &middot; open the Bus Explorer for the full list
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* ---- Identity ---- */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Identity" />
+        {!identityReady ? (
+          <PlaneNote>
+            {!identityStatus || identityStatus.state === "bootstrapping"
+              ? "connecting to the identity plane..."
+              : "identity plane not connected."}
+          </PlaneNote>
+        ) : identityError ? (
+          <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
+        ) : identity === undefined ? (
+          <PlaneNote>loading...</PlaneNote>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {identity ? (
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                <Field label="type" value={identity.type} />
+                <Field label="source" value={identity.source} />
+                <Field label="privileged" value={identity.privileged ? "yes" : "no"} />
+                <Field label="owner" value={identity.owner || "-"} />
+              </div>
+            ) : (
+              <PlaneNote>no idryx identity record for this agent (as of the last load/Rescan).</PlaneNote>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+                attestation:
+              </span>
+              {attestationAlerts.length === 0 ? (
+                <span className="badge" style={cssVar("tone", "var(--sev-low)")}>
+                  none flagged
+                </span>
               ) : (
-                <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                  <Field label="events" value={slice.node ? String(slice.node.event_count) : "0"} />
-                  <Field label="last seen" value={slice.node?.last_ts ? formatTimestamp(slice.node.last_ts) : "-"} />
-                  <Field label="kind" value={slice.node?.kind ?? "(chain-only)"} />
-                </div>
-              )}
-              {slice.parents.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-                    delegated by
+                attestationAlerts.map((a, idx) => (
+                  <span key={idx} className="badge" style={cssVar("tone", "var(--sev-high)")} title={a.summary}>
+                    {a.detector}
                   </span>
-                  {slice.parents.map((p) => (
-                    <AgentChip key={p.id} id={p.id} onOpen={onOpenAgent} />
-                  ))}
-                </div>
+                ))
               )}
-              {slice.children.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-                    delegates to
-                  </span>
-                  {slice.children.map((c) => (
-                    <AgentChip key={c.id} id={c.id} onOpen={onOpenAgent} />
-                  ))}
-                </div>
-              )}
-              <DelegationGraphView key={agentId} focusAgentId={agentId} onOpenAgent={onOpenAgent} height={220} compact />
-              <OpenPanelButton label="Open full graph" onClick={() => onNavigate("graph")} />
             </div>
-          )}
-        </section>
+            {identityAlerts.length > 0 && (
+              <div className="flex flex-col gap-1">
+                {identityAlerts.slice(0, IDENTITY_ALERTS_SHOWN).map((a, idx) => (
+                  <div key={idx} className="flex items-center gap-2 min-w-0">
+                    <SeverityBadge severity={a.severity} />
+                    <span className="mono text-[11px]" style={{ color: "var(--fg)" }}>
+                      {a.detector}
+                    </span>
+                    <span className="text-[11px] truncate" style={{ color: "var(--dim)" }} title={a.summary}>
+                      {a.summary}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
+          </div>
+        )}
+      </section>
 
-        {/* ---- Events ---- */}
-        <section className="flex flex-col gap-2">
-          <SectionHeader title="Events" />
-          {events === null ? (
-            <PlaneNote>loading...</PlaneNote>
-          ) : events.length === 0 ? (
-            <PlaneNote>no events for this agent yet.</PlaneNote>
-          ) : (
+      {/* ---- Access (I5: agent access matrix) ---- */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Access" />
+        {!identityReady ? (
+          <PlaneNote>
+            {!identityStatus || identityStatus.state === "bootstrapping"
+              ? "connecting to the identity plane..."
+              : "identity plane not connected."}
+          </PlaneNote>
+        ) : identityError ? (
+          <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
+        ) : identity === undefined ? (
+          <PlaneNote>loading...</PlaneNote>
+        ) : identity === null ? (
+          <PlaneNote>no idryx identity record for this agent - nothing to assemble an access matrix from.</PlaneNote>
+        ) : (
+          <AccessSectionBody
+            identity={identity}
+            mcpServers={mcpServers}
+            shadowIds={shadowIds}
+            policyStatus={policyStatus}
+            policyError={policyError}
+            policies={policies}
+            onOpenAgent={onOpenAgent}
+            onNavigate={onNavigate}
+          />
+        )}
+      </section>
+
+      {/* ---- Money ---- */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Money" />
+        {!moneyReady ? (
+          <PlaneNote>
+            {!moneyStatus || moneyStatus.state === "bootstrapping"
+              ? "connecting to the money plane..."
+              : "money plane not connected."}
+          </PlaneNote>
+        ) : moneyError ? (
+          <PlaneNote>{describeMoneyError(moneyError)}</PlaneNote>
+        ) : runs === null ? (
+          <PlaneNote>loading...</PlaneNote>
+        ) : runs.length === 0 ? (
+          <PlaneNote>no runs for this agent yet.</PlaneNote>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+              <Field label="total spent" value={formatUsd(totalSpentUsd)} />
+              <Field label="runs" value={String(runs.length)} />
+            </div>
             <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
-              {events.slice(0, EVENTS_SHOWN).map((e) => (
+              {runs.map((r) => (
                 <div
-                  key={e.id}
+                  key={r.run_id}
                   className="grid items-center gap-3 px-3 py-1.5 bus-row"
-                  style={{ gridTemplateColumns: "76px 92px 1fr 140px" }}
+                  style={{ gridTemplateColumns: "1fr 90px 90px 64px 60px" }}
                 >
-                  <SeverityBadge severity={e.severity} />
-                  <SourceChip source={e.source} />
-                  <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }} title={e.type}>
-                    {e.type}
+                  <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }} title={r.run_id}>
+                    {r.run_id}
                   </span>
-                  <span className="mono tabular text-[10.5px] text-right" style={{ color: "var(--faint)" }}>
-                    {formatTimestamp(e.ts)}
+                  <span className="mono tabular text-[11.5px]" style={{ color: "var(--fg)" }}>
+                    {formatUsd(r.spent_usd)}
+                  </span>
+                  <span className="mono tabular text-[11.5px]" style={{ color: "var(--dim)" }}>
+                    {r.budget_usd !== null ? formatUsd(r.budget_usd) : "-"}
+                  </span>
+                  <span>
+                    {(() => {
+                      const blocked = runBlockedState(r);
+                      return blocked ? <StateBadge state={blocked} /> : null;
+                    })()}
+                  </span>
+                  <span className="flex justify-end">
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: "auto", padding: "0 8px", fontSize: 10.5 }}
+                      title={`Replay run ${r.run_id}`}
+                      onClick={() => onOpenReplay(r.run_id)}
+                    >
+                      Replay
+                    </button>
                   </span>
                 </div>
               ))}
-              {events.length > EVENTS_SHOWN && (
-                <div className="px-3 py-1.5 mono text-[10.5px]" style={{ color: "var(--faint)" }}>
-                  + {events.length - EVENTS_SHOWN} more &middot; open the Bus Explorer for the full list
-                </div>
-              )}
             </div>
-          )}
-        </section>
+          </div>
+        )}
+        {moneyReady && <OpenPanelButton label="Open Money panel" onClick={() => onNavigate("money")} />}
+      </section>
 
-        {/* ---- Identity ---- */}
-        <section className="flex flex-col gap-2">
-          <SectionHeader title="Identity" />
-          {!identityReady ? (
-            <PlaneNote>
-              {!identityStatus || identityStatus.state === "bootstrapping"
-                ? "connecting to the identity plane..."
-                : "identity plane not connected."}
-            </PlaneNote>
-          ) : identityError ? (
-            <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
-          ) : identity === undefined ? (
+      {/* ---- Drift (I11: quality drift + spend trend + behavior anomalies) ---- */}
+      <section className="flex flex-col gap-3">
+        <SectionHeader title="Drift" />
+
+        {/* Quality drift: verdryx's quality_drift bus events for this
+            agent, out of the SAME `events` the Events/Policy sections
+            above already hold. */}
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+            quality drift
+          </span>
+          {events === null ? (
             <PlaneNote>loading...</PlaneNote>
+          ) : latestDrift === null ? (
+            <PlaneNote>
+              no quality-drift signal for this agent yet - drift arrives on the bus from verdryx only when it
+              flags a regression against a baseline.
+            </PlaneNote>
           ) : (
             <div className="flex flex-col gap-2">
-              {identity ? (
-                <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                  <Field label="type" value={identity.type} />
-                  <Field label="source" value={identity.source} />
-                  <Field label="privileged" value={identity.privileged ? "yes" : "no"} />
-                  <Field label="owner" value={identity.owner || "-"} />
-                </div>
-              ) : (
-                <PlaneNote>no idryx identity record for this agent (as of the last load/Rescan).</PlaneNote>
-              )}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px]" style={{ color: "var(--dim)" }}>
-                  attestation:
+                <span className="badge" style={cssVar("tone", verdictTone(latestDrift.verdict))}>
+                  {latestDrift.verdict ?? "unknown verdict"}
                 </span>
-                {attestationAlerts.length === 0 ? (
-                  <span className="badge" style={cssVar("tone", "var(--sev-low)")}>
-                    none flagged
-                  </span>
-                ) : (
-                  attestationAlerts.map((a, idx) => (
-                    <span key={idx} className="badge" style={cssVar("tone", "var(--sev-high)")} title={a.summary}>
-                      {a.detector}
-                    </span>
-                  ))
+                <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
+                  {formatTimestamp(latestDrift.ts)}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                <Field label="mean score" value={latestDrift.meanScore !== null ? latestDrift.meanScore.toFixed(3) : "-"} />
+                <Field
+                  label="delta"
+                  value={
+                    latestDrift.delta !== null ? `${latestDrift.delta >= 0 ? "+" : ""}${latestDrift.delta.toFixed(3)}` : "-"
+                  }
+                />
+                {latestDrift.baselineId && <Field label="baseline" value={latestDrift.baselineId} />}
+                {latestDrift.baselineN !== null && latestDrift.baselineN > 0 && (
+                  <>
+                    <Field label="t-statistic" value={latestDrift.tStatistic !== null ? latestDrift.tStatistic.toFixed(2) : "-"} />
+                    <Field
+                      label="95% CI"
+                      value={
+                        latestDrift.ciLow !== null && latestDrift.ciHigh !== null
+                          ? `[${latestDrift.ciLow.toFixed(3)}, ${latestDrift.ciHigh.toFixed(3)}]`
+                          : "-"
+                      }
+                    />
+                    <Field label="baseline n" value={String(latestDrift.baselineN)} />
+                  </>
                 )}
               </div>
-              {identityAlerts.length > 0 && (
+              {driftReadings.length > 1 && (
                 <div className="flex flex-col gap-1">
-                  {identityAlerts.slice(0, IDENTITY_ALERTS_SHOWN).map((a, idx) => (
-                    <div key={idx} className="flex items-center gap-2 min-w-0">
-                      <SeverityBadge severity={a.severity} />
-                      <span className="mono text-[11px]" style={{ color: "var(--fg)" }}>
-                        {a.detector}
+                  <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                    recent checks
+                  </span>
+                  {driftReadings.slice(1, DRIFT_CHECKS_SHOWN).map((d) => (
+                    <div key={d.id} className="flex items-center gap-2 min-w-0">
+                      <span className="badge" style={cssVar("tone", verdictTone(d.verdict))}>
+                        {d.verdict ?? "-"}
                       </span>
-                      <span className="text-[11px] truncate" style={{ color: "var(--dim)" }} title={a.summary}>
-                        {a.summary}
+                      <span className="mono tabular text-[11px]" style={{ color: "var(--dim)" }}>
+                        {d.delta !== null ? `${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)}` : "-"}
+                      </span>
+                      <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
+                        {formatTimestamp(d.ts)}
                       </span>
                     </div>
                   ))}
                 </div>
               )}
-              <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
             </div>
           )}
-        </section>
+          <OpenPanelButton label="Open Quality panel" onClick={() => onNavigate("quality")} />
+        </div>
 
-        {/* ---- Access (I5: agent access matrix) ---- */}
-        <section className="flex flex-col gap-2">
-          <SectionHeader title="Access" />
-          {!identityReady ? (
-            <PlaneNote>
-              {!identityStatus || identityStatus.state === "bootstrapping"
-                ? "connecting to the identity plane..."
-                : "identity plane not connected."}
-            </PlaneNote>
-          ) : identityError ? (
-            <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
-          ) : identity === undefined ? (
-            <PlaneNote>loading...</PlaneNote>
-          ) : identity === null ? (
-            <PlaneNote>no idryx identity record for this agent - nothing to assemble an access matrix from.</PlaneNote>
-          ) : (
-            <AccessSectionBody
-              identity={identity}
-              mcpServers={mcpServers}
-              shadowIds={shadowIds}
-              policyStatus={policyStatus}
-              policyError={policyError}
-              policies={policies}
-              onOpenAgent={onOpenAgent}
-              onNavigate={onNavigate}
-            />
-          )}
-        </section>
-
-        {/* ---- Money ---- */}
-        <section className="flex flex-col gap-2">
-          <SectionHeader title="Money" />
+        {/* Spend trend: this agent's own runs (Money section above),
+            bucketed with the SAME `spendSeries` helper MoneyView/
+            OverviewView already feed their own hero Sparkline from. */}
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+            spend trend
+          </span>
           {!moneyReady ? (
             <PlaneNote>
               {!moneyStatus || moneyStatus.state === "bootstrapping"
@@ -733,274 +941,129 @@ export function Agent360({
             <PlaneNote>loading...</PlaneNote>
           ) : runs.length === 0 ? (
             <PlaneNote>no runs for this agent yet.</PlaneNote>
+          ) : spendTrend.length === 0 ? (
+            <PlaneNote>not enough distinct run timestamps yet to draw a trend (needs at least two).</PlaneNote>
           ) : (
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                <Field label="total spent" value={formatUsd(totalSpentUsd)} />
-                <Field label="runs" value={String(runs.length)} />
-              </div>
-              <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
-                {runs.map((r) => (
-                  <div
-                    key={r.run_id}
-                    className="grid items-center gap-3 px-3 py-1.5 bus-row"
-                    style={{ gridTemplateColumns: "1fr 90px 90px 64px 60px" }}
-                  >
-                    <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }} title={r.run_id}>
-                      {r.run_id}
-                    </span>
-                    <span className="mono tabular text-[11.5px]" style={{ color: "var(--fg)" }}>
-                      {formatUsd(r.spent_usd)}
-                    </span>
-                    <span className="mono tabular text-[11.5px]" style={{ color: "var(--dim)" }}>
-                      {r.budget_usd !== null ? formatUsd(r.budget_usd) : "-"}
-                    </span>
-                    <span>
-                      {r.killed && (
-                        <span className="badge" style={cssVar("tone", "var(--faint)")}>
-                          killed
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex justify-end">
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        style={{ width: "auto", padding: "0 8px", fontSize: 10.5 }}
-                        title={`Replay run ${r.run_id}`}
-                        onClick={() => onOpenReplay(r.run_id)}
-                      >
-                        Replay
-                      </button>
-                    </span>
-                  </div>
-                ))}
-              </div>
+            <div className="flex flex-col gap-1">
+              <Sparkline values={spendTrend} height={56} />
+              <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+                spend over recent runs &middot; {formatUsd(totalSpentUsd)} total across {runs.length} run
+                {runs.length === 1 ? "" : "s"}
+              </span>
             </div>
           )}
-          {moneyReady && <OpenPanelButton label="Open Money panel" onClick={() => onNavigate("money")} />}
-        </section>
+        </div>
 
-        {/* ---- Drift (I11: quality drift + spend trend + behavior anomalies) ---- */}
-        <section className="flex flex-col gap-3">
-          <SectionHeader title="Drift" />
-
-          {/* Quality drift: verdryx's quality_drift bus events for this
-              agent, out of the SAME `events` the Events/Policy sections
-              above already hold. */}
-          <div className="flex flex-col gap-2">
-            <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-              quality drift
-            </span>
-            {events === null ? (
-              <PlaneNote>loading...</PlaneNote>
-            ) : latestDrift === null ? (
-              <PlaneNote>
-                no quality-drift signal for this agent yet - drift arrives on the bus from verdryx only when it
-                flags a regression against a baseline.
-              </PlaneNote>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="badge" style={cssVar("tone", verdictTone(latestDrift.verdict))}>
-                    {latestDrift.verdict ?? "unknown verdict"}
+        {/* Behavior anomalies: idryx's behavior_anomaly alerts for this
+            agent, out of the SAME `identityAlerts` the Identity section
+            above already fetched - idryx's login-behavior baseline, not a
+            quality one. */}
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+            behavior anomalies
+          </span>
+          {!identityReady ? (
+            <PlaneNote>
+              {!identityStatus || identityStatus.state === "bootstrapping"
+                ? "connecting to the identity plane..."
+                : "identity plane not connected."}
+            </PlaneNote>
+          ) : identityError ? (
+            <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
+          ) : identity === undefined ? (
+            <PlaneNote>loading...</PlaneNote>
+          ) : behaviorAlerts.length === 0 ? (
+            <PlaneNote>no behavior-anomaly alerts for this agent.</PlaneNote>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {behaviorAlerts.slice(0, BEHAVIOR_ALERTS_SHOWN).map((a, idx) => (
+                <div key={idx} className="flex items-center gap-2 min-w-0">
+                  <SeverityBadge severity={a.severity} />
+                  <span className="text-[11px] truncate" style={{ color: "var(--dim)" }} title={a.summary}>
+                    {a.summary}
                   </span>
                   <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
-                    {formatTimestamp(latestDrift.ts)}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                  <Field label="mean score" value={latestDrift.meanScore !== null ? latestDrift.meanScore.toFixed(3) : "-"} />
-                  <Field
-                    label="delta"
-                    value={
-                      latestDrift.delta !== null ? `${latestDrift.delta >= 0 ? "+" : ""}${latestDrift.delta.toFixed(3)}` : "-"
-                    }
-                  />
-                  {latestDrift.baselineId && <Field label="baseline" value={latestDrift.baselineId} />}
-                  {latestDrift.baselineN !== null && latestDrift.baselineN > 0 && (
-                    <>
-                      <Field label="t-statistic" value={latestDrift.tStatistic !== null ? latestDrift.tStatistic.toFixed(2) : "-"} />
-                      <Field
-                        label="95% CI"
-                        value={
-                          latestDrift.ciLow !== null && latestDrift.ciHigh !== null
-                            ? `[${latestDrift.ciLow.toFixed(3)}, ${latestDrift.ciHigh.toFixed(3)}]`
-                            : "-"
-                        }
-                      />
-                      <Field label="baseline n" value={String(latestDrift.baselineN)} />
-                    </>
-                  )}
-                </div>
-                {driftReadings.length > 1 && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-                      recent checks
-                    </span>
-                    {driftReadings.slice(1, DRIFT_CHECKS_SHOWN).map((d) => (
-                      <div key={d.id} className="flex items-center gap-2 min-w-0">
-                        <span className="badge" style={cssVar("tone", verdictTone(d.verdict))}>
-                          {d.verdict ?? "-"}
-                        </span>
-                        <span className="mono tabular text-[11px]" style={{ color: "var(--dim)" }}>
-                          {d.delta !== null ? `${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)}` : "-"}
-                        </span>
-                        <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
-                          {formatTimestamp(d.ts)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            <OpenPanelButton label="Open Quality panel" onClick={() => onNavigate("quality")} />
-          </div>
-
-          {/* Spend trend: this agent's own runs (Money section above),
-              bucketed with the SAME `spendSeries` helper MoneyView/
-              OverviewView already feed their own hero Sparkline from. */}
-          <div className="flex flex-col gap-2">
-            <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-              spend trend
-            </span>
-            {!moneyReady ? (
-              <PlaneNote>
-                {!moneyStatus || moneyStatus.state === "bootstrapping"
-                  ? "connecting to the money plane..."
-                  : "money plane not connected."}
-              </PlaneNote>
-            ) : moneyError ? (
-              <PlaneNote>{describeMoneyError(moneyError)}</PlaneNote>
-            ) : runs === null ? (
-              <PlaneNote>loading...</PlaneNote>
-            ) : runs.length === 0 ? (
-              <PlaneNote>no runs for this agent yet.</PlaneNote>
-            ) : spendTrend.length === 0 ? (
-              <PlaneNote>not enough distinct run timestamps yet to draw a trend (needs at least two).</PlaneNote>
-            ) : (
-              <div className="flex flex-col gap-1">
-                <Sparkline values={spendTrend} height={56} />
-                <span className="text-[11px]" style={{ color: "var(--dim)" }}>
-                  spend over recent runs &middot; {formatUsd(totalSpentUsd)} total across {runs.length} run
-                  {runs.length === 1 ? "" : "s"}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Behavior anomalies: idryx's behavior_anomaly alerts for this
-              agent, out of the SAME `identityAlerts` the Identity section
-              above already fetched - idryx's login-behavior baseline, not a
-              quality one. */}
-          <div className="flex flex-col gap-2">
-            <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-              behavior anomalies
-            </span>
-            {!identityReady ? (
-              <PlaneNote>
-                {!identityStatus || identityStatus.state === "bootstrapping"
-                  ? "connecting to the identity plane..."
-                  : "identity plane not connected."}
-              </PlaneNote>
-            ) : identityError ? (
-              <PlaneNote>{describeIdentityError(identityError)}</PlaneNote>
-            ) : identity === undefined ? (
-              <PlaneNote>loading...</PlaneNote>
-            ) : behaviorAlerts.length === 0 ? (
-              <PlaneNote>no behavior-anomaly alerts for this agent.</PlaneNote>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {behaviorAlerts.slice(0, BEHAVIOR_ALERTS_SHOWN).map((a, idx) => (
-                  <div key={idx} className="flex items-center gap-2 min-w-0">
-                    <SeverityBadge severity={a.severity} />
-                    <span className="text-[11px] truncate" style={{ color: "var(--dim)" }} title={a.summary}>
-                      {a.summary}
-                    </span>
-                    <span className="mono tabular text-[10.5px]" style={{ color: "var(--faint)" }}>
-                      {formatTimestamp(a.time)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
-          </div>
-        </section>
-
-        {/* ---- Policy ---- */}
-        <section className="flex flex-col gap-2">
-          <SectionHeader title="Policy" />
-          {policyEvents.length === 0 ? (
-            <PlaneNote>no wardryx decisions for this agent yet.</PlaneNote>
-          ) : (
-            <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
-              {policyEvents.slice(0, POLICY_EVENTS_SHOWN).map((e) => (
-                <div
-                  key={e.id}
-                  className="grid items-center gap-3 px-3 py-1.5 bus-row"
-                  style={{ gridTemplateColumns: "76px 1fr 140px" }}
-                >
-                  <SeverityBadge severity={e.severity} />
-                  <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }}>
-                    {e.type}
-                  </span>
-                  <span className="mono tabular text-[10.5px] text-right" style={{ color: "var(--faint)" }}>
-                    {formatTimestamp(e.ts)}
+                    {formatTimestamp(a.time)}
                   </span>
                 </div>
               ))}
             </div>
           )}
+          <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
+        </div>
+      </section>
 
-          {!policyReady ? (
-            <PlaneNote>
-              {!policyStatus || policyStatus.state === "bootstrapping"
-                ? "connecting to the policy plane..."
-                : "policy plane not connected (no approvals to show)."}
-            </PlaneNote>
-          ) : policyError ? (
-            <PlaneNote>{describePolicyError(policyError)}</PlaneNote>
-          ) : (
-            approvals !== null &&
-            approvals.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-                  approvals
+      {/* ---- Policy ---- */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Policy" />
+        {policyEvents.length === 0 ? (
+          <PlaneNote>no wardryx decisions for this agent yet.</PlaneNote>
+        ) : (
+          <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
+            {policyEvents.slice(0, POLICY_EVENTS_SHOWN).map((e) => (
+              <div
+                key={e.id}
+                className="grid items-center gap-3 px-3 py-1.5 bus-row"
+                style={{ gridTemplateColumns: "76px 1fr 140px" }}
+              >
+                <SeverityBadge severity={e.severity} />
+                <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }}>
+                  {e.type}
                 </span>
-                {approvals.map((a) => (
-                  <div key={a.approval_id} className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="badge"
-                      style={cssVar(
-                        "tone",
-                        a.pending ? "var(--sev-medium)" : a.decision === "grant" ? "var(--sev-low)" : "var(--sev-critical)",
-                      )}
-                    >
-                      {a.pending ? "pending" : (a.decision ?? "decided")}
-                    </span>
-                    <span className="mono truncate text-[11px]" style={{ color: "var(--dim)" }}>
-                      {a.approval_id}
-                    </span>
-                    {a.est_cost_usd !== null && (
-                      <span className="mono tabular text-[11px]" style={{ color: "var(--faint)" }}>
-                        {formatUsd(a.est_cost_usd)}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                <span className="mono tabular text-[10.5px] text-right" style={{ color: "var(--faint)" }}>
+                  {formatTimestamp(e.ts)}
+                </span>
               </div>
-            )
-          )}
-          {policyReady && <OpenPanelButton label="Open Policy panel" onClick={() => onNavigate("policy")} />}
-        </section>
+            ))}
+          </div>
+        )}
 
-        <span className="text-[10.5px]" style={{ color: "var(--faint)" }}>
-          This card is read-only. Killing a run, setting a budget, or granting/denying an approval happens in the
-          Money and Policy panels linked above, not here.
-        </span>
-      </div>
+        {!policyReady ? (
+          <PlaneNote>
+            {!policyStatus || policyStatus.state === "bootstrapping"
+              ? "connecting to the policy plane..."
+              : "policy plane not connected (no approvals to show)."}
+          </PlaneNote>
+        ) : policyError ? (
+          <PlaneNote>{describePolicyError(policyError)}</PlaneNote>
+        ) : (
+          approvals !== null &&
+          approvals.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                approvals
+              </span>
+              {approvals.map((a) => (
+                <div key={a.approval_id} className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="badge"
+                    style={cssVar(
+                      "tone",
+                      a.pending ? "var(--sev-medium)" : a.decision === "grant" ? "var(--sev-low)" : "var(--sev-critical)",
+                    )}
+                  >
+                    {a.pending ? "pending" : (a.decision ?? "decided")}
+                  </span>
+                  <span className="mono truncate text-[11px]" style={{ color: "var(--dim)" }}>
+                    {a.approval_id}
+                  </span>
+                  {a.est_cost_usd !== null && (
+                    <span className="mono tabular text-[11px]" style={{ color: "var(--faint)" }}>
+                      {formatUsd(a.est_cost_usd)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )
+        )}
+        {policyReady && <OpenPanelButton label="Open Policy panel" onClick={() => onNavigate("policy")} />}
+      </section>
+
+      <span className="text-[10.5px]" style={{ color: "var(--faint)" }}>
+        This card is read-only. Killing a run, setting a budget, or granting/denying an approval happens in the
+        Money and Policy panels linked above, not here.
+      </span>
     </div>
   );
 }

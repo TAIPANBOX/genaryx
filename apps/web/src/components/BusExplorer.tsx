@@ -7,6 +7,7 @@ import type { UiEvent } from "../types";
 import { EventRow } from "./EventRow";
 import { BusStatusBar } from "./Header";
 import { usePopover } from "../lib/popover";
+import { unitForTeam } from "../lib/views";
 import { AgentDetailCard } from "./AgentDetailCard";
 import { PinnedEventOverlay } from "./PinnedEventOverlay";
 import { SortBar, type SortDir } from "./SortBar";
@@ -23,8 +24,10 @@ const BUS_SORTS = [
   { key: "type", label: "type" },
 ];
 
-/** Business unit out of an `agent://org/team/name` id, and the human out of the
- * event's delegation chain, so the feed can be grouped by either. */
+/** Team out of an `agent://org/team/name` id (the "unit" sort maps it through
+ * `unitForTeam` so fraud + kyc-aml group under one business unit), and the
+ * human out of the event's delegation chain, so the feed can be grouped by
+ * either. */
 function teamOf(id: string): string {
   const m = /^agent:\/\/[^/]+\/([^/]+)\//.exec(id);
   return m ? m[1] : "";
@@ -44,7 +47,7 @@ function sortEvents(evts: UiEvent[], key: string, dir: SortDir): UiEvent[] {
     else if (key === "severity") c = (SEV_RANK[a.severity ?? ""] ?? 0) - (SEV_RANK[b.severity ?? ""] ?? 0);
     else if (key === "source") c = a.source.localeCompare(b.source);
     else if (key === "agent") c = a.agent_id.localeCompare(b.agent_id);
-    else if (key === "unit") c = teamOf(a.agent_id).localeCompare(teamOf(b.agent_id));
+    else if (key === "unit") c = unitForTeam(teamOf(a.agent_id)).localeCompare(unitForTeam(teamOf(b.agent_id)));
     else if (key === "user") c = userOf(a).localeCompare(userOf(b));
     else if (key === "type") c = a.type.localeCompare(b.type);
     // Stable tiebreak by time so grouped rows still read newest-first within a group.
