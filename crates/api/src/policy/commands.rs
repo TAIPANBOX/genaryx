@@ -335,11 +335,20 @@ async fn ready_client(state: &&PolicyState) -> Result<PolicyClient, PolicyError>
 /// verdict) - mirrors `money::commands::journal` exactly, typed against
 /// [`PolicyClient`].
 fn journal(client: &PolicyClient, rec: &CommandRecord) -> (bool, Option<String>) {
-    let Some(bus) = &client.bus else {
-        return (
-            false,
-            Some("no live event bus available (startup seeding did not complete)".to_string()),
+    // Logged as well as returned, for the same reason as the money plane's
+    // twin: the returned pair only reaches the operator when the plane call
+    // itself succeeded, so a journal that stopped working is invisible exactly
+    // when the command also failed - and those are the commands most likely to
+    // be examined later.
+    let failed = |reason: String| -> (bool, Option<String>) {
+        eprintln!(
+            "genaryx: {} on {} was NOT journaled: {reason}",
+            rec.action, rec.target
         );
+        (false, Some(reason))
+    };
+    let Some(bus) = &client.bus else {
+        return failed("no live event bus available (startup seeding did not complete)".to_string());
     };
     match genaryx_core::store::Store::open(&bus.store_db_path) {
         Ok(store) => match command::record(
@@ -350,9 +359,9 @@ fn journal(client: &PolicyClient, rec: &CommandRecord) -> (bool, Option<String>)
             rec,
         ) {
             Ok(()) => (true, None),
-            Err(e) => (false, Some(e.to_string())),
+            Err(e) => failed(e.to_string()),
         },
-        Err(e) => (false, Some(e.to_string())),
+        Err(e) => failed(e.to_string()),
     }
 }
 

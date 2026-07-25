@@ -370,11 +370,23 @@ async fn ready_client(state: &&MoneyState) -> Result<MoneyClient, MoneyError> {
 /// verdict). `None` bus (Phase-0 live-wire seeding failed) is reported the
 /// same honest way as a journal I/O error.
 fn journal(client: &MoneyClient, rec: &CommandRecord) -> (bool, Option<String>) {
-    let Some(bus) = &client.bus else {
-        return (
-            false,
-            Some("no live event bus available (startup seeding did not complete)".to_string()),
+    // Every failure below is ALSO logged, not just returned. The returned pair
+    // reaches the operator only on the Ok path: when the Cloud call itself
+    // fails, `finish_mutation` returns the Cloud's error and this pair is
+    // dropped, so a journal that silently stopped working is invisible from
+    // the UI for exactly the commands most likely to be examined afterwards.
+    // That is how a broken journal survived unnoticed: every individual
+    // command reported success or a plausible Cloud error, and nothing ever
+    // said the audit trail was not being written.
+    let failed = |reason: String| -> (bool, Option<String>) {
+        eprintln!(
+            "genaryx: {} on {} was NOT journaled: {reason}",
+            rec.action, rec.target
         );
+        (false, Some(reason))
+    };
+    let Some(bus) = &client.bus else {
+        return failed("no live event bus available (startup seeding did not complete)".to_string());
     };
     match genaryx_core::store::Store::open(&bus.store_db_path) {
         Ok(store) => {
@@ -386,10 +398,10 @@ fn journal(client: &MoneyClient, rec: &CommandRecord) -> (bool, Option<String>) 
                 rec,
             ) {
                 Ok(()) => (true, None),
-                Err(e) => (false, Some(e.to_string())),
+                Err(e) => failed(e.to_string()),
             }
         }
-        Err(e) => (false, Some(e.to_string())),
+        Err(e) => failed(e.to_string()),
     }
 }
 
