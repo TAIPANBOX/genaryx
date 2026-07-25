@@ -18,9 +18,24 @@
  * engineers, each engineer owning a few agents that do concrete work for their
  * unit. One agent, SRE's `rca-copilot`, is the caught runaway. Every wire DTO
  * is derived from that one generated fleet, so the numbers agree across tabs.
+ *
+ * HOW IT EVOLVES
+ *
+ * The fleet above is the frozen seed; the "Live world model" section below
+ * makes it move, in two ways gated by `src/demo/scenario.ts`'s calm/incident
+ * toggle: a gentle, unconditional background drift on every agent's totals
+ * (calm's "still alive" feel), and a directed ~30s spend-runaway arc on the
+ * protagonist (`rca-copilot`) that only plays in "incident" - climbing past
+ * its budget, tripping bus events and an incident + approval, then resolving
+ * by operator action or on its own and looping. Both are computed lazily from
+ * elapsed wall-clock time, not a background timer, so every read command
+ * (`money_*`, `policy_*`, the live bus, ...) agrees on "where the story is
+ * right now" no matter which tab is open or how long it has been.
  */
 
 import type { UiEvent } from "../types";
+import { getScenario, onScenarioChange, type DemoScenario } from "../demo/scenario";
+import type { EntityLifecycleState } from "./lifecycleTypes";
 
 export const MOCK = import.meta.env.VITE_GENARYX_MOCK === "1";
 
@@ -70,9 +85,14 @@ export interface FleetAgent {
    * current one and its owner/team match this agent's owner/team. */
   segments: AttributionSegment[];
   /** Operator-disabled (blocked), distinct from `closed` (the runaway killed
-   * for cause). Blocking a user or a unit sets this on every one of their
-   * agents at once. */
+   * for cause). DERIVED on read from the manual lifecycle store below (frozen
+   * agents / stopped units / stopped users / killed runs), never mutated on the
+   * fixture itself, so one agent can be blocked via several paths at once and
+   * un-blocking one leaves the others in force. */
   blocked?: boolean;
+  /** Effective operator-lifecycle state, set on every read of this record from
+   * the manual store. See {@link agentLifecycleState}. */
+  lifecycle?: EntityLifecycleState;
   history: LifecycleEntry[];
   closed?: { by: string; reason: string; wrongdoing: string; ts: string };
 }
@@ -292,33 +312,431 @@ export const FLEET: FleetAgent[] = buildFleet();
 export const agentId = (a: FleetAgent) => a.id;
 export const userId = (u: string) => `user://${ORG}/${u}`;
 
-export function mockAgentRecord(id: string): FleetAgent | null {
-  return FLEET.find((a) => agentId(a) === id) ?? null;
+// ---------------------------------------------------------------------------
+// Live world model.
+//
+// Two ingredients, deliberately kept separate:
+//
+// 1. A gentle, unconditional background drift (`liveDrift`) applied to every
+//    agent's historical totals (spend/calls), a pure function of how long the
+//    page has been open. This is what makes "calm" feel alive: small ticks,
+//    nothing ever crosses a budget.
+//
+// 2. A directed incident arc for ONE protagonist (SRE's `rca-copilot`, the
+//    fleet's own documented runaway - see `FleetAgent.closed` above), active
+//    only in the "incident" scenario: its LIVE run's spend/budget fraction
+//    climbs 0.6 -> 1.0 -> 1.28 over ~30s, trips `budget_exceeded`/
+//    `breaker_tripped` bus events and an incident + approval once it is
+//    airborne, then resolves - by the operator killing the run or denying the
+//    approval, or on its own once the arc's time is up - sits in a
+//    resolved/idle beat, and loops into a fresh climb.
+//
+// Computed LAZILY from elapsed wall-clock time (`reconcileProtagonist`)
+// rather than mutated by a background timer, so the story advances
+// identically no matter how many tabs/panels are reading it, and a tab left
+// unread for a while still lands on an honest "where would this be right
+// now" state instead of replaying every missed beat.
+//
+// Operator actions (`money_kill_run`, `money_set_budget`, `money_ack_incident`,
+// `policy_decide_approval` - all four unhandled before this, falling through
+// to `mockInvoke`'s `default: return r(null)`) are layered on top as small,
+// idempotent, keyed overrides (`manualRunKills`, `manualRunBudgets`,
+// `ackedIncidentIds`, `decidedApprovals`) that persist across a scenario flip
+// - an operator's own past decision does not un-happen just because the demo
+// storyline switched - and, for the protagonist specifically, feed straight
+// into `reconcileProtagonist`'s own resolution.
+// ---------------------------------------------------------------------------
+
+const PROTAGONIST: FleetAgent = FLEET.find((a) => a.team === RUNAWAY_TEAM && a.name === RUNAWAY_NAME) ?? FLEET[0];
+const PROTAGONIST_ID = agentId(PROTAGONIST);
+const PROTAGONIST_RUN_ID = `${PROTAGONIST.name}-live`;
+/** The live run's own per-run ceiling - distinct from `PROTAGONIST.budgetUsd`
+ * (the frozen $1.25 fixture from the DIFFERENT, already-closed incident on
+ * `FleetAgent.closed`), so this arc reads as a fresh run, not a replay. */
+const PROTAGONIST_RUN_BUDGET_USD = 18;
+
+const CLIMB_START_FRACTION = 0.6;
+const CLIMB_MS = 16_000; // fraction 0.6 -> 1.0
+const OVER_MS = 14_000; // fraction 1.0 -> 1.28
+const TRIP_MS = CLIMB_MS + OVER_MS; // 30s airborne, inside the brief's 20-40s
+const RESOLVED_BEAT_MS = 15_000; // idle-green tail before the arc loops
+
+let currentScenario: DemoScenario = getScenario();
+let armedAt = now; // when the CURRENT arc started climbing
+let manualKillAt: number | null = null; // set once this arc has been resolved
+let killFraction = 0; // fraction frozen at the moment it resolved
+let killedByOperator = false;
+
+interface ArcApproval {
+  id: string;
+  requestedAt: number;
+  decided: boolean;
+  decision: "grant" | "deny" | null;
+  decidedAt: number | null;
+}
+let arcApproval: ArcApproval | null = null;
+
+// Cross-scenario, cross-arc operator-action overrides - never cleared by a
+// scenario flip or an arc loop, only by time (the generic kill recovery) or
+// by staleness (a stale kill timestamp from a past arc simply never matches
+// `opKillAt >= armedAt` again once a fresh arc has armed).
+const manualRunKills = new Map<string, number>();
+const manualRunBudgets = new Map<string, number>();
+const ackedIncidentIds = new Set<string>();
+const decidedApprovals = new Map<string, { decision: "grant" | "deny"; decidedAt: number }>();
+
+// ---------------------------------------------------------------------------
+// Manual lifecycle store (Yurii, 2026-07-24): the ONE source of truth for the
+// console's operator-driven lifecycle actions, so a Stop/Freeze/Kill reads
+// app-wide (Overview spend-by-agent, Money runs, the Graph, the Agent/Unit/User
+// cards, the watch dock), not only where it was clicked. Every read DTO below
+// reflects it; the four mutation commands (`agent_block`, `unit_block`,
+// `user_block`, `money_kill_run`) write it.
+//
+//  - `frozenAgents`  : agent ids an operator froze (Freeze <-> Unfreeze).
+//  - `stoppedUnits`  : teams an operator stopped, so EVERY agent in the unit
+//                      reads STOPPED and stops accruing (Stop <-> Start).
+//  - `stoppedUsers`  : owner handles an operator stopped, so EVERY agent that
+//                      user owns reads STOPPED and stops accruing.
+//  - `killedRuns`    : run ids an operator killed. STICKY on purpose: unlike
+//                      the old 20s generic self-heal (which made an operator
+//                      kill look like it did nothing), an operator kill persists
+//                      visibly until the page reloads. Kill is a one-way action,
+//                      not a toggle, so nothing removes an id from this set.
+//
+// All four survive a scenario flip (an operator's decision does not un-happen
+// because the storyline changed) and are idempotent (Set add/delete).
+const frozenAgents = new Set<string>();
+const stoppedUnits = new Set<string>();
+const stoppedUsers = new Set<string>();
+const killedRuns = new Set<string>();
+
+/** When an agent was first observed blocked, so its live drift freezes at that
+ * instant ("stop accruing") and resumes from real time once it is started
+ * again. Managed lazily by {@link effectiveActivity}, so every block path
+ * (freeze / unit stop / user stop / kill) freezes without each mutation
+ * stamping a time of its own. */
+const blockedSince = new Map<string, number>();
+
+const liveRunIdFor = (a: FleetAgent): string => `${a.name}-live`;
+
+/** An agent's blocked state from the manual store ALONE - ignores `a.closed`
+ * (a fixture fact, not an operator action) and the protagonist incident arc,
+ * so freezing/stopping the protagonist overlays cleanly on top of its arc.
+ * `null` when the store holds nothing for it. Precedence killed > frozen >
+ * stopped. */
+function manualAgentState(a: FleetAgent): EntityLifecycleState | null {
+  if (killedRuns.has(liveRunIdFor(a))) return "killed";
+  if (frozenAgents.has(a.id)) return "frozen";
+  if (stoppedUnits.has(a.team) || stoppedUsers.has(a.owner)) return "stopped";
+  return null;
 }
 
-function runawayAgent(): FleetAgent {
-  return FLEET.find((a) => a.closed) ?? FLEET[0];
+/** An agent's full effective lifecycle state. `ignoreClosed` is for the "calm"
+ * scenario, where the protagonist's PAST closed incident is not held against
+ * its current live run (mirrors `baseRunFor`'s own `ignoreClosed`). */
+function agentLifecycleState(a: FleetAgent, ignoreClosed = false): EntityLifecycleState {
+  const manual = manualAgentState(a);
+  if (manual) return manual;
+  if (!ignoreClosed && a.closed) return "killed";
+  return "live";
+}
+
+function isAgentBlocked(a: FleetAgent, ignoreClosed = false): boolean {
+  return agentLifecycleState(a, ignoreClosed) !== "live";
+}
+
+// Savings ratchet: only a genuine incident resolution (see
+// `registerIncidentResolution`) advances these, so "calm" stays close to the
+// original static seed instead of drifting off it.
+let budgetBreaksFromIncidents = 0;
+let blockedSpendFromIncidents = 0;
+
+function armProtagonistArc(scenario: DemoScenario): void {
+  currentScenario = scenario;
+  armedAt = Date.now();
+  manualKillAt = null;
+  killFraction = 0;
+  killedByOperator = false;
+  arcApproval = null;
+}
+onScenarioChange(() => armProtagonistArc(getScenario()));
+
+/** The protagonist's spend/budget fraction at `elapsedMs` into an arc, had it
+ * not been killed: a straight climb to 1.0 by `CLIMB_MS`, then on to 1.28 by
+ * `TRIP_MS`, then pinned - `reconcileProtagonist` never actually evaluates
+ * this past `TRIP_MS` (it resolves the arc right at that boundary); the pin
+ * just keeps this a total function. */
+function fractionAtElapsed(elapsedMs: number): number {
+  if (elapsedMs <= 0) return CLIMB_START_FRACTION;
+  if (elapsedMs < CLIMB_MS) return CLIMB_START_FRACTION + (elapsedMs / CLIMB_MS) * (1 - CLIMB_START_FRACTION);
+  if (elapsedMs < TRIP_MS) return 1 + ((elapsedMs - CLIMB_MS) / OVER_MS) * 0.28;
+  return 1.28;
+}
+
+/** One arc's worth of "the breaker did its job": bumps the savings ratchet
+ * once (every caller only reaches this from a state transition, never a
+ * plain re-read, so a resolution is never credited twice) and settles a
+ * still-pending incident approval as a side effect of the run itself
+ * ending. */
+function registerIncidentResolution(fractionAtKill: number): void {
+  budgetBreaksFromIncidents += 1;
+  const overspend = Math.max(0, fractionAtKill - 1) * PROTAGONIST_RUN_BUDGET_USD;
+  blockedSpendFromIncidents = Number((blockedSpendFromIncidents + Math.max(2.5, overspend)).toFixed(2));
+  if (arcApproval && !arcApproval.decided) {
+    arcApproval = { ...arcApproval, decided: true, decision: arcApproval.decision ?? "deny", decidedAt: Date.now() };
+  }
+}
+
+interface ProtagonistState {
+  phase: "climbing" | "tripped" | "resolved";
+  fraction: number;
+  killed: boolean;
+  killedByOperator: boolean;
+  /** How far into the arc the current (possibly frozen, if resolved) state
+   * is - used to place `first_seen`/`last_seen`-style timestamps honestly
+   * relative to when the arc actually started. */
+  arcElapsedMs: number;
+}
+
+/**
+ * Advances the protagonist's live incident arc to "where it should be right
+ * now" and returns that state. Called by every reader (a run/incident/alert
+ * answer, a bus tick) - never by a background timer - so the story advances
+ * in lock-step with wall-clock time no matter how many tabs/polls are reading
+ * it. Only meaningful while `currentScenario === "incident"`; every caller
+ * already guards that before calling in.
+ */
+function reconcileProtagonist(): ProtagonistState {
+  const opKillAt = manualRunKills.get(PROTAGONIST_RUN_ID) ?? null;
+  if (opKillAt !== null && manualKillAt === null && opKillAt >= armedAt) {
+    manualKillAt = opKillAt;
+    killFraction = fractionAtElapsed(opKillAt - armedAt);
+    killedByOperator = true;
+    registerIncidentResolution(killFraction);
+  }
+
+  // Fast-forward past any number of fully-elapsed cycles (a tab that sat
+  // unread for a while) instead of replaying each one: credit an
+  // auto-resolve for any cycle that was never manually killed, then move on.
+  for (let guard = 0; guard < 10_000; guard++) {
+    const resolvedAt = manualKillAt ?? armedAt + TRIP_MS;
+    const cycleEnd = resolvedAt + RESOLVED_BEAT_MS;
+    if (Date.now() < cycleEnd) break;
+    if (manualKillAt === null) registerIncidentResolution(1.28);
+    armedAt = cycleEnd;
+    manualKillAt = null;
+    killFraction = 0;
+    killedByOperator = false;
+    arcApproval = null;
+  }
+
+  if (manualKillAt !== null) {
+    return { phase: "resolved", fraction: killFraction, killed: true, killedByOperator, arcElapsedMs: manualKillAt - armedAt };
+  }
+
+  const elapsed = Date.now() - armedAt;
+  if (elapsed >= TRIP_MS) {
+    manualKillAt = armedAt + TRIP_MS;
+    killFraction = 1.28;
+    killedByOperator = false;
+    registerIncidentResolution(killFraction);
+    return { phase: "resolved", fraction: killFraction, killed: true, killedByOperator: false, arcElapsedMs: TRIP_MS };
+  }
+
+  const fraction = fractionAtElapsed(elapsed);
+  if (!arcApproval && fraction >= 0.8) {
+    arcApproval = { id: `ap_incident_${armedAt.toString(36)}`, requestedAt: Date.now(), decided: false, decision: null, decidedAt: null };
+  }
+  return { phase: elapsed < CLIMB_MS ? "climbing" : "tripped", fraction, killed: false, killedByOperator: false, arcElapsedMs: elapsed };
+}
+
+/** Gentle, unconditional per-agent drift: a small monotonic function of how
+ * long the page has been open (capped at 4 hours of "credit" so a tab left
+ * open for days does not produce an absurd number), layered on top of the
+ * frozen fixture's own spend/calls wherever a read wants "alive" numbers.
+ * Deterministic per agent (same `pseudo` convention the fixture generator
+ * above already uses), so it is stable within one render rather than
+ * re-randomized on every call. */
+function liveDriftAsOf(a: FleetAgent, asOfMs: number): { spentUsd: number; calls: number } {
+  const elapsedMin = Math.min(240, Math.max(0, asOfMs - now) / 60_000);
+  const usdPerMin = 0.04 + pseudo(a.name + "driftusd") * 0.18;
+  const callsPerMin = 0.8 + pseudo(a.name + "driftcalls") * 2.6;
+  return { spentUsd: Number((usdPerMin * elapsedMin).toFixed(4)), calls: Math.floor(callsPerMin * elapsedMin) };
+}
+
+function liveDrift(a: FleetAgent): { spentUsd: number; calls: number } {
+  return liveDriftAsOf(a, Date.now());
+}
+
+/** The activity (drift over the fixture baseline) a read should show for an
+ * agent, FROZEN at the instant it was blocked so a stopped/frozen/killed agent
+ * genuinely stops accruing - its spend/calls hold where they were - and resumes
+ * from real time once it is started/unfrozen again. Freezing keys off the
+ * MANUAL store only ({@link manualAgentState}), not `a.closed`: the
+ * protagonist's fixture closure is not an operator "stop accruing", and its own
+ * live arc (`runFor`) drives its numbers, not this. */
+function effectiveActivity(a: FleetAgent): { spentUsd: number; calls: number } {
+  if (manualAgentState(a) === null) {
+    blockedSince.delete(a.id);
+    return liveDrift(a);
+  }
+  let since = blockedSince.get(a.id);
+  if (since === undefined) {
+    since = Date.now();
+    blockedSince.set(a.id, since);
+  }
+  return liveDriftAsOf(a, since);
+}
+
+// ---- Operator-mutation bus feedback ----------------------------------------
+// A privileged console mutation (kill / budget / ack / decide) is not just a
+// local state change: the real backend journals it AND appends a conforming
+// `console_command` bus event (`crates/core/src/command.rs`), which is
+// exactly what `MoneyView.tsx`/`PolicyView.tsx`'s own success notice already
+// promises ("signed console_command recorded, visible in the Bus tab").
+// Mirrored here so that promise is true in the mock too.
+
+const COMMAND_EVENTS_CAP = 12;
+/** Newest-first, for batch reads (`recent_events`) - capped, never
+ * destructively drained, so it survives being read by more than one
+ * caller. */
+const recentCommandEvents: UiEvent[] = [];
+/** FIFO, drained one-per-tick by the live bus subscription (`mockSubscribe`),
+ * so a just-issued command shows up on the Bus tab within one tick instead of
+ * waiting for the next random synthetic event to happen to cover it. */
+const pendingLiveDelivery: UiEvent[] = [];
+
+function emitConsoleCommand(
+  action: string,
+  target: string,
+  decision: "allow" | "break_glass",
+  verifyResult: string,
+  operator: string,
+): void {
+  eventSeq += 1;
+  const evt: UiEvent = {
+    id: eventSeq,
+    env: "live",
+    ts: new Date().toISOString(),
+    source: "console",
+    type: "console_command",
+    agent_id: `agent://${ORG}/console/demo-operator`,
+    run_id: null,
+    severity: decision === "break_glass" ? "high" : "low",
+    schema: "taipanbox.dev/agent-event/v0.2",
+    on_behalf_of: [operator],
+    data: {
+      action,
+      target,
+      decision,
+      sig_alg: "es256",
+      sig_fpr: "software-signed",
+      http_status: 200,
+      verify_result: verifyResult,
+    },
+    prev_hash: null,
+    raw: "",
+    file: "/root/.stack-up/events/console.ndjson",
+    off: eventSeq,
+  };
+  recentCommandEvents.unshift(evt);
+  if (recentCommandEvents.length > COMMAND_EVENTS_CAP) recentCommandEvents.length = COMMAND_EVENTS_CAP;
+  pendingLiveDelivery.push(evt);
+}
+
+export function mockAgentRecord(id: string): FleetAgent | null {
+  const a = FLEET.find((x) => agentId(x) === id) ?? null;
+  if (!a) return null;
+  // Gentle drift on the historical totals only - the protagonist's own live
+  // incident arc lives entirely in `money_runs` (see `runFor`), never here:
+  // an agent's all-time spend should not jump just because its CURRENT run
+  // is having a bad time, the same way a real system only reconciles a run's
+  // spend into history once the run itself ends. `effectiveActivity` freezes
+  // that drift while the agent is blocked, and `blocked`/`lifecycle` reflect
+  // the manual store so the card's status badge is app-wide-consistent.
+  const act = effectiveActivity(a);
+  return {
+    ...a,
+    spentUsd: Number((a.spentUsd + act.spentUsd).toFixed(2)),
+    calls: a.calls + act.calls,
+    blocked: isAgentBlocked(a),
+    lifecycle: agentLifecycleState(a),
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Derived wire DTOs.
 // ---------------------------------------------------------------------------
 
-function runFor(a: FleetAgent) {
-  const closed = Boolean(a.closed);
+/** Every non-protagonist agent's live run, and the protagonist's own run when
+ * "calm" is selected: the original pseudo-random utilisation snapshot, now
+ * with `liveDrift` layered on top so the numbers still creep forward tick
+ * over tick, plus the generic operator kill/budget overrides so a Kill/Set
+ * budget click on ANY run - not just the protagonist's incident arc - sticks.
+ * `ignoreClosed` is for the protagonist in "calm": its `closed` record
+ * describes a PAST, already-resolved incident (`FleetAgent.closed`) - calm's
+ * own story is "nothing is on fire right now", so that record is not held
+ * against its current live run. */
+function baseRunFor(a: FleetAgent, opts: { ignoreClosed?: boolean } = {}) {
+  const runId = liveRunIdFor(a);
+  // `effectiveActivity` freezes the drift while the agent is blocked, so a
+  // stopped/frozen/killed agent stops accruing here (its spend/calls hold).
+  const act = effectiveActivity(a);
+  const spentUsd = Number((a.spentUsd + act.spentUsd).toFixed(2));
+  const calls = a.calls + act.calls;
+  const closed = opts.ignoreClosed ? false : Boolean(a.closed);
   const util = closed ? 1.18 : 0.4 + pseudo(a.name + "u") * 0.46;
-  const budget = Number((a.spentUsd / util).toFixed(2));
+  const budget = manualRunBudgets.get(runId) ?? Number((spentUsd / util).toFixed(2));
+  // The whole lifecycle from the one store: `closed` (via `ignoreClosed`),
+  // an operator freeze, a stopped unit/user, or a STICKY operator kill
+  // (`killedRuns`, replacing the old 20s self-heal so a kill persists).
+  const lifecycle = agentLifecycleState(a, opts.ignoreClosed);
   return {
-    run_id: `${a.name}-live`,
+    run_id: runId,
     model: a.model,
     agent_id: agentId(a),
-    spent_usd: a.spentUsd,
+    spent_usd: spentUsd,
     budget_usd: budget,
-    calls: a.calls,
-    cache_hits: Math.round(a.calls * 0.12),
-    steps: Math.min(a.calls, 40),
+    calls,
+    cache_hits: Math.round(calls * 0.12),
+    steps: Math.min(calls, 40),
     last_seen: ago(Math.random() * 60_000),
-    killed: closed || Boolean(a.blocked),
+    killed: lifecycle !== "live",
+    lifecycle,
+  };
+}
+
+/** The protagonist's live run, in the "incident" scenario, is fully
+ * world-driven (see `reconcileProtagonist`) instead of the generic snapshot
+ * formula: this is the one run whose spend/budget fraction actually climbs
+ * past 1.0 and gets killed. Every other agent, and the protagonist itself in
+ * "calm", uses `baseRunFor`. */
+function runFor(a: FleetAgent) {
+  if (a.id !== PROTAGONIST_ID) return baseRunFor(a);
+  if (currentScenario !== "incident") return baseRunFor(a, { ignoreClosed: true });
+
+  const state = reconcileProtagonist();
+  // An operator freeze on the protagonist, or a Stop on SRE / on its owner,
+  // overlays cleanly on top of its live incident arc: the manual state wins the
+  // badge and halts the run, otherwise the arc's own live/killed state decides.
+  const manual = manualAgentState(a);
+  const spent = Number((state.fraction * PROTAGONIST_RUN_BUDGET_USD).toFixed(2));
+  const budget = manualRunBudgets.get(PROTAGONIST_RUN_ID) ?? PROTAGONIST_RUN_BUDGET_USD;
+  const calls = Math.round(70 + state.fraction * 340);
+  const lifecycle: EntityLifecycleState = manual ?? (state.killed ? "killed" : "live");
+  return {
+    run_id: PROTAGONIST_RUN_ID,
+    model: a.model,
+    agent_id: agentId(a),
+    spent_usd: spent,
+    budget_usd: budget,
+    calls,
+    cache_hits: Math.round(calls * 0.04),
+    steps: Math.min(calls, 40),
+    last_seen: state.killed ? new Date(Math.min(Date.now(), armedAt + state.arcElapsedMs)).toISOString() : new Date().toISOString(),
+    killed: state.killed || manual !== null,
+    lifecycle,
   };
 }
 
@@ -377,76 +795,321 @@ function mockOverview() {
 }
 
 function mockSavings() {
+  if (currentScenario === "incident") reconcileProtagonist();
+  const elapsedMin = Math.min(240, Math.max(0, Date.now() - now) / 60_000);
+  const cacheSaved = Number((0.15 + elapsedMin * 0.05).toFixed(2));
+  const routerSaved = Number((0.1 + elapsedMin * 0.025).toFixed(2));
+  const blocked = Number((38.9 + blockedSpendFromIncidents).toFixed(2));
+  const budgetBreaks = 61 + budgetBreaksFromIncidents;
   return {
-    blocked_spend_usd: 38.9,
-    cache_saved_usd: 0,
-    router_saved_usd: 0,
-    budget_breaks: 61,
-    total_saved_usd: 38.9,
+    blocked_spend_usd: blocked,
+    cache_saved_usd: cacheSaved,
+    router_saved_usd: routerSaved,
+    budget_breaks: budgetBreaks,
+    total_saved_usd: Number((blocked + cacheSaved + routerSaved).toFixed(2)),
   };
 }
 
+/** Calm: only the always-there, already-acknowledged filler row - "near
+ * zero", not literally empty. Incident: the protagonist's own arc adds a
+ * `spend_spike` while it climbs past 0.8, then swaps that for a
+ * `budget_exceeded` + `fanout_explosion` pair once it trips, both cleared
+ * (acknowledged) the moment the run is killed - auto or by the operator - and
+ * gone again once a fresh arc loops in. Every arc-specific incident id is
+ * suffixed with the arc's own `armedAt`, so an ack from a PAST arc can never
+ * silently apply to a fresh one reusing the same kind. */
 function mockIncidents() {
-  const ra = runawayAgent();
-  const rid = agentId(ra);
-  const out = [
-    { id: "spend_spike:", run_id: null as string | null, agent_id: null as string | null, kind: "spend_spike", severity: "high", first_seen: ago(9 * 60_000), last_seen: ago(60_000), occurrences: 5, acknowledged: false },
-    { id: `fanout_explosion:${ra.name}`, run_id: `${ra.name}-live`, agent_id: rid, kind: "fanout_explosion", severity: "high", first_seen: ago(8 * 60_000), last_seen: ago(90_000), occurrences: 12, acknowledged: false },
-    { id: "sustained_loop:query-cost-optimizer", run_id: "query-cost-optimizer-live", agent_id: `agent://${ORG}/data/query-cost-optimizer`, kind: "sustained_loop", severity: "medium", first_seen: ago(30 * 60_000), last_seen: ago(12 * 60_000), occurrences: 4, acknowledged: true },
+  const ra = PROTAGONIST;
+  const rid = PROTAGONIST_ID;
+  const out: {
+    id: string;
+    run_id: string | null;
+    agent_id: string | null;
+    kind: string;
+    severity: string;
+    first_seen: string;
+    last_seen: string;
+    occurrences: number;
+    acknowledged: boolean;
+  }[] = [
+    {
+      id: "sustained_loop:query-cost-optimizer",
+      run_id: "query-cost-optimizer-live",
+      agent_id: `agent://${ORG}/data/query-cost-optimizer`,
+      kind: "sustained_loop",
+      severity: "medium",
+      first_seen: ago(30 * 60_000),
+      last_seen: ago(12 * 60_000),
+      occurrences: 4,
+      acknowledged: true,
+    },
   ];
-  for (let i = 51; i >= 47; i--) {
-    out.push({ id: `budget_exhausted:${ra.name}-${i}`, run_id: `${ra.name}-${i}`, agent_id: rid, kind: "budget_exhausted", severity: "high", first_seen: ago((60 - i) * 60_000), last_seen: ago((58 - i) * 60_000), occurrences: 2, acknowledged: false });
+
+  if (currentScenario === "incident") {
+    const state = reconcileProtagonist();
+    const arcSuffix = armedAt.toString(36);
+    const lastSeen = new Date(Math.min(Date.now(), armedAt + state.arcElapsedMs)).toISOString();
+
+    if (state.phase === "climbing" && state.fraction >= 0.8) {
+      const id = `spend_spike:${ra.name}-${arcSuffix}`;
+      out.push({
+        id,
+        run_id: PROTAGONIST_RUN_ID,
+        agent_id: rid,
+        kind: "spend_spike",
+        severity: "medium",
+        first_seen: new Date(armedAt + CLIMB_MS * 0.5).toISOString(),
+        last_seen: lastSeen,
+        occurrences: Math.max(1, Math.round((state.fraction - 0.6) * 30)),
+        acknowledged: ackedIncidentIds.has(id),
+      });
+    } else if (state.phase === "tripped" || state.killed) {
+      const beId = `budget_exceeded:${ra.name}-${arcSuffix}`;
+      const feId = `fanout_explosion:${ra.name}-${arcSuffix}`;
+      const acked = state.killed;
+      const cappedFraction = Math.min(state.fraction, 1.28);
+      out.push({
+        id: beId,
+        run_id: PROTAGONIST_RUN_ID,
+        agent_id: rid,
+        kind: "budget_exceeded",
+        severity: "high",
+        first_seen: new Date(armedAt + CLIMB_MS).toISOString(),
+        last_seen: lastSeen,
+        occurrences: Math.max(1, Math.round((cappedFraction - 1) * 40) + 1),
+        acknowledged: acked || ackedIncidentIds.has(beId),
+      });
+      out.push({
+        id: feId,
+        run_id: PROTAGONIST_RUN_ID,
+        agent_id: rid,
+        kind: "fanout_explosion",
+        severity: "critical",
+        first_seen: new Date(armedAt + CLIMB_MS).toISOString(),
+        last_seen: lastSeen,
+        occurrences: Math.max(1, Math.round((cappedFraction - 1) * 60) + 1),
+        acknowledged: acked || ackedIncidentIds.has(feId),
+      });
+    }
   }
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Delegation topology (Agent 360's Delegation section + the mini focus graph).
+//
+// The human owner already delegates to every agent (the `user -> agent` edges
+// `mockGraph` emits below, so every agent's slice already has its owner as a
+// parent). This adds the agent -> agent layer on top: a lead/orchestrator
+// agent delegating to worker agents, exactly the shape
+// `crates/core/src/graph.rs` builds from an `on_behalf_of` chain (an edge
+// points from the delegator to the delegatee; a node's `parents` are its
+// delegators, its `children` its delegatees). Kept as one explicit,
+// hand-picked list so the graph reads as a believable fleet rather than a
+// star, and so the two Agent 360 acceptance agents (`sre/rca-copilot`,
+// `finops/unit-economics-analyst`) are genuine hubs - each with both a parent
+// orchestrator and several children. Every id here is a real fleet suffix
+// (see UNITS above); a typo would simply produce an edge to a node that never
+// renders, never an error.
+// ---------------------------------------------------------------------------
+
+const DELEGATION_EDGES: readonly (readonly [string, string])[] = (() => {
+  const out: [string, string][] = [];
+  const link = (team: string, parent: string, children: string[]) => {
+    for (const child of children) {
+      out.push([`agent://${ORG}/${team}/${parent}`, `agent://${ORG}/${team}/${child}`]);
+    }
+  };
+  // SRE: the triage copilot fans an incident out; rca-copilot is its own sub-hub.
+  link("sre", "incident-triage-copilot", ["rca-copilot", "runbook-executor", "oncall-summarizer"]);
+  link("sre", "rca-copilot", ["alert-correlator", "log-analyzer", "postmortem-writer"]);
+  // FinOps: the anomaly detector escalates; unit-economics-analyst is its own sub-hub.
+  link("finops", "cost-anomaly-detector", ["unit-economics-analyst", "rightsizing-advisor"]);
+  link("finops", "unit-economics-analyst", ["chargeback-reporter", "savings-plan-optimizer", "budget-forecaster"]);
+  // Platform + Data: enough delegation that the graph reads as a fleet, not a star.
+  link("platform", "iac-reviewer", ["terraform-drift-detector", "k8s-config-linter"]);
+  link("platform", "ci-optimizer", ["build-cost-analyzer", "flaky-test-hunter", "dependency-upgrader"]);
+  link("data", "pipeline-monitor", ["schema-drift-detector", "data-quality-checker"]);
+  link("data", "dbt-model-reviewer", ["lineage-mapper"]);
+  return out;
+})();
+
+function delegationParentIds(id: string): string[] {
+  return DELEGATION_EDGES.filter(([, to]) => to === id).map(([from]) => from);
+}
+function delegationChildIds(id: string): string[] {
+  return DELEGATION_EDGES.filter(([from]) => from === id).map(([, to]) => to);
+}
+
+/** A delegation-graph node for one fleet agent id, carrying the same live
+ * event count (`calls + liveDrift`) `mockGraph`/`mockIdentities` use, so a
+ * chip's node and the same agent's own graph node agree. */
+function delegationNode(id: string): { id: string; kind: "agent"; event_count: number; last_ts: string } {
+  const rec = FLEET.find((x) => x.id === id);
+  return {
+    id,
+    kind: "agent" as const,
+    event_count: rec ? rec.calls + effectiveActivity(rec).calls : 0,
+    last_ts: rec ? ago(60_000) : "",
+  };
+}
+
 function mockGraph() {
-  const nodes: { id: string; kind: "user" | "agent" | "other"; event_count: number; x: number; y: number }[] = [];
+  const nodes: { id: string; kind: "user" | "agent" | "other"; event_count: number; x: number; y: number; lifecycle?: EntityLifecycleState }[] = [];
   const users = [...new Set(FLEET.map((a) => a.owner))];
   users.forEach((u, i) => {
     nodes.push({ id: userId(u), kind: "user", event_count: 0, x: 120, y: 70 + i * 66 });
   });
-  // Agents in a tidy grid so labels never overlap, six per row.
+  // Agents in a tidy grid so labels never overlap, six per row. `lifecycle`
+  // marks a stopped/frozen/killed node so the graph reflects the store too;
+  // `effectiveActivity` freezes a blocked node's event_count.
   FLEET.forEach((a, k) => {
     const col = k % 6;
     const row = Math.floor(k / 6);
-    nodes.push({ id: agentId(a), kind: "agent", event_count: a.calls, x: 440 + col * 200, y: 80 + row * 96 });
+    nodes.push({ id: agentId(a), kind: "agent", event_count: a.calls + effectiveActivity(a).calls, x: 440 + col * 200, y: 80 + row * 96, lifecycle: agentLifecycleState(a) });
   });
-  const edges = FLEET.map((a) => ({ from: userId(a.owner), to: agentId(a) }));
+  // Every agent's human owner delegates to it, plus the agent -> agent
+  // delegation layer (see DELEGATION_EDGES) so a focused agent's 1-hop
+  // neighborhood - the mini graph in Agent 360, computed by
+  // `DelegationGraphView` from these edges - shows its parent orchestrator and
+  // its children, not just its owner.
+  const edges = [
+    ...FLEET.map((a) => ({ from: userId(a.owner), to: agentId(a) })),
+    ...DELEGATION_EDGES.map(([from, to]) => ({ from, to })),
+  ];
   return { nodes, edges, width: 1700, height: Math.max(1500, users.length * 66 + 120) };
 }
 
 function mockSlice(id: string) {
   const a = mockAgentRecord(id);
   if (!a) return { node: null, parents: [], children: [] };
+  // Parents = this agent's delegators: its human owner (always) plus any
+  // orchestrator agent that delegates to it. Children = the agents it
+  // delegates to. Both mirror what `crates/core/src/graph.rs`'s
+  // `parents`/`children` would return for the same edges `mockGraph` emits.
   return {
     node: { id, kind: "agent" as const, event_count: a.calls, last_ts: ago(30_000) },
-    parents: [{ id: userId(a.owner), kind: "user" as const, event_count: 0, last_ts: "" }],
-    children: [],
+    parents: [
+      { id: userId(a.owner), kind: "user" as const, event_count: 0, last_ts: "" },
+      ...delegationParentIds(id).map(delegationNode),
+    ],
+    children: delegationChildIds(id).map(delegationNode),
   };
 }
 
-// Agents whose envelope requires a human sign-off produce the pending approvals.
+// Agents whose envelope requires a human sign-off produce the pending
+// approvals, decided-state overlaid from `decidedApprovals` so a
+// `policy_decide_approval` call actually sticks. During an active "incident"
+// arc, the protagonist's own climbing run additionally surfaces its own
+// synthetic "may I keep spending" approval (see `reconcileProtagonist`),
+// pinned to the front so it reads as the operator's most pressing item.
 function mockApprovals() {
   const needHuman = FLEET.filter((a) => a.allowed.some((x) => x.includes("human")));
   const pick = needHuman.slice(0, 6);
-  return pick.map((a, i) => ({
-    approval_id: `ap_${(pseudo(a.name + "ap") * 1e12).toString(16).slice(0, 10)}`,
-    agent_id: agentId(a),
-    run_id: `${a.name}-live`,
-    requested_at: ago((1 + i) * 90_000),
-    decided_at: null as string | null,
-    decided_by: null as string | null,
-    decision: null as string | null,
-    pending: true,
-    tool_names: a.allowed.filter((x) => x.includes("_read") || x.includes("run") || x.includes("apply")).slice(0, 2),
-    est_cost_usd: Number((8 + pseudo(a.name + "c") * 40).toFixed(1)),
-    reason: `estimated cost exceeds the ${a.team} human-approval threshold; approval required`,
-    on_behalf_of: [userId(a.owner)],
-    policy_version: "356f49daa246",
-    org: ORG,
-    model: a.model,
-  }));
+  const rows = pick.map((a, i) => {
+    const approvalId = `ap_${(pseudo(a.name + "ap") * 1e12).toString(16).slice(0, 10)}`;
+    const decided = decidedApprovals.get(approvalId) ?? null;
+    return {
+      approval_id: approvalId,
+      agent_id: agentId(a),
+      run_id: `${a.name}-live`,
+      requested_at: ago((1 + i) * 90_000),
+      decided_at: decided ? new Date(decided.decidedAt).toISOString() : (null as string | null),
+      decided_by: decided ? "console-op" : (null as string | null),
+      decision: decided ? decided.decision : (null as string | null),
+      pending: !decided,
+      tool_names: a.allowed.filter((x) => x.includes("_read") || x.includes("run") || x.includes("apply")).slice(0, 2),
+      est_cost_usd: Number((8 + pseudo(a.name + "c") * 40).toFixed(1)),
+      reason: `estimated cost exceeds the ${a.team} human-approval threshold; approval required`,
+      on_behalf_of: [userId(a.owner)],
+      policy_version: "356f49daa246",
+      org: ORG,
+      model: a.model,
+    };
+  });
+
+  if (currentScenario === "incident") {
+    reconcileProtagonist();
+    if (arcApproval) {
+      rows.unshift({
+        approval_id: arcApproval.id,
+        agent_id: PROTAGONIST_ID,
+        run_id: PROTAGONIST_RUN_ID,
+        requested_at: new Date(arcApproval.requestedAt).toISOString(),
+        decided_at: arcApproval.decidedAt ? new Date(arcApproval.decidedAt).toISOString() : null,
+        decided_by: arcApproval.decided ? "console-op" : null,
+        decision: arcApproval.decision,
+        pending: !arcApproval.decided,
+        tool_names: ["correlate", "traces_read"],
+        est_cost_usd: PROTAGONIST_RUN_BUDGET_USD,
+        reason: `${PROTAGONIST.name} is climbing past its per-run ceiling; approve to keep it running or deny to stop it`,
+        on_behalf_of: [userId(PROTAGONIST.owner)],
+        policy_version: "356f49daa246",
+        org: ORG,
+        model: PROTAGONIST.model,
+      });
+    }
+  }
+  return rows;
+}
+
+/** `policy_decide_approval`'s mock: settles the protagonist's own synthetic
+ * incident approval when `id` matches it (denying it is equivalent to the
+ * operator choosing to stop the run - the same resolution path a manual
+ * kill takes; granting it just settles the request and lets the arc
+ * continue on its own climb/auto-resolve timeline), otherwise settles a
+ * generic fixed approval from `mockApprovals`'s `needHuman` list. Idempotent:
+ * deciding an already-decided approval again just re-reports its settled
+ * state rather than re-triggering any side effect. */
+function decideApprovalMock(id: string, decision: "grant" | "deny") {
+  if (currentScenario === "incident") {
+    reconcileProtagonist();
+    if (arcApproval && arcApproval.id === id) {
+      if (!arcApproval.decided) {
+        arcApproval = { ...arcApproval, decided: true, decision, decidedAt: Date.now() };
+        if (decision === "deny" && manualKillAt === null) {
+          manualRunKills.set(PROTAGONIST_RUN_ID, Date.now());
+          reconcileProtagonist();
+        }
+      }
+      const granted = arcApproval.decision === "grant";
+      return {
+        summary: `${decision === "grant" ? "Granted" : "Denied"} continued spend on ${PROTAGONIST.name}`,
+        http_status: 200,
+        verify_result: `decision:${decision}`,
+        sig_alg: "es256",
+        sig_fpr: "software-signed",
+        token: granted
+          ? {
+              agent_id: PROTAGONIST_ID,
+              run_id: PROTAGONIST_RUN_ID,
+              tools: PROTAGONIST.allowed.slice(0, 3),
+              cost_ceiling_usd: manualRunBudgets.get(PROTAGONIST_RUN_ID) ?? PROTAGONIST_RUN_BUDGET_USD,
+              exp_unix: Math.floor(Date.now() / 1000) + 900,
+            }
+          : null,
+        bus_recorded: true,
+        bus_error: null,
+      };
+    }
+  }
+
+  const decidedAt = Date.now();
+  decidedApprovals.set(id, { decision, decidedAt });
+  const src = mockApprovals().find((a) => a.approval_id === id) ?? null;
+  return {
+    summary: `${decision === "grant" ? "Granted" : "Denied"} approval ${id || "(unknown)"}`,
+    http_status: 200,
+    verify_result: `decision:${decision}`,
+    sig_alg: "es256",
+    sig_fpr: "software-signed",
+    token:
+      decision === "grant" && src
+        ? { agent_id: src.agent_id, run_id: src.run_id, tools: src.tool_names, cost_ceiling_usd: src.est_cost_usd ?? 25, exp_unix: Math.floor(Date.now() / 1000) + 900 }
+        : null,
+    bus_recorded: true,
+    bus_error: null,
+  };
 }
 
 function mockPolicies() {
@@ -464,7 +1127,7 @@ function mockPolicies() {
     pol({ id: "sre-runbook-approval", name: "sre-runbook-approval", target: `agent://${ORG}/sre/runbook-executor`, require_human_above_usd: 25 }),
     pol({ id: "sre-deploy-approval", name: "sre-deploy-approval", target: `agent://${ORG}/sre/deploy-guard`, require_human_above_usd: 10 }),
     pol({ id: "deny-shell-exec", name: "deny-shell-exec", target: `agent://${ORG}/*`, deny_tool: ["shell_exec", "prod_delete"] }),
-    pol({ id: "finops-spend-cap", name: "finops-spend-cap", target: `agent://${ORG}/finops/*`, deny_above_usd: 20 }),
+    pol({ id: "finops-spend-cap", name: "finops-spend-cap", target: `agent://${ORG}/finops/*`, require_human_above_usd: 12, deny_above_usd: 20 }),
     pol({ id: "data-pii-attestation", name: "data-pii-attestation", target: `agent://${ORG}/data/*`, deny_if_unattested: true }),
     pol({ id: "platform-secret-dlp", name: "platform-secret-dlp", target: `agent://${ORG}/platform/secret-scanner`, deny_tool: ["external_send"] }),
     pol({ id: "rca-max-steps", name: "rca-max-steps", target: `agent://${ORG}/sre/rca-copilot`, max_steps: 12 }),
@@ -519,6 +1182,17 @@ function dateStamp(msAgo: number) {
  *   server below (shadow MCP reach), paired with the `agent_shadow_tool`
  *   alert further down so the two signals agree, per the task spec ("do not
  *   special-case it, but include the alert count in the row model").
+ *
+ * The two Agent 360 acceptance agents also get real permissions here so their
+ * Access section and MCP reach are non-empty (both overlap the sanctioned
+ * observability MCP server below):
+ *
+ * - `sre/rca-copilot`: its real tools (`traces_read`/`correlate`) plus
+ *   `pagerduty_read` (reaches BOTH the observability and pagerduty sanctioned
+ *   servers) and one unused write permission (`incident_write`).
+ * - `finops/unit-economics-analyst`: `metrics_read` (reaches the
+ *   observability server) plus an UNUSED ADMIN permission (`cost_admin`) - the
+ *   escalated least-privilege finding for the fleet's top spender.
  */
 const FIXTURE_PERMISSIONS: Record<string, { name: string; admin: boolean; used: boolean }[]> = {
   [`agent://${ORG}/sre/incident-triage-copilot`]: [
@@ -535,14 +1209,29 @@ const FIXTURE_PERMISSIONS: Record<string, { name: string; admin: boolean; used: 
     { name: "deps_read", admin: false, used: true },
     { name: "scratch_notes_write", admin: false, used: true },
   ],
+  [`agent://${ORG}/sre/rca-copilot`]: [
+    { name: "traces_read", admin: false, used: true },
+    { name: "correlate", admin: false, used: true },
+    { name: "pagerduty_read", admin: false, used: true },
+    { name: "incident_write", admin: false, used: false },
+  ],
+  [`agent://${ORG}/finops/unit-economics-analyst`]: [
+    { name: "metrics_read", admin: false, used: true },
+    { name: "billing_read", admin: false, used: true },
+    { name: "unit_cost_model", admin: false, used: true },
+    { name: "cost_admin", admin: true, used: false },
+  ],
 };
 
-/** I5 fixtures: two `mcp_server` identities - one sanctioned, one shadow
+/** I5 fixtures: three `mcp_server` identities - two sanctioned, one shadow
  * (flagged by the `shadow_mcp` alert in `mockAlerts` below, since idryx
  * exposes no shadow flag over REST). Their own `permissions` are what
  * `lib/access.ts`'s name-intersection join checks fixture agents' own
  * permissions against - see {@link FIXTURE_PERMISSIONS}'s doc comment for
- * which agent overlaps which server. */
+ * which agent overlaps which server. The observability connector is the one
+ * both Agent 360 acceptance agents reach (SRE's rca-copilot via `traces_read`,
+ * FinOps' unit-economics-analyst via `metrics_read`), so their MCP reach is
+ * non-zero. */
 function mockMcpServerIdentities() {
   return [
     {
@@ -562,6 +1251,26 @@ function mockMcpServerIdentities() {
       remediation: null,
       rotation: null,
       events: 812,
+      alerts: 0,
+    },
+    {
+      id: `mcp://${ORG}/sanctioned/observability-connector`,
+      type: "mcp_server",
+      privileged: false,
+      source: "mcp",
+      owner: userId("l.moreau"),
+      created: utcStamp(120 * DAY),
+      last_used: utcStamp(90_000),
+      runtime: "mcp-server",
+      on_behalf_of: [] as string[],
+      permissions: [
+        { name: "metrics_read", admin: false, used: true },
+        { name: "traces_read", admin: false, used: true },
+        { name: "logs_read", admin: false, used: true },
+      ],
+      remediation: null,
+      rotation: null,
+      events: 1_506,
       alerts: 0,
     },
     {
@@ -600,18 +1309,34 @@ function mockIdentities() {
     permissions: FIXTURE_PERMISSIONS[agentId(a)] ?? [],
     remediation: null,
     rotation: null,
-    events: a.calls,
+    // Frozen while blocked (`effectiveActivity`), so a stopped/frozen/killed
+    // agent stops accruing activity in the identity list too.
+    events: a.calls + effectiveActivity(a).calls,
     alerts: a.closed ? 2 : 0,
     team: a.team,
   }));
   return [...agents, ...mockMcpServerIdentities()];
 }
 
+/** The two protagonist-specific detections are live: they only appear while
+ * the current "incident" arc is tripped or has just resolved, with
+ * timestamps anchored to the arc itself, rather than the permanent fixed
+ * entries this file used to seed unconditionally - "calm" (and an idle
+ * incident-arc lull) genuinely has no runaway to detect. Every other row
+ * here is an UNRELATED I5/I11 fixture (shadow MCP, access-matrix, drift
+ * baseline) and stays exactly as before regardless of scenario. */
 function mockAlerts() {
-  const ra = runawayAgent();
-  return [
-    { detector: "runaway_agent", identity: agentId(ra), severity: "high", time: ago(18 * 60_000), summary: "runaway_agent: 26 budget_exceeded blocks across shards on rca-copilot" },
-    { detector: "excessive_agency", identity: agentId(ra), severity: "medium", time: ago(40 * 60_000), summary: "excessive_agency: agent opened 22 sub-runs in one window" },
+  const ra = PROTAGONIST;
+  const out: { detector: string; identity: string; severity: string; time: string; summary: string }[] = [];
+  if (currentScenario === "incident") {
+    const state = reconcileProtagonist();
+    if (state.phase === "tripped" || state.killed) {
+      const t = new Date(Math.min(Date.now(), armedAt + state.arcElapsedMs)).toISOString();
+      out.push({ detector: "runaway_agent", identity: agentId(ra), severity: "high", time: t, summary: `runaway_agent: budget_exceeded blocks across shards on ${ra.name}` });
+      out.push({ detector: "excessive_agency", identity: agentId(ra), severity: "medium", time: new Date(armedAt + CLIMB_MS).toISOString(), summary: "excessive_agency: agent opened many sub-runs in one window" });
+    }
+  }
+  out.push(
     { detector: "over_privileged_nhi", identity: `agent://${ORG}/platform/secret-scanner`, severity: "low", time: ago(3 * DAY), summary: "over_privileged_nhi: secret-scanner holds unused repo_write" },
     { detector: "attestation_missing", identity: `agent://${ORG}/data/pii-scanner`, severity: "medium", time: ago(2 * DAY), summary: "attestation_missing: attestation=none on a data agent under data-pii-attestation" },
     // I5 "Access matrix" fixtures: the shadow_mcp alert is what MAKES the
@@ -628,21 +1353,29 @@ function mockAlerts() {
     // "idryx baselines" are exactly its existing behavior_anomaly alerts,
     // nothing new fetched from idryx).
     { detector: "behavior_anomaly", identity: DRIFT_DEMO_AGENT_ID, severity: "medium", time: ago(30 * 60_000), summary: "behavior_anomaly: data-quality-checker's call cadence shifted outside its 30-day login-behavior baseline" },
-  ];
+  );
+  return out;
 }
 
 // Owner and unit aggregates, so a card can navigate agent -> owner -> unit.
 function entityAgentFor(a: FleetAgent, portion: number, current: boolean) {
+  // Live drift lands on the CURRENT owner/team's own portion only - it
+  // represents recent activity, which by definition belongs to whoever holds
+  // the agent right now, not a past ownership segment. Frozen while blocked
+  // (`effectiveActivity`); `blocked`/`lifecycle` come from the manual store so
+  // each row's badge matches the agent card and the dock.
+  const act = effectiveActivity(a);
   return {
     agentId: a.id,
     name: a.name,
     team: a.team,
     owner: a.owner,
     model: a.model,
-    spentUsd: Number(portion.toFixed(2)),
-    calls: a.calls,
+    spentUsd: Number((portion + (current ? act.spentUsd : 0)).toFixed(2)),
+    calls: a.calls + act.calls,
     closed: Boolean(a.closed),
-    blocked: Boolean(a.blocked),
+    blocked: isAgentBlocked(a),
+    lifecycle: agentLifecycleState(a),
     current,
   };
 }
@@ -662,6 +1395,7 @@ function mockUserRecord(userArg: string) {
     totalSpentUsd: Number(agents.reduce((s, a) => s + a.spentUsd, 0).toFixed(2)),
     totalCalls: agents.filter((a) => a.current).reduce((s, a) => s + a.calls, 0),
     teams: [...new Set(agents.map((a) => a.team))],
+    stopped: stoppedUsers.has(handle),
   };
 }
 function mockUnitRecord(team: string) {
@@ -675,6 +1409,7 @@ function mockUnitRecord(team: string) {
     owners: [...new Set(agents.filter((a) => a.current).map((a) => a.owner))],
     totalSpentUsd: Number(agents.reduce((s, a) => s + a.spentUsd, 0).toFixed(2)),
     totalCalls: agents.filter((a) => a.current).reduce((s, a) => s + a.calls, 0),
+    stopped: stoppedUnits.has(team),
   };
 }
 
@@ -865,6 +1600,44 @@ function mockQualityOnTrackEvent(): UiEvent {
     file: "/root/.stack-up/events/verdryx.ndjson",
     off: 900_002,
   };
+}
+
+/** A couple of deterministic Wardryx decisions for `id`, so Agent 360's Policy
+ * section (which filters this agent's `agent_events` to `source === "wardryx"`)
+ * always shows real decisions for a governed agent: every meridian.io agent is
+ * under at least the org-wide `deny-shell-exec` policy, so a `policy_allow` is
+ * honest for any of them, and an agent whose envelope needs a human sign-off
+ * (the same `needHuman` set `mockApprovals` uses) additionally shows a
+ * `policy_hold`. Timestamps a few minutes back so they read as the run's recent
+ * history, not "now"; ids in a fixed 90_00x band, distinct from `makeEvent`'s
+ * 100_000+ live sequence and the 900_00x quality fixtures. */
+function mockAgentPolicyEvents(id: string): UiEvent[] {
+  const a = FLEET.find((x) => x.id === id);
+  if (!a) return [];
+  const wardryxEvent = (seq: number, type: string, severity: string, agoMs: number, data: Record<string, unknown>): UiEvent => ({
+    id: 90_000 + seq,
+    env: "live",
+    ts: ago(agoMs),
+    source: "wardryx",
+    type,
+    agent_id: id,
+    run_id: `${a.name}-live`,
+    severity,
+    schema: "taipanbox.dev/agent-event/v0.2",
+    on_behalf_of: [userId(a.owner)],
+    data,
+    prev_hash: null,
+    raw: "",
+    file: "/root/.stack-up/events/wardryx.ndjson",
+    off: 90_000 + seq,
+  });
+  const out: UiEvent[] = [
+    wardryxEvent(1, "policy_allow", "low", 5 * 60_000, { decision: "allow", policy_id: "deny-shell-exec", reason: "no denied tool requested" }),
+  ];
+  if (a.allowed.some((x) => x.includes("human") || x.includes("approval"))) {
+    out.unshift(wardryxEvent(2, "policy_hold", "medium", 3 * 60_000, { decision: "hold", reason: "estimated cost exceeds the human-approval threshold" }));
+  }
+  return out;
 }
 
 // --- Crypto (Qryx) ---
@@ -1228,7 +2001,7 @@ function mockCopilotAnswer(question: string) {
 // Felyx to build (cause -> effect -> effect, citing the run/incident/policy
 // ids it "used").
 function mockCopilotExplainAnswer(incidentId: string) {
-  const ra = runawayAgent();
+  const ra = PROTAGONIST;
   return {
     text:
       `Incident \`${incidentId}\` traces to sre/rca-copilot: an oversized incident trace caused retries past its $1.25 ` +
@@ -1254,12 +2027,24 @@ function mockCopilotExplainAnswer(incidentId: string) {
 
 let eventSeq = 100_000;
 
+/**
+ * One synthetic bus event, phase-aware instead of purely random: reads the
+ * live world (via `reconcileProtagonist`, when the scenario is "incident")
+ * to decide whether THIS tick is one of the protagonist's own crisis events,
+ * and otherwise draws an ordinary background event exactly as before. Pure -
+ * no mutation - so it is equally safe called once per live bus tick
+ * (`mockSubscribe`) or in a tight loop for a historical batch (`seedEvents`).
+ */
 function makeEvent(): UiEvent {
-  const a = FLEET[Math.floor(Math.random() * FLEET.length)];
-  const ra = runawayAgent();
-  const id = agentId(a);
-  const roll = Math.random();
   eventSeq += 1;
+  const state = currentScenario === "incident" ? reconcileProtagonist() : null;
+  const spotlight =
+    !!state &&
+    !state.killed &&
+    (state.phase === "tripped" ? Math.random() < 0.6 : state.phase === "climbing" && Math.random() < 0.28);
+
+  const a = spotlight ? PROTAGONIST : FLEET[Math.floor(Math.random() * FLEET.length)];
+  const id = agentId(a);
   const base = {
     id: eventSeq,
     env: "live",
@@ -1271,9 +2056,24 @@ function makeEvent(): UiEvent {
     file: "/root/.stack-up/events/tokenfuse.ndjson",
     off: eventSeq,
   };
-  if (a.name === ra.name && roll < 0.5) {
-    return { ...base, source: "tokenfuse", type: "breaker_tripped", severity: "critical", run_id: `${a.name}-${47 + Math.floor(Math.random() * 6)}`, data: { reason: "budget_exceeded", budget_usd: a.budgetUsd, spent_usd: Number((a.budgetUsd * 0.97).toFixed(4)), detail: "per-run budget exceeded", policy_id: "default" }, raw: "" };
+
+  if (a.id === PROTAGONIST_ID && state && state.phase === "tripped" && !state.killed) {
+    const roll = Math.random();
+    const budgetUsd = manualRunBudgets.get(PROTAGONIST_RUN_ID) ?? PROTAGONIST_RUN_BUDGET_USD;
+    const spentUsd = Number((state.fraction * PROTAGONIST_RUN_BUDGET_USD).toFixed(4));
+    if (roll < 0.45) {
+      return { ...base, source: "tokenfuse", type: "budget_exceeded", severity: "critical", run_id: PROTAGONIST_RUN_ID, data: { reason: "budget_exceeded", budget_usd: budgetUsd, spent_usd: spentUsd, detail: "per-run budget exceeded", policy_id: "default" }, raw: "" };
+    }
+    if (roll < 0.8) {
+      return { ...base, source: "tokenfuse", type: "breaker_tripped", severity: "critical", run_id: PROTAGONIST_RUN_ID, data: { reason: "budget_exceeded", budget_usd: budgetUsd, spent_usd: spentUsd, detail: "circuit breaker tripped after repeated retries", policy_id: "default" }, raw: "" };
+    }
+    return { ...base, source: "wardryx", type: "policy_hold", severity: "high", run_id: PROTAGONIST_RUN_ID, data: { decision: "hold", reason: "fanout beyond max sub-runs; holding for review" }, raw: "" };
   }
+  if (a.id === PROTAGONIST_ID && state && state.phase === "climbing" && Math.random() < 0.35) {
+    return { ...base, source: "wardryx", type: "policy_hold", severity: "medium", run_id: PROTAGONIST_RUN_ID, data: { decision: "hold", reason: "estimated cost approaching per-run ceiling" }, raw: "" };
+  }
+
+  const roll = Math.random();
   if (roll < 0.09) {
     return { ...base, source: "wardryx", type: "policy_hold", severity: "medium", run_id: `${a.name}-live`, data: { decision: "hold", reason: "estimated cost exceeds human-approval threshold" }, raw: "" };
   }
@@ -1337,10 +2137,39 @@ function mockHetznerList() {
     { id: 51234569, name: "relay-1", status: "running", ipv4: "203.0.113.9", server_type: "cx22", cores: 2, memory_gb: 4, location: "hel1", price_hourly_eur: 0.008, labels: { "managed-by": "taipan" }, created: "2026-07-19T19:02:00Z" },
   ];
 }
-// Example CloudServer rows for the AWS/GCP/Azure live-listing (preview only;
-// the real connector shells out to the operator's own aws/gcloud/az CLI). RFC
-// 5737 documentation IPs, never a real host.
+// "Connect this machine" (`remote_operator_wg_config`): one fixed example
+// config, the same fake "prod-stack" demo box `SEED_REMOTE_ENV` above already
+// uses (RFC 5737 documentation endpoint, never a real host, and a fake
+// keypair this preview never uses to open a real tunnel). `qr_png_base64` is
+// deliberately empty, mirroring `mockEvidenceBuild`'s own `zip_base64: ""`:
+// this preview has no real `qrencode` to shell out to, so there is no real
+// PNG to fake - the card renders its own honest "no QR available" placeholder
+// instead of a fabricated pixel.
+function mockOperatorWgConfig() {
+  const clientPriv = "eA3mK9pLwQ2vXsZ0tYbNcRf8dGjHu5MoPq1Wn6CiT2E=";
+  const clientIp = "10.9.0.2";
+  const serverPub = "k7QmZ4RfWp2NxTqYs81cVbA0dEoJnHu5MdMv9wXpUYo=";
+  const endpoint = "198.51.100.42:51820";
+  return {
+    conf: `[Interface]\nPrivateKey = ${clientPriv}\nAddress = ${clientIp}/32\n\n[Peer]\nPublicKey = ${serverPub}\nEndpoint = ${endpoint}\nAllowedIPs = 10.9.0.1/32\nPersistentKeepalive = 25\n`,
+    qr_png_base64: "",
+    client_ip: clientIp,
+    endpoint,
+    server_public_key: serverPub,
+    console_tunnel_url: "http://10.9.0.1:7420",
+  };
+}
+// Example CloudServer rows for the AWS/GCP/Azure/IBM Cloud live-listing
+// (preview only; the real connector shells out to the operator's own
+// aws/gcloud/az/ibmcloud CLI). RFC 5737 documentation IPs, never a real host.
 function mockCloudList(provider: string) {
+  if (provider === "ibmcloud") {
+    return [
+      { provider, id: "0717_e4b2a1c8-9d3f-4a56-8b12-3c4d5e6f7089", name: "prod-vsi-1", status: "running", public_ip: "203.0.113.44", private_ip: "10.240.0.6", server_type: "bx2-4x16", region: "us-south-1" },
+      { provider, id: "0717_a9c8b7d6-5e4f-4321-9a8b-7c6d5e4f3210", name: "runtime-vsi-2", status: "running", public_ip: null, private_ip: "10.240.0.11", server_type: "bx2-2x8", region: "us-south-1" },
+      { provider, id: "0717_5f4e3d2c-1b0a-4988-8776-6554433221ff", name: "relay-vsi-3", status: "stopped", public_ip: null, private_ip: "10.240.0.19", server_type: "cx2-2x4", region: "us-south-1" },
+    ];
+  }
   const region = provider === "aws" ? "eu-central-1" : provider === "azure" ? "westeurope" : "europe-west3-a";
   const t = (aws: string, azure: string, gcp: string) => (provider === "aws" ? aws : provider === "azure" ? azure : gcp);
   const id = (aws: string, azure: string, gcp: string) => (provider === "aws" ? aws : provider === "azure" ? azure : gcp);
@@ -1648,6 +2477,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "remote_status": return r(remoteStatus());
     case "remote_hetzner_list": return r(mockHetznerList());
     case "remote_cloud_list": return r(mockCloudList(String(args?.provider ?? "aws")));
+    case "remote_operator_wg_config": return r(mockOperatorWgConfig());
     case "remote_set_environment": {
       const req = (args?.request ?? null) as Record<string, unknown> | null;
       if (req) remoteEnv = { ...req };
@@ -1679,9 +2509,77 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "money_runs": return r(mockRuns());
     case "money_incidents": return r(mockIncidents());
     case "money_savings": return r(mockSavings());
+    case "money_kill_run": {
+      const runId = String(args?.run_id ?? "");
+      const reason = String(args?.reason ?? "");
+      // The protagonist's OWN incident arc keeps its looping resolution (its
+      // kill feeds `reconcileProtagonist`, and the arc re-arms after a beat -
+      // that loop is the storyline, not a self-heal). EVERY other run's kill
+      // goes into the STICKY `killedRuns` set instead of the old 20s-recovery
+      // `manualRunKills`, so an operator kill persists visibly (reflected as
+      // KILLED everywhere the agent appears) rather than looking like it did
+      // nothing.
+      const isProtagonistArc = runId === PROTAGONIST_RUN_ID && currentScenario === "incident";
+      const already = isProtagonistArc ? manualRunKills.has(runId) : killedRuns.has(runId);
+      if (runId) {
+        if (isProtagonistArc) {
+          if (!already) manualRunKills.set(runId, Date.now());
+          reconcileProtagonist();
+        } else {
+          killedRuns.add(runId);
+        }
+      }
+      emitConsoleCommand("console.kill_run", runId || "(unknown run)", "break_glass", "killed:true", `user://${ORG}/ops`);
+      return r({
+        summary: already ? `${runId || "run"} was already killed` : `Killed ${runId || "run"}${reason ? ` - ${reason}` : ""}`,
+        http_status: 200,
+        verify_result: "killed:true",
+        sig_alg: "es256",
+        sig_fpr: "software-signed",
+        bus_recorded: true,
+        bus_error: null,
+      });
+    }
+    case "money_set_budget": {
+      const runId = String(args?.run_id ?? "");
+      const budgetUsd = Number(args?.budget_usd ?? 0);
+      const reason = String(args?.reason ?? "");
+      if (runId && budgetUsd > 0) manualRunBudgets.set(runId, budgetUsd);
+      emitConsoleCommand("console.set_budget", runId || "(unknown run)", "break_glass", `budget_usd:${budgetUsd}`, `user://${ORG}/ops`);
+      return r({
+        summary: `Budget for ${runId || "run"} set to $${budgetUsd.toFixed(2)}${reason ? ` - ${reason}` : ""}`,
+        http_status: 200,
+        verify_result: `budget_usd:${budgetUsd}`,
+        sig_alg: "es256",
+        sig_fpr: "software-signed",
+        bus_recorded: true,
+        bus_error: null,
+      });
+    }
+    case "money_ack_incident": {
+      const id = String(args?.id ?? "");
+      const already = ackedIncidentIds.has(id);
+      if (id) ackedIncidentIds.add(id);
+      emitConsoleCommand("console.ack_incident", id || "(unknown incident)", "allow", "acknowledged:true", `user://${ORG}/ops`);
+      return r({
+        summary: already ? `${id || "incident"} already acknowledged` : `Acknowledged ${id || "incident"}`,
+        http_status: 200,
+        verify_result: "acknowledged:true",
+        sig_alg: "es256",
+        sig_fpr: "software-signed",
+        bus_recorded: true,
+        bus_error: null,
+      });
+    }
 
     case "policy_list_approvals": return r(mockApprovals());
     case "policy_list_policies": return r(mockPolicies());
+    case "policy_decide_approval": {
+      const id = String(args?.id ?? "");
+      const decision: "grant" | "deny" = args?.decision === "grant" ? "grant" : "deny";
+      emitConsoleCommand("console.decide_approval", id || "(unknown approval)", "allow", `decision:${decision}`, `user://${ORG}/ops`);
+      return r(decideApprovalMock(id, decision));
+    }
 
     case "identity_list_identities": return r(mockIdentities());
     case "identity_list_alerts": return r(mockAlerts());
@@ -1699,7 +2597,10 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "agent_set_budget": {
       const a = findById(String(args?.agent_id ?? ""));
       if (a) { a.budgetUsd = Number(args?.budget_usd) || a.budgetUsd; logChange(a, "budget_set", `per-run ceiling set to $${a.budgetUsd.toFixed(2)}`); }
-      return r(a ? { ...a } : null);
+      // Return the reflected record (`mockAgentRecord`) so the card keeps its
+      // live `blocked`/`lifecycle` after an unrelated edit, rather than a bare
+      // fixture spread whose `blocked` is no longer maintained on the fixture.
+      return r(a ? mockAgentRecord(a.id) : null);
     }
     case "agent_reassign_unit": {
       const a = findById(String(args?.agent_id ?? ""));
@@ -1713,7 +2614,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
         a.team = team;
         logChange(a, "transferred", `business unit ${from} -> ${team}`);
       }
-      return r(a ? { ...a } : null);
+      return r(a ? mockAgentRecord(a.id) : null);
     }
     case "agent_transfer_owner": {
       const a = findById(String(args?.agent_id ?? ""));
@@ -1727,30 +2628,48 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
         a.owner = owner;
         logChange(a, "transferred", `owner ${from} -> ${owner}`);
       }
-      return r(a ? { ...a } : null);
+      return r(a ? mockAgentRecord(a.id) : null);
     }
     case "agent_set_behaviour": {
       const a = findById(String(args?.agent_id ?? ""));
       const allowed = Array.isArray(args?.allowed) ? (args?.allowed as string[]) : null;
       if (a && allowed) { a.allowed = allowed; logChange(a, "transferred", "allowed behaviour updated"); }
-      return r(a ? { ...a } : null);
+      return r(a ? mockAgentRecord(a.id) : null);
     }
+    // Freeze <-> Unfreeze a single agent: an idempotent toggle writing the
+    // manual store (never the fixture), so it can coexist with a unit/user stop
+    // and un-freezing leaves those in force. Returns the reflected record.
     case "agent_block": {
       const a = findById(String(args?.agent_id ?? ""));
       const blocked = Boolean(args?.blocked);
-      if (a) { a.blocked = blocked; logChange(a, blocked ? "closed" : "launched", blocked ? "disabled by operator" : "re-enabled by operator"); }
-      return r(a ? { ...a } : null);
+      if (a) {
+        if (blocked) frozenAgents.add(a.id); else frozenAgents.delete(a.id);
+        logChange(a, blocked ? "closed" : "launched", blocked ? "frozen by operator" : "unfrozen by operator");
+        emitConsoleCommand(blocked ? "console.freeze_agent" : "console.unfreeze_agent", a.id, "allow", `frozen:${blocked}`, `user://${ORG}/ops`);
+      }
+      return r(a ? mockAgentRecord(a.id) : null);
     }
+    // Stop <-> Start every agent a user owns: one flag on the user, so it
+    // reflects app-wide via `manualAgentState` without stamping each agent.
     case "user_block": {
       const handle = String(args?.user ?? "").replace(/^user:\/\/[^/]+\//, "");
       const blocked = Boolean(args?.blocked);
-      FLEET.filter((a) => a.owner === handle).forEach((a) => { a.blocked = blocked; logChange(a, blocked ? "closed" : "launched", blocked ? `disabled with owner ${handle}` : `re-enabled with owner ${handle}`); });
+      if (handle) {
+        if (blocked) stoppedUsers.add(handle); else stoppedUsers.delete(handle);
+        FLEET.filter((a) => a.owner === handle).forEach((a) => logChange(a, blocked ? "closed" : "launched", blocked ? `stopped with owner ${handle}` : `started with owner ${handle}`));
+        emitConsoleCommand(blocked ? "console.stop_user" : "console.start_user", `user://${ORG}/${handle}`, "allow", `stopped:${blocked}`, `user://${ORG}/ops`);
+      }
       return r(mockUserRecord(handle));
     }
+    // Stop <-> Start every agent in a business unit: same one-flag shape.
     case "unit_block": {
       const team = String(args?.team ?? "");
       const blocked = Boolean(args?.blocked);
-      FLEET.filter((a) => a.team === team).forEach((a) => { a.blocked = blocked; logChange(a, blocked ? "closed" : "launched", blocked ? `disabled with unit ${team}` : `re-enabled with unit ${team}`); });
+      if (team) {
+        if (blocked) stoppedUnits.add(team); else stoppedUnits.delete(team);
+        FLEET.filter((a) => a.team === team).forEach((a) => logChange(a, blocked ? "closed" : "launched", blocked ? `stopped with unit ${team}` : `started with unit ${team}`));
+        emitConsoleCommand(blocked ? "console.stop_unit" : "console.start_unit", team, "allow", `stopped:${blocked}`, `user://${ORG}/ops`);
+      }
       return r(mockUnitRecord(team));
     }
     case "agent_events": {
@@ -1763,13 +2682,19 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       // doc comments) must also show up on THIS agent's own per-agent feed -
       // Agent 360's Drift section reads `agent_events`, not `recent_events`.
       const drift = id === DRIFT_DEMO_AGENT_ID ? [mockQualityDriftEvent(), mockQualityOnTrackEvent()] : [];
-      return r([...drift, ...base]);
+      // Appended (oldest) so the live `base` events stay at the newest-first
+      // head, while this agent's own Wardryx decisions still populate the
+      // Policy section's `source === "wardryx"` filter for a governed agent.
+      return r([...drift, ...base, ...mockAgentPolicyEvents(id)]);
     }
     // The seeded quality_drift event is APPENDED after the freshly-generated
     // ones (see mockQualityDriftEvent's own doc comment for why order matters
     // here), so `res.events[0]` (newest-first) is still whichever real event
-    // `seedEvents` itself produced most recently.
-    case "recent_events": return r([...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
+    // `seedEvents` itself produced most recently. `recentCommandEvents` (an
+    // operator's own kill/budget/ack/decide, newest-first already) goes in
+    // front of all of it: a just-issued console_command is genuinely the
+    // newest thing on the bus.
+    case "recent_events": return r([...recentCommandEvents, ...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
     case "run_events": return r(seedEvents(20));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });
@@ -1807,7 +2732,13 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
 
 export function mockSubscribe<T>(event: string, onEvent: (payload: T) => void): Promise<() => void> {
   if (event !== "bus:event") return Promise.resolve(() => {});
-  const tick = () => onEvent(makeEvent() as unknown as T);
+  const tick = () => {
+    // A just-issued operator command is delivered before the next synthetic
+    // event, so a Kill/Approve/Budget click shows up on a live Bus tab
+    // within one tick instead of waiting on a random draw to cover it.
+    const queued = pendingLiveDelivery.shift();
+    onEvent((queued ?? makeEvent()) as unknown as T);
+  };
   const id = window.setInterval(tick, 1300 + Math.floor(Math.random() * 900));
   return Promise.resolve(() => window.clearInterval(id));
 }
