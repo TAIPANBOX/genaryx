@@ -417,6 +417,13 @@ impl UapiSocket {
         sock.set_write_timeout(Some(IO_TIMEOUT)).map_err(io)?;
         sock.write_all(body.as_bytes()).map_err(io)?;
         sock.flush().map_err(io)?;
+        // Half-close the write side. The daemon reads the operation until the
+        // peer stops writing, so without this it keeps waiting and the read
+        // below times out with EAGAIN instead of returning the reply that was
+        // never sent. Straight to the daemon a blank line is often enough; it
+        // is not through the forwarder in front of it, and the shutdown is
+        // what makes both paths behave the same.
+        sock.shutdown(std::net::Shutdown::Write).map_err(io)?;
         let mut out = String::new();
         sock.read_to_string(&mut out).map_err(io)?;
         Ok(out)
