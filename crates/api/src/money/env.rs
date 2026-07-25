@@ -36,6 +36,17 @@ const FALLBACK_CLOUD_URL: &str = "http://127.0.0.1:8080";
 /// for the no-descriptor fallback.
 const ADMIN_KEY_ENV_VAR: &str = "TOKENFUSE_CLOUD_ADMIN_KEY";
 
+/// Env var carrying the Cloud base URL for the no-descriptor fallback,
+/// exactly as `policy::env::URL_ENV_VAR` (`WARDRYX_URL`) does for the policy
+/// plane. Without this the fallback could only ever mean "a Cloud on this
+/// same host", which is true of a laptop and false of every deployment where
+/// the console and the Cloud are separate processes on separate machines: on
+/// Kubernetes the Cloud is a Service, `127.0.0.1:8080` inside the console's
+/// own pod is nothing at all, and the Money panel reported "no environment
+/// found" with no way to tell it otherwise short of hand-writing a `taipan`
+/// descriptor onto its volume. The two planes now resolve the same way.
+const URL_ENV_VAR: &str = "TOKENFUSE_CLOUD_URL";
+
 /// Where a [`ResolvedEnv`] came from, surfaced to the UI (06 §0.5 - the
 /// operator should always be able to see what the console is actually
 /// talking to, never a silently-assumed default).
@@ -169,24 +180,32 @@ fn try_load_descriptor(path: &Path) -> Option<ResolvedEnv> {
     })
 }
 
-/// `127.0.0.1:8080` + `TOKENFUSE_CLOUD_ADMIN_KEY`, for a Cloud started
-/// without `taipan up`. `None` when the var is unset or blank.
+/// `TOKENFUSE_CLOUD_URL` (or `127.0.0.1:8080`) + `TOKENFUSE_CLOUD_ADMIN_KEY`,
+/// for a Cloud started without `taipan up`. `None` when the key var is unset
+/// or blank: the key, not the URL, is what gates the fallback, so a stray
+/// `TOKENFUSE_CLOUD_URL` in an environment never invents a Cloud.
 fn discover_env_fallback() -> Option<ResolvedEnv> {
-    env_fallback_from(std::env::var(ADMIN_KEY_ENV_VAR).ok())
+    env_fallback_from(
+        std::env::var(URL_ENV_VAR).ok(),
+        std::env::var(ADMIN_KEY_ENV_VAR).ok(),
+    )
 }
 
 /// Testable core of [`discover_env_fallback`], taking the (already-read) env
-/// var value directly so tests never have to mutate real process
+/// var values directly so tests never have to mutate real process
 /// environment (which `cargo test`'s parallel-by-default threads make
 /// inherently racy across a shared process).
-fn env_fallback_from(admin_bearer: Option<String>) -> Option<ResolvedEnv> {
+fn env_fallback_from(url: Option<String>, admin_bearer: Option<String>) -> Option<ResolvedEnv> {
     let admin_bearer = admin_bearer?;
     if admin_bearer.trim().is_empty() {
         return None;
     }
+    let cloud_url = url
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| FALLBACK_CLOUD_URL.to_string());
     Some(ResolvedEnv {
         source: EnvSource::EnvFallback,
-        cloud_url: FALLBACK_CLOUD_URL.to_string(),
+        cloud_url,
         admin_bearer,
     })
 }
@@ -351,14 +370,36 @@ mod tests {
 
     #[test]
     fn env_fallback_requires_a_non_blank_admin_key() {
-        assert!(env_fallback_from(None).is_none());
-        assert!(env_fallback_from(Some(String::new())).is_none());
-        assert!(env_fallback_from(Some("   ".to_string())).is_none());
+        assert!(env_fallback_from(None, None).is_none());
+        assert!(env_fallback_from(None, Some(String::new())).is_none());
+        assert!(env_fallback_from(None, Some("   ".to_string())).is_none());
+        // A URL alone must never invent an environment: the key gates it.
+        assert!(env_fallback_from(Some("http://tokenfuse-cloud:8080".to_string()), None).is_none());
 
-        let resolved = env_fallback_from(Some("tp_x:acme:admin".to_string()))
+        let resolved = env_fallback_from(None, Some("tp_x:acme:admin".to_string()))
             .expect("a non-blank key must resolve");
         assert_eq!(resolved.source, EnvSource::EnvFallback);
         assert_eq!(resolved.cloud_url, FALLBACK_CLOUD_URL);
         assert_eq!(resolved.admin_bearer, "tp_x:acme:admin");
+    }
+
+    /// The Kubernetes case: the Cloud is a Service on another pod, so the
+    /// loopback default is wrong and `TOKENFUSE_CLOUD_URL` has to win, exactly
+    /// as `WARDRYX_URL` already does for the policy plane.
+    #[test]
+    fn env_fallback_honours_an_explicit_cloud_url() {
+        let resolved = env_fallback_from(
+            Some("http://tokenfuse-cloud:8080".to_string()),
+            Some("devkey".to_string()),
+        )
+        .expect("url + key must resolve");
+        assert_eq!(resolved.cloud_url, "http://tokenfuse-cloud:8080");
+        assert_eq!(resolved.admin_bearer, "devkey");
+
+        // Blank or whitespace-only falls back rather than producing a URL
+        // that cannot be connected to.
+        let blank = env_fallback_from(Some("   ".to_string()), Some("devkey".to_string()))
+            .expect("blank url + key must still resolve");
+        assert_eq!(blank.cloud_url, FALLBACK_CLOUD_URL);
     }
 }
