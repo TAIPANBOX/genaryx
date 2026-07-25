@@ -47,10 +47,15 @@ use std::sync::Arc;
 /// events directory the Bus Explorer tails. `None` when live-wire startup
 /// failed, which the command reports rather than silently skipping the record.
 fn wg_journal(ctx: &Arc<Ctx>) -> Option<genaryx_api::money::state::BusHandle> {
-    ctx.bus
-        .events_dir
-        .as_ref()
-        .map(|dir| genaryx_api::money::state::BusHandle::from_events_dir(dir))
+    match (
+        ctx.bus.events_dir.as_ref(),
+        ctx.bus.source_events_dir.as_ref(),
+    ) {
+        (Some(store), Some(source)) => Some(
+            genaryx_api::money::state::BusHandle::from_dirs(store, source),
+        ),
+        _ => None,
+    }
 }
 
 /// A command's Ok value.

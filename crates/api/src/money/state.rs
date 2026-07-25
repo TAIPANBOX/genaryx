@@ -62,10 +62,18 @@ pub struct BusHandle {
 const CONSOLE_EVENTS_FILE: &str = "tokenfuse.ndjson";
 
 impl BusHandle {
-    pub fn from_events_dir(events_dir: &std::path::Path) -> Self {
+    /// `store_dir` holds the console's own SQLite; `source_dir` is where the
+    /// products write their NDJSON and where this bus tails.
+    ///
+    /// These are two different directories in a live deployment, and conflating
+    /// them is not cosmetic: a `console_command` appended into the store
+    /// directory lands somewhere nothing tails and nothing keeps, so the action
+    /// never reaches the bus and never reaches an evidence pack, while every
+    /// individual command still reports success.
+    pub fn from_dirs(store_dir: &std::path::Path, source_dir: &std::path::Path) -> Self {
         Self {
-            store_db_path: events_dir.join("console.sqlite"),
-            console_events_path: events_dir.join(CONSOLE_EVENTS_FILE),
+            store_db_path: store_dir.join("console.sqlite"),
+            console_events_path: source_dir.join(CONSOLE_EVENTS_FILE),
         }
     }
 }
@@ -162,8 +170,8 @@ impl MoneyState {
 /// the live-wire directory from `live::bootstrap` (`None` if that step
 /// itself failed); see [`BusHandle`]. Never panics and never returns an
 /// `Err`: every failure mode is a [`MoneyInner`] variant the UI can render.
-pub async fn bootstrap(events_dir: Option<PathBuf>) -> MoneyInner {
-    let bus = events_dir.map(|dir| BusHandle::from_events_dir(&dir));
+pub async fn bootstrap(dirs: Option<(PathBuf, PathBuf)>) -> MoneyInner {
+    let bus = dirs.map(|(store, source)| BusHandle::from_dirs(&store, &source));
 
     let Some(resolved) = env::discover() else {
         return MoneyInner::NoEnvironment;
@@ -306,11 +314,22 @@ mod tests {
     }
 
     #[test]
-    fn bus_handle_targets_the_tokenfuse_ndjson_file() {
-        let dir = std::path::PathBuf::from("/tmp/some-events-dir");
-        let bus = BusHandle::from_events_dir(&dir);
-        assert_eq!(bus.store_db_path, dir.join("console.sqlite"));
-        assert_eq!(bus.console_events_path, dir.join("tokenfuse.ndjson"));
+    fn the_journal_writes_where_the_products_write_not_where_the_store_lives() {
+        // These are different directories in a live deployment: the store is a
+        // fresh per-launch temp dir, the source is the mounted volume every
+        // product appends to and the bus tails. Sending a console_command to
+        // the store directory puts it somewhere nothing tails and nothing
+        // keeps, so the action disappears from the bus and from every evidence
+        // pack, while the command itself still reports success.
+        let store = std::path::PathBuf::from("/tmp/genaryx-store-abc123");
+        let source = std::path::PathBuf::from("/var/lib/stack/events");
+        let bus = BusHandle::from_dirs(&store, &source);
+        assert_eq!(bus.store_db_path, store.join("console.sqlite"));
+        assert_eq!(
+            bus.console_events_path,
+            source.join("tokenfuse.ndjson"),
+            "the events file must live in the tailed directory, never in the store's"
+        );
     }
 
     #[test]

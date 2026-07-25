@@ -172,7 +172,13 @@ impl Ctx {
     /// the caller can put the context behind its `Arc` first: each task needs
     /// a handle on the same state the request path will read.
     pub fn resolve(self: &std::sync::Arc<Self>) {
-        let events_dir = self.bus.events_dir.clone();
+        // Both directories: the store's, and the one the products actually
+        // write into. A journal that uses the first for its events file writes
+        // where nothing tails and nothing keeps.
+        let bus_dirs = match (self.bus.events_dir.clone(), self.bus.source_events_dir.clone()) {
+            (Some(store), Some(source)) => Some((store, source)),
+            _ => None,
+        };
 
         macro_rules! resolve {
             ($field:ident, $call:expr) => {{
@@ -184,9 +190,9 @@ impl Ctx {
             }};
         }
 
-        let money_dir = events_dir.clone();
+        let money_dir = bus_dirs.clone();
         resolve!(money, genaryx_api::money::bootstrap(money_dir));
-        let policy_dir = events_dir.clone();
+        let policy_dir = bus_dirs.clone();
         resolve!(policy, genaryx_api::policy::bootstrap(policy_dir));
         resolve!(identity, genaryx_api::identity::bootstrap());
         resolve!(credentials, genaryx_api::credentials::bootstrap());

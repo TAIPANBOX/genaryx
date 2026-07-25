@@ -60,10 +60,14 @@ pub struct BusHandle {
 }
 
 impl BusHandle {
-    pub fn from_events_dir(events_dir: &std::path::Path) -> Self {
+    /// `store_dir` holds the console's own SQLite; `source_dir` is where the
+    /// products write their NDJSON. Two different directories in a live
+    /// deployment: a `console_command` written into the store directory lands
+    /// where nothing tails and nothing keeps it.
+    pub fn from_dirs(store_dir: &std::path::Path, source_dir: &std::path::Path) -> Self {
         Self {
-            store_db_path: events_dir.join("console.sqlite"),
-            console_events_path: events_dir.join(CONSOLE_EVENTS_FILE),
+            store_db_path: store_dir.join("console.sqlite"),
+            console_events_path: source_dir.join(CONSOLE_EVENTS_FILE),
         }
     }
 }
@@ -162,8 +166,8 @@ impl PolicyState {
 /// is the live-wire directory from `live::bootstrap` (`None` if that step
 /// itself failed); see [`BusHandle`]. Never panics and never returns an
 /// `Err`: every failure mode is a [`PolicyInner`] variant the UI can render.
-pub async fn bootstrap(events_dir: Option<PathBuf>) -> PolicyInner {
-    let bus = events_dir.map(|dir| BusHandle::from_events_dir(&dir));
+pub async fn bootstrap(dirs: Option<(PathBuf, PathBuf)>) -> PolicyInner {
+    let bus = dirs.map(|(store, source)| BusHandle::from_dirs(&store, &source));
 
     let Some(resolved) = env::discover() else {
         return PolicyInner::NoEnvironment;
@@ -308,7 +312,7 @@ mod tests {
     #[test]
     fn bus_handle_targets_the_qryx_ndjson_file() {
         let dir = std::path::PathBuf::from("/tmp/some-events-dir");
-        let bus = BusHandle::from_events_dir(&dir);
+        let bus = BusHandle::from_dirs(&dir, &dir);
         assert_eq!(bus.store_db_path, dir.join("console.sqlite"));
         assert_eq!(bus.console_events_path, dir.join("qryx.ndjson"));
     }

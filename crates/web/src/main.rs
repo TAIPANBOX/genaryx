@@ -168,6 +168,7 @@ async fn serve(cfg: Config) {
     let bus = match genaryx_api::bus::feed::bootstrap(SseSink(events_tx.clone())) {
         Ok(b) => genaryx_api::bus::AppState {
             events_dir: Some(b.events_dir),
+            source_events_dir: Some(b.source_events_dir),
             mode: b.mode,
         },
         Err(e) => {
@@ -177,6 +178,7 @@ async fn serve(cfg: Config) {
             tracing::error!(error = %e, "bus startup failed; the Bus Explorer will be empty");
             genaryx_api::bus::AppState {
                 events_dir: None,
+                source_events_dir: None,
                 mode: genaryx_api::bus::BusMode::Unavailable {
                     reason: e.to_string(),
                 },
@@ -922,6 +924,7 @@ mod tests {
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
             events_dir: None,
+            source_events_dir: None,
             mode: genaryx_api::bus::BusMode::Unavailable {
                 reason: "test".into(),
             },

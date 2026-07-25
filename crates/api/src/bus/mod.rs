@@ -38,7 +38,13 @@ pub enum BusMode {
 /// a startup failure degrades the Bus Explorer; it never crashes the app or
 /// traps the UI).
 pub struct AppState {
+    /// The console's own store directory (fresh per launch).
     pub events_dir: Option<PathBuf>,
+    /// Where the products write their NDJSON: the directory this bus tails,
+    /// and the only correct destination for a `console_command` line. Writing
+    /// one into `events_dir` above puts it where nothing tails and nothing
+    /// keeps it.
+    pub source_events_dir: Option<PathBuf>,
     pub mode: BusMode,
 }
 

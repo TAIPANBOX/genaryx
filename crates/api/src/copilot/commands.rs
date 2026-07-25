@@ -423,7 +423,7 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&dir).expect("create scratch dir");
-        let bus = crate::money::state::BusHandle::from_events_dir(&dir);
+        let bus = crate::money::state::BusHandle::from_dirs(&dir, &dir);
         let mc = fixture_money_client(Some(bus));
 
         let (journaled, journal_error) =

@@ -65,7 +65,15 @@ pub struct BusBootstrap {
     /// generated fixture directory; in live mode it is a console-owned
     /// scratch directory, NOT the environment's own `events.dir` (the console
     /// must never write its database into a directory `taipan up` owns).
+    /// Where the console's own SQLite store lives: a fresh directory per
+    /// launch (see this module's doc on why history is not durable yet).
     pub events_dir: PathBuf,
+    /// Where the PRODUCTS write their NDJSON, i.e. the directory this bus
+    /// tails. Distinct from `events_dir` above, and the distinction is
+    /// load-bearing: a `console_command` written into the store directory is
+    /// written somewhere nothing tails and nothing keeps, so the action
+    /// vanishes from the bus and from every evidence pack built afterwards.
+    pub source_events_dir: PathBuf,
     pub mode: BusMode,
 }
 
@@ -137,6 +145,7 @@ fn bootstrap_live<S: EventSink>(
 
     Ok(BusBootstrap {
         events_dir: store_dir,
+        source_events_dir: resolved.events_dir.clone(),
         mode: BusMode::Live {
             env: resolved.env_name,
             dir: resolved.events_dir.display().to_string(),
@@ -176,6 +185,9 @@ fn bootstrap_demo<S: EventSink>(sink: S) -> genaryx_core::Result<BusBootstrap> {
 
     Ok(BusBootstrap {
         events_dir: events_dir.clone(),
+        // Demo mode seeds and tails the SAME directory, so the two are one
+        // path here. Only the live path splits them.
+        source_events_dir: events_dir.clone(),
         mode: BusMode::Demo {
             dir: events_dir.display().to_string(),
         },
