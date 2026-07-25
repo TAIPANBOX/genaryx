@@ -454,8 +454,66 @@ fn render_qr_svg(text: &str) -> Result<String, WgOperatorError> {
 }
 
 // ============================================================================
-// commands
+// audit
 // ============================================================================
+
+/// Journal one peer-lifecycle action onto the console's own command journal
+/// and the event bus.
+///
+/// Issuing a peer hands out a road into the control plane and revoking one
+/// takes an operator's access away; both already require a passkey. Until this
+/// existed, the strongest evidence the console produces - a human physically
+/// confirming that grant on their own authenticator - was written to a log line
+/// and nowhere else, so an evidence pack could show a kill but not who was
+/// given the keys. `money_kill_run` and `policy_decide_approval` have journaled
+/// their whole lives; this is the same act and was the odd one out.
+///
+/// Best-effort by design: the peer is already live on the interface by the time
+/// this runs, so a journal failure must not turn a completed grant into a
+/// reported error. It is logged loudly instead, because an unjournaled
+/// privileged action is exactly the thing an operator needs to know about.
+fn journal_peer_action(bus: Option<&crate::money::state::BusHandle>, action: &str, target: &str, detail: String) {
+    let Some(bus) = bus else {
+        eprintln!("genaryx: {action} on {target} was NOT journaled: no live event bus");
+        return;
+    };
+    // The signature the WebAuthn gate put in scope for THIS request, so the
+    // record names the credential the human actually touched. Falls back to the
+    // same honest label the rest of the console uses when no passkey is
+    // enrolled - never a fabricated one.
+    let (sig_alg, sig_fpr) =
+        crate::console_actor::signature_or("software-signed", "software-signed");
+    let org_domain = std::env::var("GENARYX_ORG_DOMAIN").unwrap_or_else(|_| "local".to_string());
+    let operator = crate::console_actor::operator_or(&format!("user://{org_domain}/operator"));
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "console".to_string());
+
+    let rec = genaryx_core::command::CommandRecord {
+        operator,
+        env: org_domain.clone(),
+        action: action.to_string(),
+        target: target.to_string(),
+        params: serde_json::json!({}),
+        // Not a break-glass override: this is the sanctioned path, gated by a
+        // passkey rather than bypassing anything.
+        decision: "allow".to_string(),
+        sig_alg,
+        sig_fpr,
+        http_status: 200,
+        verify_result: detail,
+    };
+    match genaryx_core::store::Store::open(&bus.store_db_path) {
+        Ok(store) => {
+            if let Err(e) =
+                genaryx_core::command::record(&store, &bus.console_events_path, &org_domain, &host, &rec)
+            {
+                eprintln!("genaryx: {action} on {target} succeeded but was NOT journaled: {e}");
+            }
+        }
+        Err(e) => eprintln!("genaryx: {action} on {target} succeeded but was NOT journaled: {e}"),
+    }
+}
+
+
 
 fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
     let backend = resolve_backend()?;
@@ -553,10 +611,23 @@ fn revoke_blocking(public_key_b64: &str) -> Result<RemoteWgRevokeDto, WgOperator
 
 /// Mint the signed-in operator a fresh WireGuard peer against this box's own
 /// server. Runs the blocking work on the pool, like every other connector call.
-pub async fn operator_wg_config() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
-    tokio::task::spawn_blocking(issue_blocking)
+pub async fn operator_wg_config(
+    bus: Option<&crate::money::state::BusHandle>,
+) -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
+    // The journal write happens on THIS task, not inside the blocking one:
+    // `console_actor`'s signature and operator live in a task-local scope that
+    // `spawn_blocking` does not carry across, so recording in there would lose
+    // the very passkey attribution this exists to capture.
+    let issued = tokio::task::spawn_blocking(issue_blocking)
         .await
-        .unwrap_or_else(|e| Err(exec_err(format!("operator wg config task failed to run: {e}"))))
+        .unwrap_or_else(|e| Err(exec_err(format!("operator wg config task failed to run: {e}"))))?;
+    journal_peer_action(
+        bus,
+        "console.issue_wg_peer",
+        &issued.peer_public_key,
+        format!("issued:{}", issued.client_ip),
+    );
+    Ok(issued)
 }
 
 /// Every device currently authorized on the tunnel.
@@ -570,10 +641,22 @@ pub async fn operator_wg_peers() -> Result<RemoteWgPeersDto, WgOperatorError> {
 /// daemon applies it.
 pub async fn operator_wg_revoke(
     public_key_b64: String,
+    bus: Option<&crate::money::state::BusHandle>,
 ) -> Result<RemoteWgRevokeDto, WgOperatorError> {
-    tokio::task::spawn_blocking(move || revoke_blocking(&public_key_b64))
+    let key_for_record = public_key_b64.clone();
+    let revoked = tokio::task::spawn_blocking(move || revoke_blocking(&public_key_b64))
         .await
-        .unwrap_or_else(|e| Err(exec_err(format!("operator wg revoke task failed to run: {e}"))))
+        .unwrap_or_else(|e| Err(exec_err(format!("operator wg revoke task failed to run: {e}"))))?;
+    journal_peer_action(
+        bus,
+        "console.revoke_wg_peer",
+        &key_for_record,
+        format!(
+            "revoked:was_present={} remaining={}",
+            revoked.was_present, revoked.remaining_peers
+        ),
+    );
+    Ok(revoked)
 }
 
 #[cfg(test)]

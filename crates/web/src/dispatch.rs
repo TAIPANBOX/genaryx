@@ -43,6 +43,16 @@ use genaryx_connectors::CloudListOptions;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// Where a peer-lifecycle action gets journaled, built from the same live
+/// events directory the Bus Explorer tails. `None` when live-wire startup
+/// failed, which the command reports rather than silently skipping the record.
+fn wg_journal(ctx: &Arc<Ctx>) -> Option<genaryx_api::money::state::BusHandle> {
+    ctx.bus
+        .events_dir
+        .as_ref()
+        .map(|dir| genaryx_api::money::state::BusHandle::from_events_dir(dir))
+}
+
 /// A command's Ok value.
 fn ok<T: serde::Serialize>(v: T) -> Response {
     (
@@ -724,7 +734,8 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             ))
         }
         "remote_operator_wg_config" => Ok(reply(
-            genaryx_api::remote::commands::remote_operator_wg_config().await,
+            genaryx_api::remote::commands::remote_operator_wg_config(wg_journal(&ctx).as_ref())
+                .await,
         )),
         "remote_operator_wg_peers" => Ok(reply(
             genaryx_api::remote::commands::remote_operator_wg_peers().await,
@@ -736,7 +747,11 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             }
             let a: A = decode(args)?;
             Ok(reply(
-                genaryx_api::remote::commands::remote_operator_wg_revoke(a.public_key).await,
+                genaryx_api::remote::commands::remote_operator_wg_revoke(
+                    a.public_key,
+                    wg_journal(&ctx).as_ref(),
+                )
+                .await,
             ))
         }
         "remote_set_environment" => {

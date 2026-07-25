@@ -827,8 +827,10 @@ pub async fn remote_wg_disconnect(state: &RemoteState) -> Result<RemoteStatusDto
 /// all) lives in [`wg_operator`] - mirrors [`remote_hetzner_list`]'s
 /// identical "stateless connector" shape, hence no `&RemoteState` argument
 /// here either.
-pub async fn remote_operator_wg_config() -> Result<RemoteWgOperatorConfigDto, RemoteError> {
-    wg_operator::operator_wg_config()
+pub async fn remote_operator_wg_config(
+    bus: Option<&crate::money::state::BusHandle>,
+) -> Result<RemoteWgOperatorConfigDto, RemoteError> {
+    wg_operator::operator_wg_config(bus)
         .await
         .map_err(RemoteError::from)
 }
@@ -847,8 +849,9 @@ pub async fn remote_operator_wg_peers() -> Result<wg_operator::RemoteWgPeersDto,
 /// out is permanent access to the control plane.
 pub async fn remote_operator_wg_revoke(
     public_key: String,
+    bus: Option<&crate::money::state::BusHandle>,
 ) -> Result<wg_operator::RemoteWgRevokeDto, RemoteError> {
-    wg_operator::operator_wg_revoke(public_key)
+    wg_operator::operator_wg_revoke(public_key, bus)
         .await
         .map_err(RemoteError::from)
 }
