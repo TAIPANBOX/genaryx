@@ -299,6 +299,22 @@ export function RemoteWgOperatorCard() {
                 border: "1px solid var(--line-2)",
                 background: "#fff",
                 padding: 6,
+                // The SVG carries its own intrinsic size, which is larger than
+                // this box, so without this it renders at full size and paints
+                // over the details beside it rather than scaling down.
+                display: "grid",
+                placeItems: "center",
+                overflow: "hidden",
+              }}
+              // eslint-disable-next-line react/no-danger
+              ref={(el) => {
+                const svg = el?.querySelector("svg");
+                if (svg) {
+                  svg.setAttribute("width", "100%");
+                  svg.setAttribute("height", "100%");
+                  svg.style.maxWidth = "100%";
+                  svg.style.maxHeight = "100%";
+                }
               }}
               dangerouslySetInnerHTML={{ __html: result.qr_svg }}
             />

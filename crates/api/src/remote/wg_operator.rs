@@ -74,8 +74,25 @@ use std::process::Command;
 /// through the tunnel, and the address the console answers on from inside it.
 const SERVER_TUNNEL_IP: &str = "10.9.0.1";
 
-/// Where the console itself listens.
+/// Where the console itself listens, behind the tunnel's TLS terminator.
 const CONSOLE_PORT: u16 = 7420;
+
+/// The URL an operator should open once their tunnel is up.
+///
+/// Read from `GENARYX_WEB_ORIGIN` rather than assembled from the tunnel IP,
+/// because those two answers diverged the moment the console moved behind TLS:
+/// the plain `http://10.9.0.1:7420` this used to hand out is now a closed port,
+/// so the card was telling operators to open an address that refuses
+/// connections. The origin is the same value WebAuthn is bound to, which is
+/// exactly the address that has to work.
+fn console_tunnel_url() -> String {
+    match std::env::var("GENARYX_WEB_ORIGIN") {
+        Ok(origin) if !origin.trim().is_empty() => origin.trim().to_string(),
+        // No TLS configured: the console is served plainly on the tunnel
+        // address, which is what the forwarder points at in that case.
+        _ => format!("http://{SERVER_TUNNEL_IP}:{CONSOLE_PORT}"),
+    }
+}
 
 /// `GENARYX_WG_IFACE` override, `wg-op` otherwise. The same name `install.sh`
 /// brings the sidecar up with.
@@ -489,7 +506,7 @@ fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
         endpoint,
         server_public_key,
         peer_public_key: client_public_b64,
-        console_tunnel_url: format!("http://{SERVER_TUNNEL_IP}:{CONSOLE_PORT}"),
+        console_tunnel_url: console_tunnel_url(),
     })
 }
 
