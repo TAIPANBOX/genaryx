@@ -53,6 +53,17 @@
 //! allowed-ips <ip>/32`, [`add_peer`]) takes the public key as a plain
 //! argument, which needs no file either.
 //!
+//! ## Where this cannot work, and says so
+//!
+//! Every shell below targets the HOST's kernel interface, so a console running
+//! in a container or a Kubernetes pod has neither the binaries nor the network
+//! namespace to do any of it. [`containerised`] detects that BEFORE shelling
+//! anything and returns [`WgOperatorError::ServerNotConfigured`] with the
+//! reason and the alternative, because the raw failure
+//! (`wg: command not found`) reads like a missing package and sends the
+//! operator to install one that would change nothing. A cluster-native entry
+//! point for the console is a separate component, not this command.
+//!
 //! ## Side-effect honesty
 //!
 //! [`operator_wg_config`] really adds a peer to the live interface - it is
@@ -377,8 +388,53 @@ fn render_conf(
 /// [`operator_wg_config`]'s `spawn_blocking`): read the live server
 /// identity, mint a client keypair, allocate its tunnel address, add it as a
 /// live peer, persist best-effort, then render the `.conf` and its QR.
+/// Whether this console is running inside a container rather than on the box
+/// whose WireGuard server it would mint a peer against.
+///
+/// This matters because the failure is otherwise unreadable. Everything below
+/// shells `wg`/`wg-quick` against the HOST's kernel interface, and a container
+/// has neither those binaries nor the host's network namespace, so the honest
+/// answer ("this console cannot reach a WireGuard server from in here") would
+/// otherwise reach the operator as `wg: command not found`, which reads like a
+/// missing package on the box and sends them to install one that would change
+/// nothing.
+///
+/// `KUBERNETES_SERVICE_HOST` is set by the kubelet in every pod, and
+/// `/.dockerenv`/`/run/.containerenv` cover a plain container runtime. None of
+/// the three can be true on a box running WireGuard directly, which is the
+/// only place this feature works.
+fn containerised() -> Option<&'static str> {
+    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+        return Some("a Kubernetes pod");
+    }
+    if std::path::Path::new("/.dockerenv").exists()
+        || std::path::Path::new("/run/.containerenv").exists()
+    {
+        return Some("a container");
+    }
+    None
+}
+
 fn build_config_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
     let iface = iface_name();
+
+    // Refuse early and explain, rather than shelling a binary that is not
+    // there. Reported as ServerNotConfigured because that is exactly what it
+    // is from the operator's side: no WireGuard server this console can reach.
+    if let Some(where_) = containerised() {
+        return Err(WgOperatorError::ServerNotConfigured {
+            iface: iface.clone(),
+            message: format!(
+                "this console is running in {where_}, so it cannot mint a WireGuard peer: \
+                 the server it would add you to is the HOST's kernel interface, which a \
+                 container has no access to. Reach the console over a tunnel you already \
+                 have to that host (for a cluster, an ssh port-forward onto the node \
+                 running this pod), and enrol a passkey once you are in. A cluster-native \
+                 entry point is a separate component, not this command."
+            ),
+        });
+    }
+
     let (server_public_key, listen_port) = read_server_identity(&iface)?;
 
     let client_ip = next_client_ip();
@@ -422,6 +478,28 @@ pub async fn operator_wg_config() -> Result<RemoteWgOperatorConfigDto, WgOperato
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pod_is_told_why_rather_than_that_wg_is_missing() {
+        // The whole point of the preflight: an operator in a cluster must not
+        // be sent to install a package that would change nothing. This asserts
+        // the reason travels, not just that it fails.
+        //
+        // SAFETY: single-threaded test, and the variable is removed again
+        // before it can leak into a sibling test.
+        unsafe { std::env::set_var("KUBERNETES_SERVICE_HOST", "10.43.0.1") };
+        let out = build_config_blocking();
+        unsafe { std::env::remove_var("KUBERNETES_SERVICE_HOST") };
+
+        match out {
+            Err(WgOperatorError::ServerNotConfigured { message, .. }) => {
+                assert!(message.contains("Kubernetes pod"), "names where it is: {message}");
+                assert!(message.contains("tunnel"), "says what to do instead: {message}");
+                assert!(!message.contains("command not found"), "not the raw shell error");
+            }
+            other => panic!("expected an explained ServerNotConfigured, got {other:?}"),
+        }
+    }
 
     #[test]
     fn render_conf_matches_the_documented_shape() {
