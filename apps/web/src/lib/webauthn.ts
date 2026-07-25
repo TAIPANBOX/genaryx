@@ -415,10 +415,13 @@ async function runCeremonyAndDispatch<T>(
  *   tab), run the ceremony once and retry ONCE - never a loop, matching the
  *   server's own challenge being one-shot.
  *
- * Callers never see `invokeBackend`'s plain command surface for these three
- * commands - `lib/money.ts`'s `killRun`/`setBudget` and `lib/policy.ts`'s
- * `decideApproval` call this instead, so every existing caller of those
- * wrappers inherits the ceremony with no panel-side change.
+ * Callers never see `invokeBackend`'s plain command surface for these
+ * commands - `lib/money.ts`'s `killRun`/`setBudget`, `lib/policy.ts`'s
+ * `decideApproval` and `lib/remote.ts`'s `issueOperatorWgConfig`/
+ * `revokeOperatorWgPeer` call this instead, so every existing caller of those
+ * wrappers inherits the ceremony with no panel-side change. The two WireGuard
+ * ones are here for the same reason a kill is: issuing a peer mints a road
+ * into the control plane and revoking one cuts an operator off mid-incident.
  */
 export async function invokeWithCeremony<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const effectiveArgs = args ?? {};

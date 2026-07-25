@@ -1,4 +1,5 @@
 import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRole } from "./transport";
+import { invokeWithCeremony } from "./webauthn";
 import type {
   CloudListOptions,
   CloudProviderId,
@@ -9,6 +10,8 @@ import type {
   RemoteFile,
   RemoteStatus,
   RemoteWgOperatorConfig,
+  RemoteWgPeers,
+  RemoteWgRevoke,
 } from "../remoteTypes";
 
 /** Thrown by every mutator below when there is no backend to talk to -
@@ -132,7 +135,21 @@ export const stopRemoteTail = (): Promise<RemoteStatus> => call<RemoteStatus>("r
  * `genaryx_api::remote::wg_operator`'s module doc). Side-effect-honest: this
  * really adds a peer to the live interface, it is not a preview. */
 export const issueOperatorWgConfig = (): Promise<RemoteWgOperatorConfig> =>
-  call<RemoteWgOperatorConfig>("remote_operator_wg_config");
+  invokeWithCeremony<RemoteWgOperatorConfig>("remote_operator_wg_config");
+
+/** Every device currently authorized on this box's tunnel. A read, so it needs
+ * no ceremony and `viewer` may run it: seeing who holds a way in without being
+ * able to change it is exactly what a reviewer needs. */
+export const listOperatorWgPeers = (): Promise<RemoteWgPeers> =>
+  call<RemoteWgPeers>("remote_operator_wg_peers");
+
+/** Revoke one device. The key stops completing a handshake as soon as the
+ * daemon applies it, so this cuts an operator's access mid-session if that is
+ * what was asked for - which is why it carries the same passkey ceremony a
+ * kill does. Succeeds even when the peer was already gone (`was_present`
+ * says which happened), so a retry after a dropped response is safe. */
+export const revokeOperatorWgPeer = (publicKey: string): Promise<RemoteWgRevoke> =>
+  invokeWithCeremony<RemoteWgRevoke>("remote_operator_wg_revoke", { public_key: publicKey });
 
 /** Trigger a browser download of an issued operator WireGuard client `.conf`
  * via a Blob + a temporary `<a download>` - mirrors `lib/evidence.ts`'s

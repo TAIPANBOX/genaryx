@@ -2147,18 +2147,87 @@ function mockHetznerList() {
 // available" placeholder instead.
 function mockOperatorWgConfig() {
   const clientPriv = "eA3mK9pLwQ2vXsZ0tYbNcRf8dGjHu5MoPq1Wn6CiT2E=";
-  const clientIp = "10.9.0.2";
+  // The lowest free address, the same rule the real allocator follows, so
+  // issuing twice in the preview does not hand out one address twice.
+  const taken = new Set(
+    mockWgPeers.map((p) => Number((p.allowed_ips[0] ?? "").split("/")[0].split(".")[3])),
+  );
+  let host = 2;
+  while (taken.has(host) && host < 255) host += 1;
+  const clientIp = `10.9.0.${host}`;
   const serverPub = "k7QmZ4RfWp2NxTqYs81cVbA0dEoJnHu5MdMv9wXpUYo=";
   const endpoint = "198.51.100.42:51820";
+  // A distinct key per issue, and the peer really joins the list: an "Issue"
+  // that leaves the device list unchanged would be the preview telling a lie
+  // about the one thing this panel exists to show.
+  const peerPublicKey = `Qp7VnK2mX9dLc4RtYw0sZbF6gJhU3oNeM1iA8u${String(host).padStart(2, "0")}=`;
+  mockWgPeers = [
+    ...mockWgPeers,
+    {
+      public_key: peerPublicKey,
+      allowed_ips: [`${clientIp}/32`],
+      last_handshake_unix: null as number | null,
+      endpoint: null as string | null,
+      rx_bytes: 0,
+      tx_bytes: 0,
+    },
+  ];
   return {
     conf: `[Interface]\nPrivateKey = ${clientPriv}\nAddress = ${clientIp}/32\n\n[Peer]\nPublicKey = ${serverPub}\nEndpoint = ${endpoint}\nAllowedIPs = 10.9.0.1/32\nPersistentKeepalive = 25\n`,
     qr_svg: "",
     client_ip: clientIp,
     endpoint,
     server_public_key: serverPub,
-    peer_public_key: "Qp7VnK2mX9dLc4RtYw0sZbF6gJhU3oNeM1iA8uEjT5c=",
+    peer_public_key: peerPublicKey,
     console_tunnel_url: "http://10.9.0.1:7420",
   };
+}
+
+// The devices this preview pretends are authorized. Mutable so Revoke visibly
+// removes a row: a revoke button that leaves the list unchanged reads as
+// broken, and the point of showing this panel at all is that revocation is a
+// thing you can see happen.
+let mockWgPeers = [
+  {
+    public_key: "h+tkRs4b2x3oHJU36eBBSJRNKXJBwMcTHBZcPdHNuXw=",
+    allowed_ips: ["10.9.0.2/32"],
+    // Two deliberately different states: one device that has connected and one
+    // that never has. They look identical unless the UI distinguishes them,
+    // and "issued but never used" is the row an operator should look at twice.
+    //
+    // Relative to now, not a fixed instant: a hardcoded timestamp reads as
+    // "last seen 181d ago" in a demo meant to look live, which is
+    // indistinguishable from stale data.
+    last_handshake_unix: Math.floor(Date.now() / 1000) - 12 * 60,
+    endpoint: "203.0.113.7:54321",
+    rx_bytes: 148_992,
+    tx_bytes: 96_400,
+  },
+  {
+    public_key: "POkY1/qUIGYK9twxY1oJzR1CrLrl6f5cCX29dwKZKW8=",
+    allowed_ips: ["10.9.0.3/32"],
+    last_handshake_unix: null as number | null,
+    endpoint: null as string | null,
+    rx_bytes: 0,
+    tx_bytes: 0,
+  },
+];
+
+function mockOperatorWgPeers() {
+  return {
+    iface: "wg-op",
+    server_public_key: "6Qi/70+2yBMhGBHlbPb2+R+czYHSbXBfFmhmCfnC92E=",
+    listen_port: 51820,
+    backend: "uapi",
+    peers: mockWgPeers,
+  };
+}
+
+function mockOperatorWgRevoke(args: Record<string, unknown> | undefined) {
+  const key = typeof args?.public_key === "string" ? args.public_key : "";
+  const wasPresent = mockWgPeers.some((p) => p.public_key === key);
+  mockWgPeers = mockWgPeers.filter((p) => p.public_key !== key);
+  return { public_key: key, was_present: wasPresent, remaining_peers: mockWgPeers.length };
 }
 // Example CloudServer rows for the AWS/GCP/Azure/IBM Cloud live-listing
 // (preview only; the real connector shells out to the operator's own
@@ -2479,6 +2548,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "remote_hetzner_list": return r(mockHetznerList());
     case "remote_cloud_list": return r(mockCloudList(String(args?.provider ?? "aws")));
     case "remote_operator_wg_config": return r(mockOperatorWgConfig());
+    case "remote_operator_wg_peers": return r(mockOperatorWgPeers());
+    case "remote_operator_wg_revoke": return r(mockOperatorWgRevoke(args));
     case "remote_set_environment": {
       const req = (args?.request ?? null) as Record<string, unknown> | null;
       if (req) remoteEnv = { ...req };

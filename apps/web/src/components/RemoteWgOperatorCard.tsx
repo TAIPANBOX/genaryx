@@ -1,9 +1,15 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { PopoverHeader } from "../lib/popover";
-import { describeRemoteError, downloadWgOperatorConfig, issueOperatorWgConfig } from "../lib/remote";
+import {
+  describeRemoteError,
+  downloadWgOperatorConfig,
+  issueOperatorWgConfig,
+  listOperatorWgPeers,
+  revokeOperatorWgPeer,
+} from "../lib/remote";
 import { useSession } from "../lib/useSession";
-import type { RemoteError, RemoteWgOperatorConfig } from "../remoteTypes";
+import type { RemoteError, RemoteWgOperatorConfig, RemoteWgPeer } from "../remoteTypes";
 
 /** A filesystem-safe slug for the downloaded `.conf`'s filename, from the
  * signed-in operator's own session username - falls back to "operator" when
@@ -16,6 +22,183 @@ function safeFileSlug(name: string | null | undefined): string {
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug.length > 0 ? slug : "operator";
+}
+
+/** How long ago this device last completed a handshake, or the honest "never".
+ *
+ * A peer that was issued and never used looks exactly like one that was issued
+ * to the wrong person, so the two are never collapsed into the same wording. */
+function describeHandshake(unix: number | null): string {
+  if (unix === null) return "never connected";
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - unix);
+  if (seconds < 90) return "connected just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `last seen ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `last seen ${hours}h ago`;
+  return `last seen ${Math.floor(hours / 24)}d ago`;
+}
+
+/** Bytes as something readable at a glance; exact counts matter to nobody
+ * looking at a device list. */
+function describeBytes(rx: number, tx: number): string {
+  const total = rx + tx;
+  if (total === 0) return "no traffic";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = total;
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) {
+    n /= 1024;
+    u += 1;
+  }
+  return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[u]}`;
+}
+
+/**
+ * Every device currently holding a way into this box, with a revoke beside
+ * each one.
+ *
+ * This exists because issuing without revoking is not a feature, it is a leak:
+ * the first `.conf` handed out would otherwise be permanent access to the
+ * control plane, with no way to see it and no way to take it back.
+ *
+ * Revoking is deliberately two clicks. The passkey ceremony already confirms a
+ * human is present, but it cannot know that the row under the cursor is the
+ * operator's OWN device: a single misclick would end their session's way in
+ * and leave them outside a console that is only reachable through it.
+ */
+function WgPeerList({ justIssued }: { justIssued: string | null }) {
+  const session = useSession();
+  const [peers, setPeers] = useState<RemoteWgPeer[] | null>(null);
+  const [error, setError] = useState<RemoteError | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await listOperatorWgPeers();
+      setPeers(result.peers);
+      setError(null);
+    } catch (err) {
+      setError(err as RemoteError);
+    }
+  }, []);
+
+  // Re-read whenever a device is issued, so the row for the config still on
+  // screen is actually there rather than appearing only after a manual reload.
+  useEffect(() => {
+    void refresh();
+  }, [refresh, justIssued]);
+
+  const onRevoke = useCallback(
+    async (publicKey: string) => {
+      if (confirming !== publicKey) {
+        setConfirming(publicKey);
+        return;
+      }
+      setConfirming(null);
+      setRevoking(publicKey);
+      setError(null);
+      try {
+        await revokeOperatorWgPeer(publicKey);
+        await refresh();
+      } catch (err) {
+        setError(err as RemoteError);
+      } finally {
+        setRevoking(null);
+      }
+    },
+    [confirming, refresh],
+  );
+
+  if (error && peers === null) {
+    return (
+      <div className="panel px-3 py-2 mono text-[11.5px]" style={{ background: "var(--panel)", color: "var(--dim)" }}>
+        {describeRemoteError(error, session?.role)}
+      </div>
+    );
+  }
+  if (peers === null) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5 pt-1">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+          devices with a way in
+        </span>
+        <span className="text-[10px]" style={{ color: "var(--faint)" }}>
+          {peers.length === 0 ? "none" : peers.length}
+        </span>
+      </div>
+
+      {error && (
+        <div className="mono text-[10.5px]" style={{ color: "var(--sev-high)" }}>
+          {describeRemoteError(error, session?.role)}
+        </div>
+      )}
+
+      {peers.length === 0 ? (
+        <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+          Nothing can reach this box over the tunnel yet.
+        </span>
+      ) : (
+        peers.map((peer) => {
+          const isJustIssued = justIssued !== null && peer.public_key === justIssued;
+          const isConfirming = confirming === peer.public_key;
+          const isRevoking = revoking === peer.public_key;
+          return (
+            <div
+              key={peer.public_key}
+              className="panel px-3 py-2 flex items-center gap-3 flex-wrap"
+              style={{ background: "var(--panel)" }}
+            >
+              <code className="mono text-[11.5px]" style={{ color: "var(--fg)", minWidth: 92 }}>
+                {peer.allowed_ips[0] ?? "no address"}
+              </code>
+              <span className="text-[10.5px]" style={{ color: "var(--dim)", minWidth: 130 }}>
+                {describeHandshake(peer.last_handshake_unix)}
+              </span>
+              <span className="mono text-[10.5px]" style={{ color: "var(--faint)", minWidth: 70 }}>
+                {describeBytes(peer.rx_bytes, peer.tx_bytes)}
+              </span>
+              {isJustIssued && (
+                <span className="chip" style={cssVar("dot", "var(--sev-low)")}>
+                  <span className="dot" aria-hidden="true" />
+                  just issued
+                </span>
+              )}
+              {/* The key itself, truncated: it is the only thing that
+                  distinguishes two devices on the same address after a
+                  re-issue, so it has to be visible somewhere. */}
+              <code className="mono text-[10px]" style={{ color: "var(--faint)" }} title={peer.public_key}>
+                {peer.public_key.slice(0, 12)}...
+              </code>
+              <button
+                type="button"
+                className="icon-btn"
+                style={{
+                  width: "auto",
+                  padding: "0 10px",
+                  fontSize: 10.5,
+                  marginLeft: "auto",
+                  color: isConfirming ? "var(--sev-high)" : undefined,
+                }}
+                onClick={() => void onRevoke(peer.public_key)}
+                disabled={isRevoking}
+                title={
+                  isConfirming
+                    ? "This cuts the device off immediately. Click again to confirm."
+                    : "Revoke this device's access to the tunnel"
+                }
+              >
+                {isRevoking ? "Revoking..." : isConfirming ? "Confirm revoke" : "Revoke"}
+              </button>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
 }
 
 /**
@@ -162,6 +345,8 @@ export function RemoteWgOperatorCard() {
           </div>
         </div>
       )}
+
+      <WgPeerList justIssued={result?.peer_public_key ?? null} />
     </div>
   );
 }
