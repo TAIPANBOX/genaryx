@@ -244,31 +244,37 @@ pub fn parse_get(response: &str) -> Result<InterfaceState, WgUapiError> {
                 }
             }
             "private_key" => {
-                // The daemon will hand out the interface's PRIVATE key to
-                // anyone who can read the socket. Deliberately dropped here so
-                // it cannot reach a DTO, a log line or a panic message by
-                // accident: nothing this module offers ever needs it.
+                // The daemon reports the interface's PRIVATE key and never its
+                // public one, so the public key has to be derived here or the
+                // server identity comes out empty and every issued config
+                // names no peer to connect to.
+                //
+                // The private half is derived from and immediately dropped: it
+                // is never stored on the struct, so it cannot reach a DTO, a
+                // log line or a panic message by accident. The public half is
+                // not a secret and is exactly what a client config needs.
+                if state.public_key_hex.is_none() {
+                    if let Ok(bytes) = decode_hex32(value) {
+                        state.public_key_hex = Some(crate::wg::WgKeypair::from_private(bytes).public_hex());
+                    }
+                }
             }
+            // Every `public_key` starts a peer, with no special case for the
+            // first one. The interface's own identity arrives as `private_key`
+            // and is derived above; treating the first peer as the interface
+            // would silently drop a real device from the list.
             "public_key" => {
                 if let Some(done) = current.take() {
                     state.peers.push(done);
                 }
-                if state.public_key_hex.is_none() && state.peers.is_empty() {
-                    // Ambiguity resolved by position: on a `get`, the daemon
-                    // emits the interface's own public_key first, then one per
-                    // peer. Only the first can be the interface's, and only
-                    // when no peer has started yet.
-                    state.public_key_hex = Some(value.to_string());
-                } else {
-                    current = Some(PeerState {
-                        public_key_hex: value.to_string(),
-                        allowed_ips: Vec::new(),
-                        last_handshake_unix: None,
-                        endpoint: None,
-                        rx_bytes: 0,
-                        tx_bytes: 0,
-                    });
-                }
+                current = Some(PeerState {
+                    public_key_hex: value.to_string(),
+                    allowed_ips: Vec::new(),
+                    last_handshake_unix: None,
+                    endpoint: None,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                });
             }
             "listen_port" => state.listen_port = value.parse().ok(),
             "allowed_ip" => {
@@ -450,7 +456,10 @@ impl UapiSocket {
 mod tests {
     use super::*;
 
-    const SERVER_PUB: &str = "e8f2c1a0b3d4958677a1b2c3d4e5f60718293a4b5c6d7e8f9012345678abcdef";
+    // The real public key of the fixture's private key below, taken from
+    // `wg pubkey`. A made-up constant would let a broken derivation pass.
+    const SERVER_PRIV: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const SERVER_PUB: &str = "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13";
     const PEER_A: &str = "aa11bb22cc33dd44ee55ff6677889900112233445566778899aabbccddeeff00";
     const PEER_B: &str = "bb11cc22dd33ee44ff5500667788990011223344556677889900aabbccddeeff";
 
@@ -458,8 +467,7 @@ mod tests {
         // Shaped exactly as wireguard-go answers: interface keys first, then
         // one section per peer, errno last.
         format!(
-            "private_key=1111111111111111111111111111111111111111111111111111111111111111\n\
-             public_key={SERVER_PUB}\n\
+            "private_key={SERVER_PRIV}\n\
              listen_port=51820\n\
              public_key={PEER_A}\n\
              endpoint=203.0.113.7:54321\n\
@@ -477,9 +485,17 @@ mod tests {
     }
 
     #[test]
-    fn the_first_public_key_is_the_interface_not_a_peer() {
+    fn the_server_identity_is_derived_from_the_private_key() {
+        // wireguard-go reports the interface's PRIVATE key and never its
+        // public one, so an implementation that waits for `public_key=` at the
+        // top reports no server identity at all and issues configs naming
+        // nobody. This is what that regression would look like.
         let s = parse_get(&get_response()).unwrap();
-        assert_eq!(s.public_key_hex.as_deref(), Some(SERVER_PUB));
+        assert_eq!(
+            s.public_key_hex.as_deref(),
+            Some(SERVER_PUB),
+            "the interface public key must be derived from its private key"
+        );
         assert_eq!(s.listen_port, Some(51820));
         assert_eq!(s.peers.len(), 2, "the interface key must not become a peer");
     }
@@ -511,8 +527,13 @@ mod tests {
         let s = parse_get(&raw).unwrap();
         let rendered = format!("{s:?}");
         assert!(
-            !rendered.contains("1111111111111111"),
+            !rendered.contains(SERVER_PRIV),
             "the interface private key must not survive into any struct"
+        );
+        assert_eq!(
+            s.public_key_hex.as_deref(),
+            Some(SERVER_PUB),
+            "the public half is derived and kept; only the private half is dropped"
         );
     }
 
