@@ -109,7 +109,7 @@ fn kill_and_budget_records_both_conform_and_carry_operator() {
     let operator = "user://acme.example/alice";
 
     for rec in [kill_record(operator), budget_record(operator)] {
-        let line = console_command_line("acme.example", "console-host", &rec, ts)
+        let line = console_command_line("acme.example", "console-host", &rec, ts, None)
             .expect("console_command_line");
 
         let report = conformer.check_line(&line);
@@ -232,7 +232,7 @@ fn operator_that_does_not_match_principal_pattern_is_omitted() {
     // No `agent://` or `user://` prefix: must be left out of `on_behalf_of`
     // rather than emitted and failing conformance.
     let rec = kill_record("alice");
-    let line = console_command_line("acme.example", "host", &rec, "2026-07-16T12:00:00.000Z")
+    let line = console_command_line("acme.example", "host", &rec, "2026-07-16T12:00:00.000Z", None)
         .expect("console_command_line");
 
     let value: serde_json::Value = serde_json::from_str(&line).expect("parse line");
@@ -248,4 +248,100 @@ fn operator_that_does_not_match_principal_pattern_is_omitted() {
         "line without on_behalf_of must still conform: {:?}",
         report.errors
     );
+}
+
+// --- SPEC 6.5 chain ---------------------------------------------------------
+
+/// A console_command must join the chain the products write into the same
+/// file, not sit beside it unlinked. That gap mattered more than any other:
+/// kill, budget and access-granting actions are precisely the events an
+/// auditor needs to trust, and an unchained line can be removed or altered
+/// without breaking the chain around it.
+#[test]
+fn a_console_command_chains_onto_whatever_was_written_before_it() {
+    let dir = std::env::temp_dir().join(format!(
+        "genaryx-chain-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let events = dir.join("tokenfuse.ndjson");
+
+    // A product's event, exactly as one would already be sitting in the file.
+    let existing = r#"{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-16T11:59:00.000Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/finance/bot"}"#;
+    std::fs::write(&events, format!("{existing}\n")).unwrap();
+
+    let store = genaryx_core::store::Store::open(&dir.join("console.sqlite")).unwrap();
+    let rec = genaryx_core::command::CommandRecord {
+        operator: "user://acme.example/alice".to_string(),
+        env: "local".to_string(),
+        action: "console.issue_wg_peer".to_string(),
+        target: "peerkey".to_string(),
+        params: serde_json::json!({}),
+        decision: "allow".to_string(),
+        sig_alg: "webauthn-es256".to_string(),
+        sig_fpr: "cred-id".to_string(),
+        http_status: 200,
+        verify_result: "issued:10.9.0.2".to_string(),
+    };
+    genaryx_core::command::record(&store, &events, "acme.example", "host", &rec).unwrap();
+
+    let text = std::fs::read_to_string(&events).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    let expected = genaryx_core::command::chain_hash_of_line(existing).unwrap();
+    assert_eq!(
+        written.get("prev_hash").and_then(|v| v.as_str()),
+        Some(expected.as_str()),
+        "the console line must carry the hash of the event before it"
+    );
+
+    // And the hash itself must be shaped as the spec requires, or the Go
+    // conformance checker rejects the whole file.
+    let hex = expected.strip_prefix("sha256:").expect("sha256: prefix");
+    assert_eq!(hex.len(), 64, "a prev_hash is 64 hex characters, never 63");
+    assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The hash is taken over the event WITHOUT its own prev_hash (SPEC 6.5), so
+/// two lines that differ only by their chain link hash identically. Getting
+/// this wrong makes every chain self-inconsistent from the second event on.
+#[test]
+fn the_chain_hash_ignores_the_events_own_prev_hash() {
+    let bare = r#"{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-16T12:00:00.000Z","source":"console","type":"console_command","agent_id":"agent://acme.example/console/host"}"#;
+    let linked = r#"{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-16T12:00:00.000Z","source":"console","type":"console_command","agent_id":"agent://acme.example/console/host","prev_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}"#;
+    assert_eq!(
+        genaryx_core::command::chain_hash_of_line(bare),
+        genaryx_core::command::chain_hash_of_line(linked),
+    );
+}
+
+/// A head event carries no prev_hash at all - not an empty string, not null.
+#[test]
+fn the_first_event_in_an_empty_file_carries_no_link() {
+    let line = genaryx_core::command::console_command_line(
+        "acme.example",
+        "host",
+        &genaryx_core::command::CommandRecord {
+            operator: "user://acme.example/alice".to_string(),
+            env: "local".to_string(),
+            action: "console.kill_run".to_string(),
+            target: "run-1".to_string(),
+            params: serde_json::json!({}),
+            decision: "allow".to_string(),
+            sig_alg: "es256".to_string(),
+            sig_fpr: "fpr".to_string(),
+            http_status: 200,
+            verify_result: "killed:true".to_string(),
+        },
+        "2026-07-16T12:00:00.000Z",
+        None,
+    )
+    .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert!(v.get("prev_hash").is_none(), "a head event must omit the field entirely");
 }

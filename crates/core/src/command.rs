@@ -93,7 +93,13 @@ pub fn record(
 
     store.insert_command(rec, &ts)?;
 
-    let line = console_command_line(org_domain, host, rec, &ts)?;
+    // Join the chain the products already write into this file, rather than
+    // appending an unlinked line beside it. An unchained console_command is
+    // the one event class an auditor most needs to trust, and it is exactly
+    // the class that could previously be removed or altered without breaking
+    // the chain around it.
+    let prev_hash = last_line_of(console_events_path).and_then(|l| chain_hash_of_line(&l));
+    let line = console_command_line(org_domain, host, rec, &ts, prev_hash.as_deref())?;
     append_line(console_events_path, &line)
 }
 
@@ -114,6 +120,7 @@ pub fn console_command_line(
     host: &str,
     rec: &CommandRecord,
     ts: &str,
+    prev_hash: Option<&str>,
 ) -> Result<String> {
     let agent_id = format!("agent://{org_domain}/console/{}", sanitize_host(host));
 
@@ -146,8 +153,57 @@ pub fn console_command_line(
         );
     }
     obj.insert("data".to_string(), data);
+    // Last, and only when there is one: a head event carries no `prev_hash`
+    // at all rather than an empty or null field, which is what the schema and
+    // the Go writer both do.
+    if let Some(prev) = prev_hash {
+        obj.insert("prev_hash".to_string(), Value::String(prev.to_string()));
+    }
 
     Ok(serde_json::to_string(&Value::Object(obj))?)
+}
+
+/// The SPEC 6.5 chain hash of one serialized event line: the value the NEXT
+/// event carries as its `prev_hash`.
+///
+/// Byte-identical to `agent-stack-go`'s `event.ChainHash`, because a chain the
+/// products write and the console does not join is not one chain: the
+/// conformance checker verifies a single sequence per file, so a console line
+/// computed differently would break the very chain it is meant to extend.
+/// `prev_hash` is removed before hashing (SPEC 6.5 defines the hash over the
+/// event WITHOUT it), keys are emitted in sorted order, and there is no
+/// whitespace.
+///
+/// The sort comes from `serde_json`'s `Map` being a `BTreeMap` in this build
+/// (no `preserve_order` feature), which orders by UTF-8 bytes. That equals
+/// RFC 8785's UTF-16 ordering for every key in this envelope, all of which are
+/// ASCII - and the envelope's key set is fixed by the spec, so this cannot
+/// drift into non-ASCII without a spec change.
+pub fn chain_hash_of_line(line: &str) -> Option<String> {
+    let mut value: Value = serde_json::from_str(line).ok()?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("prev_hash");
+    }
+    let canonical = serde_json::to_vec(&value).ok()?;
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(&canonical);
+    Some(format!("sha256:{digest:x}"))
+}
+
+/// The last non-empty line of `path`, or `None` when the file is absent or
+/// empty (a head event carries no `prev_hash`, which is what an empty file
+/// correctly produces).
+///
+/// Reads the whole file rather than seeking its tail: this runs once per
+/// privileged console action, not per agent event, and a correct tail read
+/// across a partially-written last line is more machinery than that rate
+/// justifies.
+fn last_line_of(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(str::to_string)
 }
 
 /// Whether `s` matches the envelope's `on_behalf_of` item pattern
