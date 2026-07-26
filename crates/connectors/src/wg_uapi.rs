@@ -528,9 +528,7 @@ impl UapiSocket {
             Endpoint::Tls(t) => t
                 .addr
                 .to_socket_addrs()
-                .ok()
-                .and_then(|mut a| a.next())
-                .map(|a| TcpStream::connect_timeout(&a, PROBE_TIMEOUT).is_ok())
+                .map(|addrs| addrs.into_iter().any(|a| TcpStream::connect_timeout(&a, PROBE_TIMEOUT).is_ok()))
                 .unwrap_or(false),
         }
     }
@@ -619,14 +617,35 @@ impl UapiSocket {
         let conn = rustls::ClientConnection::new(Arc::new(cfg), server_name)
             .map_err(|e| fail(format!("TLS setup failed: {e}")))?;
 
-        let addr = t
+        // EVERY resolved address, not just the first. A name that resolves to
+        // both families hands back one order on one machine and the other
+        // order elsewhere, so taking `.next()` works until the day the far end
+        // listens on the other family and then fails as "connection refused"
+        // against an address that was never the one serving. Found by a test
+        // where `localhost` resolved to ::1 first and the listener was on
+        // 127.0.0.1.
+        let addrs: Vec<_> = t
             .addr
             .to_socket_addrs()
             .map_err(|e| fail(format!("cannot resolve: {e}")))?
-            .next()
-            .ok_or_else(|| fail("resolved to no address".into()))?;
-        let tcp = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
-            .map_err(|e| fail(format!("cannot connect: {e}")))?;
+            .collect();
+        if addrs.is_empty() {
+            return Err(fail("resolved to no address".into()));
+        }
+        let mut tcp = None;
+        let mut last = String::new();
+        for a in &addrs {
+            match TcpStream::connect_timeout(a, IO_TIMEOUT) {
+                Ok(c) => {
+                    tcp = Some(c);
+                    break;
+                }
+                Err(e) => last = format!("{a}: {e}"),
+            }
+        }
+        let tcp = tcp.ok_or_else(|| {
+            fail(format!("cannot connect to any of {} address(es), last was {last}", addrs.len()))
+        })?;
         tcp.set_read_timeout(Some(IO_TIMEOUT))
             .and_then(|_| tcp.set_write_timeout(Some(IO_TIMEOUT)))
             .map_err(|e| fail(format!("cannot set timeouts: {e}")))?;
