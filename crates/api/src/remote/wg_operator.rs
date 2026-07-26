@@ -211,7 +211,7 @@ impl From<WgUapiError> for WgOperatorError {
                     "the WireGuard tunnel is not running: no UAPI socket at {}. \
                      On a single-box install this is the `wg` service in compose.yaml; \
                      start it with `docker compose up -d wg`.",
-                    p.display()
+                    p
                 ),
             },
             other => exec_err(other.to_string()),
@@ -274,7 +274,7 @@ fn resolve_backend() -> Result<PeerBackend, WgOperatorError> {
              socket at {} (the `wg` sidecar service, which is how {where_} is meant to \
              reach one) and for a `wg` binary on PATH (a kernel interface on this host). \
              Neither answered. On a single-box install: `docker compose up -d wg`.",
-            sock.path().display()
+            sock.describe()
         ),
     ))
 }

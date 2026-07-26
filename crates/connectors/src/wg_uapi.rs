@@ -56,15 +56,15 @@ pub enum WgUapiError {
     /// No socket at the expected path: the interface does not exist, or the
     /// sidecar holding it is not running. Distinguished from a connect failure
     /// because the remedies differ (start the tunnel vs fix permissions).
-    #[error("no wireguard UAPI socket at {0}: the interface is not up")]
-    NoSocket(PathBuf),
+    #[error("no wireguard UAPI at {0}: the interface is not up")]
+    NoSocket(String),
 
     /// The socket exists but will not talk: almost always filesystem
     /// permissions on a shared volume, which is worth naming explicitly
     /// because the fix is a mount option rather than anything in this code.
-    #[error("wireguard UAPI socket at {path}: {source}")]
+    #[error("wireguard UAPI at {endpoint}: {source}")]
     Io {
-        path: PathBuf,
+        endpoint: String,
         #[source]
         source: std::io::Error,
     },
@@ -259,6 +259,23 @@ pub fn parse_get(response: &str) -> Result<InterfaceState, WgUapiError> {
                     }
                 }
             }
+            // What a FILTERING relay sends instead of `private_key`, so the
+            // server's private half never crosses a network. The daemon
+            // reports only its private key and never its public one, so a
+            // relay that merely stripped the line would leave the console with
+            // no server identity and every issued config naming no peer. It
+            // substitutes instead, and this arm is the other half of that.
+            //
+            // Deliberately NOT named `public_key`: that key starts a peer in
+            // this protocol, so reusing it would add a phantom device to every
+            // listing. See stack-k8s/tunnel/DESIGN-uapi-transport.md.
+            "interface_public_key" => {
+                // Validated, not trusted: a malformed value here would put a
+                // key nobody holds into every client config that follows.
+                if decode_hex32(value).is_ok() {
+                    state.public_key_hex = Some(value.trim().to_string());
+                }
+            }
             // Every `public_key` starts a peer, with no special case for the
             // first one. The interface's own identity arrives as `private_key`
             // and is derived above; treating the first peer as the interface
@@ -375,48 +392,82 @@ pub fn next_free_client_ip(state: &InterfaceState) -> Option<String> {
 // live socket
 // ============================================================================
 
-/// A handle to one interface's UAPI socket. Holds no connection: UAPI is one
+/// Where the daemon's UAPI answers.
+///
+/// A unix socket when the daemon shares this process's pod, which is the only
+/// shape that exists today. The enum is here rather than a bare `PathBuf`
+/// because a unix socket cannot cross a pod boundary, and that single fact is
+/// what forces the console into a privileged pod on Kubernetes: see
+/// `stack-k8s/tunnel/DESIGN-uapi-transport.md`. Adding the second variant is
+/// the change that lets the console go back where it belongs.
+#[derive(Debug, Clone)]
+enum Endpoint {
+    Unix(PathBuf),
+}
+
+impl Endpoint {
+    /// How to name this endpoint in an error a human has to act on.
+    fn describe(&self) -> String {
+        match self {
+            Endpoint::Unix(p) => p.display().to_string(),
+        }
+    }
+}
+
+/// A handle to one interface's UAPI. Holds no connection: UAPI is one
 /// operation per connection, so every call dials afresh.
 #[derive(Debug, Clone)]
 pub struct UapiSocket {
-    path: PathBuf,
+    at: Endpoint,
 }
 
 impl UapiSocket {
     /// The socket for `iface` in the daemon's standard directory.
     pub fn for_interface(iface: &str) -> Self {
         Self {
-            path: Path::new(UAPI_DIR).join(format!("{iface}.sock")),
+            at: Endpoint::Unix(Path::new(UAPI_DIR).join(format!("{iface}.sock"))),
         }
     }
 
     /// An explicit path, for a sidecar that mounts the directory elsewhere and
     /// for tests that stand up a socket in a temp dir.
     pub fn at(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            at: Endpoint::Unix(path.into()),
+        }
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// How to name where this is looking, for an error message. Replaces the
+    /// old `path()`, which could only ever describe one kind of endpoint.
+    pub fn describe(&self) -> String {
+        self.at.describe()
     }
 
-    /// Whether the socket file exists. Cheap pre-check so callers can give the
-    /// "interface is not up" answer without a connect attempt.
+    /// Whether the endpoint is there at all. Cheap pre-check so callers can
+    /// give the "interface is not up" answer without a full exchange.
+    ///
+    /// Load-bearing beyond the message: `resolve_backend` in the api crate
+    /// gates on this and falls through to shelling out to `wg` when it is
+    /// false, so an endpoint this answers wrongly about does not fail, it
+    /// silently picks a backend that cannot work in a container.
     pub fn exists(&self) -> bool {
-        self.path.exists()
+        match &self.at {
+            Endpoint::Unix(p) => p.exists(),
+        }
     }
 
     /// One request/response exchange.
     fn request(&self, body: &str) -> Result<String, WgUapiError> {
         if !self.exists() {
-            return Err(WgUapiError::NoSocket(self.path.clone()));
+            return Err(WgUapiError::NoSocket(self.describe()));
         }
-        let mut sock = UnixStream::connect(&self.path).map_err(|source| WgUapiError::Io {
-            path: self.path.clone(),
+        let Endpoint::Unix(path) = &self.at;
+        let mut sock = UnixStream::connect(path).map_err(|source| WgUapiError::Io {
+            endpoint: self.describe(),
             source,
         })?;
         let io = |source| WgUapiError::Io {
-            path: self.path.clone(),
+            endpoint: self.describe(),
             source,
         };
         sock.set_read_timeout(Some(IO_TIMEOUT)).map_err(io)?;
@@ -521,6 +572,36 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn a_relay_may_substitute_the_public_half_and_it_is_not_read_as_a_peer() {
+        // What a filtering relay sends: no private_key at all, and the server
+        // identity supplied directly. The listing must show the peers that are
+        // really there and not one more.
+        let raw = format!(
+            "interface_public_key={SERVER_PUB}\nlisten_port=51820\n\
+             public_key={PEER_A}\nallowed_ip=10.9.0.2/32\nerrno=0\n"
+        );
+        let s = parse_get(&raw).unwrap();
+        assert_eq!(
+            s.public_key_hex.as_deref(),
+            Some(SERVER_PUB),
+            "the substituted public half is the server identity"
+        );
+        assert_eq!(s.listen_port, Some(51820));
+        assert_eq!(s.peers.len(), 1, "the substitution must not read as a peer");
+        assert_eq!(s.peers[0].public_key_hex, PEER_A);
+    }
+
+    #[test]
+    fn a_malformed_substituted_key_is_ignored_rather_than_carried() {
+        let raw = "interface_public_key=nonsense\nlisten_port=51820\nerrno=0\n";
+        let s = parse_get(raw).unwrap();
+        assert!(
+            s.public_key_hex.is_none(),
+            "a key nobody holds must not reach a client config"
+        );
+    }
+
     fn the_interface_private_key_is_never_carried_out_of_the_parser() {
         let raw = get_response();
         assert!(raw.contains("private_key="), "fixture must contain one");
