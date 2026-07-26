@@ -154,7 +154,10 @@ pub fn render_get() -> &'static str {
 ///
 /// `replace_allowed_ips=true` is scoped to THIS peer and is what makes a
 /// re-issue to the same key idempotent rather than accumulating stale CIDRs.
-pub fn render_add_peer(public_key_hex: &str, allowed_ips: &[String]) -> Result<String, WgUapiError> {
+pub fn render_add_peer(
+    public_key_hex: &str,
+    allowed_ips: &[String],
+) -> Result<String, WgUapiError> {
     // Validated rather than trusted: an invalid key here would be accepted by
     // the daemon as some other peer entirely.
     decode_hex32(public_key_hex)?;
@@ -216,7 +219,9 @@ pub struct InterfaceState {
 impl InterfaceState {
     /// The server's public key in the base64 form a client `.conf` needs.
     pub fn public_key_b64(&self) -> Option<String> {
-        self.public_key_hex.as_deref().and_then(|h| hex_to_b64(h).ok())
+        self.public_key_hex
+            .as_deref()
+            .and_then(|h| hex_to_b64(h).ok())
     }
 
     /// Whether a peer with this public key (hex) is currently configured.
@@ -265,10 +270,11 @@ pub fn parse_get(response: &str) -> Result<InterfaceState, WgUapiError> {
                 // is never stored on the struct, so it cannot reach a DTO, a
                 // log line or a panic message by accident. The public half is
                 // not a secret and is exactly what a client config needs.
-                if state.public_key_hex.is_none() {
-                    if let Ok(bytes) = decode_hex32(value) {
-                        state.public_key_hex = Some(crate::wg::WgKeypair::from_private(bytes).public_hex());
-                    }
+                if state.public_key_hex.is_none()
+                    && let Ok(bytes) = decode_hex32(value)
+                {
+                    state.public_key_hex =
+                        Some(crate::wg::WgKeypair::from_private(bytes).public_hex());
                 }
             }
             // What a FILTERING relay sends instead of `private_key`, so the
@@ -353,7 +359,11 @@ pub fn parse_set_result(response: &str) -> Result<(), WgUapiError> {
             let n: i64 = v
                 .parse()
                 .map_err(|_| WgUapiError::Malformed("errno was not a number"))?;
-            return if n == 0 { Ok(()) } else { Err(WgUapiError::Errno(n)) };
+            return if n == 0 {
+                Ok(())
+            } else {
+                Err(WgUapiError::Errno(n))
+            };
         }
     }
     Err(WgUapiError::Malformed("response carried no errno"))
@@ -397,7 +407,9 @@ pub fn taken_host_octets(state: &InterfaceState) -> Vec<u8> {
 /// serve a new one, which is never the better failure.
 pub fn next_free_client_ip(state: &InterfaceState) -> Option<String> {
     let taken = taken_host_octets(state);
-    (2u8..=254).find(|n| !taken.contains(n)).map(|n| format!("10.9.0.{n}"))
+    (2u8..=254)
+        .find(|n| !taken.contains(n))
+        .map(|n| format!("10.9.0.{n}"))
 }
 
 // ============================================================================
@@ -485,7 +497,11 @@ impl UapiSocket {
     /// `cert_pem` is the proxy's own certificate, pinned as the only root.
     /// There is no CA and no certificate lifecycle: both ends were handed the
     /// same self-signed cert at install, which is the whole trust story.
-    pub fn tls(addr: impl Into<String>, cert_pem: impl Into<PathBuf>, token: impl Into<String>) -> Self {
+    pub fn tls(
+        addr: impl Into<String>,
+        cert_pem: impl Into<PathBuf>,
+        token: impl Into<String>,
+    ) -> Self {
         Self {
             at: Endpoint::Tls(TlsEndpoint {
                 addr: addr.into(),
@@ -528,7 +544,11 @@ impl UapiSocket {
             Endpoint::Tls(t) => t
                 .addr
                 .to_socket_addrs()
-                .map(|addrs| addrs.into_iter().any(|a| TcpStream::connect_timeout(&a, PROBE_TIMEOUT).is_ok()))
+                .map(|addrs| {
+                    addrs
+                        .into_iter()
+                        .any(|a| TcpStream::connect_timeout(&a, PROBE_TIMEOUT).is_ok())
+                })
                 .unwrap_or(false),
         }
     }
@@ -593,8 +613,15 @@ impl UapiSocket {
         let mut rd = BufReader::new(file);
         let mut added = 0usize;
         for cert in rustls_pemfile::certs(&mut rd) {
-            let cert = cert.map_err(|e| fail(format!("{} is not a PEM certificate: {e}", t.cert_pem.display())))?;
-            roots.add(cert).map_err(|e| fail(format!("certificate rejected: {e}")))?;
+            let cert = cert.map_err(|e| {
+                fail(format!(
+                    "{} is not a PEM certificate: {e}",
+                    t.cert_pem.display()
+                ))
+            })?;
+            roots
+                .add(cert)
+                .map_err(|e| fail(format!("certificate rejected: {e}")))?;
             added += 1;
         }
         // An empty root store does not fail to build, it fails every
@@ -611,7 +638,12 @@ impl UapiSocket {
             .with_root_certificates(roots)
             .with_no_client_auth();
 
-        let host = t.addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(&t.addr).to_string();
+        let host = t
+            .addr
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(&t.addr)
+            .to_string();
         let server_name = rustls_pki_types::ServerName::try_from(host.clone())
             .map_err(|_| fail(format!("{host} is not a valid server name")))?;
         let conn = rustls::ClientConnection::new(Arc::new(cfg), server_name)
@@ -644,7 +676,10 @@ impl UapiSocket {
             }
         }
         let tcp = tcp.ok_or_else(|| {
-            fail(format!("cannot connect to any of {} address(es), last was {last}", addrs.len()))
+            fail(format!(
+                "cannot connect to any of {} address(es), last was {last}",
+                addrs.len()
+            ))
         })?;
         tcp.set_read_timeout(Some(IO_TIMEOUT))
             .and_then(|_| tcp.set_write_timeout(Some(IO_TIMEOUT)))
@@ -668,7 +703,11 @@ impl UapiSocket {
     }
 
     /// Add or update one peer, leaving every other peer connected.
-    pub fn add_peer(&self, public_key_hex: &str, allowed_ips: &[String]) -> Result<(), WgUapiError> {
+    pub fn add_peer(
+        &self,
+        public_key_hex: &str,
+        allowed_ips: &[String],
+    ) -> Result<(), WgUapiError> {
         parse_set_result(&self.request(&render_add_peer(public_key_hex, allowed_ips)?)?)
     }
 
@@ -747,7 +786,6 @@ mod tests {
         );
     }
 
-    #[test]
     #[test]
     fn a_tls_endpoint_is_named_by_address_not_by_a_path_it_does_not_have() {
         let sock = UapiSocket::tls("wg.agent-stack:9090", "/etc/wg/proxy.crt", "s3cret");
@@ -828,6 +866,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn the_interface_private_key_is_never_carried_out_of_the_parser() {
         let raw = get_response();
         assert!(raw.contains("private_key="), "fixture must contain one");
@@ -866,11 +905,20 @@ mod tests {
     #[test]
     fn add_peer_never_replaces_the_other_peers() {
         let body = render_add_peer(PEER_A, &["10.9.0.7/32".to_string()]).unwrap();
-        assert!(!body.contains("replace_peers"), "issuing a device must not disconnect the others");
+        assert!(
+            !body.contains("replace_peers"),
+            "issuing a device must not disconnect the others"
+        );
         assert!(body.contains(&format!("public_key={PEER_A}")));
         assert!(body.contains("allowed_ip=10.9.0.7/32"));
-        assert!(body.contains("replace_allowed_ips=true"), "re-issue must not accumulate CIDRs");
-        assert!(body.ends_with("\n\n"), "an operation is terminated by a blank line");
+        assert!(
+            body.contains("replace_allowed_ips=true"),
+            "re-issue must not accumulate CIDRs"
+        );
+        assert!(
+            body.ends_with("\n\n"),
+            "an operation is terminated by a blank line"
+        );
     }
 
     #[test]
@@ -922,34 +970,39 @@ mod tests {
 
     #[test]
     fn a_full_subnet_returns_none_rather_than_a_duplicate() {
-        let mut s = InterfaceState::default();
-        s.peers = (2u8..=254)
-            .map(|n| PeerState {
-                public_key_hex: PEER_A.to_string(),
-                allowed_ips: vec![format!("10.9.0.{n}/32")],
-                last_handshake_unix: None,
-                endpoint: None,
-                rx_bytes: 0,
-                tx_bytes: 0,
-            })
-            .collect();
+        let s = InterfaceState {
+            peers: (2u8..=254)
+                .map(|n| PeerState {
+                    public_key_hex: PEER_A.to_string(),
+                    allowed_ips: vec![format!("10.9.0.{n}/32")],
+                    last_handshake_unix: None,
+                    endpoint: None,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                })
+                .collect(),
+            ..Default::default()
+        };
         assert_eq!(
-            next_free_client_ip(&s), None,
+            next_free_client_ip(&s),
+            None,
             "a duplicate address would break a working device to serve a new one"
         );
     }
 
     #[test]
     fn addresses_outside_the_tunnel_subnet_do_not_consume_slots() {
-        let mut s = InterfaceState::default();
-        s.peers = vec![PeerState {
-            public_key_hex: PEER_A.to_string(),
-            allowed_ips: vec!["192.168.1.2/32".to_string(), "10.9.0.4/32".to_string()],
-            last_handshake_unix: None,
-            endpoint: None,
-            rx_bytes: 0,
-            tx_bytes: 0,
-        }];
+        let s = InterfaceState {
+            peers: vec![PeerState {
+                public_key_hex: PEER_A.to_string(),
+                allowed_ips: vec!["192.168.1.2/32".to_string(), "10.9.0.4/32".to_string()],
+                last_handshake_unix: None,
+                endpoint: None,
+                rx_bytes: 0,
+                tx_bytes: 0,
+            }],
+            ..Default::default()
+        };
         assert_eq!(taken_host_octets(&s), vec![4]);
     }
 
@@ -957,12 +1010,18 @@ mod tests {
     fn has_peer_matches_on_the_exact_key() {
         let s = parse_get(&get_response()).unwrap();
         assert!(s.has_peer(PEER_A));
-        assert!(!s.has_peer(SERVER_PUB), "the interface is not one of its peers");
+        assert!(
+            !s.has_peer(SERVER_PUB),
+            "the interface is not one of its peers"
+        );
     }
 
     #[test]
     fn a_missing_socket_is_its_own_error_not_an_io_failure() {
         let sock = UapiSocket::at("/nonexistent/genaryx-test/wg0.sock");
-        assert!(matches!(sock.state().unwrap_err(), WgUapiError::NoSocket(_)));
+        assert!(matches!(
+            sock.state().unwrap_err(),
+            WgUapiError::NoSocket(_)
+        ));
     }
 }

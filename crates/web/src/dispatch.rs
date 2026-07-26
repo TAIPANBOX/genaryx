@@ -51,9 +51,9 @@ fn wg_journal(ctx: &Arc<Ctx>) -> Option<genaryx_api::money::state::BusHandle> {
         ctx.bus.events_dir.as_ref(),
         ctx.bus.source_events_dir.as_ref(),
     ) {
-        (Some(store), Some(source)) => Some(
-            genaryx_api::money::state::BusHandle::from_dirs(store, source),
-        ),
+        (Some(store), Some(source)) => Some(genaryx_api::money::state::BusHandle::from_dirs(
+            store, source,
+        )),
         _ => None,
     }
 }
@@ -106,8 +106,8 @@ fn decode<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, Response> {
 /// missed). Ids are deduplicated and returned sorted for a stable audit trail.
 async fn agents_in_unit(ctx: &Arc<Ctx>, team: &str) -> Vec<String> {
     let mut found: std::collections::BTreeSet<String> = Default::default();
-    if let Ok(identities) = genaryx_api::identity::commands::identity_list_identities(&ctx.identity)
-        .await
+    if let Ok(identities) =
+        genaryx_api::identity::commands::identity_list_identities(&ctx.identity).await
     {
         for identity in identities {
             if crate::lifecycle::team_of(&identity.id) == Some(team) {
@@ -552,8 +552,14 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 blocked: bool,
             }
             let a: A = decode(args)?;
-            let done = apply_block(ctx, "agent", &a.agent_id, a.blocked, vec![a.agent_id.clone()])
-                .await;
+            let done = apply_block(
+                ctx,
+                "agent",
+                &a.agent_id,
+                a.blocked,
+                vec![a.agent_id.clone()],
+            )
+            .await;
             Ok(reply(done))
         }
         "unit_block" => {
@@ -739,7 +745,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             ))
         }
         "remote_operator_wg_config" => Ok(reply(
-            genaryx_api::remote::commands::remote_operator_wg_config(wg_journal(&ctx).as_ref())
+            genaryx_api::remote::commands::remote_operator_wg_config(wg_journal(ctx).as_ref())
                 .await,
         )),
         "remote_operator_wg_peers" => Ok(reply(
@@ -754,7 +760,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             Ok(reply(
                 genaryx_api::remote::commands::remote_operator_wg_revoke(
                     a.public_key,
-                    wg_journal(&ctx).as_ref(),
+                    wg_journal(ctx).as_ref(),
                 )
                 .await,
             ))

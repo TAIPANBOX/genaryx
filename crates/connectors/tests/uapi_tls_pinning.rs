@@ -20,7 +20,7 @@
 //! broken daemon: a certificate that does not match the name being dialled,
 //! and a certificate the client was never given.
 
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{BufReader, Read as _, Write as _};
 use std::net::TcpListener;
 use std::sync::Arc;
 
@@ -90,11 +90,7 @@ fn a_pinned_self_signed_certificate_completes_a_handshake_and_carries_an_exchang
                  errno=0\n";
     let (port, server) = spawn_proxy(reply);
 
-    let sock = UapiSocket::tls(
-        format!("{NAME}:{port}"),
-        CA,
-        "the-bearer",
-    );
+    let sock = UapiSocket::tls(format!("{NAME}:{port}"), CA, "the-bearer");
 
     // `wg-uapi.agent-tunnel` is not a name this machine resolves, so the test
     // dials the loopback listener while still presenting that server name to
@@ -106,7 +102,10 @@ fn a_pinned_self_signed_certificate_completes_a_handshake_and_carries_an_exchang
         seen.starts_with("bearer=the-bearer\n"),
         "the bearer must lead the exchange, got: {seen:?}"
     );
-    assert!(seen.contains("get=1"), "the operation must follow it: {seen:?}");
+    assert!(
+        seen.contains("get=1"),
+        "the operation must follow it: {seen:?}"
+    );
 
     let state = state.expect("a pinned self-signed certificate must be accepted");
     assert_eq!(state.listen_port, Some(31820));
@@ -124,11 +123,7 @@ fn a_certificate_for_another_name_is_refused_rather_than_trusted() {
     // Same certificate, dialled by ADDRESS. The fixture carries no IP entry in
     // its SAN, so this is a genuine name mismatch: the pin must not be a blank
     // cheque for whatever answers on the other end.
-    let sock = UapiSocket::tls(
-        format!("127.0.0.1:{port}"),
-        CA,
-        "t",
-    );
+    let sock = UapiSocket::tls(format!("127.0.0.1:{port}"), CA, "t");
     let err = sock.state().unwrap_err();
     drop(server);
     let msg = err.to_string();
@@ -137,4 +132,3 @@ fn a_certificate_for_another_name_is_refused_rather_than_trusted() {
         "a name mismatch must surface as a transport failure, got: {msg}"
     );
 }
-
