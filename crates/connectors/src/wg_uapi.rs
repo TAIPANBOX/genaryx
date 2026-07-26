@@ -33,9 +33,11 @@
 //! operator-facing `.conf` and QR must carry base64 while the wire carries
 //! hex. Reference: <https://www.wireguard.com/xplatform/>.
 
-use std::io::{Read as _, Write as _};
+use std::io::{BufReader, Read as _, Write as _};
+use std::net::{TcpStream, ToSocketAddrs as _};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -50,6 +52,10 @@ const UAPI_DIR: &str = "/var/run/wireguard";
 /// answers immediately or something is wrong; a hung read here would hang a
 /// console request, so both directions are bounded.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `exists()` is a pre-check, not an operation: it must not add five seconds
+/// to every refusal, so it gets its own shorter budget.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WgUapiError {
@@ -77,6 +83,12 @@ pub enum WgUapiError {
     /// A well-formed exchange whose body we could not make sense of.
     #[error("wireguard UAPI response malformed: {0}")]
     Malformed(&'static str),
+
+    /// The endpoint is reachable in principle but the exchange failed: TLS,
+    /// resolution, or the pinned certificate. Separate from `Io` because none
+    /// of these are a filesystem problem and the remedies differ.
+    #[error("wireguard UAPI at {endpoint}: {message}")]
+    Transport { endpoint: String, message: String },
 
     /// A key was not the 64 lowercase hex characters or 44 base64 characters
     /// a Curve25519 key must be. Rejected before it reaches the wire, because
@@ -403,6 +415,36 @@ pub fn next_free_client_ip(state: &InterfaceState) -> Option<String> {
 #[derive(Debug, Clone)]
 enum Endpoint {
     Unix(PathBuf),
+    /// The daemon is in another pod, so its socket cannot be shared. Reached
+    /// over TLS with a bearer, through a proxy that also refuses the
+    /// operations this side has no business sending.
+    Tls(TlsEndpoint),
+}
+
+/// Everything needed to reach a daemon that is not in this pod.
+///
+/// `Debug` is written by hand rather than derived: this lives inside
+/// `UapiSocket`, which IS derived, and a bearer that reaches a Debug format is
+/// a bearer in a log file.
+#[derive(Clone)]
+struct TlsEndpoint {
+    /// `host:port`. A Service name in cluster, resolved at dial time.
+    addr: String,
+    /// The proxy's certificate, pinned as the ONLY root. Not a CA: there is no
+    /// certificate authority here and no lifecycle to run, just one
+    /// self-signed cert both ends were handed at install.
+    cert_pem: PathBuf,
+    token: String,
+}
+
+impl std::fmt::Debug for TlsEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsEndpoint")
+            .field("addr", &self.addr)
+            .field("cert_pem", &self.cert_pem)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Endpoint {
@@ -410,6 +452,7 @@ impl Endpoint {
     fn describe(&self) -> String {
         match self {
             Endpoint::Unix(p) => p.display().to_string(),
+            Endpoint::Tls(t) => t.addr.clone(),
         }
     }
 }
@@ -437,10 +480,36 @@ impl UapiSocket {
         }
     }
 
+    /// A daemon in another pod, over TLS with a bearer.
+    ///
+    /// `cert_pem` is the proxy's own certificate, pinned as the only root.
+    /// There is no CA and no certificate lifecycle: both ends were handed the
+    /// same self-signed cert at install, which is the whole trust story.
+    pub fn tls(addr: impl Into<String>, cert_pem: impl Into<PathBuf>, token: impl Into<String>) -> Self {
+        Self {
+            at: Endpoint::Tls(TlsEndpoint {
+                addr: addr.into(),
+                cert_pem: cert_pem.into(),
+                token: token.into(),
+            }),
+        }
+    }
+
     /// How to name where this is looking, for an error message. Replaces the
     /// old `path()`, which could only ever describe one kind of endpoint.
     pub fn describe(&self) -> String {
         self.at.describe()
+    }
+
+    /// Whether this endpoint is reached over a network rather than a local
+    /// socket.
+    ///
+    /// Exists so a caller can tell a transient failure from a structural one:
+    /// a local socket that is missing may mean "start the daemon", while a
+    /// network endpoint that does not answer can never be replaced by a local
+    /// fallback, so falling back is worse than refusing.
+    pub fn is_network(&self) -> bool {
+        matches!(self.at, Endpoint::Tls(_))
     }
 
     /// Whether the endpoint is there at all. Cheap pre-check so callers can
@@ -453,15 +522,34 @@ impl UapiSocket {
     pub fn exists(&self) -> bool {
         match &self.at {
             Endpoint::Unix(p) => p.exists(),
+            // A connect probe, because there is no file to stat. Cheap, and it
+            // answers the question `resolve_backend` is really asking: is
+            // there a daemon this console can reach at all.
+            Endpoint::Tls(t) => t
+                .addr
+                .to_socket_addrs()
+                .ok()
+                .and_then(|mut a| a.next())
+                .map(|a| TcpStream::connect_timeout(&a, PROBE_TIMEOUT).is_ok())
+                .unwrap_or(false),
         }
     }
 
     /// One request/response exchange.
     fn request(&self, body: &str) -> Result<String, WgUapiError> {
-        if !self.exists() {
+        let path = match &self.at {
+            Endpoint::Unix(p) => p,
+            // No pre-check here, deliberately. For TLS, connecting IS the
+            // check, and probing first would mask a misconfigured certificate
+            // behind "the interface is not up": a permanent error reported as
+            // a transient one, which sends the reader to restart a daemon that
+            // was never the problem. `request_tls` validates its configuration
+            // before it dials, so the file nobody filled in is named first.
+            Endpoint::Tls(t) => return self.request_tls(t, body),
+        };
+        if !path.exists() {
             return Err(WgUapiError::NoSocket(self.describe()));
         }
-        let Endpoint::Unix(path) = &self.at;
         let mut sock = UnixStream::connect(path).map_err(|source| WgUapiError::Io {
             endpoint: self.describe(),
             source,
@@ -483,6 +571,75 @@ impl UapiSocket {
         sock.shutdown(std::net::Shutdown::Write).map_err(io)?;
         let mut out = String::new();
         sock.read_to_string(&mut out).map_err(io)?;
+        Ok(out)
+    }
+
+    /// One request/response exchange against a proxy in another pod.
+    ///
+    /// The bearer goes first, on its own line, and the proxy consumes it
+    /// before forwarding anything. Deliberately NOT a half-close afterwards:
+    /// the unix path shuts down its write side because the daemon reads until
+    /// the peer stops writing, and TLS has no half-close, only `close_notify`.
+    /// The proxy reads to the blank line the protocol already terminates on
+    /// instead, so both paths end an operation the same way without either
+    /// depending on a transport detail.
+    fn request_tls(&self, t: &TlsEndpoint, body: &str) -> Result<String, WgUapiError> {
+        let fail = |m: String| WgUapiError::Transport {
+            endpoint: t.addr.clone(),
+            message: m,
+        };
+
+        let mut roots = rustls::RootCertStore::empty();
+        let file = std::fs::File::open(&t.cert_pem)
+            .map_err(|e| fail(format!("cannot read {}: {e}", t.cert_pem.display())))?;
+        let mut rd = BufReader::new(file);
+        let mut added = 0usize;
+        for cert in rustls_pemfile::certs(&mut rd) {
+            let cert = cert.map_err(|e| fail(format!("{} is not a PEM certificate: {e}", t.cert_pem.display())))?;
+            roots.add(cert).map_err(|e| fail(format!("certificate rejected: {e}")))?;
+            added += 1;
+        }
+        // An empty root store does not fail to build, it fails every
+        // handshake, with an error about the SERVER rather than about the file
+        // nobody filled in.
+        if added == 0 {
+            return Err(fail(format!(
+                "{} contains no certificate, so nothing would be trusted",
+                t.cert_pem.display()
+            )));
+        }
+
+        let cfg = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+
+        let host = t.addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(&t.addr).to_string();
+        let server_name = rustls_pki_types::ServerName::try_from(host.clone())
+            .map_err(|_| fail(format!("{host} is not a valid server name")))?;
+        let conn = rustls::ClientConnection::new(Arc::new(cfg), server_name)
+            .map_err(|e| fail(format!("TLS setup failed: {e}")))?;
+
+        let addr = t
+            .addr
+            .to_socket_addrs()
+            .map_err(|e| fail(format!("cannot resolve: {e}")))?
+            .next()
+            .ok_or_else(|| fail("resolved to no address".into()))?;
+        let tcp = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
+            .map_err(|e| fail(format!("cannot connect: {e}")))?;
+        tcp.set_read_timeout(Some(IO_TIMEOUT))
+            .and_then(|_| tcp.set_write_timeout(Some(IO_TIMEOUT)))
+            .map_err(|e| fail(format!("cannot set timeouts: {e}")))?;
+
+        let mut tls = rustls::StreamOwned::new(conn, tcp);
+        let framed = format!("bearer={}\n{body}", t.token);
+        tls.write_all(framed.as_bytes())
+            .and_then(|_| tls.flush())
+            .map_err(|e| fail(format!("write failed: {e}")))?;
+
+        let mut out = String::new();
+        tls.read_to_string(&mut out)
+            .map_err(|e| fail(format!("read failed: {e}")))?;
         Ok(out)
     }
 
@@ -572,6 +729,56 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn a_tls_endpoint_is_named_by_address_not_by_a_path_it_does_not_have() {
+        let sock = UapiSocket::tls("wg.agent-stack:9090", "/etc/wg/proxy.crt", "s3cret");
+        assert_eq!(sock.describe(), "wg.agent-stack:9090");
+    }
+
+    #[test]
+    fn the_bearer_never_reaches_a_debug_format() {
+        // This struct is inside one that derives Debug, and every error path
+        // in the api crate formats errors into messages an operator reads. A
+        // token that survives `{:?}` is a token in a log file.
+        let sock = UapiSocket::tls("wg:9090", "/etc/wg/proxy.crt", "SUPERSECRETTOKEN");
+        let rendered = format!("{sock:?}");
+        assert!(
+            !rendered.contains("SUPERSECRETTOKEN"),
+            "the bearer must not survive Debug, got: {rendered}"
+        );
+        assert!(rendered.contains("redacted"), "and it should say so");
+    }
+
+    #[test]
+    fn a_certificate_file_with_nothing_in_it_is_named_as_the_problem() {
+        // An empty root store does not fail to build: it fails every
+        // handshake, with an error about the SERVER rather than about the file
+        // nobody filled in. That is an hour of looking in the wrong place.
+        let dir = std::env::temp_dir().join(format!("wg-uapi-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let empty = dir.join("empty.crt");
+        std::fs::write(&empty, b"").unwrap();
+
+        let sock = UapiSocket::tls("127.0.0.1:9", &empty, "t");
+        let err = sock.state().unwrap_err().to_string();
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            err.contains("no certificate"),
+            "the empty file must be named, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_missing_certificate_file_is_named_as_the_problem() {
+        let sock = UapiSocket::tls("127.0.0.1:9", "/nonexistent/genaryx-test/proxy.crt", "t");
+        let err = sock.state().unwrap_err().to_string();
+        assert!(
+            err.contains("cannot read"),
+            "the unreadable file must be named, got: {err}"
+        );
+    }
+
     #[test]
     fn a_relay_may_substitute_the_public_half_and_it_is_not_read_as_a_peer() {
         // What a filtering relay sends: no private_key at all, and the server

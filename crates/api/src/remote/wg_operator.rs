@@ -100,13 +100,48 @@ fn iface_name() -> String {
     std::env::var("GENARYX_WG_IFACE").unwrap_or_else(|_| "wg-op".to_string())
 }
 
-/// Where the sidecar exposes its UAPI socket directory, overridable so a
-/// differently-mounted deployment (and the tests) can point elsewhere.
-fn uapi_socket() -> UapiSocket {
-    match std::env::var("GENARYX_WG_UAPI_SOCKET") {
-        Ok(path) if !path.is_empty() => UapiSocket::at(path),
-        _ => UapiSocket::for_interface(&iface_name()),
+/// Where the daemon answers, and how.
+///
+/// `GENARYX_WG_UAPI_SOCKET` keeps its meaning: a filesystem path when it looks
+/// like one, which is the sidecar case and every deployment that exists today.
+/// Anything else is read as `host:port`, which is the daemon in ANOTHER pod,
+/// and then two more values are required rather than defaulted:
+///
+///   GENARYX_WG_UAPI_CERT   the proxy's certificate, pinned as the only root
+///   GENARYX_WG_UAPI_TOKEN  the bearer the proxy checks
+///
+/// Required, not optional, and the reason is worth stating: a missing
+/// certificate would otherwise mean "trust nothing", which fails every
+/// handshake with an error about the server, and a missing token would mean
+/// "send an empty bearer", which fails as an authorisation error. Both read as
+/// the far end being broken. Absent configuration is named as absent
+/// configuration instead.
+fn uapi_endpoint() -> Result<UapiSocket, WgOperatorError> {
+    let raw = std::env::var("GENARYX_WG_UAPI_SOCKET").unwrap_or_default();
+    if raw.is_empty() {
+        return Ok(UapiSocket::for_interface(&iface_name()));
     }
+    if raw.starts_with('/') || !raw.contains(':') {
+        return Ok(UapiSocket::at(raw));
+    }
+    let cert = std::env::var("GENARYX_WG_UAPI_CERT").unwrap_or_default();
+    let token = std::env::var("GENARYX_WG_UAPI_TOKEN").unwrap_or_default();
+    if cert.is_empty() || token.is_empty() {
+        let missing = match (cert.is_empty(), token.is_empty()) {
+            (true, true) => "GENARYX_WG_UAPI_CERT and GENARYX_WG_UAPI_TOKEN are",
+            (true, false) => "GENARYX_WG_UAPI_CERT is",
+            _ => "GENARYX_WG_UAPI_TOKEN is",
+        };
+        return Err(WgOperatorError::Misconfigured {
+            message: format!(
+                "GENARYX_WG_UAPI_SOCKET is {raw}, which is a network endpoint rather than a \
+                 path, but {missing} not set. Reaching a tunnel daemon in another pod needs \
+                 the proxy's certificate to pin and the bearer it checks; both are written \
+                 into this console's Secret by install.sh."
+            ),
+        });
+    }
+    Ok(UapiSocket::tls(raw, cert, token))
 }
 
 // ============================================================================
@@ -259,9 +294,26 @@ fn containerised() -> Option<&'static str> {
 /// that runs, else refuse and name both.
 fn resolve_backend() -> Result<PeerBackend, WgOperatorError> {
     let iface = iface_name();
-    let sock = uapi_socket();
+    let sock = uapi_endpoint()?;
     if sock.exists() {
         return Ok(PeerBackend::Uapi(sock));
+    }
+    // A NETWORK endpoint that did not answer must not fall through. The `wg`
+    // fallback below exists for a host install where the binary is genuinely
+    // present; on a console configured to reach another pod, silently shelling
+    // out to a kernel interface that does not exist there turns "the proxy is
+    // down" into "no WireGuard server this console can reach", naming a socket
+    // path nobody configured. Refuse, and name what was actually tried.
+    if sock.is_network() {
+        return Err(not_configured(
+            &iface,
+            format!(
+                "the tunnel daemon at {} did not answer. It is in another pod, so there is \
+                 no local interface to fall back to: check that the wg pod is running and \
+                 that a NetworkPolicy admits this one.",
+                sock.describe()
+            ),
+        ));
     }
     if Command::new("wg").arg("--version").output().is_ok() {
         return Ok(PeerBackend::Shell { iface });
@@ -709,6 +761,58 @@ mod tests {
         assert!(conf.contains("Address = 10.9.0.3/32"));
         assert!(conf.contains("Endpoint = 198.51.100.9:51820"));
         assert!(conf.contains("PersistentKeepalive = 25"));
+    }
+
+    #[test]
+    fn a_network_endpoint_without_its_certificate_or_bearer_refuses_by_name() {
+        // Absent configuration must be named as absent configuration. Without
+        // this, a missing certificate means "trust nothing" and fails every
+        // handshake with an error about the SERVER, and a missing bearer sends
+        // an empty one and fails as authorisation. Both read as the far end
+        // being broken, which is an hour spent on the wrong pod.
+        //
+        // Safety: single-threaded test, every var restored below.
+        let saved: Vec<_> = ["GENARYX_WG_UAPI_SOCKET", "GENARYX_WG_UAPI_CERT", "GENARYX_WG_UAPI_TOKEN"]
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        unsafe {
+            std::env::set_var("GENARYX_WG_UAPI_SOCKET", "wg.agent-stack:9090");
+            std::env::remove_var("GENARYX_WG_UAPI_CERT");
+            std::env::remove_var("GENARYX_WG_UAPI_TOKEN");
+        }
+
+        let err = match uapi_endpoint().unwrap_err() {
+            WgOperatorError::Misconfigured { message } => message,
+            other => panic!("absent configuration must be Misconfigured, got {other:?}"),
+        };
+
+        unsafe {
+            for (k, v) in saved {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+        assert!(err.contains("GENARYX_WG_UAPI_CERT"), "names the cert: {err}");
+        assert!(err.contains("GENARYX_WG_UAPI_TOKEN"), "names the token: {err}");
+    }
+
+    #[test]
+    fn a_path_is_still_a_path_and_never_read_as_an_address() {
+        // The same variable carries both shapes, so the discrimination has to
+        // be exact: every deployment that exists today passes a path.
+        let saved = std::env::var("GENARYX_WG_UAPI_SOCKET").ok();
+        unsafe { std::env::set_var("GENARYX_WG_UAPI_SOCKET", "/var/run/wireguard/console.sock") };
+        let sock = uapi_endpoint().expect("a path needs no certificate");
+        assert!(!sock.is_network(), "a path must not become a network endpoint");
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("GENARYX_WG_UAPI_SOCKET", v),
+                None => std::env::remove_var("GENARYX_WG_UAPI_SOCKET"),
+            }
+        }
     }
 
     #[test]

@@ -35,6 +35,15 @@ rusqlite = { version = "0.40.1", features = ["bundled"] }
 tokio = { version = "1.52.4", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
 notify = "8"
 regex = "1.13.1"
+# The UAPI client's TLS, for the case where the tunnel daemon is in another pod
+# (see stack-k8s/tunnel/DESIGN-uapi-transport.md). Pinned to the version this
+# workspace ALREADY resolves through reqwest -> hyper-rustls, so declaring it
+# directly adds an edge rather than a second copy: `cargo tree -i rustls` shows
+# 0.23.42 with aws-lc-rs, and no `ring` under connectors, so there is exactly
+# one crypto provider in that tree and no process-default to install.
+rustls = "0.23.42"
+rustls-pemfile = "2.2.0"
+rustls-pki-types = "1.15.0"
 # Phase-0 spike #6 (06 §7): genaryx-connectors' CloudSse client. Versions
 # originally pinned against the (since-removed) desktop FFI bindgen tree
 # (docs/PHASE0.md F-04) so only one version of each crate exists in the tree.

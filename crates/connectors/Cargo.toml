@@ -57,3 +57,9 @@ rusqlite = { workspace = true }
 # the workspace entropy source, same pin genaryx-signing uses).
 x25519-dalek = { workspace = true }
 getrandom = { workspace = true }
+# UAPI over TLS when the daemon is not in this pod. Blocking, deliberately:
+# `rustls::StreamOwned` over a plain `TcpStream` keeps this module synchronous
+# like its unix path, rather than dragging one call into async.
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rustls-pki-types = { workspace = true }
