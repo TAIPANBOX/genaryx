@@ -226,6 +226,25 @@ pub enum WgOperatorError {
     SubnetExhausted { message: String },
 }
 
+/// Every other caller serialises this into JSON for the console, which is why
+/// it went this long without a `Display`. A command-line caller has no JSON to
+/// hand anyone, and `{:?}` would print the variant name and braces at an
+/// operator who is trying to install the thing.
+impl std::fmt::Display for WgOperatorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ServerNotConfigured { iface, message } => {
+                write!(f, "no WireGuard server on {iface}: {message}")
+            }
+            Self::Exec { message } => write!(f, "{message}"),
+            Self::Misconfigured { message } => write!(f, "{message}"),
+            Self::SubnetExhausted { message } => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for WgOperatorError {}
+
 fn exec_err(message: String) -> WgOperatorError {
     WgOperatorError::Exec { message }
 }
@@ -339,7 +358,9 @@ fn resolve_backend() -> Result<PeerBackend, WgOperatorError> {
 fn run(cli: &str, args: &[&str]) -> Result<String, WgOperatorError> {
     let out = Command::new(cli).args(args).output().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            exec_err(format!("{cli}: command not found (is it installed and on PATH?)"))
+            exec_err(format!(
+                "{cli}: command not found (is it installed and on PATH?)"
+            ))
         } else {
             exec_err(format!("could not run {cli}: {e}"))
         }
@@ -388,7 +409,10 @@ fn parse_wg_dump(dump: &str) -> InterfaceState {
                 .filter(|s| !s.is_empty() && **s != "(none)")
                 .map(|s| s.split(',').map(|c| c.trim().to_string()).collect())
                 .unwrap_or_default(),
-            last_handshake_unix: f.get(4).and_then(|s| s.parse::<u64>().ok()).filter(|n| *n != 0),
+            last_handshake_unix: f
+                .get(4)
+                .and_then(|s| s.parse::<u64>().ok())
+                .filter(|n| *n != 0),
             endpoint: f
                 .get(2)
                 .filter(|s| !s.is_empty() && **s != "(none)")
@@ -405,10 +429,9 @@ fn read_state(backend: &PeerBackend) -> Result<InterfaceState, WgOperatorError> 
         PeerBackend::Uapi(sock) => Ok(sock.state()?),
         PeerBackend::Shell { iface } => {
             let dump = run("wg", &["show", iface, "dump"]).map_err(|e| match e {
-                WgOperatorError::Exec { message } => not_configured(
-                    iface,
-                    format!("interface '{iface}' is not up ({message})"),
-                ),
+                WgOperatorError::Exec { message } => {
+                    not_configured(iface, format!("interface '{iface}' is not up ({message})"))
+                }
                 other => other,
             })?;
             Ok(parse_wg_dump(&dump))
@@ -505,6 +528,43 @@ fn render_qr_svg(text: &str) -> Result<String, WgOperatorError> {
     })
 }
 
+/// The same config as a QR a phone can scan off a terminal.
+///
+/// `ansi` decides how it is coloured, and the choice is not cosmetic. A QR is
+/// dark modules on a LIGHT field. Printed as plain block characters, the light
+/// field is whatever the terminal's background happens to be, so on the dark
+/// terminal most operators use the code comes out inverted, and a scanner that
+/// does not try both polarities simply never sees it. With `ansi` the colours
+/// are stated per line, black on white, and the terminal's theme stops
+/// mattering.
+///
+/// Pass `false` when the output is redirected: escape codes in a file are
+/// noise, and there is nothing to scan there anyway.
+pub fn render_qr_terminal(text: &str, ansi: bool) -> Result<String, WgOperatorError> {
+    use qrcode::QrCode;
+    use qrcode::render::unicode::Dense1x2;
+    let code = QrCode::new(text.as_bytes())
+        .map_err(|e| exec_err(format!("could not encode the config as a QR: {e}")))?;
+    // Two vertical modules per character cell, so the code stays square in a
+    // terminal where cells are about twice as tall as they are wide.
+    let art = code
+        .render::<Dense1x2>()
+        .module_dimensions(1, 1)
+        .quiet_zone(true)
+        .build();
+    if !ansi {
+        return Ok(art);
+    }
+    // Per line rather than once around the whole block: a terminal that wraps a
+    // long line would otherwise carry the colour to the wrapped remainder and
+    // paint the rest of the screen.
+    Ok(art
+        .lines()
+        .map(|l| format!("\x1b[30;107m{l}\x1b[0m"))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
 // ============================================================================
 // audit
 // ============================================================================
@@ -524,7 +584,12 @@ fn render_qr_svg(text: &str) -> Result<String, WgOperatorError> {
 /// this runs, so a journal failure must not turn a completed grant into a
 /// reported error. It is logged loudly instead, because an unjournaled
 /// privileged action is exactly the thing an operator needs to know about.
-fn journal_peer_action(bus: Option<&crate::money::state::BusHandle>, action: &str, target: &str, detail: String) {
+fn journal_peer_action(
+    bus: Option<&crate::money::state::BusHandle>,
+    action: &str,
+    target: &str,
+    detail: String,
+) {
     let Some(bus) = bus else {
         eprintln!("genaryx: {action} on {target} was NOT journaled: no live event bus");
         return;
@@ -555,17 +620,19 @@ fn journal_peer_action(bus: Option<&crate::money::state::BusHandle>, action: &st
     };
     match genaryx_core::store::Store::open(&bus.store_db_path) {
         Ok(store) => {
-            if let Err(e) =
-                genaryx_core::command::record(&store, &bus.console_events_path, &org_domain, &host, &rec)
-            {
+            if let Err(e) = genaryx_core::command::record(
+                &store,
+                &bus.console_events_path,
+                &org_domain,
+                &host,
+                &rec,
+            ) {
                 eprintln!("genaryx: {action} on {target} succeeded but was NOT journaled: {e}");
             }
         }
         Err(e) => eprintln!("genaryx: {action} on {target} succeeded but was NOT journaled: {e}"),
     }
 }
-
-
 
 fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
     let backend = resolve_backend()?;
@@ -582,17 +649,21 @@ fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
         )
     })?;
     let listen_port = state.listen_port.ok_or_else(|| {
-        not_configured(&iface, format!("interface '{iface}' reports no listen port"))
+        not_configured(
+            &iface,
+            format!("interface '{iface}' reports no listen port"),
+        )
     })?;
 
-    let client_ip = next_free_client_ip(&state).ok_or_else(|| WgOperatorError::SubnetExhausted {
-        message: format!(
-            "every address in 10.9.0.0/24 is already assigned ({} peers). \
+    let client_ip =
+        next_free_client_ip(&state).ok_or_else(|| WgOperatorError::SubnetExhausted {
+            message: format!(
+                "every address in 10.9.0.0/24 is already assigned ({} peers). \
              Revoke a device before issuing another; handing out a duplicate address \
              would break a working device to serve a new one.",
-            state.peers.len()
-        ),
-    })?;
+                state.peers.len()
+            ),
+        })?;
 
     let keypair = WgKeypair::generate()
         .map_err(|e| exec_err(format!("could not generate a client keypair: {e}")))?;
@@ -606,7 +677,12 @@ fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
     add_peer(&backend, &client_public_hex, &client_ip)?;
 
     let endpoint = format!("{host}:{listen_port}");
-    let conf = render_conf(&client_private_b64, &client_ip, &server_public_key, &endpoint);
+    let conf = render_conf(
+        &client_private_b64,
+        &client_ip,
+        &server_public_key,
+        &endpoint,
+    );
     let qr_svg = render_qr_svg(&conf)?;
 
     Ok(RemoteWgOperatorConfigDto {
@@ -632,7 +708,8 @@ fn peers_blocking() -> Result<RemoteWgPeersDto, WgOperatorError> {
             .peers
             .iter()
             .map(|p| RemoteWgPeerDto {
-                public_key: hex_to_b64(&p.public_key_hex).unwrap_or_else(|_| p.public_key_hex.clone()),
+                public_key: hex_to_b64(&p.public_key_hex)
+                    .unwrap_or_else(|_| p.public_key_hex.clone()),
                 allowed_ips: p.allowed_ips.clone(),
                 last_handshake_unix: p.last_handshake_unix,
                 endpoint: p.endpoint.clone(),
@@ -672,7 +749,11 @@ pub async fn operator_wg_config(
     // the very passkey attribution this exists to capture.
     let issued = tokio::task::spawn_blocking(issue_blocking)
         .await
-        .unwrap_or_else(|e| Err(exec_err(format!("operator wg config task failed to run: {e}"))))?;
+        .unwrap_or_else(|e| {
+            Err(exec_err(format!(
+                "operator wg config task failed to run: {e}"
+            )))
+        })?;
     journal_peer_action(
         bus,
         "console.issue_wg_peer",
@@ -686,7 +767,11 @@ pub async fn operator_wg_config(
 pub async fn operator_wg_peers() -> Result<RemoteWgPeersDto, WgOperatorError> {
     tokio::task::spawn_blocking(peers_blocking)
         .await
-        .unwrap_or_else(|e| Err(exec_err(format!("operator wg peers task failed to run: {e}"))))
+        .unwrap_or_else(|e| {
+            Err(exec_err(format!(
+                "operator wg peers task failed to run: {e}"
+            )))
+        })
 }
 
 /// Revoke one device. The key stops completing a handshake as soon as the
@@ -698,7 +783,11 @@ pub async fn operator_wg_revoke(
     let key_for_record = public_key_b64.clone();
     let revoked = tokio::task::spawn_blocking(move || revoke_blocking(&public_key_b64))
         .await
-        .unwrap_or_else(|e| Err(exec_err(format!("operator wg revoke task failed to run: {e}"))))?;
+        .unwrap_or_else(|e| {
+            Err(exec_err(format!(
+                "operator wg revoke task failed to run: {e}"
+            )))
+        })?;
     journal_peer_action(
         bus,
         "console.revoke_wg_peer",
@@ -727,7 +816,11 @@ mod tests {
         let state = parse_wg_dump(&dump);
         assert_eq!(state.listen_port, Some(51820));
         assert_eq!(state.public_key_b64().as_deref(), Some(SERVER_B64));
-        assert_eq!(state.peers.len(), 1, "the interface line must not become a peer");
+        assert_eq!(
+            state.peers.len(),
+            1,
+            "the interface line must not become a peer"
+        );
         let p = &state.peers[0];
         assert_eq!(p.allowed_ips, vec!["10.9.0.4/32"]);
         assert_eq!(p.last_handshake_unix, Some(1769000000));
@@ -736,7 +829,8 @@ mod tests {
 
     #[test]
     fn a_dump_never_carries_the_interface_private_key_into_state() {
-        let dump = format!("PRIVATEKEYPRIVATEKEYPRIVATEKEYPRIVATEKEYPRI=\t{SERVER_B64}\t51820\toff\n");
+        let dump =
+            format!("PRIVATEKEYPRIVATEKEYPRIVATEKEYPRIVATEKEYPRI=\t{SERVER_B64}\t51820\toff\n");
         let rendered = format!("{:?}", parse_wg_dump(&dump));
         assert!(!rendered.contains("PRIVATEKEY"));
     }
@@ -772,10 +866,14 @@ mod tests {
         // being broken, which is an hour spent on the wrong pod.
         //
         // Safety: single-threaded test, every var restored below.
-        let saved: Vec<_> = ["GENARYX_WG_UAPI_SOCKET", "GENARYX_WG_UAPI_CERT", "GENARYX_WG_UAPI_TOKEN"]
-            .iter()
-            .map(|k| (*k, std::env::var(k).ok()))
-            .collect();
+        let saved: Vec<_> = [
+            "GENARYX_WG_UAPI_SOCKET",
+            "GENARYX_WG_UAPI_CERT",
+            "GENARYX_WG_UAPI_TOKEN",
+        ]
+        .iter()
+        .map(|k| (*k, std::env::var(k).ok()))
+        .collect();
         unsafe {
             std::env::set_var("GENARYX_WG_UAPI_SOCKET", "wg.agent-stack:9090");
             std::env::remove_var("GENARYX_WG_UAPI_CERT");
@@ -795,8 +893,14 @@ mod tests {
                 }
             }
         }
-        assert!(err.contains("GENARYX_WG_UAPI_CERT"), "names the cert: {err}");
-        assert!(err.contains("GENARYX_WG_UAPI_TOKEN"), "names the token: {err}");
+        assert!(
+            err.contains("GENARYX_WG_UAPI_CERT"),
+            "names the cert: {err}"
+        );
+        assert!(
+            err.contains("GENARYX_WG_UAPI_TOKEN"),
+            "names the token: {err}"
+        );
     }
 
     #[test]
@@ -806,7 +910,10 @@ mod tests {
         let saved = std::env::var("GENARYX_WG_UAPI_SOCKET").ok();
         unsafe { std::env::set_var("GENARYX_WG_UAPI_SOCKET", "/var/run/wireguard/console.sock") };
         let sock = uapi_endpoint().expect("a path needs no certificate");
-        assert!(!sock.is_network(), "a path must not become a network endpoint");
+        assert!(
+            !sock.is_network(),
+            "a path must not become a network endpoint"
+        );
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("GENARYX_WG_UAPI_SOCKET", v),
@@ -834,13 +941,102 @@ mod tests {
     fn the_qr_encodes_the_whole_config_and_is_an_svg() {
         let conf = render_conf("PRIV=", "10.9.0.3", SERVER_B64, "198.51.100.9:51820");
         let svg = render_qr_svg(&conf).unwrap();
-        assert!(svg.starts_with("<svg"), "must be inline SVG, no image codec involved");
+        assert!(
+            svg.starts_with("<svg"),
+            "must be inline SVG, no image codec involved"
+        );
         assert!(svg.len() > 500, "a real QR, not an empty canvas");
+    }
+
+    /// A QR that draws but does not scan fails silently: it looks finished on
+    /// screen, and the only way to find out is a phone that reads nothing. So
+    /// this reads the drawing BACK. Each character of the Dense1x2 rendering
+    /// carries two vertically stacked modules, so the matrix can be rebuilt
+    /// from the art alone and compared with what the encoder produced.
+    ///
+    /// It also pins the polarity. `█` has to mean two DARK modules; swap the
+    /// colours and every assertion below inverts, which is exactly the bug an
+    /// operator would meet as "my phone just will not read it".
+    #[test]
+    fn the_terminal_qr_carries_the_same_modules_the_encoder_produced() {
+        use qrcode::{Color, QrCode};
+
+        let conf = render_conf("PRIV=", "10.9.0.3", SERVER_B64, "198.51.100.9:51820");
+        let art = render_qr_terminal(&conf, false).unwrap();
+        let code = QrCode::new(conf.as_bytes()).unwrap();
+        let width = code.width();
+        let colors = code.to_colors();
+
+        // Rebuild the matrix from the characters. The renderer adds a quiet
+        // zone, so the drawing is wider and taller than the code itself and
+        // the offset has to be found rather than assumed.
+        let rows: Vec<Vec<char>> = art.lines().map(|l| l.chars().collect()).collect();
+        let mut grid: Vec<Vec<bool>> = Vec::new();
+        for row in &rows {
+            let mut top = Vec::with_capacity(row.len());
+            let mut bot = Vec::with_capacity(row.len());
+            for &c in row {
+                let (t, b) = match c {
+                    '█' => (true, true),
+                    '▀' => (true, false),
+                    '▄' => (false, true),
+                    ' ' => (false, false),
+                    other => panic!("unexpected character {other:?} in the rendering"),
+                };
+                top.push(t);
+                bot.push(b);
+            }
+            grid.push(top);
+            grid.push(bot);
+        }
+
+        let quiet_x = grid[0].len().saturating_sub(width) / 2;
+        let dark_rows: Vec<usize> = (0..grid.len())
+            .filter(|&y| grid[y].iter().any(|&d| d))
+            .collect();
+        let quiet_y = *dark_rows.first().expect("the drawing is entirely blank");
+
+        let mut compared = 0usize;
+        for y in 0..width {
+            for x in 0..width {
+                let want = colors[y * width + x] == Color::Dark;
+                let got = grid[quiet_y + y][quiet_x + x];
+                assert_eq!(
+                    got, want,
+                    "module ({x},{y}) differs: the drawing is not this QR"
+                );
+                compared += 1;
+            }
+        }
+        assert_eq!(compared, width * width, "every module was compared");
+
+        // And the colour path only wraps the same art, so it must not add or
+        // drop a single module.
+        let ansi = render_qr_terminal(&conf, true).unwrap();
+        let stripped: String = ansi.replace("\x1b[30;107m", "").replace("\x1b[0m", "");
+        assert_eq!(
+            stripped, art,
+            "colour changed the drawing, not just its colour"
+        );
+        assert!(
+            ansi.contains("\x1b["),
+            "colour was asked for and not applied"
+        );
+        assert!(
+            !art.contains("\x1b["),
+            "no escape codes when colour was not asked for"
+        );
     }
 
     #[test]
     fn the_backend_label_names_which_road_answered() {
         assert_eq!(PeerBackend::Uapi(UapiSocket::at("/x")).label(), "uapi");
-        assert_eq!(PeerBackend::Shell { iface: "wg-op".into() }.label(), "wg");
+        assert_eq!(
+            PeerBackend::Shell {
+                iface: "wg-op".into()
+            }
+            .label(),
+            "wg"
+        );
     }
 }

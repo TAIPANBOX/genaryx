@@ -37,6 +37,7 @@ use ctx::Ctx;
 use futures_util::stream::Stream;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -85,6 +86,37 @@ enum Cmd {
         #[arg(long)]
         state_dir: Option<PathBuf>,
     },
+    /// Issue the operator's own WireGuard device and print it here.
+    ///
+    /// This exists because of an ordering nobody can get out of: the console
+    /// is reachable only through the tunnel, and the tunnel needs a config the
+    /// console issues. Told to "issue yourself a device from the console", an
+    /// operator with no tunnel yet has nowhere to click. Somebody has to hand
+    /// out the FIRST config from outside the browser, and the only channel
+    /// that exists before a tunnel does is the one the operator used to
+    /// install this in the first place.
+    ///
+    /// The `.conf` goes to STDOUT and everything else to STDERR, so
+    /// `... issue-device > box.conf` saves the file and still shows the QR.
+    IssueDevice {
+        /// Force ANSI colour on the QR.
+        ///
+        /// Needed because this process usually cannot tell. Run through
+        /// `kubectl exec` without a TTY, its stderr is a pipe whichever way
+        /// the operator's own terminal is set up, so the automatic check says
+        /// "not a terminal" exactly when a human is watching. Colour is what
+        /// makes the QR scannable on a dark background (render_qr_terminal),
+        /// so the caller that knows has to say.
+        #[arg(long, conflicts_with = "no_color")]
+        color: bool,
+        /// Force it off, for output that is being captured.
+        #[arg(long)]
+        no_color: bool,
+        /// Skip the QR entirely. For a laptop, where the `.conf` is imported
+        /// as a file and a QR is decoration.
+        #[arg(long)]
+        no_qr: bool,
+    },
 }
 
 #[tokio::main]
@@ -129,6 +161,49 @@ async fn main() {
                     std::process::exit(1);
                 }
             }
+        }
+        Cmd::IssueDevice {
+            color,
+            no_color,
+            no_qr,
+        } => {
+            // No bus: this runs as a one-shot process with no console actor
+            // around it, so there is no signature or operator identity to
+            // attribute the action to. Passing None makes the journal record
+            // it honestly as unattributed rather than inventing an author.
+            let issued = match genaryx_api::remote::wg_operator::operator_wg_config(None).await {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("genaryx-web: could not issue a device: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if !no_qr {
+                // Explicit beats the guess in both directions; the guess is
+                // only right when a human runs this directly on the box.
+                let ansi = color || (!no_color && std::io::stderr().is_terminal());
+                match genaryx_api::remote::wg_operator::render_qr_terminal(&issued.conf, ansi) {
+                    Ok(qr) => eprintln!("\n{qr}"),
+                    // A QR is a convenience; the config above is the thing.
+                    // Failing the whole command over the decoration would mean
+                    // minting a peer and then refusing to hand over its config.
+                    Err(e) => eprintln!("genaryx-web: no QR ({e}); the config below still works"),
+                }
+            }
+            eprintln!(
+                "\n  device      {}\n  address     {}\n  endpoint    {}\n  console     {}\n",
+                issued.peer_public_key,
+                issued.client_ip,
+                issued.endpoint,
+                issued.console_tunnel_url,
+            );
+            eprintln!(
+                "  The config on stdout carries this device's PRIVATE key. It is not\n  \
+                 stored here and cannot be shown again: issue another device if it is\n  \
+                 lost, and revoke {} from the console.\n",
+                issued.peer_public_key,
+            );
+            print!("{}", issued.conf);
         }
         Cmd::Serve {
             bind,
