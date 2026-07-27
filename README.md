@@ -1,13 +1,30 @@
 # Genaryx
 
-Proprietary, closed-source enterprise **control room** (single pane of glass)
-over the open TAIPANBOX agent-governance stack, and the one **paid** product in
-the family: everything in the open stack (TokenFuse, Wardryx, Engram, Idryx,
-Qryx, Verdryx, Mockryx) is and stays free; Genaryx is the secured, managed way
-to run it as one product.
+The **control room** over the TAIPANBOX agent-governance stack: one window over
+TokenFuse, Wardryx, Engram, Idryx, Qryx, Verdryx and Mockryx, running on your own
+infrastructure and opened in a browser.
 
-> Confidential. Not open source. See [LICENSE](LICENSE). The Apache-2.0 stack this
-> product consumes is never relicensed (decision D3).
+> **Apache-2.0**, like every other repository in the stack. See [LICENSE](LICENSE).
+
+This repository was closed source and Genaryx was the one paid product in the
+family until **2026-07-27**, when that stopped being true. There is now no paid
+tier, no licence key and no build we keep and you do not get. IT-RAT is paid for
+consulting; the software is not sold. Some of the design documents under `docs/`
+still argue from the old model, and they are left as they were written rather
+than quietly edited: they are a record of how the thing was built, not a
+description of what it costs.
+
+Two consequences worth stating, because a repository that changes licence owes
+the reader an honest note rather than a badge:
+
+- **The history is here, minus five files.** Everything up to the flip is
+  preserved. Two screenshots carrying a pairing QR (a torn-down relay address
+  and two one-time codes that expired in 274 seconds on 2026-07-20) and three
+  screen recordings of the discontinued mobile app were removed before
+  publication. Nothing else was rewritten.
+- **The offline licence machinery in `crates/` still compiles.** It signed
+  entitlements for a product that is no longer sold. It is dead weight now and
+  will be removed rather than left to imply a tier exists.
 
 ## What it is
 

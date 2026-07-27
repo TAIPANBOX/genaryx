@@ -1,7 +1,7 @@
 # genaryx-relay: the always-on headless relay (Phase 5 / D12). Sits next to the
 # client-hosted TokenFuse Cloud, holds /v1/stream, computes the exception slice,
 # serves the phone over TLS+pin, forwards signed mutations verbatim. Closed,
-# licensed, proprietary. See docs/PHASE5.md + itrat-console/13 (D12).
+# See docs/PHASE5.md + itrat-console/13 (D12). Apache-2.0 like the workspace.
 [package]
 name = "genaryx-relay"
 version.workspace = true

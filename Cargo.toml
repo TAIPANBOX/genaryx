@@ -1,6 +1,7 @@
-# Genaryx workspace — closed-source enterprise control room over the open TAIPANBOX stack.
+# Genaryx workspace: the control room over the open TAIPANBOX stack.
 # Architecture source of truth: ~/Development/itrat-console (files 00-09).
-# Rule D3: this repo is proprietary and never published; the open stack is never relicensed.
+# Apache-2.0, like every other repository in the stack. This was proprietary
+# until 2026-07-27; rule D3, which said it never gets published, is retired.
 
 [workspace]
 resolver = "3"
@@ -18,7 +19,7 @@ members = [
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.96"
-license = "LicenseRef-Genaryx-Proprietary"
+license = "Apache-2.0"
 authors = ["IT-RAT / TAIPANBOX"]
 publish = false
 

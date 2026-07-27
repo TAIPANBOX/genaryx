@@ -157,7 +157,7 @@ All gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D
 
 ## Tier (D13.5)
 
-Paid Genaryx only. The crate lives in this proprietary workspace; the open stack stays
+Genaryx only. The crate lives in this workspace; the open stack stays
 fully operable without it (the copilot only consumes public plane APIs, adds none). The
 trial ships the copilot hard-locked to local providers (`allow_non_local_endpoints=false`).
 
