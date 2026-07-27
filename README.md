@@ -23,9 +23,11 @@ before you read further.
   publication. Nothing else was rewritten, and no credential, key or
   certificate has ever been committed here; that was verified across every
   commit before publication.
-- **The offline entitlement machinery in `crates/` still compiles.** It belongs
-  to the earlier model, it does nothing now, and it will be removed rather than
-  left to confuse a reader about what this is.
+- **The licence gate is gone, the ML-DSA verifier is not.** A relay module that
+  always granted and printed a TODO guarded a product nobody sells; it was
+  deleted on 2026-07-27. The post-quantum verifier in `crates/signing` stayed:
+  Genaryx never signs with ML-DSA, Qryx does, and this crate verifies what Qryx
+  signed, which is a capability rather than a licence check.
 
 ## What it is
 
