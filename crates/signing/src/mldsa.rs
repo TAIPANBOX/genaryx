@@ -1,7 +1,7 @@
 //! ML-DSA (FIPS 204) signature verification.
 //!
 //! Phase-0 spike #4 (06 §7). Genaryx never signs with ML-DSA itself; Qryx signs
-//! evidence packs (07 §4.5) and the license issuer signs offline entitlement files
+//! evidence packs (07 §4.5), and this crate verifies them
 //! (decision D3/D8). This module only verifies, and stays fail-closed (06 §0.5):
 //! any parse or verification failure is `Err` or `Ok(false)`, never a panic and
 //! never a silent pass.
@@ -10,7 +10,7 @@
 //! signs the document's blended digest directly (07 §4.5: "sha256 digest of the
 //! document with a blended digest field, SPKI embedded, self-verifying"). [`verify`]
 //! tries SPKI first and falls back to the crate's raw fixed-size encoded key, so a
-//! caller holding only a bare key (e.g. an offline-license key with no DER wrapper)
+//! caller holding only a bare key (one with no DER wrapper)
 //! still works.
 //!
 //! Crate choice: RustCrypto `ml-dsa` 0.1, not `fips204`. Both are pure Rust, forbid
@@ -55,7 +55,7 @@ pub enum ParamSet {
 /// a structurally valid but non-matching signature (tampered message, tampered
 /// signature, wrong key). Returns `Err` only when neither input can be decoded at
 /// all (malformed key, wrong-length signature). Never panics: this is the
-/// verification gate for evidence and license trust, so every failure mode is an
+/// verification gate for evidence trust, so every failure mode is an
 /// explicit, inspectable result (06 §0.5).
 pub fn verify(
     param_set: ParamSet,
@@ -174,11 +174,11 @@ mod tests {
     #[test]
     fn roundtrip_via_raw_key_bytes() {
         // Covers the fallback path for callers holding a bare key with no DER
-        // wrapper (e.g. an offline-license key, D3/D8).
+        // wrapper.
         let sk = SigningKey::<MlDsa65>::generate();
         let vk = sk.verifying_key();
         let raw = vk.encode();
-        let msg = b"offline license entitlement v1";
+        let msg = b"evidence pack v1";
         let sig = sk.sign(msg).encode();
 
         assert_eq!(verify(ParamSet::MlDsa65, &raw, msg, &sig), Ok(true));

@@ -52,15 +52,15 @@ impl LifecycleStore {
         if self.frozen_agents.contains(agent_id) {
             return Some("frozen");
         }
-        if let Some(team) = team_of(agent_id) {
-            if self.stopped_units.contains(team) {
-                return Some("stopped");
-            }
+        if let Some(team) = team_of(agent_id)
+            && self.stopped_units.contains(team)
+        {
+            return Some("stopped");
         }
-        if let Some(owner) = self.agent_owners.get(agent_id) {
-            if self.stopped_users.contains(owner) {
-                return Some("stopped");
-            }
+        if let Some(owner) = self.agent_owners.get(agent_id)
+            && self.stopped_users.contains(owner)
+        {
+            return Some("stopped");
         }
         None
     }
@@ -140,10 +140,10 @@ fn parse_block_name(name: &str) -> Option<(&str, &str)> {
 /// - `allow_domains` with a sentinel nothing can match denies any request that
 ///   names a domain, since a domain outside the allow-list is a deny.
 ///
-/// Verified against the live PDP: a realistic agent call (cost + steps + tool
-/// + attestation) is DENIED, and an unrelated agent is unaffected. The one
-/// request this cannot deny is a fully empty probe: attested, no cost, no
-/// steps, no tool, no domain. `deny_tool` does not take a wildcard (exact
+/// Verified against the live PDP: a realistic agent call carrying cost, steps,
+/// a tool and an attestation is DENIED, and an unrelated agent is unaffected.
+/// The one request this cannot deny is a fully empty probe: attested, no cost,
+/// no steps, no tool, no domain. `deny_tool` does not take a wildcard (exact
 /// names only), so that gap is the PDP's vocabulary, not an oversight here.
 /// It admits nothing an agent could do work with.
 fn deny_all_policy(name: &str, target: &str) -> Policy {

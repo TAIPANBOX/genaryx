@@ -10,7 +10,7 @@
 //! end. Everything here is defensive: it lets an operator protect their own
 //! budget/agents from anywhere, never grants any autonomous destructive power.
 //!
-//! This file is the composition root: parse config, run the license gate, a
+//! This file is the composition root: parse config, a
 //! Cloud health check, bring up `CloudSse` + the `ExceptionEngine`, then
 //! serve the public TLS listener (phone-facing) and the loopback-only admin
 //! listener (desktop-facing) side by side. See `docs/PHASE5.md` for the wave
@@ -23,7 +23,6 @@ mod acme;
 mod admin;
 mod config;
 mod exceptions;
-mod license;
 mod pairing;
 mod proxy;
 mod push;
@@ -78,8 +77,6 @@ enum RelayError {
     #[error("{0}")]
     Config(#[from] config::ConfigError),
     #[error("{0}")]
-    License(#[from] license::LicenseError),
-    #[error("{0}")]
     Tls(#[from] tls::TlsError),
     #[error("acme (cert broker): {0}")]
     Acme(#[from] acme::AcmeError),
@@ -123,15 +120,9 @@ async fn run() -> Result<(), RelayError> {
         config.org, config.cloud_base_url, config.public_bind_addr, config.admin_bind_addr
     );
 
-    // License gate (docs/PHASE5.md: "Do not block the sim build on real
-    // licensing"). Sim uses the permissive stub; R1 wires the real ML-DSA
-    // check behind the exact same `.check()` call.
-    license::LicenseGate::permissive().check()?;
-
     // Fail-closed: refuse to start without a Cloud health check, BEFORE
-    // touching TLS/registry/SSE (itrat-console/13 D12.3: "relay refuses to
-    // start without a valid license, a readable `.p8`, and a Cloud health
-    // check").
+    // touching TLS/registry/SSE (itrat-console/13 D12.3, minus its licence
+    // clause: there is no licence to check since 2026-07-27).
     let plain_http = reqwest::Client::builder()
         .build()
         .map_err(|e| RelayError::HealthCheck(e.to_string()))?;

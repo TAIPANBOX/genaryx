@@ -6,7 +6,7 @@
 //! read, and answers every request by calling `genaryx-api` directly - the
 //! same functions the Tauri shell used to wrap. No run, spend figure,
 //! identity or policy decision leaves the customer's network to render this
-//! UI, and it-rat.com has no route to it: the site sells and licenses the
+//! UI, and it-rat.com has no route to it at all: the site documents the
 //! product, it never sees the data.
 //!
 //! Reaching it is the operator's own tunnel (D11). The default bind is
