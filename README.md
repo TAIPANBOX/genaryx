@@ -6,29 +6,30 @@ infrastructure and opened in a browser.
 
 > **Apache-2.0**, like every other repository in the stack. See [LICENSE](LICENSE).
 
-This repository was closed source and Genaryx was the one paid product in the
-family until **2026-07-27**, when that stopped being true. There is now no paid
-tier, no licence key and no build we keep and you do not get. IT-RAT is paid for
-consulting; the software is not sold. Some of the design documents under `docs/`
-still argue from the old model, and they are left as they were written rather
-than quietly edited: they are a record of how the thing was built, not a
-description of what it costs.
+This repository was closed until **2026-07-27** and opened under Apache-2.0
+with its history intact. A repository that changes licence owes the reader an
+honest note rather than a badge, so here are the three things worth knowing
+before you read further.
 
-Two consequences worth stating, because a repository that changes licence owes
-the reader an honest note rather than a badge:
-
+- **Parts of `docs/` are older than the licence.** Several design documents
+  were written under the earlier model and still argue from it. They are left
+  as they were written rather than quietly edited, because they record how the
+  thing was built and when each decision was made. Read them as history; the
+  code is the present tense.
 - **The history is here, minus five files.** Everything up to the flip is
   preserved. Two screenshots carrying a pairing QR (a torn-down relay address
   and two one-time codes that expired in 274 seconds on 2026-07-20) and three
   screen recordings of the discontinued mobile app were removed before
-  publication. Nothing else was rewritten.
-- **The offline licence machinery in `crates/` still compiles.** It signed
-  entitlements for a product that is no longer sold. It is dead weight now and
-  will be removed rather than left to imply a tier exists.
+  publication. Nothing else was rewritten, and no credential, key or
+  certificate has ever been committed here; that was verified across every
+  commit before publication.
+- **The offline entitlement machinery in `crates/` still compiles.** It belongs
+  to the earlier model, it does nothing now, and it will be removed rather than
+  left to confuse a reader about what this is.
 
 ## What it is
 
-A real-time surface for a CISO / Head of FinOps: fleet burn and kill switch
+A real-time surface for whoever answers for a fleet of agents: burn and kill switch
 (**TokenFuse**), policy decisions and approvals (**Wardryx**), identity graph
 (**Idryx**), crypto posture and evidence (**Qryx**), quality and cost-per-outcome
 (**Verdryx**), fire-drills (**Mockryx**), and memory (**Engram**). No new backend:
@@ -40,14 +41,14 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
 - **A web console served from the customer's own box** (`genaryx-web`): the
   runtime and the console run inside the customer's perimeter, reached over the
   operator's own WireGuard tunnel (D11). Nothing about their runs, spend or
-  identities travels anywhere to be displayed; it-rat.com hosts only commerce
-  (accounts, payment, license, download) and has no route to the console.
+  identities travels anywhere to be displayed, and it-rat.com has no route to
+  the console at all.
 - The native desktop shells this project once also shipped (a Tauri 2 shell
   for Windows/Linux, a SwiftUI shell for macOS) were removed from this repo
   with the web-only pivot; the web console above is the only console shell
   now.
-- The mobile **Pocket** pager is built but deferred for distribution (Apple
-  Developer account pending); it stays on the roadmap, not in the offer.
+- The mobile **Pocket** pager is built but not distributed (an Apple Developer
+  account is still the blocker). It is explored, not maintained.
 
 ## What is built (all live-verified unless marked)
 
