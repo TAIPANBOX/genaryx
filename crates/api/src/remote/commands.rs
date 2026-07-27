@@ -326,7 +326,9 @@ impl From<wg_operator::WgOperatorError> for RemoteError {
             // its message, so they surface as-is instead of being flattened
             // into a generic error the UI would have to guess at.
             wg_operator::WgOperatorError::Misconfigured { message } => RemoteError::Wg { message },
-            wg_operator::WgOperatorError::SubnetExhausted { message } => RemoteError::Wg { message },
+            wg_operator::WgOperatorError::SubnetExhausted { message } => {
+                RemoteError::Wg { message }
+            }
         }
     }
 }

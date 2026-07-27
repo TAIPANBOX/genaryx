@@ -388,7 +388,9 @@ fn auth_hint(cli: &str) -> String {
         "aws" => "run `aws configure` (or set AWS_PROFILE)".to_string(),
         "gcloud" => "run `gcloud auth login`".to_string(),
         "az" => "run `az login`".to_string(),
-        "ibmcloud" => "run `ibmcloud login` (or `ibmcloud login --sso` for a federated org)".to_string(),
+        "ibmcloud" => {
+            "run `ibmcloud login` (or `ibmcloud login --sso` for a federated org)".to_string()
+        }
         other => format!("authenticate the `{other}` CLI"),
     }
 }

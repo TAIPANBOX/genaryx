@@ -175,7 +175,10 @@ impl Ctx {
         // Both directories: the store's, and the one the products actually
         // write into. A journal that uses the first for its events file writes
         // where nothing tails and nothing keeps.
-        let bus_dirs = match (self.bus.events_dir.clone(), self.bus.source_events_dir.clone()) {
+        let bus_dirs = match (
+            self.bus.events_dir.clone(),
+            self.bus.source_events_dir.clone(),
+        ) {
             (Some(store), Some(source)) => Some((store, source)),
             _ => None,
         };

@@ -308,7 +308,10 @@ mod tests {
 
     #[test]
     fn team_is_the_second_segment_of_an_agent_id() {
-        assert_eq!(team_of("agent://acme/treasury/reconciler"), Some("treasury"));
+        assert_eq!(
+            team_of("agent://acme/treasury/reconciler"),
+            Some("treasury")
+        );
         // Not an agent id (no name segment), and not an agent URI at all.
         assert_eq!(team_of("agent://acme/treasury"), None);
         assert_eq!(team_of("user://acme/d.hayes"), None);
@@ -332,10 +335,9 @@ mod tests {
         store.frozen_agents.insert(agent("agent://acme/sre/rca"));
         store.stopped_units.insert("treasury".to_string());
         store.stopped_users.insert("d.hayes".to_string());
-        store.agent_owners.insert(
-            agent("agent://acme/lending/scorer"),
-            "d.hayes".to_string(),
-        );
+        store
+            .agent_owners
+            .insert(agent("agent://acme/lending/scorer"), "d.hayes".to_string());
 
         assert_eq!(store.state_for("agent://acme/sre/rca"), Some("frozen"));
         assert_eq!(

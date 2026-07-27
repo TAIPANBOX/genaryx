@@ -343,7 +343,10 @@ mod tests {
             assert_eq!(cfg.base_url.as_deref(), Some("http://127.0.0.1:11434/v1"));
             assert_eq!(cfg.model.as_deref(), Some("qwen2.5:3b"));
             assert!(!cfg.allow_non_local_endpoints);
-            assert_eq!(cfg.max_usd_per_day, CopilotConfig::default().max_usd_per_day);
+            assert_eq!(
+                cfg.max_usd_per_day,
+                CopilotConfig::default().max_usd_per_day
+            );
 
             // The BYO-cloud opt-in is the literal "1", nothing looser.
             std::env::set_var("GENARYX_COPILOT_ALLOW_REMOTE", "true");
@@ -351,8 +354,12 @@ mod tests {
             std::env::set_var("GENARYX_COPILOT_ALLOW_REMOTE", "1");
             assert!(config_from_env().allow_non_local_endpoints);
 
-            for var in ["GENARYX_COPILOT_PROVIDER", "GENARYX_COPILOT_BASE_URL",
-                        "GENARYX_COPILOT_MODEL", "GENARYX_COPILOT_ALLOW_REMOTE"] {
+            for var in [
+                "GENARYX_COPILOT_PROVIDER",
+                "GENARYX_COPILOT_BASE_URL",
+                "GENARYX_COPILOT_MODEL",
+                "GENARYX_COPILOT_ALLOW_REMOTE",
+            ] {
                 std::env::remove_var(var);
             }
         }

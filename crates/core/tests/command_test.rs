@@ -232,8 +232,14 @@ fn operator_that_does_not_match_principal_pattern_is_omitted() {
     // No `agent://` or `user://` prefix: must be left out of `on_behalf_of`
     // rather than emitted and failing conformance.
     let rec = kill_record("alice");
-    let line = console_command_line("acme.example", "host", &rec, "2026-07-16T12:00:00.000Z", None)
-        .expect("console_command_line");
+    let line = console_command_line(
+        "acme.example",
+        "host",
+        &rec,
+        "2026-07-16T12:00:00.000Z",
+        None,
+    )
+    .expect("console_command_line");
 
     let value: serde_json::Value = serde_json::from_str(&line).expect("parse line");
     assert!(
@@ -289,8 +295,7 @@ fn a_console_command_chains_onto_whatever_was_written_before_it() {
     genaryx_core::command::record(&store, &events, "acme.example", "host", &rec).unwrap();
 
     let text = std::fs::read_to_string(&events).unwrap();
-    let written: serde_json::Value =
-        serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    let written: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
     let expected = genaryx_core::command::chain_hash_of_line(existing).unwrap();
     assert_eq!(
         written.get("prev_hash").and_then(|v| v.as_str()),
@@ -302,7 +307,10 @@ fn a_console_command_chains_onto_whatever_was_written_before_it() {
     // conformance checker rejects the whole file.
     let hex = expected.strip_prefix("sha256:").expect("sha256: prefix");
     assert_eq!(hex.len(), 64, "a prev_hash is 64 hex characters, never 63");
-    assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    assert!(
+        hex.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -343,5 +351,8 @@ fn the_first_event_in_an_empty_file_carries_no_link() {
     )
     .unwrap();
     let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-    assert!(v.get("prev_hash").is_none(), "a head event must omit the field entirely");
+    assert!(
+        v.get("prev_hash").is_none(),
+        "a head event must omit the field entirely"
+    );
 }

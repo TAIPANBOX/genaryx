@@ -26,11 +26,36 @@ use std::sync::Arc;
 
 use genaryx_connectors::UapiSocket;
 
-/// What the proxy serves.
-const CERT: &[u8] = include_bytes!("fixtures/uapi-proxy.crt");
-/// What the client pins. A different file, and that is the whole lesson.
-const CA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ca.crt");
-const KEY: &[u8] = include_bytes!("fixtures/uapi-proxy.key");
+/// The fixture directory. The certificates are committed; the leaf's PRIVATE
+/// KEY deliberately is not, because `.gitignore` keeps `*.key` out of the tree
+/// and a public repository is the last place to make an exception to that. So
+/// the fixtures are READ at runtime rather than `include_bytes!`d at compile
+/// time: with the key absent this test skips and says how to make one, instead
+/// of failing the whole workspace's `cargo test` to a missing-file error.
+///
+/// Generate them with `tests/fixtures/generate.sh`.
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+
+/// What the client pins. A different file from what the proxy serves, and that
+/// is the whole lesson.
+fn ca_path() -> String {
+    format!("{FIXTURES}/ca.crt")
+}
+
+/// `Some((cert, key))` when the pair is present, `None` when the key is not.
+fn fixtures() -> Option<(Vec<u8>, Vec<u8>)> {
+    let cert = std::fs::read(format!("{FIXTURES}/uapi-proxy.crt")).ok()?;
+    let key = std::fs::read(format!("{FIXTURES}/uapi-proxy.key")).ok()?;
+    Some((cert, key))
+}
+
+/// Printed once, so a skip never looks like a pass.
+fn skip_note() {
+    eprintln!(
+        "SKIP uapi_tls_pinning: no tests/fixtures/uapi-proxy.key. \
+         Run crates/connectors/tests/fixtures/generate.sh to create the pair."
+    );
+}
 /// The fixture's SAN carries the real Service name AND `localhost`, so this
 /// test can dial a loopback listener while still verifying a NAME. Without the
 /// second entry the client would fail at resolution and the test would pass
@@ -39,11 +64,15 @@ const NAME: &str = "localhost";
 
 /// A TLS listener that answers exactly one UAPI exchange, the way the proxy
 /// does: read to the blank line, reply, close.
-fn spawn_proxy(reply: &'static str) -> (u16, std::thread::JoinHandle<Option<String>>) {
-    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(CERT))
+fn spawn_proxy(
+    reply: &'static str,
+    cert: &[u8],
+    key_pem: &[u8],
+) -> (u16, std::thread::JoinHandle<Option<String>>) {
+    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert))
         .collect::<Result<_, _>>()
         .expect("fixture certificate");
-    let key = rustls_pemfile::private_key(&mut BufReader::new(KEY))
+    let key = rustls_pemfile::private_key(&mut BufReader::new(key_pem))
         .expect("fixture key readable")
         .expect("fixture key present");
 
@@ -88,9 +117,13 @@ fn a_pinned_self_signed_certificate_completes_a_handshake_and_carries_an_exchang
     let reply = "interface_public_key=7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13\n\
                  listen_port=31820\n\
                  errno=0\n";
-    let (port, server) = spawn_proxy(reply);
+    let Some((cert, key)) = fixtures() else {
+        skip_note();
+        return;
+    };
+    let (port, server) = spawn_proxy(reply, &cert, &key);
 
-    let sock = UapiSocket::tls(format!("{NAME}:{port}"), CA, "the-bearer");
+    let sock = UapiSocket::tls(format!("{NAME}:{port}"), ca_path(), "the-bearer");
 
     // `wg-uapi.agent-tunnel` is not a name this machine resolves, so the test
     // dials the loopback listener while still presenting that server name to
@@ -119,11 +152,15 @@ fn a_pinned_self_signed_certificate_completes_a_handshake_and_carries_an_exchang
 
 #[test]
 fn a_certificate_for_another_name_is_refused_rather_than_trusted() {
-    let (port, server) = spawn_proxy("errno=0\n");
+    let Some((cert, key)) = fixtures() else {
+        skip_note();
+        return;
+    };
+    let (port, server) = spawn_proxy("errno=0\n", &cert, &key);
     // Same certificate, dialled by ADDRESS. The fixture carries no IP entry in
     // its SAN, so this is a genuine name mismatch: the pin must not be a blank
     // cheque for whatever answers on the other end.
-    let sock = UapiSocket::tls(format!("127.0.0.1:{port}"), CA, "t");
+    let sock = UapiSocket::tls(format!("127.0.0.1:{port}"), ca_path(), "t");
     let err = sock.state().unwrap_err();
     drop(server);
     let msg = err.to_string();

@@ -220,7 +220,7 @@ fn digest_intent(batch: &[PushIntent]) -> PushIntent {
 /// Build the relay's copilot from env (`GENARYX_RELAY_COPILOT_*`), or `None`
 /// when no provider is configured / the config is invalid. Annotation needs no
 /// tools, so `Clients::default()` is correct here. Local-only by default (the
-/// residency / trial posture); a remote BYO endpoint needs an explicit opt-in.
+/// residency posture); a remote BYO endpoint needs an explicit opt-in.
 pub fn build_copilot_from_env() -> Option<Arc<CopilotService>> {
     let config = copilot_config_from_env();
     match CopilotService::from_config_and_clients(&config, Clients::default()) {
@@ -260,9 +260,9 @@ fn copilot_config_from_env() -> CopilotConfig {
         base_url: std::env::var("GENARYX_RELAY_COPILOT_BASE_URL").ok(),
         model: std::env::var("GENARYX_RELAY_COPILOT_MODEL").ok(),
         api_key_ref: std::env::var("GENARYX_RELAY_COPILOT_API_KEY_REF").ok(),
-        // Local-only unless explicitly opted in - the relay's residency / trial
-        // default (a trial license hard-locks this to false; the sim keeps it
-        // false, the strongest "nothing leaves the box" posture).
+        // Local-only unless explicitly opted in: the relay's residency default.
+        // The sim keeps it false too, which is the strongest "nothing leaves the
+        // box" posture.
         allow_non_local_endpoints: std::env::var("GENARYX_RELAY_COPILOT_ALLOW_REMOTE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false),

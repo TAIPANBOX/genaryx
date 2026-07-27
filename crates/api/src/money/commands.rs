@@ -386,7 +386,9 @@ fn journal(client: &MoneyClient, rec: &CommandRecord) -> (bool, Option<String>) 
         (false, Some(reason))
     };
     let Some(bus) = &client.bus else {
-        return failed("no live event bus available (startup seeding did not complete)".to_string());
+        return failed(
+            "no live event bus available (startup seeding did not complete)".to_string(),
+        );
     };
     match genaryx_core::store::Store::open(&bus.store_db_path) {
         Ok(store) => {
