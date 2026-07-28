@@ -666,11 +666,6 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 genaryx_api::onboard::commands::onboard_write_passport(a.request).await,
             ))
         }
-        "pocket_connect" => Ok(reply(genaryx_api::pocket::commands::pocket_connect().await)),
-        "pocket_disconnect" => Ok(reply(
-            genaryx_api::pocket::commands::pocket_disconnect().await,
-        )),
-        "pocket_status" => Ok(reply(genaryx_api::pocket::commands::pocket_status().await)),
         "policy_decide_approval" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

@@ -170,17 +170,17 @@ impl Felyx {
         Err(CopilotError::IterationLimit(self.max_iterations))
     }
 
-    /// A FAST, single-turn, tool-free summary of one event, for the C3 relay's
-    /// push-annotation budget (docs/PHASE6-C3.md, D13.4). Deliberately NOT the
-    /// tool loop: an annotation must fit a ~3 s budget, so it is one provider
-    /// call, no tools, small output. Enriches a HARD event; it can never
-    /// suppress the deterministic push (the relay dispatches that first).
+    /// A FAST, single-turn, tool-free summary of one event, for anything that
+    /// has to put a human-readable line in front of an operator under a tight
+    /// budget. Deliberately NOT the tool loop: an annotation has to fit a ~3 s
+    /// budget, so it is one provider call, no tools, small output. It enriches
+    /// an alert and can never be what decides whether the alert fires.
     pub async fn annotate(
         &self,
         event: &str,
     ) -> Result<crate::action::CopilotAnnotation, CopilotError> {
         const ANNOTATE_SYSTEM: &str = "You are Felyx, an on-call copilot. In ONE short \
-            sentence, summarize this agent-fleet event for an operator's pager: what happened \
+            sentence, summarize this agent-fleet event for the operator on call: what happened \
             and why it matters. No preamble, no markdown, just the sentence.";
         let turn = self
             .provider
@@ -456,8 +456,8 @@ mod tests {
         assert!(answer.tool_trace[0].ok);
     }
 
-    // C3: annotate is a single tool-free turn producing a one-line summary (the
-    // relay's fast push-annotation path), distinct from the multi-tool loop.
+    // annotate is a single tool-free turn producing a one-line summary, for a
+    // caller on a tight budget; distinct from the multi-tool loop.
     #[tokio::test]
     async fn annotate_produces_a_one_line_summary_without_tools() {
         let provider = crate::provider::mock::MockProvider::new(vec![ChatTurn {

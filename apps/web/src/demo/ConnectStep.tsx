@@ -13,8 +13,8 @@ import { DEMO_ENDPOINT_LABEL, DEMO_WG_CONFIG, downloadDemoWgConfig } from "./wgD
  *
  * The QR reuses the console's own dependency-free encoder
  * (`components/QrCode.tsx` / `lib/qr.ts`, vendored `qrcodegen`) rather than
- * a second one duplicated under `src/demo/`: it is already in this bundle
- * (Pocket pairing uses it too), so importing it costs nothing extra and
+ * a second one duplicated under `src/demo/`: it is already in this bundle,
+ * so importing it costs nothing extra and
  * produces a genuinely scannable code instead of a look-alike placeholder,
  * which is strictly more convincing "theater" for exactly zero extra
  * dependency weight.
@@ -52,7 +52,11 @@ export function ConnectStep({ onEnterConsole }: { onEnterConsole: () => void }) 
             className="flex flex-col items-center gap-1.5 rounded-lg border-0 bg-transparent p-0"
             style={{ cursor: "pointer" }}
           >
-            <QrCode value={DEMO_WG_CONFIG} size={176} />
+            <QrCode
+              value={DEMO_WG_CONFIG}
+              size={176}
+              label="QR code: a WireGuard config to import into the official WireGuard client"
+            />
             <span className="mono text-[10px]" style={{ color: "var(--faint)" }}>
               tap to simulate a scan
             </span>

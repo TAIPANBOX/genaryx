@@ -172,18 +172,6 @@
       }
     },
     {
-      "file": "console/c11-pocket.png",
-      "captured_local": "2026-07-20 18:44:13",
-      "epoch": "e01",
-      "epoch_label": "site set, final: console + menu bar + phone + watch, live burn, 15 killed; plus the denied-face capture and the menu-bar-in-context reshoot, totals re-read and identical; plus the pinned-identity card",
-      "totals": {
-        "runs": 9501,
-        "calls": 37596,
-        "spent_usd": 4671.02,
-        "killed": 15
-      }
-    },
-    {
       "file": "console/c12-copilot.png",
       "captured_local": "2026-07-20 18:44:17",
       "epoch": "e01",

@@ -18,12 +18,12 @@
 //! run names reach them), so a space, a slash or a non-ASCII letter is
 //! reachable, not theoretical.
 //!
-//! This is the desktop twin of the tokenfuse-mobile fix (`String.asPathSegment`
-//! with `percentEncodedPath`, commits `eac44ed`/`ed9c9de`, task #15). The
-//! encoding set below is deliberately the SAME set Foundation's
-//! `CharacterSet.urlPathAllowed` (minus `/` and `%`) applies, so the phone and
-//! the console produce byte-identical paths for the same id, and the pinned
-//! cross-language canonical vectors keep matching.
+//! The encoding set below is deliberately the same set Foundation's
+//! `CharacterSet.urlPathAllowed` applies, minus `/` and `%`. Keeping a
+//! well-known set rather than inventing one is what lets an independent
+//! implementation produce byte-identical paths for the same id, which is the
+//! whole point of a canonical string: the pinned cross-language vectors in
+//! this module are the check that it still does.
 //!
 //! ## The set, and why the `url` crate then leaves it alone
 //!

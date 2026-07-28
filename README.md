@@ -22,7 +22,7 @@ before you read further.
   recordings from the same session were removed before publication. Nothing
   else was rewritten, and no credential, key or certificate has ever been
   committed here; that was verified across every commit before publication.
-- **The licence gate is gone, the ML-DSA verifier is not.** A relay module that
+- **The licence gate is gone, the ML-DSA verifier is not.** A module that
   always granted and printed a TODO guarded a product nobody sells; it was
   deleted on 2026-07-27. The post-quantum verifier in `crates/signing` stayed:
   Genaryx never signs with ML-DSA, Qryx does, and this crate verifies what Qryx
@@ -185,7 +185,7 @@ schemas) and `crates/core/tests/fixtures/` (real campaign NDJSON).
 ## Build
 
 ```sh
-cargo build            # workspace (core + api + connectors + signing + relay + copilot + web)
+cargo build            # workspace (core + api + connectors + signing + copilot + web)
 cargo test             # unit + golden conformance tests
 cargo fmt --all        # formatting (pinned toolchain, see rust-toolchain.toml)
 cargo clippy --all-targets --all-features

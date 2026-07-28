@@ -330,11 +330,9 @@ impl CloudClient {
 
     /// Mint a one-time pairing code: `POST /v1/pair/new` with `admin_bearer`
     /// (an admin org key - `http.rs::admin_org_key` requires role `admin`).
-    /// Deliberately separate from [`CloudClient::pair`] (Phase 5 W2,
-    /// itrat-console/13 D12.2a step 1): the desktop's Pocket panel mints a
-    /// code for a PHONE to redeem later (over the relay, W3), so it must stop
-    /// after this step rather than immediately generating its own signer and
-    /// redeeming the code itself the way `pair`'s single-shot flow does.
+    /// Split out of [`CloudClient::pair`] rather than inlined, because minting
+    /// and redeeming are separately authenticated steps: this one carries the
+    /// admin bearer, and the redemption that follows carries only the code.
     pub async fn pair_new(&self, admin_bearer: &str) -> Result<PairNewResponse, ConnectorError> {
         let resp = self
             .http
@@ -351,10 +349,9 @@ impl CloudClient {
     /// `POST /v1/pair` redeeming it with `signer.public_key_b64()` (no bearer
     /// on this second call - the code itself is the credential, exactly as
     /// `devices.rs`'s module doc and `http.rs::pair`'s doc specify). This is
-    /// the desktop's OWN device self-pairing flow (Money/Overview, Phase 1);
-    /// the Pocket panel's phone-pairing flow (Phase 5 W2) uses `pair_new`
-    /// directly instead, since the code there is redeemed by the PHONE, over
-    /// the relay, not by this client.
+    /// the console's OWN self-pairing flow (Money/Overview, Phase 1): it holds
+    /// the signer whose signature the Cloud checks on every mutation, so it
+    /// mints and redeems in one shot rather than handing the code anywhere.
     ///
     /// Returns the full [`PairResponse`]; the caller decides whether (and
     /// when) to hand its `device_id`/`device_token` to
@@ -635,11 +632,10 @@ pub struct AuditVerifyResponse {
 /// (`devices.rs`/`http.rs:470-473`): `code` is the redeemable one-time code
 /// (an 8-char unambiguous-alphabet string, `devices::pairing_code()`),
 /// `expires_unix` is when it stops being redeemable (currently a fixed 600s
-/// from mint, `http.rs::pair_new`). Public since Phase 5 W2: the Pocket
-/// panel's [`CloudClient::pair_new`] hands this straight back to its caller
-/// (the desktop needs `code` for the QR and `expires_unix` to know how long
-/// the relay's pairing window should stay armed) rather than consuming it
-/// internally the way [`CloudClient::pair`] does.
+/// from mint, `http.rs::pair_new`). Public rather than private because
+/// [`CloudClient::pair_new`] is itself public: a caller that mints without
+/// redeeming needs both fields, where [`CloudClient::pair`] consumes them
+/// internally.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PairNewResponse {
     pub code: String,

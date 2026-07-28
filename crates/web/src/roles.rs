@@ -69,9 +69,6 @@ const ADMIN_COMMANDS: &[&str] = &[
     "admission_baseline",
     // Copilot: logging a proposal as approved leads to a signed action.
     "copilot_log_proposal_approved",
-    // Pocket pairs / unpairs a phone with the relay.
-    "pocket_connect",
-    "pocket_disconnect",
     // Remote: everything that touches or reaches the client-hosted box.
     "remote_set_environment",
     "remote_wg_connect",
@@ -149,7 +146,6 @@ const VIEWER_COMMANDS: &[&str] = &[
     "policy_list_approvals",
     "policy_list_policies",
     "policy_status",
-    "pocket_status",
     "quality_list_baselines",
     "quality_list_run_summaries",
     "quality_run_scores",
@@ -226,9 +222,6 @@ mod tests {
         "policy_list_approvals",
         "policy_list_policies",
         "policy_status",
-        "pocket_connect",
-        "pocket_disconnect",
-        "pocket_status",
         "quality_list_baselines",
         "quality_list_run_summaries",
         "quality_run_scores",
