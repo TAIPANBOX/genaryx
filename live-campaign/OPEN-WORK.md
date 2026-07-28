@@ -150,116 +150,32 @@ operator's laptop is right, not a bug. This item is about the box side.
 
 ---
 
-## 3. Remove the campaign box IP from the mobile project
-
-`tokenfuse-mobile/ios/project.yml` carries an ATS exception naming the live
-campaign box, `5.75.234.176`, on both the phone and the watch targets. It is
-committed on branch `watch-relay-client-and-revocation` and marked in-file as
-diagnostic rather than a shipping value, but it must not reach a release: it
-names an ephemeral box, and it turns off ATS's own trust check for that host.
-
-It exists because the relay serves a self-signed certificate that the app pins
-from the QR, and ATS refuses the connection before the pinning delegate can
-decide (observed: pin matched, then CFNetwork failed the task with -9802).
-`NSAllowsArbitraryLoads` alone was not enough; the log showed
-`enforce_ats(false) ... skip_ats_trust(false)` and the connection still failed.
-
-This disappears on its own once the cert broker (item below, and task #14) gives
-every relay a real trusted certificate. Until then, do not ship a build with it,
-and re-check it whenever the campaign box changes.
-
-## 4. Show the phone-pairing QR flow end to end
-
-Owed to Yurii: a walkthrough of how the desktop console hands a phone its
-pairing QR. The control lives on the **Pocket** tab (11th). It could not be
-demonstrated on 2026-07-20 because both slots were already paired, so the panel
-showed its paired state and a `Disconnect all` button instead of the QR.
-
-Demonstrate: the unpaired empty state, the control that arms the QR, the QR
-itself, the phone scanning it, and both devices arriving paired.
-
-**Handle with care when capturing:** one QR carries the relay's pinned TLS
-identity plus a live one-time code for each device, and the watch's code carries
-kill authority for the life of the window. A QR must never appear un-redacted in
-anything published.
-
-**DONE 2026-07-21**, tokenfuse-mobile `bfa1986` on branch
-`watch-relay-client-and-revocation` (pushed). All three branches now hold zero
-occurrences.
-
-Why it stopped being "must not ship" and became "remove now": the box it named
-was destroyed, so the entry granted the app nothing while still switching ATS's
-own trust check off for whoever is assigned that address next.
-`NSAllowsArbitraryLoads`/`NSAllowsLocalNetworking` stay, being the deliberate
-posture (the relay host is unknown until install, and PinnedTLS accepts exactly
-one certificate).
-
-The FINDING was kept in the file where the exception used to be, because it cost
-a live session: against a self-signed relay, pinning alone does not open the
-connection - `NSAllowsArbitraryLoads` relaxes only cipher/version
-(`enforce_ats(false) ... skip_ats_trust(false)`) and CFNetwork still fails with
--9802 after the pin matched. A future live batch should expect -9802 and add a
-temporary exception for its OWN host, never merged.
-
-Verified past the source: `xcodegen generate` clean, both schemes BUILD
-SUCCEEDED (iOS + watchOS simulators), and the ATS block in each BUILT bundle's
-`Info.plist` holds only the two Allows keys, with no trace of the address in
-either `.app`.
-
-## 5. Cert broker Step 4: real Let's Encrypt + Cloudflare [#14]
-
-**Blocked on Yurii.** Steps 1-3 + the broker are DONE and scripted in
-`genaryx/cert-broker/` (design A, README there). The relay's ACME client is
-embedded (`crates/relay/src/acme.rs`); the broker has a pluggable DNS backend
-(challtestsrv test + cloudflare prod), proven end to end on box `2.28.3.61`
-(**that box was torn down 2026-07-21** and nothing of value was on it: the
-broker code, systemd units and provision scripts are all in this repo, and the
-rest was a self-signed Pebble CA plus a cert issued by it, worthless anywhere
-else. Step 4 needs A box, not THAT box: `provision-broker.sh` stands it up on a
-fresh one).
-
-**Done looks like:** delegate `pocket.it-rat.com` to Cloudflare; mint a SCOPED
-token (`Zone.DNS:Edit` on that zone ONLY) + its zone id; set
-`BROKER_BACKEND=cloudflare` + the token in `/root/broker/broker.env`; on the
-relay set `acme_directory_url`=Let's Encrypt + `acme_hostname` + `broker_*`. No
-code change. Then the mobile `project.yml` ATS exception (`5.75.234.176`) goes
-away (item 3), because the relay now serves a real trusted cert.
-
-**Deferred (Fable review):** run the broker as a dedicated non-root user (not
-root; relocate to `/opt`, PrivateTmp, RestrictAddressFamilies); and confirm the
-phone->relay HTTP/2 hop carries the encoded path unchanged in the next live run.
-
-## 6. Genaryx desktop: percent-encode ids in signed mutation paths [#21]
+## 3. Percent-encode ids in signed mutation paths [#21]
 
 **DONE 2026-07-21**, genaryx commit `4ad8b83`. All three failure modes were
 observed against a live tokenfuse-cloud by keeping the raw interpolation:
 space + non-ASCII gave `403 signature_invalid` (the desync itself), a `#` made
 `url` treat the rest of the path as a fragment so `/kill` fell off entirely
 (404), and a `/` opened an extra segment and missed the route (404). New
-`crates/connectors/src/urlpath.rs` encodes one id as one segment with the same
-set Foundation uses on the phone, so console and phone produce identical paths;
-empty/`.`/`..` fail closed (encoding does not help, the URL Standard treats
-`%2e%2e` as a dot segment too), which also closes the mobile review's accepted
-LOW. Swept the same class in `wardryx.rs`. Also closed the deferred "phone ->
-relay hop" question without a live run: `crates/relay/src/proxy.rs` now proves
-over a real HTTP round trip that the relay forwards an encoded path byte for
-byte.
+`crates/connectors/src/urlpath.rs` encodes one id as one segment;
+empty/`.`/`..` fail closed, because encoding does not help there: the URL
+Standard treats `%2e%2e` as a dot segment too. Swept the same class in
+`wardryx.rs`.
 
-**The desktop twin of mobile #15.** `crates/connectors/src/cloud_rest.rs`
-(~408/422/430) signs a mutation over a canonical path built by interpolating a
-run/agent id RAW, then reqwest percent-encodes it AFTER signing -> signature
-desync for any id with a reserved char (space, `#`, `?`, non-ASCII); the Cloud
-verifies over `uri.path()`, the raw encoded path. Ids are customer-controlled,
-so this is realistic. Fable-confirmed with url 2.5.8.
+**What it was.** `crates/connectors/src/cloud_rest.rs` (~408/422/430) signed a
+mutation over a canonical path built by interpolating a run/agent id RAW, then
+reqwest percent-encoded it AFTER signing -> signature desync for any id with a
+reserved char (space, `#`, `?`, non-ASCII); the Cloud verifies over
+`uri.path()`, the raw encoded path. Ids are customer-controlled, so this is
+realistic. Fable-confirmed with url 2.5.8.
 
 **Done looks like:** encode each dynamic segment as a single path segment
 (`utf8_percent_encode`, encoding `/`), build ONE path, sign THAT, send exactly
-those bytes; mirror the mobile fix (`asPathSegment`/`Account.mutationURL` in
-tokenfuse-mobile, commits `eac44ed` + `ed9c9de`). Add a test.
+those bytes. Add a test.
 
 ---
 
-## 7. Qryx: separate test-code findings from production [#12]
+## 4. Qryx: separate test-code findings from production [#12]
 
 **DONE 2026-07-21**, qryx commit `9d46d8b` (pushed, CI green).
 
@@ -290,7 +206,7 @@ hardcoded-key finding 3 -> 1; verdryx unchanged, the right non-effect.
 
 ---
 
-## 8. Budgets above the run: per agent / team / org [#16]
+## 5. Budgets above the run: per agent / team / org [#16]
 
 **DESIGNED 2026-07-21, NOT BUILT.** Ground truth extracted from tokenfuse and
 the design settled with Fable. Recorded here so implementation can start cold.

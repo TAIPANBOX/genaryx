@@ -85,8 +85,8 @@ impl CloudProvider {
 
     /// Parse a provider name, case-insensitively (`"AWS"`, `"Aws"`, `"aws"`
     /// all match). `None` for anything else - callers never default a bad
-    /// string into a provider, mirroring [`crate::RelayDeviceKind::parse`]'s
-    /// contract exactly. IBM accepts both its canonical wire spelling
+    /// string into a provider, because a silently wrong provider reads as a
+    /// working one. IBM accepts both its canonical wire spelling
     /// (`"ibmcloud"`, matching [`Self::as_str`]) and the shorter `"ibm"` alias.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.to_ascii_lowercase().as_str() {

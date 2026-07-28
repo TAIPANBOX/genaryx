@@ -91,10 +91,10 @@ impl CopilotService {
         self.ask(&prompt).await
     }
 
-    /// C3 push annotation (docs/PHASE6-C3.md): a fast, tool-free one-line summary
-    /// of a pager event for the relay's triage stage, or `None` when the copilot
-    /// is disabled. The relay wraps this in its own latency budget and never lets
-    /// it block or suppress a HARD push (the deterministic floor dispatches first).
+    /// A fast, tool-free one-line summary of one event, or `None` when the
+    /// copilot is disabled. A caller is expected to wrap this in its own
+    /// latency budget and to never let it block or suppress the alert itself:
+    /// the deterministic path dispatches first, this only enriches it.
     pub async fn annotate(
         &self,
         event: &str,
@@ -144,7 +144,7 @@ mod tests {
 
     #[tokio::test]
     async fn annotate_on_a_disabled_service_is_none() {
-        // C3: a disabled copilot yields no annotation (the relay then pushes the
+        // A disabled copilot yields no annotation (the caller then sends the
         // HARD event plain - the deterministic floor never depends on the AI).
         let svc =
             CopilotService::from_config_and_clients(&CopilotConfig::default(), Clients::default())

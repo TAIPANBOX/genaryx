@@ -10,7 +10,6 @@ members = [
     "crates/core",
     "crates/connectors",
     "crates/signing",
-    "crates/relay",
     "crates/web",
     "crates/copilot",
 ]

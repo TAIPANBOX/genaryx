@@ -258,9 +258,9 @@ impl SoftwareSigner {
     }
 
     /// The raw 32-byte private scalar, so a software key can be PERSISTED and
-    /// reloaded across restarts (the relay's ACME account key: registering a
-    /// fresh ACME account on every boot would churn the CA's account store and
-    /// lose the key that authorizes its own orders). Round-trips through
+    /// reloaded across restarts, for the case where the key IS the identity a
+    /// remote party already knows and re-minting it on every boot would throw
+    /// that identity away. Round-trips through
     /// [`SoftwareSigner::from_scalar`]. Deliberately only on the SOFTWARE
     /// signer: a Secure Enclave key is non-extractable by construction, and its
     /// [`Assurance`] says so. Callers MUST write the result with owner-only

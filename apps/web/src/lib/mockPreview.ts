@@ -2565,7 +2565,6 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "remote_ssh_tail_stop": return r(remoteStatus());
     case "remote_ssh_check_reachable": return r(undefined);
     case "remote_ssh_read_file": return r({ content: "# preview: remote file reads run against your own box, not this local demo\n", valid_utf8: true, size_bytes: 74 });
-    case "pocket_status": return r({ state: "relay_unreachable", message: "no relay in the preview" });
     case "copilot_status": return r(copilotStatus());
     case "copilot_connect": {
       copilotConfig = {

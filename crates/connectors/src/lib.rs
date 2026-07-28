@@ -56,16 +56,6 @@
 //! [`QryxClient`]/[`MockryxClient`] shell theirs. See
 //! `crates/connectors/src/cloud_cli.rs`.
 //!
-//! Phase-5 wave 2 (docs/PHASE5.md W2): [`RelayAdminClient`] is the desktop
-//! Pocket panel's connector to `genaryx-relay`'s loopback/WG-only admin API
-//! (pairing-info, per-kind pairing-window arm, two-slot device view,
-//! per-kind or whole-panel disconnect) - see
-//! `crates/connectors/src/relay_admin.rs`. [`CloudClient::pair_new`] is a
-//! small addition alongside it: the mint-only half of the existing
-//! [`CloudClient::pair`] flow, since the Pocket panel mints a code per
-//! device (a PHONE, then a WATCH) to redeem later (over the relay) rather
-//! than redeeming either itself.
-//!
 //! Phase-4 wave 3 (docs/PHASE4.md W3): the Evidence Center. [`build_evidence_pack`]
 //! is the ONE function both shells call to assemble a signed evidence zip - it
 //! gathers Cloud compliance evidence + the audit verdict
@@ -104,7 +94,6 @@ mod idryx;
 mod mcp_stdio;
 mod mockryx;
 mod qryx;
-mod relay_admin;
 mod sse_decoder;
 mod ssh;
 mod tokenfuse;
@@ -143,12 +132,6 @@ pub use mockryx::{
 pub use qryx::{
     EvidenceReport, EvidenceSummary, NcscDiscovery, NcscFinding, NcscFullMigration, NcscPriority,
     NcscReport, QryxClient, QryxError, Signature as QryxSignature, VerifyOutcome,
-};
-pub use relay_admin::{
-    ArmPairingWindowResponse as RelayArmPairingWindowResponse, DeviceKind as RelayDeviceKind,
-    DeviceView as RelayDeviceView, DevicesResponse as RelayDevicesResponse,
-    DisconnectResponse as RelayDisconnectResponse, PairingInfo as RelayPairingInfo,
-    RelayAdminClient, RelayAdminError, WindowView as RelayWindowView,
 };
 pub use sse_decoder::{SseDecoder, SseEvent};
 pub use ssh::{SshClient, SshError, SshTarget};

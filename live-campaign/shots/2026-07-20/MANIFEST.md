@@ -34,7 +34,6 @@ the frozen set above and must not be quoted as if they were.
 | `console/c08-drills.png` | 2026-07-20 18:43:58 | `e01` |
 | `console/c09-evidence.png` | 2026-07-20 18:44:03 | `e01` |
 | `console/c10-remote.png` | 2026-07-20 18:44:08 | `e01` |
-| `console/c11-pocket.png` | 2026-07-20 18:44:13 | `e01` |
 | `console/c12-copilot.png` | 2026-07-20 18:44:17 | `e01` |
 | `console/c13-graph.png` | 2026-07-20 18:44:22 | `e01` |
 | `console/c14-replay.png` | 2026-07-20 18:44:27 | `e01` |

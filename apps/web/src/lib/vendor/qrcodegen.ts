@@ -24,7 +24,7 @@
 // Vendored verbatim (docs/PHASE5.md W2: "dependency-free QR approach or a tiny
 // vendored generator, keep it self-contained") from
 // https://github.com/nayuki/QR-Code-generator, typescript-javascript/qrcodegen.ts,
-// so the Pocket panel's QR render has zero npm dependency and zero network
+// so the console's QR render has zero npm dependency and zero network
 // fetch at runtime. The ONLY change from upstream is adding `export` to this
 // file's three top-level `namespace qrcodegen[...]` declarations (this
 // project's `isolatedModules` tsconfig requires every declaration merging

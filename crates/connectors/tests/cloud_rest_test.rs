@@ -165,9 +165,9 @@ async fn pair_read_signed_mutations_and_tamper_reject_against_live_cloud() {
         return; // Already explained why via eprintln! above.
     };
 
-    // ---- pair_new alone (Phase 5 W2, D12.2a step 1): the desktop Pocket
-    // panel's own call shape - mint a code and stop, no redeem, distinct from
-    // pair()'s single-shot mint-then-redeem below. ----
+    // ---- pair_new alone: mint a code and stop, no redeem, so the mint half
+    // is proven against the live Cloud independently of pair()'s single-shot
+    // mint-then-redeem below. ----
     let mut client = CloudClient::new(&base, "devkey").expect("build CloudClient");
     let minted = client
         .pair_new("devkey")

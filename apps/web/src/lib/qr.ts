@@ -12,14 +12,12 @@ export interface QrRender {
 }
 
 /**
- * Render `text` as a QR code, dependency-free (docs/PHASE5.md W2: "use a
- * dependency-free QR approach or a tiny vendored generator, keep it
- * self-contained") via the vendored `qrcodegen` library
+ * Render `text` as a QR code, dependency-free, via the vendored `qrcodegen`
+ * library
  * (`lib/vendor/qrcodegen.ts`, Project Nayuki, MIT). Error correction level
- * MEDIUM (~15% tolerance): enough headroom for a phone camera scan of a
- * desktop-screen QR without inflating the symbol size the way
- * QUARTILE/HIGH would for the Pocket panel's ~150-char
- * `genaryx-pocket://pair/v1?...` content. Version is chosen automatically
+ * MEDIUM (~15% tolerance): enough headroom to scan a QR off a screen without
+ * inflating the symbol the way QUARTILE/HIGH would for the few hundred
+ * characters of a WireGuard config. Version is chosen automatically
  * (smallest that fits, `QrCode.encodeText`'s own contract).
  */
 export function renderQr(text: string): QrRender {

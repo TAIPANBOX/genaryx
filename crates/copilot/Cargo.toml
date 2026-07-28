@@ -35,6 +35,5 @@ async-trait = { workspace = true }
 # base_url host classification for the residency gate.
 url = { workspace = true }
 chrono = { workspace = true }
-# Parse the `[copilot]` block (docs/PHASE6.md D13.2). Same 0.8 line the relay's
-# config.rs uses, so this is a new direct edge, not a second version in the tree.
+# Parse the `[copilot]` block (docs/PHASE6.md D13.2).
 toml = "0.8"

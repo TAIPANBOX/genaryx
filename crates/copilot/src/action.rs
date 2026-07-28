@@ -56,11 +56,11 @@ pub struct ProposedAction {
     pub policy_context: Vec<String>,
 }
 
-/// The optional `copilot` block a C3 relay attaches to a HARD pager event
-/// (docs/PHASE6-C3.md, itrat-console/13 D13.4): a one-line summary, an optional
-/// recommended action, a confidence, and the cross-plane chain. It ENRICHES a
-/// pushed/polled exception; it can never suppress or delay the deterministic
-/// HARD push (that floor is code in the relay, not this data).
+/// The optional `copilot` block that can be attached to an alert: a one-line
+/// summary, an optional recommended action, a confidence, and the cross-plane
+/// chain. It only ever ENRICHES an alert that was already going to fire. A
+/// dispatcher must send the deterministic alert first and attach this if it
+/// arrives, so a slow or disabled copilot can never suppress or delay one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CopilotAnnotation {
     pub summary: String,
