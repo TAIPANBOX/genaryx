@@ -16,13 +16,12 @@ before you read further.
   as they were written rather than quietly edited, because they record how the
   thing was built and when each decision was made. Read them as history; the
   code is the present tense.
-- **The history is here, minus five files.** Everything up to the flip is
-  preserved. Two screenshots carrying a pairing QR (a torn-down relay address
-  and two one-time codes that expired in 274 seconds on 2026-07-20) and three
-  screen recordings of the discontinued mobile app were removed before
-  publication. Nothing else was rewritten, and no credential, key or
-  certificate has ever been committed here; that was verified across every
-  commit before publication.
+- **The history is here, minus five media files.** Everything up to the flip is
+  preserved. Two screenshots carrying a pairing QR (a torn-down address and two
+  one-time codes that expired in 274 seconds on 2026-07-20) and three screen
+  recordings from the same session were removed before publication. Nothing
+  else was rewritten, and no credential, key or certificate has ever been
+  committed here; that was verified across every commit before publication.
 - **The licence gate is gone, the ML-DSA verifier is not.** A relay module that
   always granted and printed a TODO guarded a product nobody sells; it was
   deleted on 2026-07-27. The post-quantum verifier in `crates/signing` stayed:
@@ -38,55 +37,68 @@ A real-time surface for whoever answers for a fleet of agents: burn and kill swi
 the console is a privileged consumer of the per-service NDJSON event bus plus a
 client of the existing HTTP APIs.
 
-Since the 2026-07-21 web-first pivot, the product's present tense is:
+The product is **a web console served from the customer's own box**
+(`genaryx-web`): the runtime and the console both run inside the customer's
+perimeter, reached over the operator's own WireGuard tunnel (D11). Nothing
+about their runs, spend or identities travels anywhere to be displayed, and
+it-rat.com has no route to the console at all.
 
-- **A web console served from the customer's own box** (`genaryx-web`): the
-  runtime and the console run inside the customer's perimeter, reached over the
-  operator's own WireGuard tunnel (D11). Nothing about their runs, spend or
-  identities travels anywhere to be displayed, and it-rat.com has no route to
-  the console at all.
-- The native desktop shells this project once also shipped (a Tauri 2 shell
-  for Windows/Linux, a SwiftUI shell for macOS) were removed from this repo
-  with the web-only pivot; the web console above is the only console shell
-  now.
-- The mobile **Pocket** pager is built but not distributed (an Apple Developer
-  account is still the blocker). It is explored, not maintained.
+<div align="center">
+
+<img src="assets/diagram.svg" alt="Genaryx architecture: the browser console reaches a self-hosted Cloud plane from inside the operator's own WireGuard tunnel, so the control plane never faces the internet; kills and budget changes land fleet-wide, and Felyx reads and proposes with no signing key" width="960">
+
+<sub>The console as its room on <a href="https://it-rat.com/genaryx.html">it-rat.com</a> draws it: the
+control plane never faces the internet, and Felyx holds no signing key.</sub>
+
+</div>
+
+## What it looks like
+
+Four of the fourteen tabs, on the frozen e01 campaign data described below.
+
+<table>
+<tr>
+<td width="50%"><img src="assets/console-overview.png" alt="Genaryx Overview tab: fleet AI spend with governed savings, active runs, open incidents, spend by agent, and a live incident centre"></td>
+<td width="50%"><img src="assets/console-money.png" alt="Genaryx Money tab: every run with spend against budget, killed and over-cap states, replay and kill actions, and the governed-savings breakdown"></td>
+</tr>
+<tr>
+<td><sub><b>Overview</b> - the whole fleet in one screen: what it costs, what governance recovered, what is still open.</sub></td>
+<td><sub><b>Money</b> - per-run spend against budget, with the runs the breaker already killed.</sub></td>
+</tr>
+<tr>
+<td><img src="assets/console-policy.png" alt="Genaryx Policy tab: Wardryx decisions with allow, deny and hold outcomes and the approvals queue"></td>
+<td><img src="assets/console-graph.png" alt="Genaryx Graph tab: the identity graph built by Idryx, 62 agents and 13 users across 82 links, laid out by event volume"></td>
+</tr>
+<tr>
+<td><sub><b>Policy</b> - the Wardryx decision stream and the approvals a hold is waiting on.</sub></td>
+<td><sub><b>Graph</b> - the Idryx identity graph: 62 agents, 13 users, 82 links, sized by event volume.</sub></td>
+</tr>
+</table>
 
 ## What is built (all live-verified unless marked)
 
 - **Phases 0-4: the console itself.** One shared Rust core (`genaryx-core`:
   ingest, store, reducers, commands, signing ceremonies, alerts, evidence,
   ToolRunner, MCP), environment connectors (FS, SSH, Cloud SSE, cloud
-  inventory), and **all 14 tabs redesigned in both shells** (shared dash kit +
-  FreshBadge). Phase-4 live exit gate **passed 2026-07-18**: the app raised its
-  own WireGuard tunnel from the Remote panel to a Hetzner box whose control
-  plane was closed to the internet (ufw), and sent a hardware-signed
-  Touch-ID/ES256 kill through it. The macOS `set_addr` netmask bug on the WG
-  data path was found and fixed live.
-- **Phase 5 (D12): the relay and the pager.** `genaryx-relay`, a headless
-  24/7 Rust service beside the stack: QR single-device pairing, APNs-push
-  design, and a **bounded read surface** (money + agents) so the phone gets
-  exceptions, not a firehose. TokenFuse Pocket and the Watch pair through it
-  (sim-first; end-to-end exit gate passed). A finding's **provenance** is
-  carried through to the phone (D14): a detection born in Idryx says so on the
-  exception card, verified live idryx → Cloud → relay → phone.
-- **Phase 6 (D13): Felyx.** The in-console AI copilot (`genaryx-copilot`):
-  **read + propose, never act**. C0 read-only triage, C1 explanation, C2
-  propose-and-confirm (every action still goes through the signed ceremony),
-  C3 the intelligent-pager tie to D12 (its annotation rides the Pocket
-  exception card). Provider-agnostic, local/BYO model, residency-gated;
-  validated against a real cloud model with bounded tool output.
-- **The web shell** (`genaryx-web` + `genaryx-api`). The command layer was
-  lifted out of the (now-removed) Tauri shell into `genaryx-api`, shared
-  verbatim by desktop and web at the time, so the browser console was the
-  same console; the web shell is the sole survivor of that split today.
-  Operator auth is one
-  account per box, Argon2id, password via stdin; **loopback / tunnel bind by
-  default** (a wildcard bind works but warns). Environments resolve from
-  `taipan up` descriptors; `genaryx-web doctor` explains empty panels. Proven
-  against the live Hetzner stack over HTTP: all eight planes ready, a real
-  drill fired end to end, SSE streaming. See
-  [docs/WEB-SHELL.md](docs/WEB-SHELL.md).
+  inventory), and **all 14 tabs redesigned** (shared dash kit + FreshBadge).
+  Phase-4 live exit gate **passed 2026-07-18**: the console raised its own
+  WireGuard tunnel from the Remote panel to a Hetzner box whose control plane
+  was closed to the internet (ufw), and sent a hardware-signed ES256 kill
+  through it. The `set_addr` netmask bug on the WG data path was found and
+  fixed live.
+- **Felyx (D13).** The in-console AI copilot (`genaryx-copilot`): **read +
+  propose, never act**. C0 read-only triage, C1 explanation, C2
+  propose-and-confirm (every action still goes through the signed ceremony).
+  Provider-agnostic, local/BYO model, residency-gated; validated against a
+  real cloud model with bounded tool output.
+- **The web shell** (`genaryx-web` + `genaryx-api`). `genaryx-api` holds the
+  command layer the browser console calls, so every privileged action goes
+  through one chokepoint. Operator auth is one account per box, Argon2id,
+  password via stdin; **loopback / tunnel bind by default** (a wildcard bind
+  works but warns). Environments resolve from `taipan up` descriptors;
+  `genaryx-web doctor` explains empty panels. Proven against the live Hetzner
+  stack over HTTP: all eight planes ready, a real drill fired end to end, SSE
+  streaming. See [docs/WEB-SHELL.md](docs/WEB-SHELL.md).
 - **Provisioning.** Box-side WireGuard provisioner for the D11 console
   channel; the box **issues a ready device config**, the operator never
   assembles one by hand (`provisioning/`).
@@ -94,10 +106,6 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
   inventory connectors (read-only, official-CLI ToolRunner), and the
   interactive console preview (PR #4). The WG console channel was already
   provider-agnostic.
-- **Cert broker** (`cert-broker/`): ACME DNS-01 client embedded in the relay
-  (design A), productionized and scripted. Its Cloudflare activation step is
-  the **mobile-only** path and waits on the Apple Developer account; the
-  console product needs none of it (WireGuard instead).
 - **Live campaign, epoch e01 (frozen 2026-07-20).** The whole open stack under
   Genaryx on a real Hetzner box, fictional tier-1 bank `meridian.example`:
   **$4,671.02 spend / 9,501 runs / 37,596 calls / 15 runaway runs killed /
@@ -143,8 +151,6 @@ Since the 2026-07-21 web-first pivot, the product's present tense is:
 - **Email alerts**: a thin consumer of existing bus signals, sent **by the
   box**, always an alert plus a deep link into the authenticated console,
   never a direct-execute button.
-- **Store distribution** of Pocket (Apple Developer account pending; see the
-  blocker note in the wiki).
 - **Onboard wizard follow-up**: the "provisioned, awaiting first traffic"
   check against the Cloud's per-unit aggregation, together with Identity-tab
   unit grouping.
@@ -162,16 +168,11 @@ crates/
   api/          genaryx-api - the command layer the web shell calls.
   web/          genaryx-web - the console served over HTTP from the box.
   connectors/   environment/service connectors (FS, SSH, Cloud SSE, cloud inventory).
-  relay/        genaryx-relay - headless 24/7 relay for Pocket/Watch (D12).
   copilot/      Felyx (D13): read + propose, never act.
-  signing/      canonical-string ceremonies (ES256 device-pairing, ML-DSA verify).
+  signing/      canonical-string ceremonies (ES256 sign/verify, ML-DSA verify).
 apps/
   web/          genaryx-web-ui, the browser frontend (React + Vite + TS +
-                Tailwind), served by crates/web. The Tauri desktop shell and
-                the SwiftUI macOS shell (and crates/ffi, its UniFFI surface)
-                that once also lived in this repo were removed with the
-                2026-07-21 web-only pivot.
-cert-broker/    ACME DNS-01 Pocket cert broker (design A) + scripts.
+                Tailwind), served by crates/web.
 provisioning/   box-side WireGuard provisioner; issues device configs.
 live-campaign/  the live-validation campaign: runbooks, records, shots, open work.
 docs/           PHASE0-6 scopes and exit-gate results, WEB-SHELL.md.
@@ -200,8 +201,8 @@ cd ../..    && cargo build -p genaryx-web --release
 ## Architecture source of truth
 
 The plan lives in [`~/Development/itrat-console`](../itrat-console): files
-00-09 (product, architecture, contracts, UX, roadmap D1-D8), **12** (D12
-relay/Pocket) and **13** (D13 Felyx). Per-phase scopes and exit-gate results
+00-09 (product, architecture, contracts, UX, roadmap D1-D8) and **13**
+(D13 Felyx). Per-phase scopes and exit-gate results
 are under [`docs/`](docs/); the web shell's operational truth is
 [docs/WEB-SHELL.md](docs/WEB-SHELL.md). Read those before architectural
 changes.
@@ -209,8 +210,7 @@ changes.
 ## Process
 
 Architect (Fable 5 / Opus) writes specs and reviews every diff; implementation
-by Sonnet 5 subagents against self-contained specs. Feature parity between the
-shells is a CI checklist (a feature exists only when it lands in the core and
-every shipping shell within the same phase).
+by Sonnet 5 subagents against self-contained specs. A feature exists only when
+it lands in the core and in the console within the same phase.
 
 **Do not push without explicit sign-off. No publicity until Yurii's explicit call.**

@@ -8,8 +8,8 @@ re-run and to cite the numbers is here.
   dataset design, grounding facts, gotchas, and a reproduction runbook.
 - **`scripts/`** - the dataset generators + deploy/seed/verify helpers + the Genaryx
   environment descriptor. `gx_fleet_v2.py` is the authoritative money dataset.
-- **`shots/`** - screenshots, incl. the redesigned native SwiftUI Overview + Money
-  dashboards on live data.
+- **`shots/`** - screenshots of the console's Overview + Money dashboards on
+  live data.
 
 Headline: **$4,314.42** governed AI spend, **$2,370.40** runaway prevented by the
 budget kill-switch, **$2,992.70** total governed savings, 176 incidents, across 16

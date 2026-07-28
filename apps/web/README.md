@@ -13,7 +13,7 @@ and `GET /api/events`, never `fetch` directly.
 Overview, Money (TokenFuse), Policy (Wardryx) + Approvals, Identity (Idryx) +
 Agent 360, Quality (Verdryx), Crypto (Qryx), Memory (Engram), Drills
 (Mockryx), Remote (Distance: WireGuard + SSH + cloud inventory), Copilot
-(Felyx), Pocket, Onboard, Routines, Posture, and the live Bus Explorer - one
+(Felyx), Onboard, Routines, Posture, and the live Bus Explorer - one
 React view per plane, in the it-rat2 design language (dark by default, full
 light theme too). `WebGate` is the sign-in screen every panel sits behind
 once a real `genaryx-web` is configured (local Argon2id account, optionally
@@ -57,7 +57,7 @@ apps/web/
   src/
     components/          one file per panel (MoneyView, PolicyView,
                           IdentityView, CryptoView, MemoryView, QualityView,
-                          DrillsView, RemoteView, CopilotView, PocketView,
+                          DrillsView, RemoteView, CopilotView,
                           OnboardView, RoutinesView, PostureView,
                           OverviewView, BusExplorer, ...) plus shared chrome
                           (AppShell, AppHeader, Header, WebGate) and small

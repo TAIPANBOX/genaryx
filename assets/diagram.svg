@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -18 1016 396" width="1016" height="396" role="img" aria-label="Genaryx: one browser control room over the stack, reached only over the tunnel">
+  <title>Genaryx: one browser control room over the stack, reached only over the tunnel</title>
+  <rect x="-18" y="-18" width="1016" height="396" rx="16" fill="#0A0E13"/>
+  <rect x="-17.5" y="-17.5" width="1015" height="395" rx="15.5" fill="none" stroke="rgba(255,255,255,.09)"/>
+
+        <defs>
+          <marker id="enarrGrey" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#5A6675"/></marker>
+          <marker id="enarrVio" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#B48CFF"/></marker>
+          <marker id="enarrMint" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#34D399"/></marker>
+        </defs>
+        <g font-family="ui-monospace,Menlo" text-anchor="middle">
+          <rect x="24" y="40" width="200" height="96" rx="14" fill="#10161F" stroke="#B48CFF" stroke-width="1.5"/>
+          <text x="124" y="70" fill="#B48CFF" font-size="13" font-weight="700">Genaryx console</text>
+          <text x="124" y="90" fill="#8A97A6" font-size="10.5">browser console</text>
+          <text x="124" y="106" fill="#8A97A6" font-size="10.5">one Rust core &#183; thin shell</text>
+          <text x="124" y="122" fill="#8A97A6" font-size="10.5">passkey ES256 &#183; on your device</text>
+
+          <rect x="24" y="240" width="200" height="80" rx="14" fill="#10161F" stroke="#B48CFF" stroke-width="1.4" stroke-dasharray="5 4"><animate attributeName="stroke-opacity" values="1;.45;1" dur="3.4s" repeatCount="indefinite"/></rect>
+          <text x="124" y="268" fill="#B48CFF" font-size="12.5" font-weight="700">any device, any browser</text>
+          <text x="124" y="286" fill="#8A97A6" font-size="10.5">a desk at noon, a sofa at 2am</text>
+          <text x="124" y="302" fill="#8A97A6" font-size="10.5">opens the console on the tunnel</text>
+
+          <rect x="390" y="88" width="230" height="130" rx="16" fill="#10161F" stroke="#34D399" stroke-width="1.6"/>
+          <text x="505" y="118" fill="#34D399" font-size="13.5" font-weight="700">your Cloud plane</text>
+          <text x="505" y="138" fill="#8A97A6" font-size="10.5">TokenFuse &#183; Wardryx &#183; Idryx</text>
+          <text x="505" y="154" fill="#8A97A6" font-size="10.5">self-hosted &#183; firewalled</text>
+          <text x="505" y="170" fill="#8A97A6" font-size="10.5">never faces the internet</text>
+          <text x="505" y="196" fill="#5A6675" font-size="10">audit chain &#183; evidence packs</text>
+
+          <rect x="770" y="104" width="186" height="98" rx="14" fill="#141C27" stroke="#2a3547"/>
+          <text x="863" y="134" fill="#E9EFF6" font-size="12.5" font-weight="700">gateways &#8594; agents</text>
+          <text x="863" y="153" fill="#8A97A6" font-size="10.5">budgets enforced in-path</text>
+          <text x="863" y="169" fill="#8A97A6" font-size="10.5">breakers &#183; policy checks</text>
+          <text x="863" y="185" fill="#8A97A6" font-size="10.5">kills land fleet-wide</text>
+
+          <rect x="742" y="252" width="214" height="68" rx="13" fill="#10161F" stroke="#B48CFF" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <text x="849" y="278" fill="#B48CFF" font-size="12" font-weight="700">Felyx &#183; the copilot</text>
+          <text x="849" y="296" fill="#8A97A6" font-size="10">local model by default</text>
+          <text x="849" y="310" fill="#8A97A6" font-size="10">reads + proposes &#183; no signer</text>
+
+          <text x="307" y="70" fill="#B48CFF" font-size="10.5" font-weight="700">WireGuard</text>
+          <text x="307" y="85" fill="#B48CFF" font-size="10">your own tunnel</text>
+          <text x="307" y="100" fill="#5A6675" font-size="10">the only road in</text>
+          <text x="150" y="196" fill="#5A6675" font-size="10" text-anchor="start">over your tunnel</text>
+          <text x="690" y="128" fill="#5A6675" font-size="10">push &#183; poll</text>
+        </g>
+        <line x1="224" y1="110" x2="390" y2="130" stroke="#B48CFF" stroke-width="1.7" class="flow"/><line x1="375.1" y1="128.2" x2="390" y2="130" stroke="#B48CFF" stroke-width="1.7" marker-end="url(#enarrVio)"/>
+        <line x1="124" y1="240" x2="124" y2="140" stroke="#5A6675" stroke-width="1.5" class="flow"/><line x1="124" y1="155" x2="124" y2="140" stroke="#5A6675" stroke-width="1.5" marker-end="url(#enarrGrey)"/>
+        <line x1="620" y1="140" x2="770" y2="146" stroke="#34D399" stroke-width="1.6" class="flow"/><line x1="755.0" y1="145.4" x2="770" y2="146" stroke="#34D399" stroke-width="1.6" marker-end="url(#enarrMint)"/>
+        <line x1="849" y1="252" x2="849" y2="210" stroke="#B48CFF" stroke-width="1.2" stroke-dasharray="4 3" class="flow flow-dot"/><line x1="849.0" y1="225.0" x2="849" y2="210" stroke="#B48CFF" stroke-width="1.2" marker-end="url(#enarrVio)"/>
+      
+  <g fill="none">
+  <line x1="375.1" y1="128.2" x2="390" y2="130" pathLength="100" stroke="#B48CFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-0.00s" repeatCount="indefinite"/></line>
+  <line x1="124" y1="155" x2="124" y2="140" pathLength="100" stroke="#B48CFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-0.37s" repeatCount="indefinite"/></line>
+  <line x1="755.0" y1="145.4" x2="770" y2="146" pathLength="100" stroke="#B48CFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-0.74s" repeatCount="indefinite"/></line>
+  <line x1="849.0" y1="225.0" x2="849" y2="210" pathLength="100" stroke="#B48CFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-1.11s" repeatCount="indefinite"/></line>
+  </g>
+</svg>
