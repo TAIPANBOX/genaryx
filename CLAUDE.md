@@ -33,7 +33,11 @@ an absent invariant.
 1. **The console never stores cloud credentials.** Multi-cloud inventory is
    read-only and runs through the operator's own CLI, already authenticated on
    their machine. A console that holds cloud keys is a target, and it changes
-   what this product is. *(not enforced)*
+   what this product is.
+   *(gate: `scripts/no-cloud-credentials.sh`, which checks two structural
+   things: no cloud credential environment variable is read anywhere, and no
+   provider SDK is declared. An SDK exists to authenticate, so pulling one in is
+   the same decision arriving under another name.)*
 2. **A sensitive command requires a per-action ceremony.** Kill, budget change
    and approval each need a fresh passkey confirmation. Not a session, not a
    role check alone: the ceremony is per action, because the whole point is that
@@ -61,7 +65,7 @@ an absent invariant.
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
-**Held by this file alone: invariants 1, 2, 3 and 4.**
+**Held by this file alone: invariants 2, 3 and 4.**
 
 **Invariants 5 and 6 are now `scripts/web-only-and-unpriced.sh`, and writing it
 found invariant 6 being violated rather than merely unenforced.**
@@ -83,9 +87,17 @@ calling this browser build "this desktop build". References in the past tense,
 recording that the shells existed and were removed, are left alone: that is
 history, and it is worth keeping.
 
-**Invariant 1** remains the next checkable one: fail if any crate outside
-`connectors` reads a cloud credential environment variable, and if `connectors`
-persists one anywhere.
+**Invariant 1** is now `scripts/no-cloud-credentials.sh`, and it came out
+stricter than the note that asked for it. That note wanted credentials confined
+to `connectors`; in fact no crate reads one at all, and none needs to, because
+`cloud_cli.rs` spawns the operator's already-authenticated CLI. So the check
+forbids reading one ANYWHERE rather than policing where it may live, which is a
+line that cannot be argued down one crate at a time.
+
+It also forbids declaring a provider SDK. That is the way this invariant would
+actually be lost: not by somebody deciding to store keys, but by an operator
+without the CLI installed, and an SDK looking pragmatic. Verified by breaking
+both ways.
 
 Invariants 2, 3 and 4 are the ones that most deserve tests rather than greps,
 and invariant 4 in particular is the kind of promise that erodes one placeholder

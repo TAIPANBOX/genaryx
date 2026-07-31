@@ -73,3 +73,5 @@ jobs:
           pnpm build
       - name: web-only and unpriced
         run: ./scripts/web-only-and-unpriced.sh
+      - name: no cloud credential is read, no provider SDK declared
+        run: ./scripts/no-cloud-credentials.sh
