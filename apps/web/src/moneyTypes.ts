@@ -33,6 +33,9 @@ export type MoneyError =
   | { kind: "bootstrapping" }
   | { kind: "no_environment" }
   | { kind: "pairing_failed"; reason: string }
+  // Legacy. Nothing in this stack is sold, so no current TokenFuse Cloud
+  // emits this. Kept so a console pointed at an older plane reports the 402
+  // honestly instead of going blank; `upgrade_url` is parsed and never shown.
   | { kind: "plan_required"; feature: string; org: string; upgrade_url: string }
   | { kind: "break_glass_missing_reason" }
   | { kind: "cloud"; status: number | null; message: string }

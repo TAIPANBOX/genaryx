@@ -3,7 +3,7 @@ import { describeCryptoError, scanEvidence, verifyEvidence } from "../lib/crypto
 import type { CryptoError, EvidenceReport, VerifyOutcome } from "../cryptoTypes";
 import { StatTile } from "./StatTile";
 
-/** Genaryx v2 design spec section 7 parity fix #5: SwiftUI's Evidence
+/** Genaryx v2 design spec section 7 parity fix #5: the Evidence
  * section has a `repository` / `agent stack` scope toggle (`CryptoModel.swift`'s
  * `EvidenceScope`, backed by two distinct `CryptoHandle` methods -
  * `scan_evidence` vs `agents_evidence`). The `crypto_scan_evidence`

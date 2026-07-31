@@ -290,15 +290,15 @@ function MutedAgentsStrip({ mutedAgents, onUnmute }: { mutedAgents: readonly str
 /**
  * The Approvals Inbox (PHASE2.md Wave 2): the queue of holds
  * (`pending == true`) with full context (who/what/cost/why/chain), Grant/Deny
- * through an explicit `ConfirmButton` ceremony (this shell's substitute for
- * SwiftUI's Touch ID gate - the hardware gate is a Wave-3 upgrade here),
+ * through an explicit `ConfirmButton` ceremony (a passkey ceremony is the
+ * hardware-confirmed form, see `PasskeySettings`),
  * and a history list of already-decided approvals underneath.
  *
  * Wave 3 additions (docs/PHASE2.md "Actionable notifications"): `focusApprovalId`
  * scrolls to and briefly highlights the matching row - the working half of
  * the notification deep link (`lib/notifications.ts`'s doc comment explains
  * why this in-app scroll-to, rather than a real OS notification-click
- * callback, is what actually fires on this desktop build). `mutedKeys`/
+ * callback, is what actually fires in the browser). `mutedKeys`/
  * `onToggleMuteAgent` back the per-row mute toggle that keys
  * `useApprovalNotifications`'s mute set (`lib/notifications.ts`'s
  * `muteKey`/`isMuted` composite-key format, shared verbatim - never a

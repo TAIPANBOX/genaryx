@@ -15,7 +15,6 @@ import { sevColor, sevRank } from "../lib/dashData";
 import type { Incident, MoneyError, MutationOutcome, Run, Savings } from "../moneyTypes";
 import { MoneyEmptyState } from "./MoneyEmptyState";
 import { RunsBoard } from "./RunsBoard";
-import { UpsellBanner } from "./UpsellBanner";
 import { DashMain, Section, Composition, Feed } from "./dash";
 import type { CompItem, FeedItem } from "./dash";
 import { usePopover } from "../lib/popover";
@@ -230,8 +229,7 @@ export function MoneyView({
           {notice}
         </div>
       )}
-      {error && error.kind === "plan_required" && <UpsellBanner error={error} />}
-      {error && error.kind !== "plan_required" && (
+      {error && (
         <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeMoneyError(error, session?.role)}
         </div>
