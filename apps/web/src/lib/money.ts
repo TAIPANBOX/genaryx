@@ -117,8 +117,14 @@ export const ackIncident = (id: string): Promise<MutationOutcome> =>
   call<MutationOutcome>("money_ack_incident", { id });
 
 /** Human-readable text for any `MoneyError` - used for the plain error
- * banner. `plan_required` is deliberately NOT routed through this: the UI
- * renders that one as an upsell tile instead of an error message (spec).
+ * banner. Every kind routes through here, including `plan_required`.
+ *
+ * That one used to be rendered as an upsell tile instead. Nothing in this
+ * stack is sold, so a console that shows an operator an upgrade prompt is
+ * describing a product that does not exist. The variant is kept, and kept
+ * tolerant, only because an OLDER TokenFuse Cloud may still answer 402 with
+ * that envelope; a console that crashed or went blank on it would be worse
+ * than one that says plainly what came back.
  *
  * `currentRole` is the signed-in operator's OWN role (from `useSession()`),
  * threaded in by callers that know it (`MoneyView.tsx`) so a `role_required`
@@ -134,7 +140,9 @@ export function describeMoneyError(err: MoneyError, currentRole?: ConsoleRole | 
     case "pairing_failed":
       return `Pairing failed: ${err.reason}`;
     case "plan_required":
-      return `Upgrade required: ${err.feature} is not on the ${err.org} plan.`;
+      // Only reachable from a Cloud old enough to still send it. Reported as
+      // what it is, a refusal by the plane, with no call to buy anything.
+      return `The Cloud plane refused ${err.feature} for ${err.org}.`;
     case "break_glass_missing_reason":
       return "Break-glass override requires a non-empty reason.";
     case "cloud":

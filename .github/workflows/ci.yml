@@ -71,3 +71,5 @@ jobs:
           pnpm exec tsc --noEmit
           pnpm test
           pnpm build
+      - name: web-only and unpriced
+        run: ./scripts/web-only-and-unpriced.sh

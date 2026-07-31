@@ -26,7 +26,7 @@ import type { Severity } from "../types";
  * `lib/incidents.ts`) both consume that one hook's output rather than each
  * re-deriving their own.
  *
- * Posture-lite's 4 v0 zonds (identical set the SwiftUI track builds),
+ * Posture-lite's 4 v0 zonds,
  * computed purely from signals every panel in this app already fetches - no
  * new backend command or connector change:
  *

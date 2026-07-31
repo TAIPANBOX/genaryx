@@ -12,7 +12,6 @@ import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { formatUsd } from "../lib/format";
 import type { Incident, MoneyError, Overview, Run, Savings } from "../moneyTypes";
 import { MoneyEmptyState } from "./MoneyEmptyState";
-import { UpsellBanner } from "./UpsellBanner";
 import { HeroBand, Hero, KpiTile, DashMain, Section, Bars, Composition, Feed } from "./dash";
 import type { BarItem, CompItem, FeedItem } from "./dash";
 import { sevColor, sevRank, spendByAgent, spendSeries, usd0 } from "../lib/dashData";
@@ -351,8 +350,7 @@ export function OverviewView({
         </span>
       </div>
 
-      {error && error.kind === "plan_required" && <UpsellBanner error={error} />}
-      {error && error.kind !== "plan_required" && (
+      {error && (
         <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeMoneyError(error)}
         </div>

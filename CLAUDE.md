@@ -45,28 +45,47 @@ an absent invariant.
    no data says it has no data. Inventing a plausible number to fill a panel is
    the single worst thing this product can do, because the entire proposition is
    that what you see is what happened. *(not enforced)*
-5. **Web-only, and no cancelled surface returns.** No Tauri, no SwiftUI, no
-   enclave, no pager, no phone or watch. This is settled.
-   *(not enforced)*
-6. **Nothing here is paid.** No upgrade prompts, no gated feature, no plan
-   language. This was removed once already, estate-wide; do not let it grow
-   back in a tooltip. *(not enforced)*
+5. **Web-only, and no cancelled surface returns.** This is settled.
+   *(gate: `scripts/web-only-and-unpriced.sh`, by artefact rather than by
+   vocabulary: a shell leaves a config, a project file, sources or a manifest
+   entry behind, and those are unambiguous. Honest history in the PAST tense,
+   recording that shells existed and were removed, is deliberately untouched.)*
+6. **Nothing here is paid.** No purchase surface, no gated feature. This was
+   removed once already, estate-wide.
+   *(gate: `scripts/web-only-and-unpriced.sh`, in what the console SHOWS.
+   "upgrade" has an honest meaning here, software-signed actions upgrade to
+   hardware-confirmed and an agent is literally named `dependency-upgrader`, so
+   a word list would cry wolf and get disabled. What is forbidden is a
+   purchase-surface component and `upgrade_url` reaching a component.)*
 
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
-**Every invariant above is held by this file alone.**
+**Held by this file alone: invariants 1, 2, 3 and 4.**
 
-Three are mechanically checkable and are the place to start:
+**Invariants 5 and 6 are now `scripts/web-only-and-unpriced.sh`, and writing it
+found invariant 6 being violated rather than merely unenforced.**
 
-- **Invariant 5** is the cheapest and catches a real regression: fail the build
-  if the tree contains a Tauri, SwiftUI or enclave dependency, or the cancelled
-  surface's vocabulary anywhere in source or docs.
-- **Invariant 6** is a grep for plan and upgrade language in the web app, and it
-  has already had to be cleaned once.
-- **Invariant 1** can be approximated: fail if any crate outside `connectors`
-  reads a cloud credential environment variable, and if `connectors` persists
-  one anywhere.
+The estate-wide removal of paid language took out the sender and left the
+receiver. TokenFuse stopped emitting `plan_required` in its PR #142 on
+2026-07-27; this console still carried an `UpsellBanner` component rendering
+the word "upgrade" and a purchase URL, wired into two views, for a message no
+current Cloud sends. In a public repository, anyone reading the source
+concluded there was a paid tier.
+
+The component is gone and `plan_required` now routes through the ordinary
+error banner like every other kind. The variant is still PARSED, so a console
+pointed at an older Cloud reports the refusal honestly instead of going blank;
+what it no longer does is ask anybody to buy something.
+
+Four present-tense references to the deleted shells went with it, including one
+calling this browser build "this desktop build". References in the past tense,
+recording that the shells existed and were removed, are left alone: that is
+history, and it is worth keeping.
+
+**Invariant 1** remains the next checkable one: fail if any crate outside
+`connectors` reads a cloud credential environment variable, and if `connectors`
+persists one anywhere.
 
 Invariants 2, 3 and 4 are the ones that most deserve tests rather than greps,
 and invariant 4 in particular is the kind of promise that erodes one placeholder
