@@ -20,7 +20,7 @@ jobs:
     name: core (rust)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins 1.96.1 + rustfmt + clippy; rustup honors it.
       - name: Toolchain
@@ -29,7 +29,7 @@ jobs:
           rustup component add rustfmt clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -55,11 +55,11 @@ jobs:
     name: web ui (typescript)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
