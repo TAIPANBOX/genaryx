@@ -4,6 +4,8 @@ import { usePopover } from "../lib/popover";
 import type { ApprovalAlert } from "../lib/notifications";
 import { muteKey } from "../lib/notifications";
 import { useApprovalNotifications } from "../lib/useApprovalNotifications";
+import type { MailLink } from "../lib/mailLink";
+import { mailLinkNotice, parseMailLink } from "../lib/mailLink";
 import type { ViewId } from "../lib/views";
 import { Agent360 } from "./Agent360";
 import { AppHeader } from "./AppHeader";
@@ -117,6 +119,34 @@ export function AppShell() {
       writeStoredFlag(RAIL_COLLAPSED_KEY, next);
       return next;
     });
+  }, []);
+
+  // Arriving from the alert mail's one link (`/i/{type}:{subject}`, see
+  // `lib/mailLink.ts`). Read ONCE, here, on mount rather than in `App.tsx`,
+  // and the placement is the point: `WebGate` sits above this component, so a
+  // signed-out operator meets the sign-in form first and this effect runs
+  // after they are through it. The path is still in the address bar at that
+  // moment, so the link survives the gate without anything having to remember
+  // it across a navigation.
+  const [mailLink, setMailLink] = useState<MailLink | null>(null);
+  useEffect(() => {
+    const link = parseMailLink(window.location.pathname);
+    if (link === null) return;
+    setMailLink(link);
+    // A type this build does not know does not get a guessed panel. The
+    // operator lands on the overview, where the incident centre aggregates
+    // every plane, and the notice says which id could not be placed.
+    if (link.view !== null) setView(link.view);
+    // Drop the deep link from the address bar once it has been acted on, so a
+    // reload is an ordinary reload rather than a second arrival, and so the
+    // id does not sit in the URL for a screenshot to carry away. `replaceState`
+    // rather than `pushState`: there is no history entry worth going back to.
+    try {
+      window.history.replaceState(null, "", "/");
+    } catch {
+      // Some embedded webviews refuse this. The console is already showing
+      // the right panel by then, which is the part that matters.
+    }
   }, []);
 
   const [mutedKeys, setMutedKeys] = useState<ReadonlySet<string>>(new Set());
@@ -336,6 +366,14 @@ export function AppShell() {
         onToggleRail={onToggleRail}
       />
       <div className="main-col">
+        {mailLink !== null && (
+          <div className="mail-link-notice" role="status">
+            <span>{mailLinkNotice(mailLink)}</span>
+            <button type="button" onClick={() => setMailLink(null)} aria-label="Dismiss">
+              dismiss
+            </button>
+          </div>
+        )}
         {view === "overview" && (
           <OverviewView onOpenAgent={onOpenAgent} onSelectView={onSelectView} onExplainIncident={onExplainIncident} />
         )}
