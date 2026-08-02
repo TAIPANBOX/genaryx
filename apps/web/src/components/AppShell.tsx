@@ -137,6 +137,12 @@ export function AppShell() {
     // operator lands on the overview, where the incident centre aggregates
     // every plane, and the notice says which id could not be placed.
     if (link.view !== null) setView(link.view);
+    // An agent link opens that agent's card on top of whatever panel it landed
+    // on, because the card is where freeze and kill are. This reuses the same
+    // overlay a graph node or a table row opens, so a mail arrives at exactly
+    // the surface the operator already knows, rather than a second one built
+    // for mail.
+    if (link.kind === "agent") setFocusedAgentIds([link.subject]);
     // Drop the deep link from the address bar once it has been acted on, so a
     // reload is an ordinary reload rather than a second arrival, and so the
     // id does not sit in the URL for a screenshot to carry away. `replaceState`

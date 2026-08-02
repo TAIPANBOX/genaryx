@@ -5,6 +5,7 @@ describe("parseMailLink", () => {
   it("resolves the link the notifier actually builds", () => {
     const link = parseMailLink("/i/budget_threshold:run-42");
     expect(link).toEqual({
+      kind: "incident",
       id: "budget_threshold:run-42",
       type: "budget_threshold",
       subject: "run-42",
@@ -74,7 +75,39 @@ describe("parseMailLink", () => {
 
   it("handles an id with no subject at all", () => {
     const link = parseMailLink("/i/spend_spike");
-    expect(link).toEqual({ id: "spend_spike", type: "spend_spike", subject: "", view: "money" });
+    expect(link).toEqual({ kind: "incident", id: "spend_spike", type: "spend_spike", subject: "", view: "money" });
+  });
+});
+
+// The other two coordinates an alert carries. An operator at two in the morning
+// wants one of three things, and the mail offers all three rather than making
+// them navigate: what happened, the agent itself (where freeze and kill are),
+// and who is answerable for it.
+describe("the agent and owner links", () => {
+  it("opens an agent by id, and the id can contain slashes and colons", () => {
+    const link = parseMailLink(`/a/${encodeURIComponent("agent://acme.example/biller")}`);
+    expect(link?.kind).toBe("agent");
+    expect(link?.subject).toBe("agent://acme.example/biller");
+    expect(link?.view).toBe("overview");
+  });
+
+  it("opens an owner, which is the passport field and not the delegation chain", () => {
+    const link = parseMailLink(`/o/${encodeURIComponent("team-finance@acme.example")}`);
+    expect(link?.kind).toBe("owner");
+    expect(link?.subject).toBe("team-finance@acme.example");
+    expect(link?.view).toBe("identity");
+  });
+
+  it("says what each one landed on, in words an operator can act on", () => {
+    const agent = parseMailLink("/a/billing-agent")!;
+    expect(mailLinkNotice(agent)).toContain("freeze or kill it there, not from the mail");
+    const owner = parseMailLink("/o/team-finance")!;
+    expect(mailLinkNotice(owner)).toContain("everything they are answerable for");
+  });
+
+  it("is still null for an empty id on either", () => {
+    expect(parseMailLink("/a/")).toBeNull();
+    expect(parseMailLink("/o/")).toBeNull();
   });
 });
 
