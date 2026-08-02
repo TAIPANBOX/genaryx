@@ -146,11 +146,25 @@ Four of the fourteen tabs, on the frozen e01 campaign data described below.
   (`crates/web/src/webauthn.rs`) both built; design in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
 
+## Being written to, not just watched
+
+Email alerts are built, in [heraldyx](https://github.com/TAIPANBOX/heraldyx),
+a separate process beside this console on the same box: it reads the shared
+event log, decides which events are worth a human's evening, and mails them.
+
+This console's half is the other end of the one link that mail carries. It is
+a coordinate, never a control: following it opens the panel that shows the
+event, and the action still happens here, behind a sign-in and, for anything
+destructive, a passkey. A link that ACTS would be an unauthenticated capability
+held by whoever forwards the message, and mail gateways prefetch links.
+
+What is NOT here yet is a notifications panel: what has been sent, and to whom.
+heraldyx writes that down (a hash-chained journal on its own volume), and the
+console will show it once that record reaches the record plane. A panel that
+could only echo an address back is the kind this console does not build.
+
 ## Not built yet (decided, on the roadmap)
 
-- **Email alerts**: a thin consumer of existing bus signals, sent **by the
-  box**, always an alert plus a deep link into the authenticated console,
-  never a direct-execute button.
 - **Onboard wizard follow-up**: the "provisioned, awaiting first traffic"
   check against the Cloud's per-unit aggregation, together with Identity-tab
   unit grouping.
