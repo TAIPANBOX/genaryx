@@ -5,9 +5,10 @@ import type { ApprovalAlert } from "../lib/notifications";
 import { muteKey } from "../lib/notifications";
 import { useApprovalNotifications } from "../lib/useApprovalNotifications";
 import type { MailLink } from "../lib/mailLink";
-import { mailLinkNotice, parseMailLink } from "../lib/mailLink";
+import { mailLinkFrom, mailLinkNotice, parseMailLink } from "../lib/mailLink";
 import type { ViewId } from "../lib/views";
 import { Agent360 } from "./Agent360";
+import { AgentDetailCard } from "./AgentDetailCard";
 import { AppHeader } from "./AppHeader";
 import { BusExplorer } from "./BusExplorer";
 import { CopilotView } from "./CopilotView";
@@ -27,6 +28,7 @@ import { RemoteView } from "./RemoteView";
 import { RoutinesView } from "./RoutinesView";
 import { RunReplayView } from "./RunReplayView";
 import { UnitCard } from "./UnitCard";
+import { UserCard } from "./UserCard";
 import { WatchDock } from "./WatchDock";
 
 /** How long a notification's deep-link target stays "focused" (drives
@@ -130,29 +132,72 @@ export function AppShell() {
   // it across a navigation.
   const [mailLink, setMailLink] = useState<MailLink | null>(null);
   useEffect(() => {
-    const link = parseMailLink(window.location.pathname);
+    // Path first, fragment second: see `mailLinkFrom`. The fragment form is
+    // what makes this work on a static deployment, where a file server asked
+    // for `/i/budget_exhausted:run-42` answers 404 and the click never reaches
+    // this code at all.
+    const link = mailLinkFrom(window.location);
     if (link === null) return;
     setMailLink(link);
     // A type this build does not know does not get a guessed panel. The
     // operator lands on the overview, where the incident centre aggregates
     // every plane, and the notice says which id could not be placed.
     if (link.view !== null) setView(link.view);
-    // An agent link opens that agent's card on top of whatever panel it landed
-    // on, because the card is where freeze and kill are. This reuses the same
-    // overlay a graph node or a table row opens, so a mail arrives at exactly
-    // the surface the operator already knows, rather than a second one built
-    // for mail.
-    if (link.kind === "agent") setFocusedAgentIds([link.subject]);
+    // An agent link opens that agent's DETAIL CARD, because that card is where
+    // freeze and kill are.
+    //
+    // It opened Agent 360 until 2026-08-03, and both this comment and
+    // `lib/mailLink.ts` said Agent 360 was "where those controls live". Neither
+    // was true: `Agent360.tsx` imports `runBlockedState` and `StateBadge` and
+    // nothing else from `lib/lifecycle`, so it SHOWS whether an agent is
+    // blocked and offers no way to block it. `AgentDetailCard.tsx` is the one
+    // that imports `FreezeToggleButton` and `KillRunButton`.
+    //
+    // The mail that sends an operator here says "(freeze, kill)" beside the
+    // link, so the old behaviour ended a two-in-the-morning path at a screen
+    // that could not do the thing the mail had just named. Reported by Yurii,
+    // 2026-08-03, from the sample on it-rat.com.
+    //
+    // Centred rather than anchored: there is no click and so no rect to sit
+    // beside, and `usePopover` already centres an anchorless window. Agent 360
+    // stays one step away through the card's own "open full".
+    if (link.kind === "agent") {
+      open(<AgentDetailCard agentId={link.subject} onOpenFull={onOpenAgent} />);
+    }
+    // And the owner link opens the OWNER, for the same reason: the mail says
+    // "who is answerable, and what else are they running", and that is one
+    // card (`UserCard.tsx`, every agent they own with what those agents spend),
+    // not the whole Identity panel the link used to stop at. The panel is
+    // still what it lands ON, so the card has its context behind it.
+    // Reported by Yurii, 2026-08-03, alongside the agent link.
+    if (link.kind === "owner") {
+      open(<UserCard handle={link.subject} onOpenFullAgent={onOpenAgent} />);
+    }
     // Drop the deep link from the address bar once it has been acted on, so a
     // reload is an ordinary reload rather than a second arrival, and so the
     // id does not sit in the URL for a screenshot to carry away. `replaceState`
     // rather than `pushState`: there is no history entry worth going back to.
+    // Clear whichever form it arrived in, and only that one.
+    //
+    // When the PATH was the link, the path has to go, so the console lands at
+    // its own root. When the FRAGMENT was, the path is where the app is
+    // actually served from and must survive: a static deployment lives under
+    // `/demo/`, and replacing that with `/` would point a reload at the site
+    // root instead of the console.
+    const cleared = parseMailLink(window.location.pathname) !== null
+      ? "/"
+      : window.location.pathname + window.location.search;
     try {
-      window.history.replaceState(null, "", "/");
+      window.history.replaceState(null, "", cleared);
     } catch {
       // Some embedded webviews refuse this. The console is already showing
       // the right panel by then, which is the part that matters.
     }
+    // Deliberately mount-only. `open` and `onOpenAgent` are stable for this
+    // component's life, and re-running this would re-open the card every time
+    // one of them changed identity, on a link that has already been consumed
+    // and cleared from the address bar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const [mutedKeys, setMutedKeys] = useState<ReadonlySet<string>>(new Set());

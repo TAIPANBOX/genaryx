@@ -105,11 +105,20 @@ const VIEW_BY_TYPE: Readonly<Record<string, ViewId>> = {
  *
  *   /i/{type}:{subject}  the incident. "What exactly happened."
  *   /a/{agent}           the agent. "Show me this thing, and let me freeze or
- *                        kill it." Opens the Agent 360 card, which is where
- *                        those controls live.
+ *                        kill it." Opens the agent DETAIL card
+ *                        (`AgentDetailCard.tsx`), which is where those two
+ *                        controls live. This said "the Agent 360 card, which
+ *                        is where those controls live" until 2026-08-03, and
+ *                        it was wrong in the way a comment can be: Agent 360
+ *                        shows whether an agent is blocked and offers no way
+ *                        to block it, so the link landed an operator one
+ *                        screen away from the thing the mail had named.
  *   /o/{owner}           the owner. "Who is answerable, and what else are they
  *                        running." The blast radius, when one agent going wrong
- *                        is not the whole story.
+ *                        is not the whole story. Opens `UserCard.tsx` on the
+ *                        Identity panel; it stopped at the panel alone until
+ *                        2026-08-03, which answered the second half of that
+ *                        question and not the first.
  *
  * All three are VIEWS. None of them acts: the action happens in the console
  * after a sign-in, and a destructive one after a passkey. A mail that could act
@@ -140,6 +149,32 @@ const OWNER_LINK_PREFIX = "/o/";
  * shows is what happened. The caller lands on the overview and says which id
  * it could not place.
  */
+/**
+ * Where the deep link actually arrives from, which is not always the path.
+ *
+ * The console served by the operator's own box owns its routes, so a mail link
+ * lands as `/i/{type}:{subject}` and [`parseMailLink`] reads it straight off
+ * `location.pathname`. A STATIC deployment cannot do that: a file server asked
+ * for `/i/budget_exhausted:run-42` has no such file and answers 404, so the
+ * click dies before any of this code runs. That is not hypothetical, it is
+ * where the public demo of this console is published.
+ *
+ * So the same link is also accepted in the fragment, `#/i/{type}:{subject}`,
+ * which every static host serves as the page itself and never sends upstream.
+ * One parser, two ways in: the path wins when both are present, because a real
+ * console's own route is the more specific statement of intent.
+ *
+ * Deliberately NOT a query parameter. A fragment is not sent to the server, and
+ * this string names an incident and an agent.
+ */
+export function mailLinkFrom(loc: { pathname: string; hash: string }): MailLink | null {
+  const fromPath = parseMailLink(loc.pathname);
+  if (fromPath !== null) return fromPath;
+  const hash = loc.hash.startsWith("#") ? loc.hash.slice(1) : loc.hash;
+  if (hash === "") return null;
+  return parseMailLink(hash);
+}
+
 export function parseMailLink(pathname: string): MailLink | null {
   let kind: MailLinkKind;
   let prefix: string;
