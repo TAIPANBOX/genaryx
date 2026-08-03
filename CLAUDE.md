@@ -23,6 +23,24 @@ sold**.
 phone and watch branch is cancelled. Do not reintroduce either, and do not
 mention the cancelled branch in code, docs, or copy.
 
+## Building the published demo
+
+The demo on it-rat.com is `npm run build:demo` in `apps/web`, never
+`npm run build`. Both flags in it are load-bearing and neither is guessable:
+
+- `--mode mock` loads `.env.mock`, which sets `VITE_GENARYX_MOCK=1`. Only that
+  build wraps `Console` in `demo/DemoFunnel.tsx`, the sign-in mimic and the
+  connect step. `--mode web` is the real product, so a static copy of it has no
+  box to reach and renders "No answer from the box".
+- `--base=./` makes the asset paths relative. The default writes `/assets/...`,
+  which resolves against the SITE root rather than `/demo/`, so nothing loads
+  and the page is blank.
+
+Both were rediscovered on 2026-08-03 by building without them and watching each
+break in turn, because the command lived only in whoever ran it last. Copy
+`dist/` into the site's `demo/`, and delete the previous hashed asset files:
+the names change per build and stale ones are served forever otherwise.
+
 ## Hard invariants
 
 Each one carries how it is held today. Use `(gate: ...)`, `(test: ...)`,
