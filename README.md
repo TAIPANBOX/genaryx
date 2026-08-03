@@ -54,7 +54,7 @@ control plane never faces the internet, and Felyx holds no signing key.</sub>
 
 ## What it looks like
 
-Four of the fourteen tabs, on the frozen e01 campaign data described below.
+Four of the seventeen tabs, on the frozen e01 campaign data described below.
 
 <table>
 <tr>
@@ -80,7 +80,7 @@ Four of the fourteen tabs, on the frozen e01 campaign data described below.
 - **Phases 0-4: the console itself.** One shared Rust core (`genaryx-core`:
   ingest, store, reducers, commands, signing ceremonies, alerts, evidence,
   ToolRunner, MCP), environment connectors (FS, SSH, Cloud SSE, cloud
-  inventory), and **all 14 tabs redesigned** (shared dash kit + FreshBadge).
+  inventory), and **all 17 tabs redesigned** (shared dash kit + FreshBadge).
   Phase-4 live exit gate **passed 2026-07-18**: the console raised its own
   WireGuard tunnel from the Remote panel to a Hetzner box whose control plane
   was closed to the internet (ufw), and sent a hardware-signed ES256 kill
@@ -214,9 +214,10 @@ cd ../..    && cargo build -p genaryx-web --release
 
 ## Architecture source of truth
 
-The plan lives in [`~/Development/itrat-console`](../itrat-console): files
-00-09 (product, architecture, contracts, UX, roadmap D1-D8) and **13**
-(D13 Felyx). Per-phase scopes and exit-gate results
+The plan lives in [`~/Development/itrat-console`](../itrat-console): decisions
+00 through 18. This pointed at "00-09 and 13" until 2026-08-04, which left out
+the file describing the work three sections of this README are about: **15**
+(registration, identity and units, D15/B2 and B3). Per-phase scopes and exit-gate results
 are under [`docs/`](docs/); the web shell's operational truth is
 [docs/WEB-SHELL.md](docs/WEB-SHELL.md). Read those before architectural
 changes.
