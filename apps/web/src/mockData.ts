@@ -53,7 +53,7 @@ const SEEDS: Seed[] = [
   { source: "tokenfuse", v2: false, type: "budget_exhausted", severity: "critical", agent: "tier1-bot", run: 1, delegated: false },
   { source: "engram", v2: false, type: "memory_written", severity: "info", agent: "tier1-bot", run: 1, delegated: false },
   { source: "wardryx", v2: true, type: "policy_allow", severity: "info", agent: "tier2-bot", run: 2, delegated: false },
-  { source: "tokenfuse", v2: false, type: "breaker_tripped", severity: "critical", agent: "tier2-bot", run: 2, delegated: false },
+  { source: "tokenfuse", v2: false, type: "breaker_tripped", severity: "medium", agent: "tier2-bot", run: 2, delegated: false },
   { source: "engram", v2: false, type: "memory_written", severity: "info", agent: "tier2-bot", run: 2, delegated: false },
   { source: "wardryx", v2: true, type: "policy_deny", severity: "high", agent: "ci-fixer", run: 3, delegated: true },
   { source: "wardryx", v2: true, type: "approval_requested", severity: "medium", agent: "ci-fixer", run: 3, delegated: true },
@@ -88,7 +88,7 @@ const SEEDS: Seed[] = [
   { source: "mockryx", v2: true, type: "blast_radius_measured", severity: "medium", agent: "reconciler", run: 18, delegated: false },
   { source: "qryx", v2: false, type: "crypto_finding", severity: "medium", agent: "translator", run: 19, delegated: false },
   { source: "wardryx", v2: true, type: "policy_deny", severity: "high", agent: "support-bot", run: 20, delegated: true },
-  { source: "tokenfuse", v2: false, type: "breaker_tripped", severity: "critical", agent: "support-bot", run: 20, delegated: true },
+  { source: "tokenfuse", v2: false, type: "breaker_tripped", severity: "medium", agent: "support-bot", run: 20, delegated: true },
 ];
 
 function seedData(type: string, run: number, agentId: string): unknown {
