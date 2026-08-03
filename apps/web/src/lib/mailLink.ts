@@ -105,11 +105,20 @@ const VIEW_BY_TYPE: Readonly<Record<string, ViewId>> = {
  *
  *   /i/{type}:{subject}  the incident. "What exactly happened."
  *   /a/{agent}           the agent. "Show me this thing, and let me freeze or
- *                        kill it." Opens the Agent 360 card, which is where
- *                        those controls live.
+ *                        kill it." Opens the agent DETAIL card
+ *                        (`AgentDetailCard.tsx`), which is where those two
+ *                        controls live. This said "the Agent 360 card, which
+ *                        is where those controls live" until 2026-08-03, and
+ *                        it was wrong in the way a comment can be: Agent 360
+ *                        shows whether an agent is blocked and offers no way
+ *                        to block it, so the link landed an operator one
+ *                        screen away from the thing the mail had named.
  *   /o/{owner}           the owner. "Who is answerable, and what else are they
  *                        running." The blast radius, when one agent going wrong
- *                        is not the whole story.
+ *                        is not the whole story. Opens `UserCard.tsx` on the
+ *                        Identity panel; it stopped at the panel alone until
+ *                        2026-08-03, which answered the second half of that
+ *                        question and not the first.
  *
  * All three are VIEWS. None of them acts: the action happens in the console
  * after a sign-in, and a destructive one after a passkey. A mail that could act
