@@ -19,8 +19,13 @@
  */
 import type { ViewId } from "./views";
 
+/** Which of the three coordinates a link carries. */
+export type MailLinkKind = "incident" | "agent" | "owner";
+
 /** What a mail link resolves to. */
 export interface MailLink {
+  /** Which coordinate this is. */
+  kind: MailLinkKind;
   /** The whole id as it appeared in the URL, e.g. `budget_threshold:run-42`. */
   id: string;
   /** The agent-event type, e.g. `budget_threshold`. */
@@ -91,8 +96,37 @@ const VIEW_BY_TYPE: Readonly<Record<string, ViewId>> = {
   contradiction_found: "memory",
 };
 
-/** The path prefix the notifier builds its links with. */
+/**
+ * The three path prefixes an alert mail can carry, and what each one is FOR.
+ *
+ * An operator reading an alert at two in the morning wants three different
+ * things depending on what they already know, so the mail offers three
+ * coordinates rather than one:
+ *
+ *   /i/{type}:{subject}  the incident. "What exactly happened."
+ *   /a/{agent}           the agent. "Show me this thing, and let me freeze or
+ *                        kill it." Opens the Agent 360 card, which is where
+ *                        those controls live.
+ *   /o/{owner}           the owner. "Who is answerable, and what else are they
+ *                        running." The blast radius, when one agent going wrong
+ *                        is not the whole story.
+ *
+ * All three are VIEWS. None of them acts: the action happens in the console
+ * after a sign-in, and a destructive one after a passkey. A mail that could act
+ * would be an unauthenticated capability held by whoever forwards it, and mail
+ * gateways prefetch links.
+ *
+ * `owner` and the delegation chain are DIFFERENT things and the spec keeps them
+ * apart (agent-passport SPEC.md sections 4 and 5): `owner` is the required
+ * passport field naming who is answerable for the agent existing, a person or a
+ * team; `on_behalf_of` carries `user://` principals and says who the agent is
+ * acting for right now. Often the same human, not always, and the difference is
+ * a different blast radius for a stop. `/o/` is the OWNER, which is who you
+ * call (Yurii, 2026-08-02).
+ */
 const MAIL_LINK_PREFIX = "/i/";
+const AGENT_LINK_PREFIX = "/a/";
+const OWNER_LINK_PREFIX = "/o/";
 
 /**
  * Parse a pathname into what the mail was about, or `null` when it is not a
@@ -107,9 +141,22 @@ const MAIL_LINK_PREFIX = "/i/";
  * it could not place.
  */
 export function parseMailLink(pathname: string): MailLink | null {
-  if (!pathname.startsWith(MAIL_LINK_PREFIX)) return null;
+  let kind: MailLinkKind;
+  let prefix: string;
+  if (pathname.startsWith(MAIL_LINK_PREFIX)) {
+    kind = "incident";
+    prefix = MAIL_LINK_PREFIX;
+  } else if (pathname.startsWith(AGENT_LINK_PREFIX)) {
+    kind = "agent";
+    prefix = AGENT_LINK_PREFIX;
+  } else if (pathname.startsWith(OWNER_LINK_PREFIX)) {
+    kind = "owner";
+    prefix = OWNER_LINK_PREFIX;
+  } else {
+    return null;
+  }
 
-  let raw = pathname.slice(MAIL_LINK_PREFIX.length);
+  let raw = pathname.slice(prefix.length);
   // A trailing slash is what a browser or a mail client's link rewriter adds,
   // not something the operator did wrong.
   if (raw.endsWith("/")) raw = raw.slice(0, -1);
@@ -124,6 +171,14 @@ export function parseMailLink(pathname: string): MailLink | null {
     id = raw;
   }
 
+  // An agent or owner link is the id itself, with no type in front of it.
+  if (kind === "agent") {
+    return { kind, id, type: "", subject: id, view: "overview" };
+  }
+  if (kind === "owner") {
+    return { kind, id, type: "", subject: id, view: "identity" };
+  }
+
   // `{type}:{subject}` on the FIRST colon only. A subject can contain one:
   // an agent id is `agent://acme.example/biller`, and splitting on every
   // colon would turn it into three pieces and lose the agent.
@@ -131,7 +186,7 @@ export function parseMailLink(pathname: string): MailLink | null {
   const type = cut === -1 ? id : id.slice(0, cut);
   const subject = cut === -1 ? "" : id.slice(cut + 1);
 
-  return { id, type, subject, view: VIEW_BY_TYPE[type] ?? null };
+  return { kind, id, type, subject, view: VIEW_BY_TYPE[type] ?? null };
 }
 
 /**
@@ -143,6 +198,12 @@ export function parseMailLink(pathname: string): MailLink | null {
  * translate.
  */
 export function mailLinkNotice(link: MailLink): string {
+  if (link.kind === "agent") {
+    return `Opened from an alert about ${link.subject}. Its card is open: freeze or kill it there, not from the mail.`;
+  }
+  if (link.kind === "owner") {
+    return `Opened from an alert about an agent owned by ${link.subject}. This panel is everything they are answerable for.`;
+  }
   const about = link.subject === "" ? link.type : `${link.type} on ${link.subject}`;
   if (link.view === null) {
     return `Opened from an alert about ${about}. This console does not know which panel shows that kind of event, so it has not guessed: the id is ${link.id}.`;
