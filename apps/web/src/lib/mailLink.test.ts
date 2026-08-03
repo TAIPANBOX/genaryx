@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mailLinkNotice, parseMailLink } from "./mailLink";
+import { mailLinkFrom, mailLinkNotice, parseMailLink } from "./mailLink";
 
 describe("parseMailLink", () => {
   it("resolves the link the notifier actually builds", () => {
@@ -127,5 +127,39 @@ describe("mailLinkNotice", () => {
   it("omits the subject when there is none", () => {
     const link = parseMailLink("/i/spend_spike")!;
     expect(mailLinkNotice(link)).toBe("Opened from an alert about spend_spike.");
+  });
+});
+
+describe("mailLinkFrom", () => {
+  // A static host answers 404 for `/i/...` because there is no such file, so
+  // the click dies before any of this runs. The fragment is what a static host
+  // always serves as the page itself, and never sends upstream.
+  it("reads the link out of the fragment when the path is not one", () => {
+    const link = mailLinkFrom({ pathname: "/demo/", hash: "#/i/budget_exhausted:run-42" });
+    expect(link?.kind).toBe("incident");
+    expect(link?.type).toBe("budget_exhausted");
+    expect(link?.subject).toBe("run-42");
+    expect(link?.view).toBe("money");
+  });
+
+  it("takes the path over the fragment when both are links", () => {
+    // A real console owns its routes, so its own path is the more specific
+    // statement of intent than something a link rewriter may have appended.
+    const link = mailLinkFrom({ pathname: "/a/billing-agent", hash: "#/i/policy_deny:run-9" });
+    expect(link?.kind).toBe("agent");
+    expect(link?.subject).toBe("billing-agent");
+  });
+
+  it("is not a link when neither the path nor the fragment is one", () => {
+    expect(mailLinkFrom({ pathname: "/demo/", hash: "" })).toBeNull();
+    expect(mailLinkFrom({ pathname: "/demo/", hash: "#" })).toBeNull();
+    expect(mailLinkFrom({ pathname: "/", hash: "#section-two" })).toBeNull();
+  });
+
+  it("handles a fragment carrying an owner link, escaping and all", () => {
+    const link = mailLinkFrom({ pathname: "/demo/", hash: "#/o/team-finance%40acme.example" });
+    expect(link?.kind).toBe("owner");
+    expect(link?.id).toBe("team-finance@acme.example");
+    expect(link?.view).toBe("identity");
   });
 });

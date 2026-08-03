@@ -140,6 +140,32 @@ const OWNER_LINK_PREFIX = "/o/";
  * shows is what happened. The caller lands on the overview and says which id
  * it could not place.
  */
+/**
+ * Where the deep link actually arrives from, which is not always the path.
+ *
+ * The console served by the operator's own box owns its routes, so a mail link
+ * lands as `/i/{type}:{subject}` and [`parseMailLink`] reads it straight off
+ * `location.pathname`. A STATIC deployment cannot do that: a file server asked
+ * for `/i/budget_exhausted:run-42` has no such file and answers 404, so the
+ * click dies before any of this code runs. That is not hypothetical, it is
+ * where the public demo of this console is published.
+ *
+ * So the same link is also accepted in the fragment, `#/i/{type}:{subject}`,
+ * which every static host serves as the page itself and never sends upstream.
+ * One parser, two ways in: the path wins when both are present, because a real
+ * console's own route is the more specific statement of intent.
+ *
+ * Deliberately NOT a query parameter. A fragment is not sent to the server, and
+ * this string names an incident and an agent.
+ */
+export function mailLinkFrom(loc: { pathname: string; hash: string }): MailLink | null {
+  const fromPath = parseMailLink(loc.pathname);
+  if (fromPath !== null) return fromPath;
+  const hash = loc.hash.startsWith("#") ? loc.hash.slice(1) : loc.hash;
+  if (hash === "") return null;
+  return parseMailLink(hash);
+}
+
 export function parseMailLink(pathname: string): MailLink | null {
   let kind: MailLinkKind;
   let prefix: string;

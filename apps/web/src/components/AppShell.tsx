@@ -5,7 +5,7 @@ import type { ApprovalAlert } from "../lib/notifications";
 import { muteKey } from "../lib/notifications";
 import { useApprovalNotifications } from "../lib/useApprovalNotifications";
 import type { MailLink } from "../lib/mailLink";
-import { mailLinkNotice, parseMailLink } from "../lib/mailLink";
+import { mailLinkFrom, mailLinkNotice, parseMailLink } from "../lib/mailLink";
 import type { ViewId } from "../lib/views";
 import { Agent360 } from "./Agent360";
 import { AppHeader } from "./AppHeader";
@@ -130,7 +130,11 @@ export function AppShell() {
   // it across a navigation.
   const [mailLink, setMailLink] = useState<MailLink | null>(null);
   useEffect(() => {
-    const link = parseMailLink(window.location.pathname);
+    // Path first, fragment second: see `mailLinkFrom`. The fragment form is
+    // what makes this work on a static deployment, where a file server asked
+    // for `/i/budget_exhausted:run-42` answers 404 and the click never reaches
+    // this code at all.
+    const link = mailLinkFrom(window.location);
     if (link === null) return;
     setMailLink(link);
     // A type this build does not know does not get a guessed panel. The
@@ -147,8 +151,18 @@ export function AppShell() {
     // reload is an ordinary reload rather than a second arrival, and so the
     // id does not sit in the URL for a screenshot to carry away. `replaceState`
     // rather than `pushState`: there is no history entry worth going back to.
+    // Clear whichever form it arrived in, and only that one.
+    //
+    // When the PATH was the link, the path has to go, so the console lands at
+    // its own root. When the FRAGMENT was, the path is where the app is
+    // actually served from and must survive: a static deployment lives under
+    // `/demo/`, and replacing that with `/` would point a reload at the site
+    // root instead of the console.
+    const cleared = parseMailLink(window.location.pathname) !== null
+      ? "/"
+      : window.location.pathname + window.location.search;
     try {
-      window.history.replaceState(null, "", "/");
+      window.history.replaceState(null, "", cleared);
     } catch {
       // Some embedded webviews refuse this. The console is already showing
       // the right panel by then, which is the part that matters.
