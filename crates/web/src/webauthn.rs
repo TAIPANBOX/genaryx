@@ -75,6 +75,13 @@ pub enum WebAuthnError {
     UnknownChallenge,
     /// The session user does not own the ceremony or the credential.
     WrongUser,
+    /// No enrolled passkey with that credential id (removal of something the
+    /// caller does not have).
+    UnknownCredential,
+    /// This removal would leave the user with no passkey at all, and the
+    /// caller did not carry the authority for that (see `main.rs`'s removal
+    /// policy: the last one goes only to the operator password).
+    LastPasskey,
     /// Reading/writing the passkey store failed.
     Store(String),
 }
@@ -98,6 +105,11 @@ impl std::fmt::Display for WebAuthnError {
             }
             WebAuthnError::UnknownChallenge => write!(f, "unknown or expired challenge"),
             WebAuthnError::WrongUser => write!(f, "ceremony does not belong to this user"),
+            WebAuthnError::UnknownCredential => write!(f, "no passkey with that credential id"),
+            WebAuthnError::LastPasskey => write!(
+                f,
+                "this is the last enrolled passkey; removing it needs the operator password"
+            ),
             WebAuthnError::Store(e) => write!(f, "passkey store: {e}"),
         }
     }
@@ -212,6 +224,39 @@ impl PasskeyStore {
         }
         list.push(record);
         self.persist(&guard)
+    }
+
+    /// Remove one enrolled passkey and persist, returning how many the user
+    /// has left.
+    ///
+    /// `allow_last` is the caller's answer to "may this empty the set?", and
+    /// it is checked HERE rather than only at the route because the count and
+    /// the removal have to be one decision: two removals arriving together
+    /// would otherwise each see another key remaining and, between them,
+    /// leave none. Refuses [`WebAuthnError::UnknownCredential`] for a
+    /// credential this user never enrolled, so a removal is never reported as
+    /// done when nothing was removed.
+    pub fn remove(
+        &self,
+        user: &str,
+        credential_id: &str,
+        allow_last: bool,
+    ) -> Result<usize, WebAuthnError> {
+        let mut guard = self.inner.lock().expect("passkey store poisoned");
+        let list = guard
+            .get_mut(user)
+            .ok_or(WebAuthnError::UnknownCredential)?;
+        let at = list
+            .iter()
+            .position(|r| r.credential_id == credential_id)
+            .ok_or(WebAuthnError::UnknownCredential)?;
+        if list.len() == 1 && !allow_last {
+            return Err(WebAuthnError::LastPasskey);
+        }
+        list.remove(at);
+        let remaining = list.len();
+        self.persist(&guard)?;
+        Ok(remaining)
     }
 
     /// Update the stored signature counter after an accepted assertion.
@@ -712,8 +757,19 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn enrolled(signer: &SoftwareSigner, sign_count: u32) -> PasskeyRecord {
+        enrolled_with_id(signer, b"cred-1", sign_count)
+    }
+
+    /// An enrollment under a chosen credential id, for the tests that need
+    /// TWO enrolled authenticators (removal: one key confirms the removal of
+    /// the other; enrollment: an enrolled key authorizes adding the next).
+    pub(crate) fn enrolled_with_id(
+        signer: &SoftwareSigner,
+        credential_id: &[u8],
+        sign_count: u32,
+    ) -> PasskeyRecord {
         PasskeyRecord {
-            credential_id: B64URL.encode(b"cred-1"),
+            credential_id: B64URL.encode(credential_id),
             public_key_x963: B64.encode(signer.public_key_x963().unwrap()),
             sign_count,
             created_at: "2026-07-24T00:00:00Z".into(),

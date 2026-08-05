@@ -287,6 +287,7 @@ fn app(ctx: Arc<Ctx>) -> Router {
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
         .route("/webauthn/passkeys", get(webauthn_list))
+        .route("/webauthn/passkeys/remove", post(webauthn_remove))
         .route("/webauthn/register/start", post(webauthn_register_start))
         .route("/webauthn/register/finish", post(webauthn_register_finish))
         .route("/webauthn/action/start", post(webauthn_action_start))
@@ -481,6 +482,17 @@ const SENSITIVE_COMMANDS: &[&str] = &[
     "remote_operator_wg_revoke",
 ];
 
+/// The two ceremony names that are NOT dispatchable commands: each names an
+/// endpoint of the passkey lifecycle rather than something
+/// `POST /api/command/<name>` could ever run, and `action/start` mints a
+/// challenge bound to one exactly as it does for a sensitive command.
+///
+/// Deliberately kept out of [`SENSITIVE_COMMANDS`], which is the DISPATCH
+/// list the command chokepoint reads: a name that cannot be dispatched has no
+/// business in a list of commands.
+const REMOVE_PASSKEY_CEREMONY: &str = "webauthn_remove_passkey";
+const ENROLL_PASSKEY_CEREMONY: &str = "webauthn_enroll_passkey";
+
 /// `POST /api/webauthn/action/start`'s body: which command the operator is
 /// about to confirm, with the exact args the later dispatch will carry.
 #[derive(Deserialize)]
@@ -499,6 +511,19 @@ struct AssertionEnvelope {
     client_data_json: String,
     authenticator_data: String,
     signature: String,
+}
+
+/// `POST /api/webauthn/passkeys/remove`'s body.
+#[derive(Deserialize)]
+struct RemovePasskey {
+    /// The enrolled credential to drop, base64url, exactly as
+    /// `GET /api/webauthn/passkeys` reports it.
+    credential_id: String,
+    /// The local operator account's password (`genaryx-web set-password`).
+    /// Required to remove the LAST enrolled passkey, and accepted in place of
+    /// an assertion for any other - see [`webauthn_remove`] for why.
+    #[serde(default)]
+    operator_password: Option<String>,
 }
 
 /// `POST /api/webauthn/register/finish`'s body.
@@ -634,6 +659,160 @@ async fn webauthn_register_finish(
     Json(json!({ "enrolled": true, "credential_id": credential_id })).into_response()
 }
 
+/// Remove one enrolled passkey.
+///
+/// An enrolled passkey used to be permanent: `PasskeyStore` could add and
+/// count, and nothing could take one away, so an operator whose only
+/// authenticator was lost or wiped was 428'd out of every sensitive command
+/// with no way back except hand-editing `passkeys.json` on the box - shell
+/// access to the box you reach THROUGH this console, as the emergency path
+/// for the emergency console.
+///
+/// The authority to remove is deliberately never the session, since the
+/// session is the exact thing the ceremony defends against:
+///
+/// - **While another passkey remains**: a fresh, one-shot WebAuthn assertion
+///   bound to this exact credential id, from any of the caller's own enrolled
+///   keys. This is the ordinary "I lost one of my two" flow, and it demands
+///   the strongest proof that is still available.
+/// - **The last one**: the operator password (`genaryx-web set-password`),
+///   and only that. An assertion from the key being removed is a fine proof
+///   of possession, and still not enough: this is the removal that takes the
+///   whole box back to session-only (or, with `GENARYX_WEB_REQUIRE_PASSKEY`,
+///   to refusing outright), so it is the box owner's decision. It is also the
+///   only rule that works in the case that matters, a lost key, where no
+///   assertion can be produced at all.
+/// - The password is accepted for a non-last removal too. That adds no
+///   authority it did not already have (holding it, one can remove the others
+///   one at a time and then the last), and it removes the one lockout the
+///   assertion-only rule would create: every enrolled key lost at once.
+///
+/// So the recovery story is: operator password removes what is left, and the
+/// first enrollment after that needs the same password again
+/// ([`webauthn_register_start`]). A stolen session alone gets neither.
+async fn webauthn_remove(
+    State(ctx): State<Arc<Ctx>>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(body): Json<RemovePasskey>,
+) -> Response {
+    let session = match guard(&ctx, &jar) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let store = match ctx.passkeys.as_ref() {
+        Ok(s) => s,
+        Err(e) => return store_unavailable(e),
+    };
+    let keys = store.for_user(&session.user);
+    if !keys.iter().any(|k| k.credential_id == body.credential_id) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("webauthn: {}", webauthn::WebAuthnError::UnknownCredential)})),
+        )
+            .into_response();
+    }
+    let is_last = keys.len() == 1;
+
+    // A supplied password is answered on its own terms: wrong is a refusal,
+    // never a quiet fall-through to the assertion path.
+    let password_ok = match body.operator_password.as_deref() {
+        Some(pw) => match operator_password_ok(&ctx, pw) {
+            Ok(()) => true,
+            Err(refusal) => return refusal,
+        },
+        None => false,
+    };
+
+    if is_last && !password_ok {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "this is the last enrolled passkey: removing it needs the operator \
+                          password (the one `genaryx-web set-password` set), because it is what \
+                          takes this console back to session-only",
+                "webauthn": "password_required",
+            })),
+        )
+            .into_response();
+    }
+    if !password_ok {
+        let Some(header) = headers.get("x-genaryx-webauthn") else {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "removing a passkey needs a fresh confirmation from an enrolled \
+                              passkey, or the operator password: a session alone cannot take the \
+                              ceremony away",
+                    "webauthn": "assertion_required",
+                })),
+            )
+                .into_response();
+        };
+        let bound = json!({ "credential_id": body.credential_id });
+        if let Err(refusal) = verify_assertion_header(
+            &ctx,
+            &session,
+            store,
+            REMOVE_PASSKEY_CEREMONY,
+            &bound,
+            header,
+        ) {
+            return refusal;
+        }
+    }
+
+    let remaining = match store.remove(&session.user, &body.credential_id, password_ok) {
+        Ok(n) => n,
+        Err(e) => return ceremony_refused(&e),
+    };
+    tracing::warn!(
+        user = %session.user, credential = %body.credential_id, remaining,
+        by = if password_ok { "operator password" } else { "passkey assertion" },
+        "webauthn passkey removed"
+    );
+    Json(json!({
+        "removed": true,
+        "credential_id": body.credential_id,
+        "remaining": remaining,
+    }))
+    .into_response()
+}
+
+/// Check the local operator account's password, the box's break-glass factor
+/// for the passkey lifecycle (first enrollment, last removal).
+///
+/// Reuses `auth::verify` untouched, including its deliberate refusal to
+/// short-circuit on the username, so a wrong password always costs the same
+/// Argon2 verification. The username handed to it is the operator record's
+/// OWN: who the caller is was settled by the session, and what is being
+/// proven here is knowledge of the box credential, not that the signed-in
+/// name (an OIDC `sub`, say) happens to match the local account's.
+#[allow(clippy::result_large_err)]
+fn operator_password_ok(ctx: &Arc<Ctx>, password: &str) -> Result<(), Response> {
+    let op = ctx.operator.read().expect("operator lock").clone();
+    let Some(op) = op else {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "this box has no operator account, so there is no password to prove: \
+                          run `genaryx-web set-password --username <name>` on the box first",
+                "webauthn": "no_operator_account",
+            })),
+        )
+            .into_response());
+    };
+    if !auth::verify(&op, &op.username, password) {
+        tracing::warn!("operator password refused for a passkey lifecycle change");
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "the operator password was not accepted"})),
+        )
+            .into_response());
+    }
+    Ok(())
+}
+
 /// Mint a per-action challenge bound to the exact command + args the operator
 /// is about to confirm, and say which credentials may answer it.
 async fn webauthn_action_start(
@@ -653,7 +832,10 @@ async fn webauthn_action_start(
     if keys.is_empty() {
         return bad_request("no passkey enrolled; enroll one before starting an action ceremony");
     }
-    if !SENSITIVE_COMMANDS.contains(&body.command.as_str()) {
+    let ceremonial = SENSITIVE_COMMANDS.contains(&body.command.as_str())
+        || body.command == REMOVE_PASSKEY_CEREMONY
+        || body.command == ENROLL_PASSKEY_CEREMONY;
+    if !ceremonial {
         return bad_request("this command carries no webauthn ceremony");
     }
     let args_sha256 = genaryx_signing::body_sha256_hex(canonical_args(&body.args).as_bytes());
@@ -719,6 +901,30 @@ fn webauthn_gate(
         )
             .into_response());
     };
+    let record = verify_assertion_header(ctx, session, store, name, args, header)?;
+    Ok(Some(genaryx_api::console_actor::ConsoleSignature {
+        alg: "webauthn-es256".to_string(),
+        fpr: record.credential_id,
+    }))
+}
+
+/// Verify one `x-genaryx-webauthn` header against a ceremony bound to
+/// `bound_to` + `args`, and answer with the enrolled passkey that signed it.
+///
+/// The cryptographic middle of the gate, shared by everything that demands a
+/// fresh confirmation: the sensitive-command gate above, the passkey removal
+/// ([`webauthn_remove`]) and the additional enrollment
+/// ([`webauthn_register_start`]). Every step is fail-closed, and the challenge
+/// is consumed one-shot by the `take` below whatever happens afterwards.
+#[allow(clippy::result_large_err)]
+fn verify_assertion_header(
+    ctx: &Arc<Ctx>,
+    session: &auth::SessionInfo,
+    store: &webauthn::PasskeyStore,
+    bound_to: &str,
+    args: &Value,
+    header: &axum::http::HeaderValue,
+) -> Result<webauthn::PasskeyRecord, Response> {
     let envelope: AssertionEnvelope = match header
         .to_str()
         .ok()
@@ -755,7 +961,7 @@ fn webauthn_gate(
             )));
         }
     };
-    if bound_command != name {
+    if bound_command != bound_to {
         return Err(ceremony_refused(&webauthn::WebAuthnError::Mismatch(
             "bound command",
         )));
@@ -791,14 +997,11 @@ fn webauthn_gate(
         tracing::warn!(error = %e, "webauthn: could not persist sign count");
     }
     tracing::info!(
-        user = %session.user, command = %name, credential = %record.credential_id,
+        user = %session.user, bound_to = %bound_to, credential = %record.credential_id,
         user_verified = verified.user_verified,
         "webauthn assertion verified"
     );
-    Ok(Some(genaryx_api::console_actor::ConsoleSignature {
-        alg: "webauthn-es256".to_string(),
-        fpr: record.credential_id.clone(),
-    }))
+    Ok(record)
 }
 
 /// The canonical serialization both `action/start` and the gate hash:
@@ -979,17 +1182,24 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    /// A hermetic Ctx: a temp state dir, no UI, an unavailable bus, and every
-    /// plane left in its pending state (never `resolve()`d, so no network and
-    /// no background tasks). Enough to exercise the auth + role gate, which
-    /// runs entirely BEFORE any plane is touched.
-    fn test_ctx() -> Arc<Ctx> {
+    /// A state directory of this test's own. Named per call because cargo runs
+    /// these on parallel threads in one process, and a directory keyed only by
+    /// pid would be shared (the passkey store is a FILE, so two tests sharing
+    /// one would see each other's enrollments).
+    fn test_dir() -> PathBuf {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
+        std::env::temp_dir().join(format!(
             "gw-gate-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        ))
+    }
+
+    /// A hermetic Ctx over `dir`: no UI, an unavailable bus, and every plane
+    /// left in its pending state (never `resolve()`d, so no network and no
+    /// background tasks). Enough to exercise the auth, role and passkey gates,
+    /// which run entirely BEFORE any plane is touched.
+    fn ctx_at(dir: PathBuf) -> Arc<Ctx> {
         let cfg = Config {
             bind: "127.0.0.1:0".parse().unwrap(),
             state_dir: dir,
@@ -1005,6 +1215,10 @@ mod tests {
             },
         };
         Arc::new(Ctx::bootstrap(cfg, bus, events_tx))
+    }
+
+    fn test_ctx() -> Arc<Ctx> {
+        ctx_at(test_dir())
     }
 
     async fn post_command(ctx: &Arc<Ctx>, name: &str, cookie: Option<&str>) -> StatusCode {
@@ -1152,6 +1366,241 @@ mod tests {
             .expect("test store opens")
             .add(user, test_support::enrolled(&s, 0))
             .unwrap();
+    }
+
+    /// Enroll a SECOND authenticator for `user`, under its own credential id.
+    fn enroll_test_passkey_id(ctx: &Arc<Ctx>, user: &str, cred_id: &[u8]) {
+        let s = test_support::signer();
+        ctx.passkeys
+            .as_ref()
+            .expect("test store opens")
+            .add(user, test_support::enrolled_with_id(&s, cred_id, 0))
+            .unwrap();
+    }
+
+    /// Like [`assertion_header`], for an authenticator with a chosen
+    /// credential id (the removal ceremony has to say WHICH enrolled key
+    /// answered, and the removal tests enroll two).
+    fn assertion_header_for(ctx: &Arc<Ctx>, challenge: &str, cred_id: &[u8]) -> String {
+        let s = test_support::signer();
+        let cd = test_support::client_data("webauthn.get", challenge, &ctx.webauthn_rp.origin);
+        let ad = test_support::auth_data(&ctx.webauthn_rp.rp_id, 0x01, 1, None);
+        let sig = test_support::assert_sign(&s, &ad, &cd);
+        let envelope = json!({
+            "credential_id": test_support::enrolled_with_id(&s, cred_id, 0).credential_id,
+            "client_data_json": B64URL.encode(&cd),
+            "authenticator_data": B64URL.encode(&ad),
+            "signature": B64URL.encode(&sig),
+        });
+        B64URL.encode(envelope.to_string())
+    }
+
+    /// POST any `/api` route with a session cookie, an optional
+    /// `x-genaryx-webauthn` header and a JSON body; return the status AND the
+    /// parsed body, because these gates are as much about the message the
+    /// operator reads as about the number.
+    async fn post_api(
+        ctx: &Arc<Ctx>,
+        uri: &str,
+        cookie: &str,
+        assertion: Option<&str>,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("cookie", format!("{}={}", auth::COOKIE, cookie));
+        if let Some(a) = assertion {
+            req = req.header("x-genaryx-webauthn", a);
+        }
+        let resp = app(Arc::clone(ctx))
+            .oneshot(req.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let parsed = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, parsed)
+    }
+
+    /// Give this box the local operator account whose password is the
+    /// break-glass factor for the passkey lifecycle (first enrollment, last
+    /// removal). Written through the real `auth::set_operator`, then loaded
+    /// into the live `Ctx` exactly as `serve` would at startup.
+    fn set_test_operator(ctx: &Arc<Ctx>, password: &str) {
+        auth::set_operator(&ctx.cfg.operator_file(), "ops", password).unwrap();
+        *ctx.operator.write().expect("operator lock") = auth::load(&ctx.cfg.operator_file());
+    }
+
+    fn enrolled_ids(ctx: &Arc<Ctx>, user: &str) -> Vec<String> {
+        ctx.passkeys
+            .as_ref()
+            .expect("test store opens")
+            .for_user(user)
+            .into_iter()
+            .map(|k| k.credential_id)
+            .collect()
+    }
+
+    // -- removing a passkey (defect 1: enrolled, then unremovable) -----------
+
+    #[tokio::test]
+    async fn a_passkey_is_removed_by_a_caller_who_confirms_with_an_enrolled_one() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice"); // cred-1
+        enroll_test_passkey_id(&ctx, "alice", b"cred-2");
+        let victim = B64URL.encode(b"cred-2");
+
+        let challenge = start_action(
+            &ctx,
+            &sid,
+            "webauthn_remove_passkey",
+            &json!({ "credential_id": victim }).to_string(),
+        )
+        .await;
+        let header = assertion_header_for(&ctx, &challenge, b"cred-1");
+
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            Some(&header),
+            json!({ "credential_id": victim }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(body["removed"], true);
+        assert_eq!(body["remaining"], 1);
+        assert_eq!(enrolled_ids(&ctx, "alice"), vec![B64URL.encode(b"cred-1")]);
+    }
+
+    #[tokio::test]
+    async fn removing_a_passkey_on_a_session_alone_is_refused() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        enroll_test_passkey_id(&ctx, "alice", b"cred-2");
+        let victim = B64URL.encode(b"cred-2");
+
+        // Nothing but the cookie: the exact thing the ceremony exists to
+        // defend against must not be able to take the ceremony away.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            None,
+            json!({ "credential_id": victim }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "assertion_required");
+        assert_eq!(enrolled_ids(&ctx, "alice").len(), 2);
+
+        // A wrong operator password is no better.
+        set_test_operator(&ctx, "correct horse battery");
+        let (status, _) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            None,
+            json!({ "credential_id": victim, "operator_password": "not the password" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(enrolled_ids(&ctx, "alice").len(), 2);
+
+        // Nor is an assertion bound to a DIFFERENT credential than the one
+        // being removed: the challenge names what it authorizes.
+        let challenge = start_action(
+            &ctx,
+            &sid,
+            "webauthn_remove_passkey",
+            &json!({ "credential_id": B64URL.encode(b"cred-1") }).to_string(),
+        )
+        .await;
+        let header = assertion_header_for(&ctx, &challenge, b"cred-1");
+        let (status, _) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            Some(&header),
+            json!({ "credential_id": victim }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(enrolled_ids(&ctx, "alice").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn the_last_passkey_goes_only_to_the_operator_password() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let only = B64URL.encode(b"cred-1");
+        set_test_operator(&ctx, "correct horse battery");
+
+        // An assertion from the key itself is a fine proof of possession and
+        // still not enough: this removal is what downgrades the whole box.
+        let challenge = start_action(
+            &ctx,
+            &sid,
+            "webauthn_remove_passkey",
+            &json!({ "credential_id": only }).to_string(),
+        )
+        .await;
+        let header = assertion_header_for(&ctx, &challenge, b"cred-1");
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            Some(&header),
+            json!({ "credential_id": only }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "password_required");
+        assert_eq!(enrolled_ids(&ctx, "alice").len(), 1);
+
+        // The operator password is the recovery path, and it works with no
+        // authenticator at all - the case a lost key leaves behind.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            None,
+            json!({ "credential_id": only, "operator_password": "correct horse battery" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(body["remaining"], 0);
+        assert!(enrolled_ids(&ctx, "alice").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_corrupt_passkey_store_refuses_removal_instead_of_reading_empty() {
+        let dir = test_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("passkeys.json"), "{ not json").unwrap();
+        let ctx = ctx_at(dir);
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+
+        // An unreadable store must not read as "nobody enrolled": both the
+        // removal and the sensitive command refuse.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            None,
+            json!({ "credential_id": B64URL.encode(b"cred-1") }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "body: {body}");
+        assert_eq!(
+            post_command_with(&ctx, "money_kill_run", &sid, None, "{}").await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[tokio::test]

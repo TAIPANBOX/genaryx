@@ -4,6 +4,8 @@ import {
   CeremonyCancelled,
   enrollPasskey,
   listPasskeys,
+  operatorPasswordRequired,
+  removePasskey,
   webauthnAvailable,
   type PasskeyInfo,
 } from "../lib/webauthn";
@@ -60,6 +62,9 @@ export function PasskeySettings() {
   const [passkeys, setPasskeys] = useState<PasskeyInfo[] | null | undefined>(undefined);
   const [label, setLabel] = useState("");
   const [enrolling, setEnrolling] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [needPassword, setNeedPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
@@ -92,6 +97,28 @@ export function PasskeySettings() {
       if (!(err instanceof CeremonyCancelled)) setError(errorText(err));
     } finally {
       setEnrolling(false);
+    }
+  }
+
+  /** Remove one enrolled passkey. Two proofs, decided by the server and not
+   * guessed here: an assertion from an enrolled key for any but the last, the
+   * operator password for the last one (`lib/webauthn.ts`'s `removePasskey`).
+   * A `password_required` refusal is not an error to show and forget, it is
+   * the server asking for the field below, so it puts it on screen. */
+  async function onRemove(credentialId: string) {
+    setRemoving(credentialId);
+    setError(null);
+    try {
+      await removePasskey(credentialId, password.trim() || undefined);
+      setPassword("");
+      setNeedPassword(false);
+      refresh();
+    } catch (err) {
+      if (err instanceof CeremonyCancelled) return;
+      if (operatorPasswordRequired(err)) setNeedPassword(true);
+      setError(errorText(err));
+    } finally {
+      setRemoving(null);
     }
   }
 
@@ -132,11 +159,50 @@ export function PasskeySettings() {
                 <span className="text-[12px] truncate" style={{ color: "var(--fg)" }}>
                   {k.label}
                 </span>
-                <span className="mono text-[11px]" style={{ color: "var(--faint)" }}>
-                  {createdLabel(k.created_at)}
+                <span className="flex items-center gap-3">
+                  <span className="mono text-[11px]" style={{ color: "var(--faint)" }}>
+                    {createdLabel(k.created_at)}
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    style={{ width: "auto", padding: "0 8px", fontSize: 11, whiteSpace: "nowrap" }}
+                    onClick={() => void onRemove(k.credential_id)}
+                    disabled={removing !== null}
+                    title="Remove this passkey"
+                  >
+                    {removing === k.credential_id ? "Removing..." : "Remove"}
+                  </button>
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {needPassword && (
+          <div className="flex flex-col gap-2">
+            <div className="text-[11.5px]" style={{ color: "var(--dim)", lineHeight: 1.6 }}>
+              This is the last enrolled passkey. Removing it takes this console back to
+              session-only, so it needs the operator password (the one{" "}
+              <code className="mono">genaryx-web set-password</code> set), not a passkey.
+            </div>
+            <input
+              className="mono"
+              type="password"
+              style={{
+                background: "var(--panel)",
+                border: "1px solid var(--line-2)",
+                borderRadius: 8,
+                padding: "6px 10px",
+                fontSize: 12,
+                color: "var(--fg)",
+              }}
+              placeholder="operator password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={removing !== null || enrolling}
+              spellCheck={false}
+            />
           </div>
         )}
 

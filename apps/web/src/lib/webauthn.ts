@@ -267,6 +267,71 @@ export async function enrollPasskey(label?: string): Promise<EnrolledPasskey> {
 }
 
 // ---------------------------------------------------------------------------
+// removal (the passkey lifecycle's other half)
+// ---------------------------------------------------------------------------
+
+/** The ceremony name a removal's challenge is bound to - mirrors
+ * `crates/web/src/main.rs`'s `REMOVE_PASSKEY_CEREMONY`. Not a command: it
+ * names the removal endpoint, and `action/start` mints a challenge for it
+ * exactly as it does for a sensitive command. */
+const REMOVE_PASSKEY_CEREMONY = "webauthn_remove_passkey";
+
+/** Mirrors `POST /api/webauthn/passkeys/remove`'s success body. */
+export interface RemovedPasskey {
+  removed: true;
+  credential_id: string;
+  remaining: number;
+}
+
+/** True when a refusal is the server asking for the operator password: the
+ * `403 {"webauthn": "password_required"}` shape `webauthn_remove` returns for
+ * the LAST enrolled passkey, and `register/start` returns for the FIRST
+ * enrollment. The one signal `PasskeySettings` needs to put the password
+ * field on screen instead of guessing. */
+export function operatorPasswordRequired(err: unknown): boolean {
+  return Boolean(err) && typeof err === "object" && (err as { webauthn?: unknown }).webauthn === "password_required";
+}
+
+/**
+ * Remove one enrolled passkey (`POST /api/webauthn/passkeys/remove`).
+ *
+ * The authority is never the session (that is what the ceremony defends
+ * against), so this sends one of two proofs, matching the server's policy in
+ * `crates/web/src/main.rs`'s `webauthn_remove`:
+ * - with `operatorPassword`: the box's break-glass credential, which is what
+ *   the LAST enrolled passkey requires and what recovers a box whose only
+ *   authenticator was lost;
+ * - otherwise: a fresh assertion from an enrolled passkey, bound to this
+ *   exact credential id.
+ *
+ * Rejects with the server's own body (so {@link operatorPasswordRequired}
+ * can read it), or {@link CeremonyCancelled} on a plain operator cancel.
+ */
+export async function removePasskey(credentialId: string, operatorPassword?: string): Promise<RemovedPasskey> {
+  if (!isWebShell()) {
+    throw new Error("no backend: cannot remove a passkey without a console session");
+  }
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const body: Record<string, unknown> = { credential_id: credentialId };
+  if (operatorPassword) {
+    body.operator_password = operatorPassword;
+  } else {
+    headers["x-genaryx-webauthn"] = await ceremonyHeader(REMOVE_PASSKEY_CEREMONY, {
+      credential_id: credentialId,
+    });
+  }
+
+  const result = (await fetchJson(`${webApiBase()}/webauthn/passkeys/remove`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  })) as RemovedPasskey;
+
+  invalidatePasskeysCache();
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // per-action ceremony (navigator.credentials.get)
 // ---------------------------------------------------------------------------
 
