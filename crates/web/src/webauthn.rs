@@ -777,6 +777,31 @@ pub(crate) mod test_support {
         }
     }
 
+    /// The browser half of a REGISTRATION: the `clientDataJSON` and
+    /// `attestationObject` a `navigator.credentials.create` would hand back
+    /// for `credential_id`, under this module's test authenticator key. Kept
+    /// here rather than in `main.rs`'s tests so the signer trait import and
+    /// the flag constants stay in the one module that owns them.
+    pub(crate) fn registration_response(
+        rp_id: &str,
+        origin: &str,
+        challenge: &str,
+        credential_id: &[u8],
+    ) -> (Vec<u8>, Vec<u8>) {
+        let s = signer();
+        let x963 = s.public_key_x963().unwrap();
+        let ad = auth_data(
+            rp_id,
+            FLAG_UP | FLAG_UV | FLAG_AT,
+            0,
+            Some((credential_id, &x963)),
+        );
+        (
+            client_data("webauthn.create", challenge, origin),
+            attestation_object("none", &ad),
+        )
+    }
+
     /// Sign like a browser authenticator: DER ECDSA over authData || sha256(clientData).
     pub(crate) fn assert_sign(
         signer: &SoftwareSigner,

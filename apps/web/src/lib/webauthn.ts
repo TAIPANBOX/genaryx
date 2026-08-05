@@ -214,17 +214,50 @@ export interface EnrolledPasskey {
   credential_id: string;
 }
 
+/** The ceremony name an enrollment's challenge is bound to - mirrors
+ * `crates/web/src/main.rs`'s `ENROLL_PASSKEY_CEREMONY`. Used only for the
+ * SECOND and later keys, where an already-enrolled one authorizes the next. */
+const ENROLL_PASSKEY_CEREMONY = "webauthn_enroll_passkey";
+
+/** True when a refusal is the server asking for an assertion from an
+ * already-enrolled passkey: the `403 {"webauthn": "assertion_required"}`
+ * shape `register/start` returns for an ADDITIONAL enrollment. */
+function assertionRequired(err: unknown): boolean {
+  return Boolean(err) && typeof err === "object" && (err as { webauthn?: unknown }).webauthn === "assertion_required";
+}
+
+/** `POST /api/webauthn/register/start` with whichever factor is being
+ * offered: the operator password in the body, or an assertion in the
+ * header. */
+async function registerStart(operatorPassword?: string, assertion?: string): Promise<RegisterStartDto> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (assertion) headers["x-genaryx-webauthn"] = assertion;
+  return (await fetchJson(`${webApiBase()}/webauthn/register/start`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(operatorPassword ? { operator_password: operatorPassword } : {}),
+  })) as RegisterStartDto;
+}
+
 /**
  * Register a new passkey in the current session
  * (`navigator.credentials.create`) and enroll it
  * (`POST /api/webauthn/register/finish`). Invalidates {@link listPasskeys}'s
  * cache on success, so the next probe sees it without a page reload.
  *
+ * Enrolling needs a factor the session does not carry, because a session that
+ * could enrol its own authenticator would satisfy every later ceremony from
+ * it (`crates/web/src/main.rs`'s `webauthn_register_start`): the operator
+ * password for the FIRST passkey, an assertion from an enrolled one for every
+ * later one. The password is passed in by the caller; the assertion is run
+ * here, once, on the server's own `assertion_required` refusal, so a panel
+ * never has to know which case it is in.
+ *
  * Rejects with the server's `{error: ...}` body, unmodified, for a genuine
- * refusal (a bad ceremony, a store failure, ...); a plain operator cancel
- * rejects with {@link CeremonyCancelled} instead.
+ * refusal (a missing factor, a bad ceremony, a store failure, ...); a plain
+ * operator cancel rejects with {@link CeremonyCancelled} instead.
  */
-export async function enrollPasskey(label?: string): Promise<EnrolledPasskey> {
+export async function enrollPasskey(label?: string, operatorPassword?: string): Promise<EnrolledPasskey> {
   if (!isWebShell()) {
     throw new Error("no backend: cannot enroll a passkey without a console session");
   }
@@ -234,9 +267,16 @@ export async function enrollPasskey(label?: string): Promise<EnrolledPasskey> {
     );
   }
 
-  const options = (await fetchJson(`${webApiBase()}/webauthn/register/start`, {
-    method: "POST",
-  })) as RegisterStartDto;
+  let options: RegisterStartDto;
+  try {
+    options = await registerStart(operatorPassword);
+  } catch (err) {
+    if (!assertionRequired(err)) throw err;
+    // Already holding a passkey: confirm with it, then start once more. Once,
+    // never a loop - the challenge behind it is one-shot either way.
+    const header = await ceremonyHeader(ENROLL_PASSKEY_CEREMONY, {});
+    options = await registerStart(operatorPassword, header);
+  }
 
   let credential: PublicKeyCredential | null;
   try {

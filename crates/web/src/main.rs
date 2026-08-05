@@ -515,6 +515,17 @@ struct AssertionEnvelope {
     signature: String,
 }
 
+/// `POST /api/webauthn/register/start`'s body. Optional in the request (an
+/// enrollment that proves itself with an assertion sends no body at all), so
+/// the handler takes it as `Option<Json<_>>`.
+#[derive(Deserialize, Default)]
+struct RegisterStart {
+    /// The local operator account's password, the factor for a FIRST
+    /// enrollment (see [`webauthn_register_start`]).
+    #[serde(default)]
+    operator_password: Option<String>,
+}
+
 /// `POST /api/webauthn/passkeys/remove`'s body.
 #[derive(Deserialize)]
 struct RemovePasskey {
@@ -578,14 +589,86 @@ async fn webauthn_list(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response 
 /// Mint a registration challenge and return the exact
 /// `PublicKeyCredentialCreationOptions` the frontend spreads into
 /// `navigator.credentials.create` (decoding challenge/user.id browser-side).
-async fn webauthn_register_start(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response {
+///
+/// Enrolling used to need nothing but a live session cookie, which is the one
+/// thing this whole ceremony exists to distrust: an attacker holding a stolen
+/// admin session on a box where nobody had enrolled yet could add their own
+/// authenticator and then satisfy every per-action ceremony from it. "A
+/// stolen session cannot pull the switch" was not true on that path, and it
+/// was the COMMON path, because the software-signed fallback meant most boxes
+/// had nobody enrolled.
+///
+/// So a challenge is minted only against a factor the session does not carry:
+///
+/// - **Nothing enrolled yet**: the operator password, the box's break-glass
+///   credential (`genaryx-web set-password`). It is also what the recovery
+///   path after a lost key lands on, so the two ends meet.
+/// - **Something enrolled already**: a fresh assertion from one of those
+///   keys. While a working authenticator exists, the phishing-resistant proof
+///   is the one to demand, and it means the password alone cannot QUIETLY add
+///   a second authenticator beside the operator's own: it would first have to
+///   remove theirs ([`webauthn_remove`]), which is visible in this very list.
+///
+/// The factor gates the START, so no registration ceremony can even begin
+/// without it; `register/finish` then rides on the one-shot, user-bound
+/// challenge this mints, exactly as before.
+async fn webauthn_register_start(
+    State(ctx): State<Arc<Ctx>>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    body: Option<Json<RegisterStart>>,
+) -> Response {
     let session = match guard(&ctx, &jar) {
         Ok(s) => s,
         Err(r) => return r,
     };
-    if let Err(e) = ctx.passkeys.as_ref() {
-        return store_unavailable(e);
+    let store = match ctx.passkeys.as_ref() {
+        Ok(s) => s,
+        Err(e) => return store_unavailable(e),
+    };
+    let Json(body) = body.unwrap_or_default();
+
+    if store.has_any(&session.user) {
+        let Some(header) = headers.get("x-genaryx-webauthn") else {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "you already have an enrolled passkey: confirm with it before \
+                              enrolling another, so a session on its own cannot add one",
+                    "webauthn": "assertion_required",
+                })),
+            )
+                .into_response();
+        };
+        if let Err(refusal) = verify_assertion_header(
+            &ctx,
+            &session,
+            store,
+            ENROLL_PASSKEY_CEREMONY,
+            &json!({}),
+            header,
+        ) {
+            return refusal;
+        }
+    } else {
+        let Some(password) = body.operator_password.as_deref() else {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "enrolling the first passkey needs the operator password (the one \
+                              `genaryx-web set-password` set): a session alone is what the \
+                              ceremony exists to defend against, so it cannot mint the key that \
+                              would satisfy it",
+                    "webauthn": "password_required",
+                })),
+            )
+                .into_response();
+        };
+        if let Err(refusal) = operator_password_ok(&ctx, password) {
+            return refusal;
+        }
     }
+
     let challenge = match ctx
         .webauthn_pending
         .mint(&session.user, webauthn::Purpose::Register)
@@ -1623,6 +1706,111 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "body: {body}");
         assert_eq!(body["remaining"], 0);
         assert!(enrolled_ids(&ctx, "alice").is_empty());
+    }
+
+    // -- enrolling a passkey (defect 3: gated by the session it defends) ----
+
+    /// `POST /api/webauthn/register/start` with an optional operator password
+    /// and an optional assertion header.
+    async fn register_start(
+        ctx: &Arc<Ctx>,
+        cookie: &str,
+        password: Option<&str>,
+        assertion: Option<&str>,
+    ) -> (StatusCode, Value) {
+        let body = match password {
+            Some(pw) => json!({ "operator_password": pw }),
+            None => json!({}),
+        };
+        post_api(ctx, "/api/webauthn/register/start", cookie, assertion, body).await
+    }
+
+    /// Finish a registration the way the browser would, for `cred_id`.
+    async fn register_finish(
+        ctx: &Arc<Ctx>,
+        cookie: &str,
+        challenge: &str,
+        cred_id: &[u8],
+    ) -> (StatusCode, Value) {
+        let (client_data, attestation) = test_support::registration_response(
+            &ctx.webauthn_rp.rp_id,
+            &ctx.webauthn_rp.origin,
+            challenge,
+            cred_id,
+        );
+        post_api(
+            ctx,
+            "/api/webauthn/register/finish",
+            cookie,
+            None,
+            json!({
+                "label": "a test authenticator",
+                "credential_id": B64URL.encode(cred_id),
+                "client_data_json": B64URL.encode(&client_data),
+                "attestation_object": B64URL.encode(&attestation),
+            }),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn enrolling_a_first_passkey_on_a_session_alone_is_refused() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("mallory", Role::Admin, Method::Oidc);
+        set_test_operator(&ctx, "correct horse battery");
+
+        // A stolen admin session, on a box where nobody has enrolled yet, is
+        // exactly the case the ceremony exists for: it must not be able to
+        // mint itself an authenticator and then satisfy the ceremony from it.
+        let (status, body) = register_start(&ctx, &sid, None, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "password_required");
+        assert!(body["challenge"].is_null(), "no challenge is minted");
+
+        let (status, _) = register_start(&ctx, &sid, Some("not the password"), None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(enrolled_ids(&ctx, "mallory").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_first_enrollment_takes_the_operator_password() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        set_test_operator(&ctx, "correct horse battery");
+
+        let (status, body) = register_start(&ctx, &sid, Some("correct horse battery"), None).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        let challenge = body["challenge"].as_str().expect("a challenge").to_string();
+
+        let (status, body) = register_finish(&ctx, &sid, &challenge, b"cred-1").await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(body["enrolled"], true);
+        assert_eq!(enrolled_ids(&ctx, "alice"), vec![B64URL.encode(b"cred-1")]);
+    }
+
+    #[tokio::test]
+    async fn an_additional_enrollment_takes_an_assertion_from_an_enrolled_passkey() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        set_test_operator(&ctx, "correct horse battery");
+        enroll_test_passkey(&ctx, "alice"); // cred-1
+
+        // With a passkey already enrolled, the password is no longer the
+        // factor: the strongest proof available is a touch of the key that is
+        // already protecting this account, so that is what is demanded.
+        let (status, body) = register_start(&ctx, &sid, Some("correct horse battery"), None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "assertion_required");
+
+        let challenge = start_action(&ctx, &sid, "webauthn_enroll_passkey", "{}").await;
+        let header = assertion_header_for(&ctx, &challenge, b"cred-1");
+        let (status, body) = register_start(&ctx, &sid, None, Some(&header)).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        let challenge = body["challenge"].as_str().expect("a challenge").to_string();
+
+        let (status, body) = register_finish(&ctx, &sid, &challenge, b"cred-2").await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(enrolled_ids(&ctx, "alice").len(), 2);
     }
 
     // -- a console that can make the ceremony mandatory (defect 2) ----------

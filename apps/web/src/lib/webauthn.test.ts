@@ -282,6 +282,106 @@ describe("enrollPasskey", () => {
     await enrollPasskey();
   });
 
+  it("sends the operator password to register/start, the factor a first enrollment needs", async () => {
+    let startBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/webauthn/register/start")) {
+          startBody = JSON.parse(init!.body as string);
+          return jsonResponse({
+            challenge: b64urlEncode(new Uint8Array([1]).buffer),
+            rp: { id: "localhost", name: "Genaryx" },
+            user: { id: b64urlEncode(new Uint8Array([1]).buffer), name: "a", displayName: "a" },
+            pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+            timeout: 1,
+            attestation: "none",
+            authenticatorSelection: {},
+          });
+        }
+        return jsonResponse({ enrolled: true, credential_id: "c" });
+      }),
+    );
+    vi.stubGlobal("navigator", {
+      credentials: {
+        create: vi.fn(async () => ({
+          rawId: new Uint8Array([1]).buffer,
+          response: { clientDataJSON: new Uint8Array([1]).buffer, attestationObject: new Uint8Array([1]).buffer },
+        })),
+        get: vi.fn(),
+      },
+    });
+
+    await enrollPasskey("Yubikey", "correct horse battery");
+
+    expect(startBody).toEqual({ operator_password: "correct horse battery" });
+  });
+
+  it("on an assertion_required refusal, confirms with an enrolled passkey and starts once more, with the header", async () => {
+    let startCalls = 0;
+    let secondStartHeaders: Record<string, string> | undefined;
+    let actionStartBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/webauthn/register/start")) {
+          startCalls += 1;
+          if (startCalls === 1) {
+            return jsonResponse(
+              { error: "you already have an enrolled passkey", webauthn: "assertion_required" },
+              false,
+            );
+          }
+          secondStartHeaders = init!.headers as Record<string, string>;
+          return jsonResponse({
+            challenge: b64urlEncode(new Uint8Array([1]).buffer),
+            rp: { id: "localhost", name: "Genaryx" },
+            user: { id: b64urlEncode(new Uint8Array([1]).buffer), name: "a", displayName: "a" },
+            pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+            timeout: 1,
+            attestation: "none",
+            authenticatorSelection: {},
+          });
+        }
+        if (url.endsWith("/webauthn/action/start")) {
+          actionStartBody = JSON.parse(init!.body as string);
+          return jsonResponse({
+            challenge: b64urlEncode(new Uint8Array([2]).buffer),
+            rp_id: "localhost",
+            timeout: 1,
+            user_verification: "preferred",
+            allow_credentials: [],
+          });
+        }
+        return jsonResponse({ enrolled: true, credential_id: "cred-2" });
+      }),
+    );
+    vi.stubGlobal("navigator", {
+      credentials: {
+        get: vi.fn(async () => ({
+          rawId: new Uint8Array([1]).buffer,
+          response: {
+            clientDataJSON: new Uint8Array([1]).buffer,
+            authenticatorData: new Uint8Array([1]).buffer,
+            signature: new Uint8Array([1]).buffer,
+          },
+        })),
+        create: vi.fn(async () => ({
+          rawId: new Uint8Array([2]).buffer,
+          response: { clientDataJSON: new Uint8Array([1]).buffer, attestationObject: new Uint8Array([1]).buffer },
+        })),
+      },
+    });
+
+    await expect(enrollPasskey("second key")).resolves.toEqual({
+      enrolled: true,
+      credential_id: "cred-2",
+    });
+    expect(startCalls).toBe(2);
+    expect(actionStartBody).toEqual({ command: "webauthn_enroll_passkey", args: {} });
+    expect(secondStartHeaders!["x-genaryx-webauthn"]).toBeTruthy();
+  });
+
   it("rejects with CeremonyCancelled on a NotAllowedError from navigator.credentials.create", async () => {
     vi.stubGlobal(
       "fetch",
