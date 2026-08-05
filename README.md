@@ -1,5 +1,8 @@
 # Genaryx
 
+![tests](https://img.shields.io/badge/tests-653-brightgreen.svg)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
+
 The **control room** over the TAIPANBOX agent-governance stack: one window over
 TokenFuse, Wardryx, Engram, Idryx, Qryx, Verdryx and Mockryx, running on your own
 infrastructure and opened in a browser.

@@ -47,6 +47,12 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # A number in a README is a claim with no owner: right the day it is
+      # written, and the suite grows in commits that never open the file. Four
+      # of seven such figures on it-rat.com were found stale on 2026-08-05.
+      - name: the README's numbers are true
+        run: ./scripts/readme-numbers.sh
+
   # The browser console. `cargo --workspace` cannot see a TypeScript frontend,
   # so it gets its own job: install, typecheck, unit tests, production build.
   # (The native desktop shells and their macOS/parity jobs left with the
