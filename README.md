@@ -55,6 +55,73 @@ control plane never faces the internet, and Felyx holds no signing key.</sub>
 
 </div>
 
+---
+
+## Where this fits in the stack
+
+Genaryx is the console plane of the TAIPANBOX agent-governance stack, and it is
+the operator's way IN: the counterpart to heraldyx, which is the stack's way out
+to a mailbox and is explicitly a view that never acts. This one acts, which is
+why every write it makes is a signed command rather than a store edit.
+
+```mermaid
+flowchart TB
+  Agent["AI agent (any framework)"] -->|"LLM call (base-URL swap)"| TF["TokenFuse proxy: spend + enforcement"]
+  TF -->|"POST /v1/decide (PEP)"| WX["Wardryx: policy PDP"]
+  WX -.->|"allow / deny / hold"| TF
+  TF -->|"cheapest model, budget OK"| LLM[("LLM provider")]
+  TF -->|"CallRecords"| CL["TokenFuse Cloud: control plane, incidents, replay, evidence, kill-switch"]
+  TF ==>|"agent-event NDJSON"| BUS{{"agent-event bus + Agent Passport"}}
+  WX ==> BUS
+  ENG["Engram: memory"] -->|"reflect via base_url"| TF
+  ENG ==> BUS
+  BUS ==> IDX["Idryx: identity graph, detectors, Agent-BOM"]
+  BUS ==> QX["Qryx: crypto / PQC, passport + hash-chain scan"]
+  BUS ==> VX["Verdryx: quality / drift"]
+  VX ==>|"quality events"| BUS
+  TF -->|"outcome-tagged traces"| VX
+  MX["Mockryx: pre-prod safety rehearsal"] -->|"hostile scenarios"| TF
+  MX ==>|"sim events"| BUS
+  BUS ==> HX["heraldyx: reads the log, mails you"]
+  HX -->|"one mail, a view and never an action"| OPS["your mailbox"]
+  YOU(["you, in a browser over your own tunnel"]) --> GX[["Genaryx: the console over all of it"]]
+  GX -->|"signed commands: the kill, an approval, a policy"| CL
+  GX -->|"signed commands"| WX
+  GX -.->|"reads it"| IDX
+  GX -.->|"reads it"| QX
+  GX -.->|"reads it"| VX
+  GX -.->|"reads it"| MX
+  GX -.->|"reads it"| ENG
+  TFP["terraform-provider-taipan"] -->|"budgets + passports as code"| CL
+  ASG[["agent-stack-go: shared Go contract"]] -.->|imported by| IDX
+  ASG -.->|imported by| WX
+  ASG -.->|imported by| MX
+  ASG -.->|imported by| TFP
+  ASG -.->|imported by| HX
+  ASG -.->|imported by| QX
+  SPEC[["agent-passport: the spec"]] -.->|governs| BUS
+```
+
+- **Consumes**: each plane the way that plane actually exposes itself, which is
+  deliberately not one mechanism. **Wardryx** and **Idryx** over their HTTP APIs
+  (`:8090`, `:8081`); **Qryx** and **Mockryx** by running their JSON-emitting
+  CLIs; **Engram** over MCP on stdio, typed against five tools; **Verdryx** by
+  opening its SQLite store `SQLITE_OPEN_READ_ONLY`, because Verdryx prints human
+  text on every subcommand and its store is the only machine-readable surface it
+  has; and **TokenFuse Cloud** over REST and a live SSE stream.
+- **Produces**: nothing on the bus. It is a surface, not a plane that emits.
+  What it writes are signed commands: the kill, an approval decision, a policy
+  put or delete.
+- **Talks to**: everything above, and the rule that shapes all of it is that
+  **the console never writes another service's store.** It mutates planes only
+  through signed commands to Cloud and Wardryx, never by touching a database
+  another service owns. That is why the diagram shows one solid edge to each of
+  those two and dotted reads to the rest.
+
+The full stack is TokenFuse (spend), Wardryx (policy), Engram (memory), Idryx (access), Qryx (crypto), Verdryx (quality), Mockryx (pre-prod), on the shared Agent Passport + agent-event contract (agent-stack-go / agent-passport), configured via terraform-provider-taipan.
+
+Run the whole open stack locally with one command via [**stack-up**](https://github.com/TAIPANBOX/stack-up); the stack's home on the web is [**it-rat.com**](https://it-rat.com).
+
 ## What it looks like
 
 Four of the seventeen tabs, on the frozen e01 campaign data described below.
