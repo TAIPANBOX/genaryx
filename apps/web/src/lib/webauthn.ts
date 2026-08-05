@@ -114,10 +114,21 @@ export interface PasskeyInfo {
 /** Mirrors `GET /api/webauthn/passkeys`'s full body. */
 export interface PasskeysProbe {
   passkeys: PasskeyInfo[];
+  /** Whether THIS caller's next sensitive command needs an assertion, which
+   * is simply whether they have enrolled anything. */
   webauthn_required: boolean;
+  /** Whether this BOX refuses a sensitive command from a caller with no
+   * enrolled passkey (`GENARYX_WEB_REQUIRE_PASSKEY`), instead of running it
+   * software-signed. Independent of the flag above: the policy is the box's,
+   * the enrollment is the caller's. */
+  policy_requires_passkey: boolean;
 }
 
-const NO_PASSKEYS_PROBE: PasskeysProbe = { passkeys: [], webauthn_required: false };
+const NO_PASSKEYS_PROBE: PasskeysProbe = {
+  passkeys: [],
+  webauthn_required: false,
+  policy_requires_passkey: false,
+};
 
 let passkeysCache: Promise<PasskeysProbe> | null = null;
 

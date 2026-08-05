@@ -60,6 +60,7 @@ function errorText(err: unknown): string {
  */
 export function PasskeySettings() {
   const [passkeys, setPasskeys] = useState<PasskeyInfo[] | null | undefined>(undefined);
+  const [policyRequires, setPolicyRequires] = useState(false);
   const [label, setLabel] = useState("");
   const [enrolling, setEnrolling] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -69,7 +70,10 @@ export function PasskeySettings() {
 
   const refresh = () => {
     void listPasskeys()
-      .then((probe) => setPasskeys(probe.passkeys))
+      .then((probe) => {
+        setPasskeys(probe.passkeys);
+        setPolicyRequires(probe.policy_requires_passkey);
+      })
       .catch((err: unknown) => {
         setPasskeys(null);
         setError(errorText(err));
@@ -141,10 +145,19 @@ export function PasskeySettings() {
           </div>
         )}
 
-        {passkeys && passkeys.length === 0 && (
+        {passkeys && passkeys.length === 0 && !policyRequires && (
           <div className="text-[11.5px]" style={{ color: "var(--dim)", lineHeight: 1.6 }}>
-            No passkey enrolled yet. Kill / budget / approval actions still go through, journaled
-            as software-signed. Enrolling a passkey upgrades those actions to hardware-confirmed.
+            No passkey enrolled yet. Kill / budget / approval / tunnel actions still go through,
+            journaled as software-signed. Enrolling a passkey upgrades those actions to
+            hardware-confirmed.
+          </div>
+        )}
+
+        {passkeys && passkeys.length === 0 && policyRequires && (
+          <div className="text-[11.5px]" style={{ color: "var(--sev-high)", lineHeight: 1.6 }}>
+            No passkey enrolled, and this console requires one (
+            <code className="mono">GENARYX_WEB_REQUIRE_PASSKEY</code>). Kill / budget / approval /
+            tunnel actions are refused until you enrol one here.
           </div>
         )}
 

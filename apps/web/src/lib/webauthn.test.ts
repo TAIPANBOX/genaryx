@@ -138,7 +138,11 @@ describe("listPasskeys", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(listPasskeys()).resolves.toEqual({ passkeys: [], webauthn_required: false });
+    await expect(listPasskeys()).resolves.toEqual({
+      passkeys: [],
+      webauthn_required: false,
+      policy_requires_passkey: false,
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -216,6 +216,7 @@ async fn main() {
                 state_dir: state_dir.unwrap_or_else(Config::default_state_dir),
                 ui_dir: ui,
                 secure_cookies,
+                require_passkey: Config::require_passkey_from_env(),
             };
             serve(cfg).await;
         }
@@ -224,6 +225,7 @@ async fn main() {
 
 async fn serve(cfg: Config) {
     cfg.warn_if_exposed();
+    cfg.announce_passkey_policy();
     if auth::load(&cfg.operator_file()).is_none() {
         tracing::warn!(
             file = %cfg.operator_file().display(),
@@ -559,7 +561,18 @@ async fn webauthn_list(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response 
             })
         })
         .collect();
-    Json(json!({ "passkeys": keys, "webauthn_required": !keys.is_empty() })).into_response()
+    Json(json!({
+        "passkeys": keys,
+        // "will this caller's next sensitive command need an assertion", which
+        // is simply "have they enrolled anything".
+        "webauthn_required": !keys.is_empty(),
+        // "does this box refuse a sensitive command from a caller with none",
+        // so the panel can say that BEFORE the operator finds out by being
+        // refused. Independent of the line above: the policy is the box's,
+        // enrollment is the caller's.
+        "policy_requires_passkey": ctx.cfg.require_passkey,
+    }))
+    .into_response()
 }
 
 /// Mint a registration challenge and return the exact
@@ -883,6 +896,29 @@ fn webauthn_gate(
         Err(e) => return Err(store_unavailable(e)),
     };
     if !store.has_any(&session.user) {
+        // The strict console (`GENARYX_WEB_REQUIRE_PASSKEY`): no enrolled
+        // passkey means no ceremony is possible, and an operator who asked for
+        // the ceremony to be mandatory asked for the command to be REFUSED
+        // rather than quietly run on the session. Say what to do about it: a
+        // bare 403 here would read as a role problem, which it is not.
+        if ctx.cfg.require_passkey {
+            tracing::warn!(
+                user = %session.user, command = %name,
+                "webauthn: required by configuration and nothing enrolled; refused"
+            );
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": format!(
+                        "this console requires a passkey for {name} \
+                         (GENARYX_WEB_REQUIRE_PASSKEY is on) and you have none enrolled: \
+                         enrol one under Session > Passkeys, then run this again"
+                    ),
+                    "webauthn": "enrollment_required",
+                })),
+            )
+                .into_response());
+        }
         // No override: the plane's own transport-signing fields stay, which
         // on this shell honestly read "software-signed".
         tracing::info!(
@@ -1199,12 +1235,13 @@ mod tests {
     /// left in its pending state (never `resolve()`d, so no network and no
     /// background tasks). Enough to exercise the auth, role and passkey gates,
     /// which run entirely BEFORE any plane is touched.
-    fn ctx_at(dir: PathBuf) -> Arc<Ctx> {
+    fn ctx_at(dir: PathBuf, require_passkey: bool) -> Arc<Ctx> {
         let cfg = Config {
             bind: "127.0.0.1:0".parse().unwrap(),
             state_dir: dir,
             ui_dir: None,
             secure_cookies: false,
+            require_passkey,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
@@ -1218,7 +1255,17 @@ mod tests {
     }
 
     fn test_ctx() -> Arc<Ctx> {
-        ctx_at(test_dir())
+        ctx_at(test_dir(), false)
+    }
+
+    /// A console configured the strict way (`GENARYX_WEB_REQUIRE_PASSKEY`):
+    /// the ceremony is mandatory, and a sensitive command with nobody enrolled
+    /// is refused rather than falling back. Set on the resolved `Config` here
+    /// rather than through the environment on purpose: the env is
+    /// process-global and cargo runs these tests on parallel threads, so an
+    /// env-var switch would leak between them.
+    fn strict_ctx() -> Arc<Ctx> {
+        ctx_at(test_dir(), true)
     }
 
     async fn post_command(ctx: &Arc<Ctx>, name: &str, cookie: Option<&str>) -> StatusCode {
@@ -1578,12 +1625,123 @@ mod tests {
         assert!(enrolled_ids(&ctx, "alice").is_empty());
     }
 
+    // -- a console that can make the ceremony mandatory (defect 2) ----------
+
+    /// GET any `/api` route with a session cookie; status plus parsed body.
+    async fn get_api(ctx: &Arc<Ctx>, uri: &str, cookie: &str) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("cookie", format!("{}={}", auth::COOKIE, cookie))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app(Arc::clone(ctx)).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    #[tokio::test]
+    async fn with_the_ceremony_required_and_nothing_enrolled_every_sensitive_command_is_refused() {
+        let ctx = strict_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+
+        for command in SENSITIVE_COMMANDS {
+            let (status, body) = post_api(
+                &ctx,
+                &format!("/api/command/{command}"),
+                &sid,
+                None,
+                json!({}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{command} body: {body}");
+            assert_eq!(body["webauthn"], "enrollment_required", "{command}");
+            // Actionable, not a bare 403: it has to say what to do about it.
+            let error = body["error"].as_str().unwrap_or_default();
+            assert!(error.contains("passkey"), "{command}: {error}");
+            assert!(error.contains("enrol"), "{command}: {error}");
+        }
+
+        // And the probe says so too, so the panel can explain it before the
+        // operator finds out by being refused.
+        let (status, body) = get_api(&ctx, "/api/webauthn/passkeys", &sid).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["policy_requires_passkey"], true);
+    }
+
+    #[tokio::test]
+    async fn with_the_ceremony_optional_the_fallback_still_runs_and_is_still_software_signed() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+
+        // Today's behaviour, unchanged by the new setting's default.
+        let status = post_command_with(&ctx, "money_kill_run", &sid, None, "{}").await;
+        assert_ne!(status, StatusCode::FORBIDDEN);
+        assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+
+        let (_, body) = get_api(&ctx, "/api/webauthn/passkeys", &sid).await;
+        assert_eq!(body["policy_requires_passkey"], false);
+
+        // "Journaled software-signed" is exactly this: the gate hands the
+        // command layer NO ceremony override, so `CommandRecord`'s own
+        // transport-signing fields are what the journal carries.
+        let session = auth::SessionInfo {
+            user: "alice".into(),
+            role: Role::Admin,
+            method: Method::Local,
+        };
+        let signature = webauthn_gate(
+            &ctx,
+            &session,
+            "money_kill_run",
+            &json!({}),
+            &HeaderMap::new(),
+        )
+        .expect("the fallback passes the gate");
+        assert!(signature.is_none(), "the fallback overrides nothing");
+        let journaled = genaryx_api::console_actor::with_signature(signature, async {
+            genaryx_api::console_actor::signature_or("es256", "software-signed")
+        })
+        .await;
+        assert_eq!(
+            journaled,
+            ("es256".to_string(), "software-signed".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn with_the_ceremony_required_an_enrolled_caller_takes_the_ordinary_path() {
+        let ctx = strict_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+
+        // Enrolled and no assertion: the ordinary 428 retry signal, NOT the
+        // enrollment refusal (the frontend retries on exactly this shape).
+        let (status, body) =
+            post_api(&ctx, "/api/command/money_kill_run", &sid, None, json!({})).await;
+        assert_eq!(status, StatusCode::PRECONDITION_REQUIRED, "body: {body}");
+        assert_eq!(body["webauthn"], "required");
+
+        // And the full ceremony passes exactly as it does without the setting.
+        let challenge = start_action(&ctx, &sid, "money_kill_run", "{}").await;
+        let header = assertion_header(&ctx, &challenge);
+        let status = post_command_with(&ctx, "money_kill_run", &sid, Some(&header), "{}").await;
+        assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
+        assert_ne!(status, StatusCode::FORBIDDEN);
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+    }
+
     #[tokio::test]
     async fn a_corrupt_passkey_store_refuses_removal_instead_of_reading_empty() {
         let dir = test_dir();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("passkeys.json"), "{ not json").unwrap();
-        let ctx = ctx_at(dir);
+        let ctx = ctx_at(dir, false);
         let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
 
         // An unreadable store must not read as "nobody enrolled": both the
