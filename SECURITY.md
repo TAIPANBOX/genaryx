@@ -36,7 +36,12 @@ because an assumption nobody stated is the one that bites.
   WebAuthn ceremony is bound to the exact command and its exact arguments, and
   it exists so a stolen session cannot mint a kill. Where no passkey is
   enrolled, the action still proceeds and is journaled software-signed and
-  labelled as such; that is deliberate, and it is a weaker state.
+  labelled as such; that is deliberate, and it is a weaker state. Set
+  `GENARYX_WEB_REQUIRE_PASSKEY=1` to refuse the action instead. Enrolling a
+  passkey and removing one are part of the same control and neither rides on
+  the session: the operator password is the factor for the first enrollment
+  and the last removal, an assertion from an enrolled key for everything
+  between.
 - **The copilot has no signing key at all.** The copilot crate carries no
   dependency on the signing crate and a build-time test asserts it stays that
   way. If you find a path by which a model proposal becomes an executed command

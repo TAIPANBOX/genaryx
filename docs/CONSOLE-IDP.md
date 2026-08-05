@@ -137,23 +137,28 @@ paths (set => named actor; unset => OS-user default).
   session until it idles out or the process restarts (restart cuts all
   sessions, the same control the local account has).
 - Roles gate the console's command surface; they are NOT a second signature
-  by themselves. Part 2 (WebAuthn, below) re-signs `money_kill_run` /
-  `money_set_budget` / `policy_decide_approval` with a hardware-backed
-  passkey once the operator has enrolled one; a caller with none enrolled
-  still has the part-1 exposure only - "session opens the console"
-  (docs/WEB-SHELL.md), narrowed by role - the documented trial fallback, not
-  a bypass.
+  by themselves. Part 2 (WebAuthn, below) re-signs all five sensitive
+  commands with a hardware-backed passkey once the operator has enrolled one;
+  a caller with none enrolled still has the part-1 exposure only - "session
+  opens the console" (docs/WEB-SHELL.md), narrowed by role - the documented
+  trial fallback, not a bypass. `GENARYX_WEB_REQUIRE_PASSKEY=1` removes that
+  fallback for a box that wants the ceremony unconditional.
 
 ## Part 2: WebAuthn per-action ceremony (built, branch `feat/webauthn-per-action`)
 
-Signing in gets you the console; it does not get you the kill. Three
+Signing in gets you the console; it does not get you the kill. FIVE
 privileged commands carry the ceremony today
 (`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`): `money_kill_run`,
-`money_set_budget`, `policy_decide_approval`. Each additionally requires a
-fresh, per-action WebAuthn assertion once the caller has enrolled a passkey -
-the operator's authenticator (Touch ID, Windows Hello, a roaming key) signs a
-challenge minted FOR THAT ONE COMMAND, and the assertion is verified
-server-side before the command ever dispatches.
+`money_set_budget`, `policy_decide_approval`, `remote_operator_wg_config` and
+`remote_operator_wg_revoke`. The last two joined because issuing a WireGuard
+peer hands out a road into the control plane and revoking one takes an
+operator's access away mid-incident. (This document, the README and CLAUDE.md
+all said "three" until 2026-08-05, which is what a hand-copied list does.)
+Each additionally requires a fresh, per-action WebAuthn assertion once the
+caller has enrolled a passkey - the operator's authenticator (Touch ID,
+Windows Hello, a roaming key) signs a challenge minted FOR THAT ONE COMMAND,
+and the assertion is verified server-side before the command ever
+dispatches.
 
 Deliberately not `webauthn-rs` (that crate hard-depends on OpenSSL, a second
 crypto backend this pure-Rust workspace does not want): a hand-parsed,
@@ -165,23 +170,48 @@ throughout: any parse or verify failure is a refusal, never a pass.
 ### Endpoints
 
 - `GET /api/webauthn/passkeys` -> `{passkeys: [{credential_id, label,
-  created_at}], webauthn_required: bool}`. The one probe the frontend reads
-  before rendering either the confirm-with-passkey flow or the
-  software-signed badge; `webauthn_required` is simply "does this caller have
-  at least one enrolled passkey".
-- `POST /api/webauthn/register/start` -> a
+  created_at}], webauthn_required: bool, policy_requires_passkey: bool}`. The
+  one probe the frontend reads before rendering either the
+  confirm-with-passkey flow or the software-signed badge;
+  `webauthn_required` is simply "does this caller have at least one enrolled
+  passkey", and `policy_requires_passkey` is "does this BOX refuse a
+  sensitive command from a caller with none" (see the trial fallback below).
+  The two are independent: the policy is the box's, the enrollment is the
+  caller's.
+- `POST /api/webauthn/register/start` `{operator_password?}` -> a
   `PublicKeyCredentialCreationOptions`-shaped JSON (`challenge` and
   `user.id` as base64url strings; the browser decodes them into
-  `ArrayBuffer`s before calling `navigator.credentials.create`).
+  `ArrayBuffer`s before calling `navigator.credentials.create`). Needs a
+  factor the session does not carry, or no challenge is minted at all: the
+  operator password for a FIRST enrollment (`403 {"webauthn":
+  "password_required"}` without it), an `x-genaryx-webauthn` assertion bound
+  to `webauthn_enroll_passkey` for every later one (`403 {"webauthn":
+  "assertion_required"}` without it).
 - `POST /api/webauthn/register/finish` `{label, credential_id,
   client_data_json, attestation_object}` (each base64url; `credential_id` is
   the base64url `rawId`) -> `{enrolled: true, credential_id}` on success.
+- `POST /api/webauthn/passkeys/remove` `{credential_id, operator_password?}`
+  -> `{removed: true, credential_id, remaining}`. An assertion bound to
+  `webauthn_remove_passkey` and this exact `credential_id` removes any
+  passkey while another remains; the LAST one takes the operator password and
+  nothing else, because it is the removal that puts the box back to
+  session-only. The password is accepted for a non-last removal too, which
+  grants it no authority it did not have (remove the others one at a time,
+  then the last) and ends the lockout an assertion-only rule would create
+  when every enrolled key is lost at once. The "is this the last" check and
+  the removal happen under one lock, so two concurrent removals cannot each
+  see another key remaining and between them leave none.
 - `POST /api/webauthn/action/start` `{command, args}` -> `{challenge, rp_id,
   timeout, user_verification, allow_credentials: [{type, id}]}`. Mints a
   challenge bound to the exact command name and a SHA-256 of the exact args
   JSON that dispatch will carry (`args_sha256`) - an assertion for "kill run
   A" can never be replayed to authorize "kill run B", or the same command
-  with different arguments.
+  with different arguments. `command` is one of the five sensitive commands,
+  or one of the two lifecycle ceremony names above
+  (`webauthn_enroll_passkey`, `webauthn_remove_passkey`), which are
+  deliberately NOT in `SENSITIVE_COMMANDS`: they name an endpoint of this
+  module, and a name that cannot be dispatched has no business in a list of
+  commands.
 
 ### The header
 
@@ -222,7 +252,7 @@ one. The frontend's `webauthnAvailable()` (`lib/webauthn.ts`) is how the UI
 knows this and says so honestly (`PasskeySettings`'s own hint line) instead
 of showing an "Add passkey" button that would only fail.
 
-### Trial fallback (no passkey enrolled)
+### Trial fallback (no passkey enrolled), and how to switch it off
 
 A caller with no enrolled passkey passes the gate without a ceremony -
 `CommandRecord`'s own transport-signing fields stay exactly as they already
@@ -231,6 +261,17 @@ silently weakened: this is the documented, intentional bridge for an
 operator who has not yet enrolled a passkey, not a bypass.
 `PasskeySettings` explains exactly this to an operator with zero passkeys,
 so enrolling the first one is framed as an upgrade, not a chore.
+
+What was missing until 2026-08-05 was any way to STOP standing on the bridge:
+an operator who wanted the ceremony unconditional had no setting to say so.
+`GENARYX_WEB_REQUIRE_PASSKEY=1` (read once at startup, like the RP and OIDC
+configuration beside it) makes it mandatory: a sensitive command from a
+caller with nothing enrolled is refused with `403 {"webauthn":
+"enrollment_required"}` and a message naming the command, the setting and
+what to do about it. Deliberately NOT the `"required"` shape the frontend
+retries on: re-running a ceremony that cannot exist yet would only fail
+again. Off by default, so an upgrade changes nothing about a running box, and
+`serve` states which way it read the variable at startup.
 
 ### The journal
 
@@ -246,14 +287,18 @@ were.
 
 `lib/webauthn.ts` is the one ceremony module: base64url helpers,
 `webauthnAvailable()`, `listPasskeys()` (cached per page load,
-`invalidatePasskeysCache()` after enrollment), `enrollPasskey(label)`, and
+`invalidatePasskeysCache()` after any change), `enrollPasskey(label,
+operatorPassword?)`, `removePasskey(credentialId, operatorPassword?)`, and
 `invokeWithCeremony(command, args)` - the wrapper `lib/money.ts`'s
-`killRun`/`setBudget` and `lib/policy.ts`'s `decideApproval` call instead of
-`invokeBackend` directly, so every existing caller of those three commands
+`killRun`/`setBudget`, `lib/policy.ts`'s `decideApproval` and
+`lib/remote.ts`'s `issueOperatorWgConfig`/`revokeOperatorWgPeer` call instead
+of `invokeBackend` directly, so every existing caller of those five commands
 inherits the ceremony with no panel-side change. `PasskeySettings.tsx`
-(opened from the session area in `AppHeader.tsx`) lists enrolled passkeys
-and adds new ones; a plain operator cancel of the platform's own passkey
-prompt is treated as "say nothing", never an error banner.
+(opened from the session area in `AppHeader.tsx`) lists enrolled passkeys,
+adds and removes them, and shows the operator-password field exactly where
+the server demands it (the first enrollment, the last removal); a plain
+operator cancel of the platform's own passkey prompt is treated as "say
+nothing", never an error banner.
 
 Fixture-tested with a software authenticator
 (`crates/web/src/webauthn.rs`'s `test_support`, `crates/web/src/main.rs`'s

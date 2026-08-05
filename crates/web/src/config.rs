@@ -36,6 +36,18 @@ pub struct Config {
     /// out with no explanation. Turn it on the moment anything terminates
     /// TLS in front of this.
     pub secure_cookies: bool,
+    /// Make the per-action passkey ceremony MANDATORY: a sensitive command
+    /// from a caller with no enrolled passkey is refused, instead of running
+    /// on the session alone and being journaled software-signed.
+    ///
+    /// Off by default, so an upgrade changes nothing about a running box: the
+    /// software-signed fallback is documented, journaled honestly, and the
+    /// bridge an operator who has not enrolled yet is standing on. What was
+    /// missing was any way to STOP standing on it. An operator who wants the
+    /// invariant enforced ("a sensitive command requires a per-action
+    /// ceremony", CLAUDE.md 2) sets `GENARYX_WEB_REQUIRE_PASSKEY=1` and the
+    /// fallback is gone for every command in `SENSITIVE_COMMANDS`.
+    pub require_passkey: bool,
 }
 
 impl Config {
@@ -55,6 +67,47 @@ impl Config {
     /// never people - the customer's IdP stays the identity registry.
     pub fn passkeys_file(&self) -> PathBuf {
         self.state_dir.join("passkeys.json")
+    }
+
+    /// Read [`Config::require_passkey`] from `GENARYX_WEB_REQUIRE_PASSKEY`.
+    ///
+    /// An environment variable rather than a flag, matching the other two
+    /// pieces of WebAuthn configuration this console already reads that way
+    /// (`GENARYX_WEB_RP_ID` / `GENARYX_WEB_ORIGIN`) and the OIDC block beside
+    /// them: they belong to the deployment, not to one invocation. Absent, or
+    /// any value other than the accepted true words, is off - a typo must not
+    /// silently lock an operator out of their own kill switch, and the console
+    /// says at startup which way it read.
+    pub fn require_passkey_from_env() -> bool {
+        matches!(
+            std::env::var("GENARYX_WEB_REQUIRE_PASSKEY")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    }
+
+    /// Say which way [`Config::require_passkey`] was read, both ways.
+    ///
+    /// Stated at startup rather than discovered: on a strict box a sensitive
+    /// command from a caller with nothing enrolled is refused, and on a
+    /// permissive one it runs software-signed. Either is a legitimate
+    /// deployment, and neither should be a surprise to whoever is on call.
+    pub fn announce_passkey_policy(&self) {
+        if self.require_passkey {
+            tracing::info!(
+                "GENARYX_WEB_REQUIRE_PASSKEY is on: a sensitive command from a caller with no \
+                 enrolled passkey is REFUSED, not run software-signed"
+            );
+        } else {
+            tracing::info!(
+                "GENARYX_WEB_REQUIRE_PASSKEY is off (the default): a caller with no enrolled \
+                 passkey still runs sensitive commands, journaled software-signed. Set it to 1 \
+                 to require the ceremony."
+            );
+        }
     }
 
     /// Say plainly when the bind address reaches beyond this machine.

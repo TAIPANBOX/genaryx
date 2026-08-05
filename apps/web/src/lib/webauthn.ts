@@ -13,9 +13,15 @@ import { invokeBackend, isWebShell, webApiBase } from "./transport";
  * degraded mode, just absent - and {@link webauthnAvailable} is how the UI
  * finds that out and says so honestly instead of silently downgrading.
  *
- * Three things live here:
+ * Four things live here:
  * - {@link enrollPasskey}: the registration ceremony
- *   (`navigator.credentials.create`), driven by `PasskeySettings`.
+ *   (`navigator.credentials.create`), driven by `PasskeySettings`. Carries
+ *   the factor the server demands on top of the session: the operator
+ *   password for the first passkey, an assertion from an enrolled one after
+ *   that.
+ * - {@link removePasskey}: the other end of the same lifecycle, with the
+ *   same rule (an assertion while another passkey remains, the operator
+ *   password for the last one).
  * - {@link invokeWithCeremony}: the per-action ceremony
  *   (`navigator.credentials.get`) wrapped around a normal command dispatch -
  *   every sensitive command's wrapper (`lib/money.ts`'s `killRun`/
@@ -24,7 +30,7 @@ import { invokeBackend, isWebShell, webApiBase } from "./transport";
  *   ceremony with no panel-side change.
  * - {@link listPasskeys}: the one probe (`GET /api/webauthn/passkeys`) both
  *   `PasskeySettings` and `invokeWithCeremony` read, cached for the page's
- *   life and invalidated after a fresh enrollment.
+ *   life and invalidated after any change to the enrolled set.
  *
  * Not mocked: `dev:mock` has no server behind it to mint a challenge or
  * store a passkey, so every function here is a no-op (or a plain throw) when
@@ -114,10 +120,21 @@ export interface PasskeyInfo {
 /** Mirrors `GET /api/webauthn/passkeys`'s full body. */
 export interface PasskeysProbe {
   passkeys: PasskeyInfo[];
+  /** Whether THIS caller's next sensitive command needs an assertion, which
+   * is simply whether they have enrolled anything. */
   webauthn_required: boolean;
+  /** Whether this BOX refuses a sensitive command from a caller with no
+   * enrolled passkey (`GENARYX_WEB_REQUIRE_PASSKEY`), instead of running it
+   * software-signed. Independent of the flag above: the policy is the box's,
+   * the enrollment is the caller's. */
+  policy_requires_passkey: boolean;
 }
 
-const NO_PASSKEYS_PROBE: PasskeysProbe = { passkeys: [], webauthn_required: false };
+const NO_PASSKEYS_PROBE: PasskeysProbe = {
+  passkeys: [],
+  webauthn_required: false,
+  policy_requires_passkey: false,
+};
 
 let passkeysCache: Promise<PasskeysProbe> | null = null;
 
@@ -203,17 +220,50 @@ export interface EnrolledPasskey {
   credential_id: string;
 }
 
+/** The ceremony name an enrollment's challenge is bound to - mirrors
+ * `crates/web/src/main.rs`'s `ENROLL_PASSKEY_CEREMONY`. Used only for the
+ * SECOND and later keys, where an already-enrolled one authorizes the next. */
+const ENROLL_PASSKEY_CEREMONY = "webauthn_enroll_passkey";
+
+/** True when a refusal is the server asking for an assertion from an
+ * already-enrolled passkey: the `403 {"webauthn": "assertion_required"}`
+ * shape `register/start` returns for an ADDITIONAL enrollment. */
+function assertionRequired(err: unknown): boolean {
+  return Boolean(err) && typeof err === "object" && (err as { webauthn?: unknown }).webauthn === "assertion_required";
+}
+
+/** `POST /api/webauthn/register/start` with whichever factor is being
+ * offered: the operator password in the body, or an assertion in the
+ * header. */
+async function registerStart(operatorPassword?: string, assertion?: string): Promise<RegisterStartDto> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (assertion) headers["x-genaryx-webauthn"] = assertion;
+  return (await fetchJson(`${webApiBase()}/webauthn/register/start`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(operatorPassword ? { operator_password: operatorPassword } : {}),
+  })) as RegisterStartDto;
+}
+
 /**
  * Register a new passkey in the current session
  * (`navigator.credentials.create`) and enroll it
  * (`POST /api/webauthn/register/finish`). Invalidates {@link listPasskeys}'s
  * cache on success, so the next probe sees it without a page reload.
  *
+ * Enrolling needs a factor the session does not carry, because a session that
+ * could enrol its own authenticator would satisfy every later ceremony from
+ * it (`crates/web/src/main.rs`'s `webauthn_register_start`): the operator
+ * password for the FIRST passkey, an assertion from an enrolled one for every
+ * later one. The password is passed in by the caller; the assertion is run
+ * here, once, on the server's own `assertion_required` refusal, so a panel
+ * never has to know which case it is in.
+ *
  * Rejects with the server's `{error: ...}` body, unmodified, for a genuine
- * refusal (a bad ceremony, a store failure, ...); a plain operator cancel
- * rejects with {@link CeremonyCancelled} instead.
+ * refusal (a missing factor, a bad ceremony, a store failure, ...); a plain
+ * operator cancel rejects with {@link CeremonyCancelled} instead.
  */
-export async function enrollPasskey(label?: string): Promise<EnrolledPasskey> {
+export async function enrollPasskey(label?: string, operatorPassword?: string): Promise<EnrolledPasskey> {
   if (!isWebShell()) {
     throw new Error("no backend: cannot enroll a passkey without a console session");
   }
@@ -223,9 +273,16 @@ export async function enrollPasskey(label?: string): Promise<EnrolledPasskey> {
     );
   }
 
-  const options = (await fetchJson(`${webApiBase()}/webauthn/register/start`, {
-    method: "POST",
-  })) as RegisterStartDto;
+  let options: RegisterStartDto;
+  try {
+    options = await registerStart(operatorPassword);
+  } catch (err) {
+    if (!assertionRequired(err)) throw err;
+    // Already holding a passkey: confirm with it, then start once more. Once,
+    // never a loop - the challenge behind it is one-shot either way.
+    const header = await ceremonyHeader(ENROLL_PASSKEY_CEREMONY, {});
+    options = await registerStart(operatorPassword, header);
+  }
 
   let credential: PublicKeyCredential | null;
   try {
@@ -261,6 +318,71 @@ export async function enrollPasskey(label?: string): Promise<EnrolledPasskey> {
       attestation_object: b64urlEncode(response.attestationObject),
     }),
   })) as EnrolledPasskey;
+
+  invalidatePasskeysCache();
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// removal (the passkey lifecycle's other half)
+// ---------------------------------------------------------------------------
+
+/** The ceremony name a removal's challenge is bound to - mirrors
+ * `crates/web/src/main.rs`'s `REMOVE_PASSKEY_CEREMONY`. Not a command: it
+ * names the removal endpoint, and `action/start` mints a challenge for it
+ * exactly as it does for a sensitive command. */
+const REMOVE_PASSKEY_CEREMONY = "webauthn_remove_passkey";
+
+/** Mirrors `POST /api/webauthn/passkeys/remove`'s success body. */
+export interface RemovedPasskey {
+  removed: true;
+  credential_id: string;
+  remaining: number;
+}
+
+/** True when a refusal is the server asking for the operator password: the
+ * `403 {"webauthn": "password_required"}` shape `webauthn_remove` returns for
+ * the LAST enrolled passkey, and `register/start` returns for the FIRST
+ * enrollment. The one signal `PasskeySettings` needs to put the password
+ * field on screen instead of guessing. */
+export function operatorPasswordRequired(err: unknown): boolean {
+  return Boolean(err) && typeof err === "object" && (err as { webauthn?: unknown }).webauthn === "password_required";
+}
+
+/**
+ * Remove one enrolled passkey (`POST /api/webauthn/passkeys/remove`).
+ *
+ * The authority is never the session (that is what the ceremony defends
+ * against), so this sends one of two proofs, matching the server's policy in
+ * `crates/web/src/main.rs`'s `webauthn_remove`:
+ * - with `operatorPassword`: the box's break-glass credential, which is what
+ *   the LAST enrolled passkey requires and what recovers a box whose only
+ *   authenticator was lost;
+ * - otherwise: a fresh assertion from an enrolled passkey, bound to this
+ *   exact credential id.
+ *
+ * Rejects with the server's own body (so {@link operatorPasswordRequired}
+ * can read it), or {@link CeremonyCancelled} on a plain operator cancel.
+ */
+export async function removePasskey(credentialId: string, operatorPassword?: string): Promise<RemovedPasskey> {
+  if (!isWebShell()) {
+    throw new Error("no backend: cannot remove a passkey without a console session");
+  }
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const body: Record<string, unknown> = { credential_id: credentialId };
+  if (operatorPassword) {
+    body.operator_password = operatorPassword;
+  } else {
+    headers["x-genaryx-webauthn"] = await ceremonyHeader(REMOVE_PASSKEY_CEREMONY, {
+      credential_id: credentialId,
+    });
+  }
+
+  const result = (await fetchJson(`${webApiBase()}/webauthn/passkeys/remove`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  })) as RemovedPasskey;
 
   invalidatePasskeysCache();
   return result;
@@ -401,10 +523,12 @@ async function runCeremonyAndDispatch<T>(
 
 /**
  * Dispatch a sensitive command through the per-action WebAuthn ceremony
- * (docs/CONSOLE-IDP.md B3/2; the three commands in
+ * (docs/CONSOLE-IDP.md B3/2; the five commands in
  * `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`).
  *
- * Two paths, matching `webauthn_gate`'s own two honest outcomes:
+ * Two paths, matching the two outcomes `webauthn_gate` has for a caller who
+ * can still act at all (a box with `GENARYX_WEB_REQUIRE_PASSKEY` on refuses
+ * outright, with a shape this deliberately does not retry):
  * - The common case: {@link listPasskeys}'s cached probe already says a
  *   ceremony is required, and this browser can run one - get the header
  *   FIRST, then dispatch once, with it.

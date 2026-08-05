@@ -105,12 +105,49 @@ also why the audit trail now names the signed-in person
 (`user://<org>/<sub>` for OIDC, `user://<org>/<username>` for local) instead
 of the box's OS account.
 
-Roles gate the command surface, not the moment of action. Signing in still
-opens the console: in part 1, the right role plus a live session is enough to
-run a privileged command, and nothing re-signs it as it happens. A stolen
-`admin` session can still act, not just look, until the per-action WebAuthn
-ceremony (part 2, a separate branch) lands. The full contract and the honest
-limits are in docs/CONSOLE-IDP.md.
+Roles gate the command surface, not the moment of action: the right role plus
+a live session is what a role check can prove, and nothing in it re-signs an
+action as it happens. That is what the per-action WebAuthn ceremony is for,
+and it has landed (part 2, below). The full contract and the honest limits
+are in docs/CONSOLE-IDP.md.
+
+## The per-action passkey ceremony
+
+Five commands carry it (`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`):
+`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
+`remote_operator_wg_config` and `remote_operator_wg_revoke`. Each needs a
+fresh assertion from the operator's own passkey, bound to that exact command
+and its exact arguments, verified before the command dispatches.
+
+Enrolling and removing a passkey are part of the same control, and neither
+rides on the session:
+
+- the FIRST passkey is enrolled with the operator password
+  (`set-password`, above); every later one with an assertion from a passkey
+  already enrolled;
+- a passkey is removed with an assertion from an enrolled one, and the LAST
+  one only with the operator password, since that is the removal that takes
+  the console back to session-only. It is also the recovery path when the
+  only authenticator is lost: the password removes it, and the password
+  enrols its replacement.
+
+```sh
+# Refuse a sensitive command outright when the caller has no passkey,
+# instead of running it on the session and journaling it software-signed.
+export GENARYX_WEB_REQUIRE_PASSKEY=1
+```
+
+Off by default, so an upgrade changes nothing on a running box. With it off,
+a caller with no enrolled passkey still runs those five commands and the
+journal records them honestly as software-signed: a weaker state, deliberately
+kept as the bridge for an operator who has not enrolled yet. With it on, that
+bridge is gone and the refusal says to enrol a passkey. `genaryx-web serve`
+states which way it read the variable at startup.
+
+The browser needs a secure context for any of this: reach the console as
+`localhost` (the loopback bind, or an `ssh -L` forward over the tunnel) or
+behind TLS. A bare `http://10.x.x.x` has no WebAuthn at all, and the panel
+says so rather than showing controls that could only fail.
 
 ## Pointing it at the stack
 
@@ -219,10 +256,15 @@ carries what the bus receives, and a stack nobody is calling receives nothing.
   object the frontend already sends, a 2xx body is the command's Ok value, and
   a **422 body is the command's own Err value unwrapped**, so each plane's
   existing error normaliser works untouched. 400 is malformed arguments, 401 is
-  no session, 404 is an unknown command.
+  no session, 404 is an unknown command. For the five sensitive commands, 428
+  means "send an assertion" and 403 means the ceremony was refused.
+- `GET /api/webauthn/passkeys`, `POST /api/webauthn/passkeys/remove`,
+  `POST /api/webauthn/register/start` / `register/finish`,
+  `POST /api/webauthn/action/start`: the passkey lifecycle and the ceremony.
 - `GET /api/events` is the live bus as Server-Sent Events (`event: bus`).
 
 Signing in opens the console, at whatever role the session carries. It does
-not, in part 1, re-sign a destructive action in the moment it happens: a live
-session at the right role is still the whole gate. docs/CONSOLE-IDP.md has
-the honest limits and what part 2 changes.
+not by itself run a destructive action: those five re-sign in the moment they
+happen, with the operator's passkey, whenever one is enrolled (always, with
+`GENARYX_WEB_REQUIRE_PASSKEY=1`). docs/CONSOLE-IDP.md has the full contract
+and the honest limits.

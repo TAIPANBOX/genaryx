@@ -22,6 +22,8 @@ import {
   invalidatePasskeysCache,
   invokeWithCeremony,
   listPasskeys,
+  operatorPasswordRequired,
+  removePasskey,
   webauthnAvailable,
 } from "./webauthn";
 
@@ -136,7 +138,11 @@ describe("listPasskeys", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(listPasskeys()).resolves.toEqual({ passkeys: [], webauthn_required: false });
+    await expect(listPasskeys()).resolves.toEqual({
+      passkeys: [],
+      webauthn_required: false,
+      policy_requires_passkey: false,
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -276,6 +282,106 @@ describe("enrollPasskey", () => {
     await enrollPasskey();
   });
 
+  it("sends the operator password to register/start, the factor a first enrollment needs", async () => {
+    let startBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/webauthn/register/start")) {
+          startBody = JSON.parse(init!.body as string);
+          return jsonResponse({
+            challenge: b64urlEncode(new Uint8Array([1]).buffer),
+            rp: { id: "localhost", name: "Genaryx" },
+            user: { id: b64urlEncode(new Uint8Array([1]).buffer), name: "a", displayName: "a" },
+            pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+            timeout: 1,
+            attestation: "none",
+            authenticatorSelection: {},
+          });
+        }
+        return jsonResponse({ enrolled: true, credential_id: "c" });
+      }),
+    );
+    vi.stubGlobal("navigator", {
+      credentials: {
+        create: vi.fn(async () => ({
+          rawId: new Uint8Array([1]).buffer,
+          response: { clientDataJSON: new Uint8Array([1]).buffer, attestationObject: new Uint8Array([1]).buffer },
+        })),
+        get: vi.fn(),
+      },
+    });
+
+    await enrollPasskey("Yubikey", "correct horse battery");
+
+    expect(startBody).toEqual({ operator_password: "correct horse battery" });
+  });
+
+  it("on an assertion_required refusal, confirms with an enrolled passkey and starts once more, with the header", async () => {
+    let startCalls = 0;
+    let secondStartHeaders: Record<string, string> | undefined;
+    let actionStartBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/webauthn/register/start")) {
+          startCalls += 1;
+          if (startCalls === 1) {
+            return jsonResponse(
+              { error: "you already have an enrolled passkey", webauthn: "assertion_required" },
+              false,
+            );
+          }
+          secondStartHeaders = init!.headers as Record<string, string>;
+          return jsonResponse({
+            challenge: b64urlEncode(new Uint8Array([1]).buffer),
+            rp: { id: "localhost", name: "Genaryx" },
+            user: { id: b64urlEncode(new Uint8Array([1]).buffer), name: "a", displayName: "a" },
+            pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+            timeout: 1,
+            attestation: "none",
+            authenticatorSelection: {},
+          });
+        }
+        if (url.endsWith("/webauthn/action/start")) {
+          actionStartBody = JSON.parse(init!.body as string);
+          return jsonResponse({
+            challenge: b64urlEncode(new Uint8Array([2]).buffer),
+            rp_id: "localhost",
+            timeout: 1,
+            user_verification: "preferred",
+            allow_credentials: [],
+          });
+        }
+        return jsonResponse({ enrolled: true, credential_id: "cred-2" });
+      }),
+    );
+    vi.stubGlobal("navigator", {
+      credentials: {
+        get: vi.fn(async () => ({
+          rawId: new Uint8Array([1]).buffer,
+          response: {
+            clientDataJSON: new Uint8Array([1]).buffer,
+            authenticatorData: new Uint8Array([1]).buffer,
+            signature: new Uint8Array([1]).buffer,
+          },
+        })),
+        create: vi.fn(async () => ({
+          rawId: new Uint8Array([2]).buffer,
+          response: { clientDataJSON: new Uint8Array([1]).buffer, attestationObject: new Uint8Array([1]).buffer },
+        })),
+      },
+    });
+
+    await expect(enrollPasskey("second key")).resolves.toEqual({
+      enrolled: true,
+      credential_id: "cred-2",
+    });
+    expect(startCalls).toBe(2);
+    expect(actionStartBody).toEqual({ command: "webauthn_enroll_passkey", args: {} });
+    expect(secondStartHeaders!["x-genaryx-webauthn"]).toBeTruthy();
+  });
+
   it("rejects with CeremonyCancelled on a NotAllowedError from navigator.credentials.create", async () => {
     vi.stubGlobal(
       "fetch",
@@ -335,6 +441,91 @@ describe("enrollPasskey", () => {
   it("throws a plain Error, never CeremonyCancelled, when this context cannot run WebAuthn at all", async () => {
     vi.stubGlobal("window", { isSecureContext: false });
     await expect(enrollPasskey()).rejects.toThrow(/WebAuthn is not available/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removePasskey
+// ---------------------------------------------------------------------------
+
+describe("removePasskey", () => {
+  beforeEach(() => {
+    vi.mocked(isWebShell).mockReturnValue(true);
+    vi.stubGlobal("window", secureWindow());
+  });
+
+  it("confirms with an enrolled passkey, binding the ceremony to the credential being removed", async () => {
+    let actionStartBody: unknown;
+    let removeInit: RequestInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/webauthn/action/start")) {
+          actionStartBody = JSON.parse(init!.body as string);
+          return jsonResponse({
+            challenge: b64urlEncode(new Uint8Array([1]).buffer),
+            rp_id: "localhost",
+            timeout: 1,
+            user_verification: "preferred",
+            allow_credentials: [],
+          });
+        }
+        removeInit = init;
+        return jsonResponse({ removed: true, credential_id: "cred-2", remaining: 1 });
+      }),
+    );
+    vi.stubGlobal("navigator", {
+      credentials: {
+        get: vi.fn(async () => ({
+          rawId: new Uint8Array([1]).buffer,
+          response: {
+            clientDataJSON: new Uint8Array([1]).buffer,
+            authenticatorData: new Uint8Array([1]).buffer,
+            signature: new Uint8Array([1]).buffer,
+          },
+        })),
+      },
+    });
+
+    await expect(removePasskey("cred-2")).resolves.toEqual({
+      removed: true,
+      credential_id: "cred-2",
+      remaining: 1,
+    });
+    expect(actionStartBody).toEqual({
+      command: "webauthn_remove_passkey",
+      args: { credential_id: "cred-2" },
+    });
+    expect(JSON.parse(removeInit!.body as string)).toEqual({ credential_id: "cred-2" });
+    expect((removeInit!.headers as Record<string, string>)["x-genaryx-webauthn"]).toBeTruthy();
+  });
+
+  it("sends the operator password instead, and never touches WebAuthn, when one is given", async () => {
+    let removeInit: RequestInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!url.endsWith("/webauthn/passkeys/remove")) throw new Error(`unexpected fetch url: ${url}`);
+        removeInit = init;
+        return jsonResponse({ removed: true, credential_id: "cred-1", remaining: 0 });
+      }),
+    );
+    const get = vi.fn();
+    vi.stubGlobal("navigator", { credentials: { get } });
+
+    await removePasskey("cred-1", "correct horse battery");
+
+    expect(JSON.parse(removeInit!.body as string)).toEqual({
+      credential_id: "cred-1",
+      operator_password: "correct horse battery",
+    });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("recognizes the server's password_required refusal, so the UI can ask for it", () => {
+    expect(operatorPasswordRequired({ error: "last passkey", webauthn: "password_required" })).toBe(true);
+    expect(operatorPasswordRequired({ error: "nope", webauthn: "assertion_required" })).toBe(false);
+    expect(operatorPasswordRequired(null)).toBe(false);
   });
 });
 

@@ -4,6 +4,8 @@ import {
   CeremonyCancelled,
   enrollPasskey,
   listPasskeys,
+  operatorPasswordRequired,
+  removePasskey,
   webauthnAvailable,
   type PasskeyInfo,
 } from "../lib/webauthn";
@@ -38,19 +40,30 @@ function errorText(err: unknown): string {
  * surface, not the loud break-glass ceremony `BreakGlassDialog` is reserved
  * for.
  *
- * Three honest states, never a fabricated one:
+ * Four honest states, never a fabricated one:
  * - `!webauthnAvailable()`: this browser/origin cannot run WebAuthn at all
  *   (`lib/webauthn.ts`'s own doc explains exactly why - not a secure
  *   context). Enrolling is impossible here, and the panel says so instead
  *   of showing a button that would only fail.
- * - No passkeys enrolled: privileged actions (kill, budget, approval) still
- *   go through, journaled software-signed (the documented trial fallback,
- *   `crates/web/src/main.rs`'s `webauthn_gate`) - enrolling the first one
- *   is what upgrades them to hardware-confirmed.
+ * - No passkeys enrolled, on a permissive box: privileged actions (kill,
+ *   budget, approval, tunnel) still go through, journaled software-signed
+ *   (the documented trial fallback, `crates/web/src/main.rs`'s
+ *   `webauthn_gate`) - enrolling the first one upgrades them to
+ *   hardware-confirmed.
+ * - No passkeys enrolled, on a box that requires one
+ *   (`GENARYX_WEB_REQUIRE_PASSKEY`, reported by the probe's
+ *   `policy_requires_passkey`): those actions are REFUSED until one is
+ *   enrolled, and the panel says that rather than promising a fallback this
+ *   box does not have.
  * - One or more enrolled: the ceremony is REQUIRED from here on
  *   (`GET /api/webauthn/passkeys`'s own `webauthn_required` flag mirrors
  *   this exactly), so the list reads as what is already protecting those
  *   actions, not as a suggestion.
+ *
+ * The operator-password field is the box's break-glass factor, and it appears
+ * exactly where the server demands it: enrolling the FIRST passkey, and
+ * removing the LAST one. Neither may ride on the session, which is the thing
+ * the ceremony exists to distrust.
  *
  * A plain operator cancel of the platform's own passkey prompt
  * ({@link CeremonyCancelled}) is treated as "say nothing" - never an error
@@ -58,13 +71,20 @@ function errorText(err: unknown): string {
  */
 export function PasskeySettings() {
   const [passkeys, setPasskeys] = useState<PasskeyInfo[] | null | undefined>(undefined);
+  const [policyRequires, setPolicyRequires] = useState(false);
   const [label, setLabel] = useState("");
   const [enrolling, setEnrolling] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [needPassword, setNeedPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
     void listPasskeys()
-      .then((probe) => setPasskeys(probe.passkeys))
+      .then((probe) => {
+        setPasskeys(probe.passkeys);
+        setPolicyRequires(probe.policy_requires_passkey);
+      })
       .catch((err: unknown) => {
         setPasskeys(null);
         setError(errorText(err));
@@ -80,18 +100,51 @@ export function PasskeySettings() {
   }, []);
 
   const available = webauthnAvailable();
+  /** Nothing enrolled yet, so the next enrollment is the FIRST one and the
+   * server will want the operator password for it: put the field on screen
+   * before the operator hits the refusal, not after. */
+  const firstEnrollment = Boolean(passkeys && passkeys.length === 0);
 
+  /** Enrol one. The FIRST passkey takes the operator password (the field
+   * below is already on screen for it); a later one takes an assertion from
+   * an enrolled key, which `lib/webauthn.ts`'s `enrollPasskey` runs on the
+   * server's own refusal, so nothing here has to know which case it is. */
   async function onEnroll() {
     setEnrolling(true);
     setError(null);
     try {
-      await enrollPasskey(label.trim());
+      await enrollPasskey(label.trim(), password.trim() || undefined);
       setLabel("");
+      setPassword("");
       refresh();
     } catch (err) {
-      if (!(err instanceof CeremonyCancelled)) setError(errorText(err));
+      if (err instanceof CeremonyCancelled) return;
+      if (operatorPasswordRequired(err)) setNeedPassword(true);
+      setError(errorText(err));
     } finally {
       setEnrolling(false);
+    }
+  }
+
+  /** Remove one enrolled passkey. Two proofs, decided by the server and not
+   * guessed here: an assertion from an enrolled key for any but the last, the
+   * operator password for the last one (`lib/webauthn.ts`'s `removePasskey`).
+   * A `password_required` refusal is not an error to show and forget, it is
+   * the server asking for the field below, so it puts it on screen. */
+  async function onRemove(credentialId: string) {
+    setRemoving(credentialId);
+    setError(null);
+    try {
+      await removePasskey(credentialId, password.trim() || undefined);
+      setPassword("");
+      setNeedPassword(false);
+      refresh();
+    } catch (err) {
+      if (err instanceof CeremonyCancelled) return;
+      if (operatorPasswordRequired(err)) setNeedPassword(true);
+      setError(errorText(err));
+    } finally {
+      setRemoving(null);
     }
   }
 
@@ -114,10 +167,19 @@ export function PasskeySettings() {
           </div>
         )}
 
-        {passkeys && passkeys.length === 0 && (
+        {passkeys && passkeys.length === 0 && !policyRequires && (
           <div className="text-[11.5px]" style={{ color: "var(--dim)", lineHeight: 1.6 }}>
-            No passkey enrolled yet. Kill / budget / approval actions still go through, journaled
-            as software-signed. Enrolling a passkey upgrades those actions to hardware-confirmed.
+            No passkey enrolled yet. Kill / budget / approval / tunnel actions still go through,
+            journaled as software-signed. Enrolling a passkey upgrades those actions to
+            hardware-confirmed.
+          </div>
+        )}
+
+        {passkeys && passkeys.length === 0 && policyRequires && (
+          <div className="text-[11.5px]" style={{ color: "var(--sev-high)", lineHeight: 1.6 }}>
+            No passkey enrolled, and this console requires one (
+            <code className="mono">GENARYX_WEB_REQUIRE_PASSKEY</code>). Kill / budget / approval /
+            tunnel actions are refused until you enrol one here.
           </div>
         )}
 
@@ -132,11 +194,60 @@ export function PasskeySettings() {
                 <span className="text-[12px] truncate" style={{ color: "var(--fg)" }}>
                   {k.label}
                 </span>
-                <span className="mono text-[11px]" style={{ color: "var(--faint)" }}>
-                  {createdLabel(k.created_at)}
+                <span className="flex items-center gap-3">
+                  <span className="mono text-[11px]" style={{ color: "var(--faint)" }}>
+                    {createdLabel(k.created_at)}
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    style={{ width: "auto", padding: "0 8px", fontSize: 11, whiteSpace: "nowrap" }}
+                    onClick={() => void onRemove(k.credential_id)}
+                    disabled={removing !== null}
+                    title="Remove this passkey"
+                  >
+                    {removing === k.credential_id ? "Removing..." : "Remove"}
+                  </button>
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {(firstEnrollment || needPassword) && available && (
+          <div className="flex flex-col gap-2">
+            <div className="text-[11.5px]" style={{ color: "var(--dim)", lineHeight: 1.6 }}>
+              {firstEnrollment ? (
+                <>
+                  The first passkey needs the operator password (the one{" "}
+                  <code className="mono">genaryx-web set-password</code> set). A session on its own
+                  cannot enrol the key that would then confirm every kill.
+                </>
+              ) : (
+                <>
+                  This is the last enrolled passkey. Removing it takes this console back to
+                  session-only, so it needs the operator password (the one{" "}
+                  <code className="mono">genaryx-web set-password</code> set), not a passkey.
+                </>
+              )}
+            </div>
+            <input
+              className="mono"
+              type="password"
+              style={{
+                background: "var(--panel)",
+                border: "1px solid var(--line-2)",
+                borderRadius: 8,
+                padding: "6px 10px",
+                fontSize: 12,
+                color: "var(--fg)",
+              }}
+              placeholder="operator password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={removing !== null || enrolling}
+              spellCheck={false}
+            />
           </div>
         )}
 

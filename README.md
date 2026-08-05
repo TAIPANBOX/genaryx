@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-653-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-663-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -202,19 +202,23 @@ Four of the seventeen tabs, on the frozen e01 campaign data described below.
   the audit trail instead of the box's OS account. The local account stays
   the break-glass admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
-- **Per-action WebAuthn ceremony (D15/B3 part 2).** The three privileged
-  commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`)
-  additionally require a fresh, per-action passkey assertion once the
-  operator has enrolled one: a challenge minted for that exact command and
-  its arguments, verified server-side (ES256, attestation "none", no
-  `webauthn-rs`/OpenSSL dependency), and the assertion's algorithm and
-  credential id journaled into the same `CommandRecord` the action already
-  writes (`sig_alg=webauthn-es256`, `sig_fpr=<credential id>`). An operator
-  with no enrolled passkey still passes, journaled software-signed (the
-  documented trial fallback). Frontend (`lib/webauthn.ts`, passkey
-  enrollment from the session area) and server
-  (`crates/web/src/webauthn.rs`) both built; design in
-  [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
+- **Per-action WebAuthn ceremony (D15/B3 part 2).** The five privileged
+  commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
+  `remote_operator_wg_config`, `remote_operator_wg_revoke`) additionally
+  require a fresh, per-action passkey assertion once the operator has
+  enrolled one: a challenge minted for that exact command and its arguments,
+  verified server-side (ES256, attestation "none", no `webauthn-rs`/OpenSSL
+  dependency), and the assertion's algorithm and credential id journaled into
+  the same `CommandRecord` the action already writes
+  (`sig_alg=webauthn-es256`, `sig_fpr=<credential id>`). An operator with no
+  enrolled passkey still passes, journaled software-signed (the documented
+  trial fallback), unless the box sets `GENARYX_WEB_REQUIRE_PASSKEY=1`, which
+  refuses the command instead. Enrolling and removing a passkey each need a
+  factor the session does not carry: the operator password for the first
+  enrollment and the last removal, an assertion from an enrolled key for
+  everything between. Frontend (`lib/webauthn.ts`, the passkey panel in the
+  session area) and server (`crates/web/src/webauthn.rs`) both built; design
+  in [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
 
 ## Being written to, not just watched
 
