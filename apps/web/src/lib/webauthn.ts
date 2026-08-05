@@ -13,9 +13,15 @@ import { invokeBackend, isWebShell, webApiBase } from "./transport";
  * degraded mode, just absent - and {@link webauthnAvailable} is how the UI
  * finds that out and says so honestly instead of silently downgrading.
  *
- * Three things live here:
+ * Four things live here:
  * - {@link enrollPasskey}: the registration ceremony
- *   (`navigator.credentials.create`), driven by `PasskeySettings`.
+ *   (`navigator.credentials.create`), driven by `PasskeySettings`. Carries
+ *   the factor the server demands on top of the session: the operator
+ *   password for the first passkey, an assertion from an enrolled one after
+ *   that.
+ * - {@link removePasskey}: the other end of the same lifecycle, with the
+ *   same rule (an assertion while another passkey remains, the operator
+ *   password for the last one).
  * - {@link invokeWithCeremony}: the per-action ceremony
  *   (`navigator.credentials.get`) wrapped around a normal command dispatch -
  *   every sensitive command's wrapper (`lib/money.ts`'s `killRun`/
@@ -24,7 +30,7 @@ import { invokeBackend, isWebShell, webApiBase } from "./transport";
  *   ceremony with no panel-side change.
  * - {@link listPasskeys}: the one probe (`GET /api/webauthn/passkeys`) both
  *   `PasskeySettings` and `invokeWithCeremony` read, cached for the page's
- *   life and invalidated after a fresh enrollment.
+ *   life and invalidated after any change to the enrolled set.
  *
  * Not mocked: `dev:mock` has no server behind it to mint a challenge or
  * store a passkey, so every function here is a no-op (or a plain throw) when
@@ -517,10 +523,12 @@ async function runCeremonyAndDispatch<T>(
 
 /**
  * Dispatch a sensitive command through the per-action WebAuthn ceremony
- * (docs/CONSOLE-IDP.md B3/2; the three commands in
+ * (docs/CONSOLE-IDP.md B3/2; the five commands in
  * `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`).
  *
- * Two paths, matching `webauthn_gate`'s own two honest outcomes:
+ * Two paths, matching the two outcomes `webauthn_gate` has for a caller who
+ * can still act at all (a box with `GENARYX_WEB_REQUIRE_PASSKEY` on refuses
+ * outright, with a shape this deliberately does not retry):
  * - The common case: {@link listPasskeys}'s cached probe already says a
  *   ceremony is required, and this browser can run one - get the header
  *   FIRST, then dispatch once, with it.

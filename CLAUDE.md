@@ -56,10 +56,23 @@ an absent invariant.
    things: no cloud credential environment variable is read anywhere, and no
    provider SDK is declared. An SDK exists to authenticate, so pulling one in is
    the same decision arriving under another name.)*
-2. **A sensitive command requires a per-action ceremony.** Kill, budget change
-   and approval each need a fresh passkey confirmation. Not a session, not a
-   role check alone: the ceremony is per action, because the whole point is that
-   a stolen session cannot pull the switch. *(not enforced)*
+2. **A sensitive command requires a per-action ceremony.** Kill, budget
+   change, approval and the two operator WireGuard commands (issue a peer,
+   revoke a peer) each need a fresh passkey confirmation. Five, not three:
+   `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS` is the list, and this file
+   said three until 2026-08-05. Not a session, not a role check alone: the
+   ceremony is per action, because the whole point is that a stolen session
+   cannot pull the switch.
+   *(partly gated: router-level tests in `crates/web/src/main.rs` drive the
+   real axum router through the whole ceremony, and hold that an enrolled
+   caller is refused without an assertion, that the command and argument
+   bindings are enforced, that enrolling and removing a passkey each need a
+   factor the session does not carry, and that with
+   `GENARYX_WEB_REQUIRE_PASSKEY=1` all five are refused when nobody is
+   enrolled. What is NOT held is the default configuration: with the setting
+   off and no passkey enrolled, a sensitive command still runs and is
+   journaled software-signed. So the invariant holds on a box that enrolled a
+   passkey or set the variable, and is a documented fallback otherwise.)*
 3. **Every privileged action is journaled into a verified hash chain.** An
    action that happened without a chain entry is indistinguishable from one that
    did not happen. *(not enforced)*
@@ -83,7 +96,9 @@ an absent invariant.
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
-**Held by this file alone: invariants 2, 3 and 4.**
+**Held by this file alone: invariants 3 and 4.** Invariant 2 is now partly
+gated by the console's own router-level tests, and its marker says exactly
+which half of it they hold.
 
 **Invariants 5 and 6 are now `scripts/web-only-and-unpriced.sh`, and writing it
 found invariant 6 being violated rather than merely unenforced.**
@@ -120,6 +135,16 @@ both ways.
 Invariants 2, 3 and 4 are the ones that most deserve tests rather than greps,
 and invariant 4 in particular is the kind of promise that erodes one placeholder
 at a time.
+
+**Invariant 2** got those tests on 2026-08-05, and writing them found the
+ceremony's two ends unguarded rather than merely untested: an enrolled passkey
+could not be removed at all (a lost authenticator locked its owner out of all
+five commands with no in-product way back), and a new one could be enrolled on
+nothing but a session cookie, which is the exact credential the ceremony
+exists to distrust. Both are fixed and held by tests. The third finding stays
+visible in the marker: there was no way to make the ceremony mandatory, and
+now there is, but it is opt-in, so the invariant is configuration-dependent
+until a box sets it.
 
 ## Standing rule
 

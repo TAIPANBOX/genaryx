@@ -1,15 +1,26 @@
 //! WebAuthn per-action ceremony (D15 B3 part 2, docs/CONSOLE-IDP.md).
 //!
 //! A signed-in session gets you the console; it does not get you the kill.
-//! The five privileged commands (kill, break-glass carriers, budget mutation,
-//! policy write, approval grant) additionally require a fresh, per-action
-//! WebAuthn assertion: the operator's passkey (Touch ID, Windows Hello, a
-//! roaming key) signs a challenge this server minted FOR THAT ONE COMMAND,
+//! The five privileged commands additionally require a fresh, per-action
+//! WebAuthn assertion, and they are exactly the five names in `main.rs`'s
+//! `SENSITIVE_COMMANDS`: `money_kill_run`, `money_set_budget`,
+//! `policy_decide_approval`, `remote_operator_wg_config` and
+//! `remote_operator_wg_revoke`. (This list used to say "policy write", which
+//! is not a dispatchable command at all; the policy editor joins the list the
+//! day it becomes routable.) The operator's passkey (Touch ID, Windows Hello,
+//! a roaming key) signs a challenge this server minted FOR THAT ONE COMMAND,
 //! and the assertion's algorithm + credential id are recorded into the same
 //! `CommandRecord` the action journals. This is the web console's twin of the
 //! removed desktop shell's Secure-Enclave signed kill, and it reuses the same
 //! verification primitive (`genaryx_signing::verify_es256`, the p256 path
 //! device-pairing already trusts).
+//!
+//! Two things sit either side of that ceremony, and both are `main.rs`'s:
+//! enrolling a passkey needs a factor the session does not carry (the
+//! operator password for the first, an assertion for every later one), and
+//! removing one needs the same (an assertion while another remains, the
+//! operator password for the last). A lifecycle whose two ends rode on the
+//! session would hand the ceremony back to whoever stole the session.
 //!
 //! Deliberately NOT `webauthn-rs`: that crate hard-depends on OpenSSL
 //! (via `webauthn-attestation-ca`), a second crypto backend this pure-Rust
