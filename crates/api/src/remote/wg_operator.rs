@@ -590,48 +590,11 @@ fn journal_peer_action(
     target: &str,
     detail: String,
 ) {
-    let Some(bus) = bus else {
-        eprintln!("genaryx: {action} on {target} was NOT journaled: no live event bus");
-        return;
-    };
-    // The signature the WebAuthn gate put in scope for THIS request, so the
-    // record names the credential the human actually touched. Falls back to the
-    // same honest label the rest of the console uses when no passkey is
-    // enrolled - never a fabricated one.
-    let (sig_alg, sig_fpr) =
-        crate::console_actor::signature_or("software-signed", "software-signed");
-    let org_domain = std::env::var("GENARYX_ORG_DOMAIN").unwrap_or_else(|_| "local".to_string());
-    let operator = crate::console_actor::operator_or(&format!("user://{org_domain}/operator"));
-    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "console".to_string());
-
-    let rec = genaryx_core::command::CommandRecord {
-        operator,
-        env: org_domain.clone(),
-        action: action.to_string(),
-        target: target.to_string(),
-        params: serde_json::json!({}),
-        // Not a break-glass override: this is the sanctioned path, gated by a
-        // passkey rather than bypassing anything.
-        decision: "allow".to_string(),
-        sig_alg,
-        sig_fpr,
-        http_status: 200,
-        verify_result: detail,
-    };
-    match genaryx_core::store::Store::open(&bus.store_db_path) {
-        Ok(store) => {
-            if let Err(e) = genaryx_core::command::record(
-                &store,
-                &bus.console_events_path,
-                &org_domain,
-                &host,
-                &rec,
-            ) {
-                eprintln!("genaryx: {action} on {target} succeeded but was NOT journaled: {e}");
-            }
-        }
-        Err(e) => eprintln!("genaryx: {action} on {target} succeeded but was NOT journaled: {e}"),
-    }
+    // The whole body of this moved to `crate::journal` when the lifecycle
+    // blocks needed exactly the same record and had none at all. Kept as a
+    // named wrapper so this module's call sites still read as what they are.
+    let _ =
+        crate::journal::record_console_action(bus, action, target, serde_json::json!({}), detail);
 }
 
 fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {

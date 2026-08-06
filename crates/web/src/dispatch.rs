@@ -193,14 +193,57 @@ async fn apply_block(
         }
     }
 
-    // The durable audit record of this action is the wardryx policy itself:
-    // it carries `console-block:<kind>:<key>` as its name and survives a
-    // console restart (which is also what `lifecycle::rehydrate` reads back).
-    // Mirroring it onto the console's own bus needs the money plane's signing
-    // path (`money::state`'s `console_command_line`), which is not reachable
-    // from here; that mirror is tracked follow-up work, not a silent gap.
-    let _ = affected;
+    journal_block(ctx, kind, key, blocked, affected);
+
+    // The reply stays `null` deliberately: this box keeps no per-entity record
+    // to echo, and the frontend re-reads `lifecycle_blocks` + `money_runs` for
+    // the truth rather than trusting a mutation's own body.
     Ok(Value::Null)
+}
+
+/// Put a completed block or unblock on the console's own bus.
+///
+/// The wardryx policy is the durable record of the block (it carries
+/// `console-block:<kind>:<key>` as its name and is what `lifecycle::rehydrate`
+/// reads back), but a policy sitting in wardryx is not an audit trail of WHO
+/// did it and WHEN. This is the most far-reaching action the console has:
+/// stopping a unit writes a real deny-all policy for every agent in it, and
+/// until now it was the only privileged mutation that reached no bus at all,
+/// so an evidence pack could show a single killed run and not a halted fleet.
+///
+/// The old note here said the mirror needed a signing path "not reachable
+/// from here". It is reachable: `wg_journal` builds a `BusHandle` from this
+/// same `ctx` two functions up, and the WireGuard peer commands have been
+/// journaling through it for some time. What was missing was the signing
+/// METADATA, and `crate::journal` supplies it the same way they do, from the
+/// request's own ceremony.
+fn journal_block(ctx: &Arc<Ctx>, kind: &str, key: &str, blocked: bool, affected: usize) {
+    let _ = genaryx_api::journal::record_console_action(
+        wg_journal(ctx).as_ref(),
+        block_action(kind, blocked),
+        key,
+        serde_json::json!({ "policies": affected }),
+        format!("blocked:{blocked}"),
+    );
+}
+
+/// The `data.action` name for one lifecycle toggle.
+///
+/// Two directions, two names, matching `console.issue_wg_peer` /
+/// `console.revoke_wg_peer`: an auditor filtering for who restarted a stopped
+/// unit should not have to read `verify_result` to find out. `kind` comes
+/// from this module's own three call sites, and anything other than `agent`
+/// or `unit` is a user block, mirroring `apply_block`'s own dispatch on the
+/// same value so the two can never disagree about what a `kind` means.
+fn block_action(kind: &str, blocked: bool) -> &'static str {
+    match (kind, blocked) {
+        ("agent", true) => "console.block_agent",
+        ("agent", false) => "console.unblock_agent",
+        ("unit", true) => "console.block_unit",
+        ("unit", false) => "console.unblock_unit",
+        (_, true) => "console.block_user",
+        (_, false) => "console.unblock_user",
+    }
 }
 
 /// Route one command by name. `Err` here means the name is unknown; a command
@@ -851,5 +894,46 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             })),
         )
             .into_response()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every lifecycle toggle names itself, and no two name themselves the
+    /// same thing. Stopping a unit and starting it again are opposite acts on
+    /// a whole fleet; an audit trail that spells them identically cannot
+    /// answer the only question anybody asks it afterwards.
+    #[test]
+    fn every_block_direction_has_its_own_action_name() {
+        let names: Vec<&str> = ["agent", "unit", "user"]
+            .into_iter()
+            .flat_map(|kind| [block_action(kind, true), block_action(kind, false)])
+            .collect();
+
+        let unique: std::collections::BTreeSet<_> = names.iter().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "duplicate action names: {names:?}"
+        );
+        for name in &names {
+            assert!(
+                name.starts_with("console."),
+                "{name} must carry the console prefix every other journaled action uses"
+            );
+        }
+    }
+
+    #[test]
+    fn block_and_unblock_are_not_the_same_action() {
+        assert_eq!(block_action("agent", true), "console.block_agent");
+        assert_eq!(block_action("agent", false), "console.unblock_agent");
+        assert_eq!(block_action("unit", true), "console.block_unit");
+        assert_eq!(block_action("unit", false), "console.unblock_unit");
+        // `apply_block` treats anything that is not `agent`/`unit` as a user.
+        assert_eq!(block_action("user", true), "console.block_user");
+        assert_eq!(block_action("anything-else", false), "console.unblock_user");
     }
 }
