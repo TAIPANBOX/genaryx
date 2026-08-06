@@ -186,7 +186,7 @@ pub async fn build_evidence_pack(
                 "Agent-BOM (CycloneDX)",
                 "agent-bom.json",
                 "application/json",
-                "idryx agent-bom --format json",
+                "idryx bom --format json",
                 bytes,
                 None,
             )),

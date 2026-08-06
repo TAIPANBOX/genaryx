@@ -39,11 +39,47 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// idryx's stack-bus `--load` vocabulary Agent-BOM accepts - mirrors
-/// `identity::state::ACCEPTED_LOAD_SOURCES` exactly (duplicated per this
-/// module's own doc comment, not shared: `identity::state`'s copy is private
-/// and this is an independent plane).
-const ACCEPTED_LOAD_SOURCES: &[&str] = &["tokenfuse", "wardryx", "mockryx", "verdryx"];
+/// The bus sources Agent-BOM will draw from. `console` is here because the
+/// console is a producer on this bus in its own right (agent-passport SPEC
+/// 6.2 carries a `console` row); it is NOT a prefix idryx accepts, which is
+/// what [`IDRYX_LOAD_PREFIXES`] is for.
+///
+/// `identity::state` keeps its own copy of the first four (duplicated per
+/// this module's doc comment, not shared). It does not gain `console`: that
+/// plane's Rescan is about identity inventory, and the console's own
+/// commands are not part of it.
+const ACCEPTED_LOAD_SOURCES: &[&str] = &["tokenfuse", "wardryx", "mockryx", "verdryx", "console"];
+
+/// The `--load <prefix>:<path>` prefixes idryx actually resolves
+/// (`cmd/idryx/main.go`'s `agentBusSources`). Anything else exits 1 with
+/// `unknown source`, and one rejected spec aborts the whole `idryx agent-bom`
+/// run rather than skipping that source, so an unaccepted prefix costs the
+/// entire Agent-BOM and not just its own file.
+const IDRYX_LOAD_PREFIXES: &[&str] = &["tokenfuse", "wardryx", "mockryx", "verdryx"];
+
+/// The prefix a bus source is loaded under. All four agent-event-bus
+/// prefixes resolve to one generic connector in idryx, and every identity
+/// and event takes its source from the ENVELOPE's own `source` field rather
+/// than from the prefix, so a console file loaded under `tokenfuse:` is
+/// still attributed to the console. Verified against the installed idryx on
+/// 2026-08-06; see `the_console_load_spec_uses_a_prefix_idryx_accepts`.
+fn idryx_load_prefix(source: &str) -> &'static str {
+    if IDRYX_LOAD_PREFIXES.contains(&source) {
+        // Borrowed back out of the constant so the returned lifetime is
+        // 'static without cloning; the membership check just passed.
+        IDRYX_LOAD_PREFIXES
+            .iter()
+            .find(|p| **p == source)
+            .copied()
+            .unwrap_or("tokenfuse")
+    } else {
+        "tokenfuse"
+    }
+}
+
+/// The console's own events file, written by
+/// `genaryx_api::money::state::CONSOLE_EVENTS_FILE`.
+const CONSOLE_EVENTS_FILE: &str = "console.ndjson";
 
 /// qryx: the binary plus a default scan target - field-for-field identical to
 /// `crypto::env::ResolvedEnv`.
@@ -206,10 +242,21 @@ fn modified_time(path: &Path) -> std::time::SystemTime {
 }
 
 /// Build Agent-BOM's `--load` specs: `events_dir.join(file)` for every
-/// `event_files` entry whose source idryx's stack-bus `--load` actually
-/// accepts ([`ACCEPTED_LOAD_SOURCES`]), filtered to files that exist on disk
-/// right now - mirrors `identity::state::resolve_rescan_loads` exactly
-/// (duplicated, see this module's doc comment).
+/// `event_files` entry whose source this panel draws from
+/// ([`ACCEPTED_LOAD_SOURCES`]), plus the console's own file, filtered to
+/// files that exist on disk right now.
+///
+/// Two things differ from `identity::state::resolve_rescan_loads`, which
+/// this otherwise mirrors:
+///
+/// - The console's file is added even when the descriptor does not name it.
+///   `taipan up` writes exactly one `events.files` entry, for tokenfuse, so
+///   no descriptor ever will. Leaving it out would mean the console's own
+///   privileged actions stopped appearing in the Agent-BOM the moment they
+///   stopped being appended into TokenFuse's file.
+/// - The emitted prefix is mapped through [`idryx_load_prefix`], because
+///   idryx rejects a `console:` spec and one rejected spec aborts the whole
+///   run. The prefix selects a loader; the envelope decides attribution.
 fn agent_bom_loads(
     events_dir: Option<&Path>,
     event_files: &BTreeMap<String, String>,
@@ -217,12 +264,19 @@ fn agent_bom_loads(
     let Some(dir) = events_dir else {
         return Vec::new();
     };
-    event_files
+
+    let mut loads: Vec<(String, PathBuf)> = event_files
         .iter()
         .filter(|(source, _)| ACCEPTED_LOAD_SOURCES.contains(&source.as_str()))
-        .map(|(source, file)| (source.clone(), dir.join(file)))
+        .map(|(source, file)| (idryx_load_prefix(source).to_string(), dir.join(file)))
         .filter(|(_, path)| path.is_file())
-        .collect()
+        .collect();
+
+    let console = dir.join(CONSOLE_EVENTS_FILE);
+    if console.is_file() && !loads.iter().any(|(_, p)| *p == console) {
+        loads.push((idryx_load_prefix("console").to_string(), console));
+    }
+    loads
 }
 
 #[cfg(test)]
@@ -377,6 +431,106 @@ mod tests {
     #[test]
     fn agent_bom_loads_is_empty_with_no_events_dir() {
         assert!(agent_bom_loads(None, &BTreeMap::new()).is_empty());
+    }
+
+    /// The console is a producer on this bus (agent-passport SPEC 6.2 has a
+    /// `console` row), so a descriptor that declares its file must produce a
+    /// load spec rather than have it filtered away.
+    #[test]
+    fn a_declared_console_events_file_reaches_agent_bom() {
+        let dir = unique_dir("console-declared");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(dir.join("console.ndjson"), "").expect("touch console file");
+
+        let mut files = BTreeMap::new();
+        files.insert("console".to_string(), "console.ndjson".to_string());
+
+        let loads = agent_bom_loads(Some(&dir), &files);
+        assert_eq!(loads.len(), 1, "got {loads:?}");
+        assert_eq!(loads[0].1, dir.join("console.ndjson"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The console's file has to be loaded whether or not the descriptor
+    /// mentions it. `taipan up` writes exactly one `events.files` entry, for
+    /// tokenfuse (`~/Development/taipan/src/commands/up.rs`), so a descriptor
+    /// will never name `console.ndjson`. Before the console had its own file
+    /// its events reached Agent-BOM only by being appended into TokenFuse's,
+    /// which is the defect this change removes; dropping them instead would
+    /// trade a broken chain for a missing one.
+    #[test]
+    fn the_consoles_own_file_is_loaded_even_when_the_descriptor_omits_it() {
+        let dir = unique_dir("console-undeclared");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(dir.join("tokenfuse.ndjson"), "").expect("touch tokenfuse file");
+        std::fs::write(dir.join("console.ndjson"), "").expect("touch console file");
+
+        let mut files = BTreeMap::new();
+        files.insert("tokenfuse".to_string(), "tokenfuse.ndjson".to_string());
+
+        let loads = agent_bom_loads(Some(&dir), &files);
+        let paths: Vec<_> = loads.iter().map(|(_, p)| p.clone()).collect();
+        assert!(
+            paths.contains(&dir.join("console.ndjson")),
+            "the console's own events must still reach the Agent-BOM: {loads:?}"
+        );
+        assert_eq!(
+            loads.len(),
+            2,
+            "and without duplicating anything: {loads:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A console file present on disk but never written to is still a
+    /// legitimate load; a console file that does not exist is not fabricated
+    /// into one, the same rule every declared source already follows.
+    #[test]
+    fn a_missing_console_file_is_not_invented() {
+        let dir = unique_dir("console-absent");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        assert!(agent_bom_loads(Some(&dir), &BTreeMap::new()).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MEASURED against the installed `~/.taipan/bin/idryx` on 2026-08-06:
+    /// `idryx bom --load console:<path>` exits 1 with `parse console log:
+    /// unknown source "console"`, and one rejected spec aborts the WHOLE run
+    /// (`cmd/idryx/main.go`'s `buildGraph` returns on the first error), so a
+    /// valid tokenfuse spec alongside it produced zero bytes of Agent-BOM.
+    ///
+    /// idryx's accepted agent-event-bus prefixes are tokenfuse, wardryx,
+    /// mockryx and verdryx, and the prefix is only a LOADER SELECTOR: every
+    /// identity and event takes its source from the envelope's own `source`
+    /// field, never from the prefix (`internal/ingest/tokenfuse`'s package
+    /// doc says so, and a console file loaded under the tokenfuse prefix was
+    /// verified to come out as `agent://.../console/...` in the BOM).
+    ///
+    /// So the console's spec rides the generic prefix until idryx adds
+    /// `console` to its own `agentBusSources`. Emitting the natural spelling
+    /// would not merely drop the console: it would take the whole Evidence
+    /// pack's Agent-BOM down with it.
+    #[test]
+    fn the_console_load_spec_uses_a_prefix_idryx_accepts() {
+        let dir = unique_dir("console-prefix");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(dir.join("console.ndjson"), "").expect("touch console file");
+
+        let mut files = BTreeMap::new();
+        files.insert("console".to_string(), "console.ndjson".to_string());
+
+        for (source, path) in agent_bom_loads(Some(&dir), &files) {
+            assert!(
+                IDRYX_LOAD_PREFIXES.contains(&source.as_str()),
+                "`idryx --load {source}:{}` is rejected by idryx, and one rejected \
+                 spec aborts the entire Agent-BOM run",
+                path.display()
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

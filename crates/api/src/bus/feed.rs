@@ -181,7 +181,8 @@ fn bootstrap_demo<S: EventSink>(sink: S) -> genaryx_core::Result<BusBootstrap> {
         stats.quarantined
     );
 
-    std::thread::spawn(move || run_feeder(ingest, receiver, files, sink));
+    let feeder_dir = events_dir.clone();
+    std::thread::spawn(move || run_feeder(ingest, receiver, feeder_dir, files, sink));
 
     Ok(BusBootstrap {
         events_dir: events_dir.clone(),
@@ -202,6 +203,35 @@ fn add_source(ingest: &mut IngestService, path: &Path) -> genaryx_core::Result<(
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
     ingest.add_file_source(format!("filetail:{id}"), path)
+}
+
+/// Tail any `*.ndjson` file in `dir` that is not tailed yet, extending
+/// `tailed` with each one taken up.
+///
+/// Both loops call this every tick, and both need it for the same reason: a
+/// source file on this bus is created lazily, by whichever tool first has
+/// something to say. There is no `qryx.ndjson` until something scans, no
+/// `mockryx.ndjson` until a drill fires, and no `console.ndjson` until the
+/// operator issues their first privileged command. A directory listing taken
+/// once at startup misses precisely the sources somebody is waiting for, and
+/// keeps missing them until the console is restarted.
+///
+/// A file that cannot be registered is logged and retried on the next tick
+/// rather than ending the loop: a bus that stops reading is much worse than
+/// a bus that skips a cycle.
+fn pick_up_new_sources(ingest: &mut IngestService, dir: &Path, tailed: &mut Vec<PathBuf>) {
+    for path in collect_ndjson_files(dir).unwrap_or_default() {
+        if tailed.contains(&path) {
+            continue;
+        }
+        match add_source(ingest, &path) {
+            Ok(()) => {
+                eprintln!("genaryx: bus picked up a new source: {}", path.display());
+                tailed.push(path);
+            }
+            Err(e) => eprintln!("genaryx: bus could not tail {}: {e}", path.display()),
+        }
+    }
 }
 
 /// A fresh, distinct-per-process directory so a restart never reuses another
@@ -243,17 +273,9 @@ fn collect_ndjson_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
 }
 
 /// Live mode's loop: every ~2s, pick up any event file that appeared since
-/// the last tick, poll every tailed file, and forward whatever arrived. It
-/// writes nothing, ever: the only source of events here is the products
-/// themselves.
-///
-/// The rescan matters more than it looks. Wave-2 tools create their event
-/// file lazily, on their first run: there is no `qryx.ndjson` until something
-/// scans, no `mockryx.ndjson` until a drill fires. A directory listing taken
-/// once at startup would miss precisely the sources an operator is most
-/// likely to be waiting for, and would keep missing them until the console
-/// was restarted. Re-listing one small directory every two seconds is a
-/// rounding error next to that.
+/// the last tick ([`pick_up_new_sources`]), poll every tailed file, and
+/// forward whatever arrived. It writes nothing, ever: the only source of
+/// events here is the products themselves.
 ///
 /// Failures are logged and retried on the next tick rather than ending the
 /// loop, mirroring the demo feeder: a bus that stops reading is much worse
@@ -268,18 +290,7 @@ fn run_tailer<S: EventSink>(
     loop {
         std::thread::sleep(FEEDER_INTERVAL);
 
-        for path in collect_ndjson_files(&events_dir).unwrap_or_default() {
-            if tailed.contains(&path) {
-                continue;
-            }
-            match add_source(&mut ingest, &path) {
-                Ok(()) => {
-                    eprintln!("genaryx: bus picked up a new source: {}", path.display());
-                    tailed.push(path);
-                }
-                Err(e) => eprintln!("genaryx: bus could not tail {}: {e}", path.display()),
-            }
-        }
+        pick_up_new_sources(&mut ingest, &events_dir, &mut tailed);
 
         if let Err(e) = ingest.poll_once() {
             eprintln!("genaryx: bus poll_once failed: {e}");
@@ -291,25 +302,37 @@ fn run_tailer<S: EventSink>(
 }
 
 /// Demo mode's loop, and demo mode's only. Owns the `IngestService` (and its
-/// `Store`) for the rest of the process: every ~2s, append one conforming
-/// demo-shaped line to one of the seeded NDJSON files, poll it into the Store
-/// like any other ingest cycle, then forward whatever that poll just
-/// broadcast to the sink. Never panics on a transient failure; a bad tick is
-/// logged and the loop just tries again next tick (fail-closed: the live
-/// feed degrading is never the whole app crashing).
+/// `Store`) for the rest of the process: every ~2s, pick up any event file
+/// that appeared since the last tick ([`pick_up_new_sources`]), append one
+/// conforming demo-shaped line to one of the seeded NDJSON files, poll it
+/// into the Store like any other ingest cycle, then forward whatever that
+/// poll just broadcast to the sink. Never panics on a transient failure; a
+/// bad tick is logged and the loop just tries again next tick (fail-closed:
+/// the live feed degrading is never the whole app crashing).
+///
+/// The rescan is here for the console's own file and nothing else: the
+/// demo fixtures are all written before this loop starts, but
+/// `console.ndjson` is created by the operator's first privileged command,
+/// which can happen at any point afterwards. `files` stays the SEEDED list,
+/// because it decides where a synthetic line is appended and the feeder must
+/// never write into the console's chain.
 ///
 /// This function fabricates events. It must never run for a resolved
 /// environment, which is why it is reachable only from [`bootstrap_demo`].
 fn run_feeder<S: EventSink>(
     mut ingest: IngestService,
     mut receiver: broadcast::Receiver<ConsoleEvent>,
+    events_dir: PathBuf,
     files: Vec<PathBuf>,
     sink: S,
 ) {
+    let mut tailed = files.clone();
     let mut tick: u64 = 0;
     loop {
         std::thread::sleep(FEEDER_INTERVAL);
         tick += 1;
+
+        pick_up_new_sources(&mut ingest, &events_dir, &mut tailed);
 
         let (source, line) = feeder_line(tick);
         match pick_file(&files, source) {
@@ -493,5 +516,69 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir); // best-effort cleanup; not load-bearing
+    }
+
+    /// A source file that appears AFTER startup still reaches the bus.
+    ///
+    /// The live tailer already re-lists the directory every tick, because
+    /// wave-2 tools create their file lazily on first run. Demo mode listed
+    /// once and never again, which did not matter while the console appended
+    /// its `console_command` lines into a file `demo::generate` had already
+    /// created. Now that the console writes its own file, created by the
+    /// first privileged action, "listed once" means an operator's own kill
+    /// never appears in the Bus Explorer.
+    #[test]
+    fn a_source_file_created_after_startup_is_picked_up() {
+        let dir = std::env::temp_dir().join(format!(
+            "genaryx-late-source-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let generated = demo::generate(&dir).expect("demo::generate");
+
+        let store = Store::open(&dir.join("console.sqlite")).expect("Store::open");
+        let mut ingest = IngestService::new(store, "demo").expect("IngestService::new");
+        let mut tailed = collect_ndjson_files(&dir).expect("collect_ndjson_files");
+        for path in &tailed {
+            add_source(&mut ingest, path).expect("add_source");
+        }
+        ingest.poll_once().expect("seed poll");
+        assert_eq!(
+            ingest.store().event_count().expect("event_count"),
+            generated as u64
+        );
+
+        // The console's first privileged action creates its file.
+        let console = dir.join("console.ndjson");
+        std::fs::write(
+            &console,
+            "{\"schema\":\"taipanbox.dev/agent-event/v0.2\",\
+             \"ts\":\"2026-08-06T10:00:00.000Z\",\"source\":\"console\",\
+             \"type\":\"console_command\",\
+             \"agent_id\":\"agent://acme.example/console/box\",\
+             \"data\":{\"action\":\"console.kill_run\",\"target\":\"run-1\",\
+             \"decision\":\"allow\",\"sig_alg\":\"es256\",\
+             \"sig_fpr\":\"software-signed\",\"http_status\":200,\
+             \"verify_result\":\"killed:true\"}}\n",
+        )
+        .expect("write the console events file");
+
+        pick_up_new_sources(&mut ingest, &dir, &mut tailed);
+        ingest.poll_once().expect("poll after rescan");
+
+        assert!(
+            tailed.contains(&console),
+            "the console's file must be tailed once it exists: {tailed:?}"
+        );
+        assert_eq!(
+            ingest.store().event_count().expect("event_count"),
+            generated as u64 + 1,
+            "the console_command must reach the store"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

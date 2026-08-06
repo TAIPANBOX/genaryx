@@ -431,9 +431,9 @@ mod tests {
         assert!(journaled, "journal_error: {journal_error:?}");
         assert!(journal_error.is_none());
 
-        // Money's `BusHandle` targets `tokenfuse.ndjson` - see
+        // Money's `BusHandle` targets the console's own file - see
         // `money::state::CONSOLE_EVENTS_FILE`.
-        let events_path = dir.join("tokenfuse.ndjson");
+        let events_path = dir.join("console.ndjson");
         let body = std::fs::read_to_string(&events_path).expect("read the appended events file");
         let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(lines.len(), 1, "exactly one console_command line appended");

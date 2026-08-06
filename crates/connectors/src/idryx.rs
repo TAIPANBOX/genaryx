@@ -305,24 +305,38 @@ impl IdryxClient {
         Ok(serde_json::from_slice(&out.stdout)?)
     }
 
-    /// Build the **Agent-BOM** by shelling out to `idryx agent-bom --format json
+    /// Build the **Agent-BOM** by shelling out to `idryx bom --format json
     /// --load <src:path>...`, returning its raw stdout VERBATIM (docs/PHASE4.md
-    /// W3, the Evidence Center). NOTE `idryx agent-bom --format json` emits a
+    /// W3, the Evidence Center). NOTE `idryx bom --format json` emits a
     /// **CycloneDX document** (one component per agent identity, built from the
     /// same delegation graph as `detect`), NOT the bare `AgentBOM` structs, so
     /// the caller captures it as an opaque CycloneDX blob exactly like the CBOM
-    /// (`~/Development/idryx/cmd/idryx/main.go:471`, `internal/bom/cyclonedx.go`).
+    /// (`~/Development/idryx/cmd/idryx/main.go`, `internal/bom/cyclonedx.go`).
+    ///
+    /// The subcommand is `bom`, not `agent-bom`. This called `agent-bom` until
+    /// 2026-08-06 and every invocation failed with `unknown command
+    /// "agent-bom"` and exit 1, so the Evidence pack's Agent-BOM artifact was
+    /// never produced on a box that had idryx installed. The name is easy to
+    /// get wrong because "agent-bom" IS what idryx prints
+    /// (`internal/bom/cyclonedx.go`'s "idryx agent-bom: N agent(s)" header) and
+    /// what the product is called everywhere else; it is only the CLI verb
+    /// that is short. `tests/idryx_agent_bom_test.rs` runs the real binary.
     ///
     /// Same shape and rationale as [`Self::rescan`]: a synchronous, non-`self`
     /// associated function (the caller resolves the idryx binary + the `--load`
     /// specs), and idryx's exit code does NOT signal findings, so a nonzero exit
     /// is a genuine failure carrying idryx's stderr as [`IdryxError::Cli`].
+    ///
+    /// One rejected `--load` spec fails the WHOLE run rather than skipping
+    /// that source (`cmd/idryx/main.go`'s `buildGraph` returns on the first
+    /// error), which is why callers must only ever pass prefixes idryx
+    /// resolves; see `genaryx_api::evidence::env::idryx_load_prefix`.
     pub fn agent_bom(
         idryx_bin: &std::path::Path,
         loads: &[(&str, &str)],
     ) -> Result<Vec<u8>, IdryxError> {
         let mut cmd = std::process::Command::new(idryx_bin);
-        cmd.arg("agent-bom").arg("--format").arg("json");
+        cmd.arg("bom").arg("--format").arg("json");
         for (src, path) in loads {
             cmd.arg("--load").arg(format!("{src}:{path}"));
         }
@@ -331,7 +345,7 @@ impl IdryxClient {
             .map_err(|e| IdryxError::Cli(format!("spawn {}: {e}", idryx_bin.display())))?;
         if !out.status.success() {
             return Err(IdryxError::Cli(format!(
-                "`idryx agent-bom` exited {}: {}",
+                "`idryx bom` exited {}: {}",
                 out.status,
                 String::from_utf8_lossy(&out.stderr).trim()
             )));
