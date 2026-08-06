@@ -52,14 +52,24 @@ pub struct BusHandle {
     pub console_events_path: PathBuf,
 }
 
-/// One of the six demo-seeded NDJSON files `live::bootstrap` always
-/// registers as a `FileTail` source (`genaryx_core::demo`'s `SOURCES`).
-/// `tokenfuse.ndjson` is picked deliberately: it is guaranteed to exist
-/// whenever `live::bootstrap` succeeds, it is thematically the money plane,
-/// and - unlike `wardryx`/`verdryx`/`mockryx`/`engram` - the live feeder
-/// (`live.rs::feeder_line`) never appends to it itself, so a console-command
-/// append here can never race the feeder's own writes to the same file.
-const CONSOLE_EVENTS_FILE: &str = "tokenfuse.ndjson";
+/// The console's own NDJSON file, in the events directory the bus tails.
+/// One writer, one chain, and no other product's chain to break.
+///
+/// This used to be `tokenfuse.ndjson`, chosen because the DEMO feeder never
+/// appends there. That reasoning only ever covered demo mode. On a live box
+/// the file is TokenFuse's own: its exporter seeds its chain from the file
+/// tail once at open and advances it in memory, so a console line appended
+/// while it holds the file makes its very next event name a predecessor that
+/// is no longer the one on disk. Not a race, and not rare: it happens on
+/// every console command issued while TokenFuse is running, and nothing
+/// anywhere reports it, because both files still conform line by line.
+///
+/// The console is a producer on this bus in its own right (agent-passport
+/// SPEC 6.2 carries a `console` row), so it gets a producer's file. The
+/// live tailer re-lists the events directory every tick, so a file that did
+/// not exist at startup is picked up as soon as the first command creates
+/// it, exactly like `qryx.ndjson` and `mockryx.ndjson` already are.
+const CONSOLE_EVENTS_FILE: &str = "console.ndjson";
 
 impl BusHandle {
     /// `store_dir` holds the console's own SQLite; `source_dir` is where the
@@ -327,9 +337,45 @@ mod tests {
         assert_eq!(bus.store_db_path, store.join("console.sqlite"));
         assert_eq!(
             bus.console_events_path,
-            source.join("tokenfuse.ndjson"),
+            source.join("console.ndjson"),
             "the events file must live in the tailed directory, never in the store's"
         );
+    }
+
+    /// The console writes its OWN file, and the point is what it does NOT
+    /// write. A `console_command` appended into a product's file lands in the
+    /// middle of that product's SPEC 6.5 chain: the product seeded its chain
+    /// from the file tail when it opened the file and advances it in memory,
+    /// so its next event names its own previous event while the predecessor
+    /// on disk is the console's line. Every event that product writes from
+    /// then on fails a chain walk, and nothing in the console reports it.
+    #[test]
+    fn the_console_never_writes_into_another_products_file() {
+        let source = std::path::PathBuf::from("/var/lib/stack/events");
+        let path = BusHandle::from_dirs(&std::path::PathBuf::from("/tmp/store"), &source)
+            .console_events_path;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("a file name");
+
+        // Every file a product on this bus writes (`genaryx_core::demo`'s own
+        // source list, which mirrors the products that emit).
+        for product in [
+            "tokenfuse.ndjson",
+            "wardryx.ndjson",
+            "engram.ndjson",
+            "verdryx.ndjson",
+            "mockryx.ndjson",
+            "qryx.ndjson",
+        ] {
+            assert_ne!(
+                name, product,
+                "the console must not append into {product}: it would break that \
+                 product's hash chain on its very next event"
+            );
+        }
+        assert_eq!(name, "console.ndjson");
     }
 
     #[test]

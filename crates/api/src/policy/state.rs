@@ -32,21 +32,20 @@ use tokio::sync::Mutex;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One of the six demo-seeded NDJSON files `live::bootstrap` always
-/// registers as a `FileTail` source (`genaryx_core::demo`'s `SOURCES`:
-/// tokenfuse, wardryx, engram, verdryx, mockryx, qryx). The live feeder
-/// (`live.rs::feeder_line`'s `VARIANTS`) cycles through exactly four of
-/// those - wardryx, verdryx, mockryx, engram - and `money::state` already
-/// claimed `tokenfuse.ndjson` for its own `console_command` journal
-/// (deliberately, per that module's own doc comment, because the feeder
-/// never writes there). `qryx.ndjson` is the one remaining file NEITHER the
-/// feeder NOR the money panel ever appends to, so it is the only choice
-/// here that cannot race a concurrent writer. Appending here does not
-/// affect the Decision Stream (`DecisionStream.tsx` filters on
-/// `source == "wardryx"`; every `console_command` line this module writes
-/// carries `source:"console"` regardless of which file it lands in, per
-/// `genaryx_core::command::console_command_line`) - the file choice is
-/// purely about avoiding a write race, not about which planes render it.
-const CONSOLE_EVENTS_FILE: &str = "qryx.ndjson";
+/// The console's own NDJSON file, deliberately the SAME name
+/// `money::state::CONSOLE_EVENTS_FILE` uses: one console, one chain, and
+/// `genaryx_core::command`'s process-wide sink then makes both planes share
+/// one writer for it.
+///
+/// This used to be `qryx.ndjson`, picked as the one file neither the demo
+/// feeder nor the money plane appended to. That is true of the demo feeder
+/// and false of qryx: on a live box qryx writes its own chain there, and a
+/// console line landing in the middle of it breaks every qryx event after
+/// it. Appending elsewhere does not affect the Decision Stream
+/// (`DecisionStream.tsx` filters on `source == "wardryx"`, and every line
+/// this module writes carries `source:"console"` whatever file it lands in,
+/// per `genaryx_core::command::console_command_line`).
+const CONSOLE_EVENTS_FILE: &str = "console.ndjson";
 
 /// Where the console events file (`command::record`'s `console_events_path`)
 /// and its companion `console.sqlite` live. Deliberately duplicated from
@@ -309,12 +308,23 @@ mod tests {
         assert_eq!(org_domain_for(&EnvSource::EnvFallback), "wardryx.local");
     }
 
+    /// The policy plane journals into the console's own file, the same one
+    /// `money::state` uses. It used to pick `qryx.ndjson`, on the reasoning
+    /// that qryx was the one file neither the demo feeder nor the money plane
+    /// wrote to. That reasoning was about the demo feeder; on a live box qryx
+    /// itself writes there, and a console line dropped into the middle of its
+    /// chain breaks every qryx event after it.
     #[test]
-    fn bus_handle_targets_the_qryx_ndjson_file() {
+    fn bus_handle_targets_the_consoles_own_file() {
         let dir = std::path::PathBuf::from("/tmp/some-events-dir");
         let bus = BusHandle::from_dirs(&dir, &dir);
         assert_eq!(bus.store_db_path, dir.join("console.sqlite"));
-        assert_eq!(bus.console_events_path, dir.join("qryx.ndjson"));
+        assert_eq!(bus.console_events_path, dir.join("console.ndjson"));
+        assert_eq!(
+            bus.console_events_path,
+            crate::money::state::BusHandle::from_dirs(&dir, &dir).console_events_path,
+            "both planes must journal into ONE console chain, not two"
+        );
     }
 
     #[test]

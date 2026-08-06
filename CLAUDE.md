@@ -75,11 +75,34 @@ an absent invariant.
    passkey or set the variable, and is a documented fallback otherwise.)*
 3. **Every privileged action is journaled into a verified hash chain.** An
    action that happened without a chain entry is indistinguishable from one that
-   did not happen. *(not enforced)*
+   did not happen. And it must be the CONSOLE's chain: a console_command
+   appended into a product's file breaks that product's chain from its next
+   event onward, because every producer on this bus seeds its chain from the
+   file tail once at open and advances it in memory.
+   *(partly gated: `crates/core/tests/console_chain_test.rs` holds the chain
+   itself, that the console's lines stay one chain with another writer
+   appending to the same file throughout and with several commands landing at
+   once, and `crates/core/src/command.rs`'s own tests hold that a line and its
+   newline are one write and that a failed write does not advance the chain.
+   `crates/api/src/money/state.rs` holds that the file is the console's own
+   and none of the six product files. What is NOT held is the "every" in the
+   sentence: nothing structural proves the NEXT privileged action added will
+   journal at all. The lifecycle blocks were the one that did not, for months,
+   while the note explaining why said the signing path was unreachable and it
+   was reachable two functions away.)*
 4. **The console shows the operator's real records, never a mock.** A card with
    no data says it has no data. Inventing a plausible number to fill a panel is
    the single worst thing this product can do, because the entire proposition is
-   that what you see is what happened. *(not enforced)*
+   that what you see is what happened.
+   *(partly gated: `scripts/no-fabricated-rows.sh`, structurally and in the two
+   places this actually erodes: which modules may import fixture ROWS at all,
+   and that no `catch` block anywhere reaches for them. Verified by running it
+   against the real pre-fix `recentEvents.ts`, which it fails.
+   `apps/web/src/lib/recentEvents.test.ts` holds the behaviour: a backend that
+   throws yields no rows and an `error` source, never fixtures. What is NOT
+   held is the rest of the sentence, every card in every panel saying it has
+   no data rather than showing a placeholder; the gate covers the fixture
+   stream, not every individual empty state.)*
 5. **Web-only, and no cancelled surface returns.** This is settled.
    *(gate: `scripts/web-only-and-unpriced.sh`, by artefact rather than by
    vocabulary: a shell leaves a config, a project file, sources or a manifest
@@ -96,9 +119,40 @@ an absent invariant.
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
-**Held by this file alone: invariants 3 and 4.** Invariant 2 is now partly
-gated by the console's own router-level tests, and its marker says exactly
-which half of it they hold.
+**No invariant is now held by this file alone.** Every one of the six carries
+a gate or a test, and the three that are partial say in their own marker which
+half is held and which is not. That is the useful state, not a clean one: a
+marker reading "partly gated" with the unheld half spelled out is worth more
+than a green tick over a claim nobody checked.
+
+**Invariants 3 and 4** were the last two held by prose, and both turned out to
+be false about our own code when somebody finally went to check, which is the
+argument for gates in one line:
+
+- The console was appending its `console_command` lines into `tokenfuse.ndjson`
+  and `qryx.ndjson`, two products' own files. Each product seeds its SPEC 6.5
+  chain from the file tail once when it opens the file and advances it in
+  memory, so a console line landing in between made that product's next event
+  name a predecessor that was no longer the one on disk. Deterministic, not a
+  race, and invisible: every line still conformed on its own. The console now
+  writes `console.ndjson`.
+- `recentEvents.ts` answered ANY thrown error with the `mockData.ts` fixture
+  stream, so a console pointed at a box that had stopped answering showed
+  fabricated agents, severities and timestamps. The mitigation was a label in
+  a status bar, which is not a mitigation when the ROWS are the claim.
+
+Two smaller things went the same way and are worth recording as the same
+class. `crates/web/src/roles.rs` said "a test asserts the classified set equals
+the live dispatch set, so a new command cannot be added without being placed";
+the test compared two hand-maintained lists that both lived in `roles.rs`, so
+a command added to `dispatch.rs` and to neither list passed. It reads
+`dispatch.rs` itself now. And `scripts/no-cloud-credentials.sh` enumerated AWS,
+GCP, Azure, IBM and OpenStack credential names and no Hetzner term at all,
+while this console ships a Hetzner inventory connector: a
+`std::env::var("HCLOUD_TOKEN")` in `crates/` passed the gate cleanly.
+
+The pattern in all four: the claim was written when it was true of the
+intent, and nothing ever ran it against the code.
 
 **Invariants 5 and 6 are now `scripts/web-only-and-unpriced.sh`, and writing it
 found invariant 6 being violated rather than merely unenforced.**

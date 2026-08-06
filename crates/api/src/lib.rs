@@ -30,6 +30,7 @@ pub mod bus;
 pub mod console_actor;
 pub mod events;
 pub mod graph;
+pub mod journal;
 pub mod replay;
 
 pub mod admission;

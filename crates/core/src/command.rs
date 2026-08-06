@@ -24,9 +24,11 @@ use crate::event::SchemaVersion;
 use crate::store::Store;
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The outcome of one privileged console mutation (kill / budget change /
 /// incident ack), already executed and signed elsewhere (by the shell, via
@@ -93,14 +95,119 @@ pub fn record(
 
     store.insert_command(rec, &ts)?;
 
-    // Join the chain the products already write into this file, rather than
-    // appending an unlinked line beside it. An unchained console_command is
-    // the one event class an auditor most needs to trust, and it is exactly
-    // the class that could previously be removed or altered without breaking
-    // the chain around it.
-    let prev_hash = last_line_of(console_events_path).and_then(|l| chain_hash_of_line(&l));
-    let line = console_command_line(org_domain, host, rec, &ts, prev_hash.as_deref())?;
-    append_line(console_events_path, &line)
+    // The console's own chain, advanced in memory by the one sink that owns
+    // this file (see [`ChainSink`]). Deriving `prev_hash` by re-reading the
+    // file tail here is what used to fork it: anything appended in between,
+    // by a product or by another console command, became the link target.
+    let sink = sink_for(console_events_path)?;
+    let mut sink = sink.lock().unwrap_or_else(|e| e.into_inner());
+    let ChainSink { file, next } = &mut *sink;
+    append_chained(file, next, |prev| {
+        console_command_line(org_domain, host, rec, &ts, prev)
+    })
+}
+
+/// One console events file, open for append, plus the `prev_hash` its NEXT
+/// line will carry.
+///
+/// The chain is seeded from the file's tail ONCE, in [`sink_for`], and
+/// advanced in memory from then on, so one file stays one chain across a
+/// restart without ever re-reading what other writers have done since. This
+/// is the shape the estate already implements twice: TokenFuse's
+/// `Exporter` (`crates/core/src/agent_event.rs`) and heraldyx's
+/// `internal/record`. It is ported rather than reinvented, because a chain
+/// written by three different mechanisms is three chances to get it wrong.
+struct ChainSink {
+    file: std::fs::File,
+    /// `prev_hash` for the next event; `None` at a chain head.
+    next: Option<String>,
+}
+
+/// Every console events file this process has opened, one [`ChainSink`]
+/// each. Process-wide and keyed by path because the callers build their
+/// `BusHandle` per request (`crates/web/src/dispatch.rs`'s `wg_journal` is
+/// the clearest case), so the sink cannot live on the handle: it has to
+/// outlive it, or two commands in flight at once each get their own idea of
+/// where the chain is.
+///
+/// One writer per file is the invariant this upholds, and it is only true
+/// for THIS process. It holds in practice because the file is the console's
+/// own (see `money::state::CONSOLE_EVENTS_FILE`) and nothing else writes it.
+static SINKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<ChainSink>>>>> = OnceLock::new();
+
+/// The sink that owns `path`, opening and seeding it on first use.
+///
+/// Keyed by the canonicalized parent plus the file name rather than by the
+/// path as given: on macOS the temp directory is reached both as `/tmp` and
+/// as `/private/tmp`, and two spellings of one file would otherwise get two
+/// sinks, which is exactly the forked chain this whole change removes. The
+/// file name itself is not canonicalized (the file may not exist yet).
+fn sink_for(path: &Path) -> Result<Arc<Mutex<ChainSink>>> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let key = canonical_key(path);
+
+    let registry = SINKS.get_or_init(|| Mutex::new(HashMap::new()));
+    // A poisoned registry is recovered rather than propagated: a panic in
+    // some other command must not stop this box journaling for the rest of
+    // its life. The map itself is only ever inserted into.
+    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = guard.get(&key) {
+        return Ok(existing.clone());
+    }
+
+    let file = OpenOptions::new().create(true).append(true).open(path)?;
+    // Resume whatever chain the file already holds, so a console restart
+    // continues one chain instead of starting a second beside it. An empty
+    // file, or a tail that does not parse, correctly starts a fresh one.
+    let next = last_line_of(path).and_then(|l| chain_hash_of_line(&l));
+    let sink = Arc::new(Mutex::new(ChainSink { file, next }));
+    guard.insert(key, sink.clone());
+    Ok(sink)
+}
+
+fn canonical_key(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => parent
+            .canonicalize()
+            .map_or_else(|_| path.to_path_buf(), |p| p.join(name)),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Build one line with the chain link `next` currently holds, write it and
+/// its newline in a SINGLE write, then advance `next`.
+///
+/// Two properties, and both are load-bearing:
+///
+/// 1. **One write.** A line written without its newline, and the newline
+///    written after, lets a concurrent `O_APPEND` write land in between and
+///    produce one line that is two half-events and parses as neither.
+///    TokenFuse's exporter frames the same way, for the same reason.
+/// 2. **The chain does not advance on a failed write.** `?` on `write_all`
+///    skips the assignment, so the next successful line re-links to the last
+///    line actually on disk rather than to one that never reached it.
+///
+/// Generic over the writer purely so the framing can be asserted directly in
+/// a test; the only production writer is the sink's `File`.
+fn append_chained<W: Write>(
+    w: &mut W,
+    next: &mut Option<String>,
+    build: impl FnOnce(Option<&str>) -> Result<String>,
+) -> Result<()> {
+    let line = build(next.as_deref())?;
+    // Computed before the write and from the line itself: `chain_hash_of_line`
+    // strips `prev_hash` first, so this is the same value a verifier
+    // recomputes from the bytes on disk.
+    let advanced = chain_hash_of_line(&line);
+    let mut framed = line.into_bytes();
+    framed.push(b'\n');
+    w.write_all(&framed)?;
+    *next = advanced;
+    Ok(())
 }
 
 /// Build the `console_command` agent-event line for `rec`, without touching
@@ -194,10 +301,10 @@ pub fn chain_hash_of_line(line: &str) -> Option<String> {
 /// empty (a head event carries no `prev_hash`, which is what an empty file
 /// correctly produces).
 ///
-/// Reads the whole file rather than seeking its tail: this runs once per
-/// privileged console action, not per agent event, and a correct tail read
-/// across a partially-written last line is more machinery than that rate
-/// justifies.
+/// Reads the whole file rather than seeking its tail. That was already a
+/// generous trade when this ran once per privileged console action; it now
+/// runs once per file per process, at [`sink_for`], so a correct tail read
+/// across a partially-written last line is machinery this does not need.
 fn last_line_of(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     text.lines()
@@ -241,22 +348,6 @@ fn sanitize_host(host: &str) -> String {
     } else {
         sanitized
     }
-}
-
-/// Append `line` plus a trailing `\n` to `path`, creating the parent
-/// directory and the file itself if either is missing. Always appends, never
-/// truncates: the console events file is a log every source, including the
-/// console's own commands, writes to over time.
-fn append_line(path: &Path, line: &str) -> Result<()> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(line.as_bytes())?;
-    file.write_all(b"\n")?;
-    Ok(())
 }
 
 /// Fail-closed guard for the break-glass path (06 §0.5; Phase-2 wave 3B).
@@ -331,5 +422,106 @@ mod tests {
     #[test]
     fn a_non_break_glass_decision_needs_no_reason() {
         assert!(require_break_glass_reason(&rec("allow", json!({}))).is_ok());
+    }
+
+    /// Records every `write_all` it is handed, so the framing can be asserted
+    /// as what it is: a count of writes, not a shape of bytes.
+    #[derive(Default)]
+    struct CountingWriter(Vec<Vec<u8>>);
+
+    impl Write for CountingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.push(buf.to_vec());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The defect this pins: writing the line and then the newline is two
+    /// syscalls, and a concurrent `O_APPEND` write lands between them.
+    #[test]
+    fn a_line_and_its_newline_are_one_write() {
+        let mut w = CountingWriter::default();
+        let mut next = None;
+        append_chained(&mut w, &mut next, |prev| {
+            assert_eq!(prev, None, "an empty chain starts at a head");
+            Ok(r#"{"source":"console"}"#.to_string())
+        })
+        .expect("append");
+
+        assert_eq!(w.0.len(), 1, "one event must reach the file in one write");
+        assert_eq!(w.0[0], b"{\"source\":\"console\"}\n");
+    }
+
+    /// The link is advanced in memory from the line just written, never by
+    /// re-reading the file, which is what makes a foreign append harmless.
+    #[test]
+    fn the_next_link_comes_from_the_line_just_written() {
+        let mut w = CountingWriter::default();
+        let mut next = None;
+        let first = r#"{"source":"console","ts":"1"}"#;
+        append_chained(&mut w, &mut next, |_| Ok(first.to_string())).expect("append");
+        assert_eq!(next, chain_hash_of_line(first));
+
+        append_chained(&mut w, &mut next, |prev| {
+            assert_eq!(
+                prev,
+                chain_hash_of_line(first).as_deref(),
+                "the second line must link to the first"
+            );
+            Ok(r#"{"source":"console","ts":"2"}"#.to_string())
+        })
+        .expect("append");
+    }
+
+    /// A write that fails must not advance the chain: the next successful
+    /// line has to re-link to the last line actually on disk.
+    #[test]
+    fn a_failed_write_does_not_advance_the_chain() {
+        struct Failing;
+        impl Write for Failing {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk gone"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut next = Some("sha256:aa".to_string());
+        let err = append_chained(&mut Failing, &mut next, |_| {
+            Ok(r#"{"source":"console"}"#.to_string())
+        });
+        assert!(err.is_err());
+        assert_eq!(
+            next,
+            Some("sha256:aa".to_string()),
+            "the chain must stay where it was"
+        );
+    }
+
+    /// One file, one sink: two lookups of the same path (in any spelling the
+    /// OS resolves to it) must hand back the same writer, or two commands in
+    /// flight each advance their own chain.
+    #[test]
+    fn one_file_gets_exactly_one_sink() {
+        let dir = std::env::temp_dir().join(format!(
+            "genaryx-sink-identity-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let path = dir.join("console.ndjson");
+        let a = sink_for(&path).expect("open the sink");
+        let b = sink_for(&dir.join(".").join("console.ndjson")).expect("reopen the same file");
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "the same file must resolve to the same sink"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

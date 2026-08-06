@@ -90,10 +90,25 @@ export function BusStatusBar({
         <span
           className="chip"
           style={cssVar("dot", "var(--sev-medium)")}
-          title="No backend detected (or the recent_events command failed): showing bundled mock data."
+          title="No backend is configured, so these rows are bundled sample data, not this box's records."
         >
           <span className="dot" aria-hidden="true" />
           mock data
+        </span>
+      )}
+
+      {/* A real backend that did not answer. Distinct from the mock chip on
+          purpose: the two used to be the same state, and that is what let a
+          failing box show a fixture stream under a "mock data" label. There
+          are no rows behind this one, and that is the honest answer. */}
+      {source === "error" && (
+        <span
+          className="chip"
+          style={cssVar("dot", "var(--sev-high)")}
+          title="The box did not answer recent_events. No events are shown, because there are none to show."
+        >
+          <span className="dot" aria-hidden="true" />
+          no answer from the box
         </span>
       )}
 

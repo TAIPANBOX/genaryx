@@ -27,7 +27,14 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 
 problems=0
 
-CRED='AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_CREDENTIALS|GCP_SERVICE_ACCOUNT|AZURE_CLIENT_SECRET|AZURE_TENANT_ID|ARM_CLIENT_SECRET|IBM_CLOUD_API_KEY|OS_PASSWORD'
+# The provider list is the point of failure here, not the grep. Until
+# 2026-08-06 it covered AWS, GCP, Azure, IBM and OpenStack and no Hetzner term
+# at all, while the console shipped a Hetzner inventory connector and the
+# estate runs its own Kubernetes baseline on Hetzner. A gate that names every
+# provider except the one actually in use reads as enforcement and is not.
+# Verified by breaking it: a `std::env::var("HCLOUD_TOKEN")` in `crates/`
+# passed this script cleanly before HCLOUD_TOKEN was on this line.
+CRED='AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_CREDENTIALS|GCP_SERVICE_ACCOUNT|AZURE_CLIENT_SECRET|AZURE_TENANT_ID|ARM_CLIENT_SECRET|IBM_CLOUD_API_KEY|OS_PASSWORD|HCLOUD_TOKEN|HCLOUD_API_TOKEN|HETZNER_TOKEN|HETZNER_API_TOKEN|DIGITALOCEAN_TOKEN|DO_API_TOKEN'
 
 while IFS= read -r hit; do
 	[ -n "$hit" ] || continue
