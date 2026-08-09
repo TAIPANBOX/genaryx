@@ -178,7 +178,10 @@ pub fn egress_recent(limit: usize, state: &AppState) -> EgressPanel {
         };
         let d = e.data.unwrap_or_default();
 
-        let enforcement = d.get("enforcement").and_then(|v| v.as_str()).map(String::from);
+        let enforcement = d
+            .get("enforcement")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         if is_fetch {
             totals.fetched += 1;
             if enforcement.as_deref() == Some("navigation_only") {
@@ -213,7 +216,10 @@ pub fn egress_recent(limit: usize, state: &AppState) -> EgressPanel {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            url_sha384: d.get("url_sha384").and_then(|v| v.as_str()).map(String::from),
+            url_sha384: d
+                .get("url_sha384")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             backend: d.get("backend").and_then(|v| v.as_str()).map(String::from),
             enforcement,
             content_bytes: d.get("content_bytes").and_then(|v| v.as_i64()),
