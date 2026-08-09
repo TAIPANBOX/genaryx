@@ -152,3 +152,39 @@ fn bad_severity_enum_is_rejected() {
     let bad = r#"{"schema":"taipanbox.dev/agent-event/v0.1","ts":"2026-07-09T03:12:44.100Z","source":"tokenfuse","type":"budget_exhausted","agent_id":"agent://acme.example/a/b","severity":"apocalyptic"}"#;
     assert!(!c.check_line(bad).valid);
 }
+
+/// SPEC 5.1 caps the delegation chain at 32 entries and both canonical schemas
+/// carry that as `maxItems`. Both vendored copies here had lost it, so this
+/// console accepted a chain of any depth while believing it validated one, and
+/// nothing said so: the copies are compiled in with `include_str!`, so the only
+/// thing between them and the canonical file is a byte comparison living in
+/// another repository.
+///
+/// Both directions are asserted on purpose. A bound that refuses 33 and also
+/// refuses 32 is a different bug wearing the same green tick.
+#[test]
+fn a_delegation_chain_past_the_spec_depth_is_rejected() {
+    let c = conformer();
+    let chain = |n: usize| -> String {
+        (0..n)
+            .map(|i| format!("\"agent://acme.example/a/{i}\""))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let event = |schema: &str, entries: &str| -> String {
+        format!(
+            r#"{{"schema":"taipanbox.dev/agent-event/{schema}","ts":"2026-07-09T03:12:44.100Z","source":"tokenfuse","type":"budget_exhausted","agent_id":"agent://acme.example/a/b","on_behalf_of":[{entries}]}}"#
+        )
+    };
+
+    for schema in ["v0.1", "v0.2"] {
+        assert!(
+            c.check_line(&event(schema, &chain(32))).valid,
+            "{schema}: a chain of exactly 32 is legal under SPEC 5.1 and must stay legal"
+        );
+        assert!(
+            !c.check_line(&event(schema, &chain(33))).valid,
+            "{schema}: a chain of 33 exceeds SPEC 5.1 and must be refused"
+        );
+    }
+}
