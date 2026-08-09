@@ -41,8 +41,26 @@ note() {
 	problems=$((problems + 1))
 }
 
-actual=$(cargo test --workspace --quiet 2>/dev/null |
-	grep -E '^test result' | awk '{s += $4} END {print s + 0}')
+# `--no-fail-fast`, and the exit code is read rather than discarded. Without
+# both, a single failing test truncates the run: cargo stops after that crate,
+# the later crates never report, and the sum comes out low. This check then
+# says the badge is wrong when what actually happened is that the suite broke.
+#
+# Measured 2026-08-09: one failing test in `connectors` cut the workspace from
+# six crates to two, the sum from 688 to 479, and this printed "the badge says
+# 688 tests and cargo test --all runs 479". The badge was right and the README
+# was innocent.
+out=$(cargo test --workspace --no-fail-fast --quiet 2>&1)
+status=$?
+actual=$(printf '%s\n' "$out" | grep -E '^test result' | awk '{s += $4} END {print s + 0}')
+
+if [ "$status" -ne 0 ]; then
+	note "the suite did not pass, so its count cannot be compared with anything."
+	note "Fix the tests first; a failing run reports fewer tests than the repo has,"
+	note "and this check would blame the README for it."
+	printf '%s\n' "$out" | grep -E '^(test result|error|failures:)' | head -20
+	exit 1
+fi
 
 if [ "${actual:-0}" -eq 0 ]; then
 	note "the suite reported no tests at all, which means this check measured nothing"

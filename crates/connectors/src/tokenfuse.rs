@@ -883,7 +883,17 @@ mod tests {
             format!("{home}/.taipan/environments/p2exit.traces/gateway"),
             format!("{home}/.taipan/environments/p2gate.traces/gateway"),
         ];
-        let Some(traces_dir) = candidates.iter().map(PathBuf::from).find(|p| p.is_dir()) else {
+        // `is_dir()` is not "populated", and the difference is not academic:
+        // installing the stack creates `<env>.traces/gateway` empty, so this
+        // found a directory, took it, and failed the assert below on a box
+        // that legitimately has no traces. The word in the comment above is
+        // "populated", so that is what is asked.
+        let Some(traces_dir) = candidates.iter().map(PathBuf::from).find(|p| {
+            p.is_dir()
+                && std::fs::read_dir(p)
+                    .map(|mut d| d.next().is_some())
+                    .unwrap_or(false)
+        }) else {
             eprintln!("SKIP live tokenfuse test: no populated traces dir among {candidates:?}");
             return;
         };
