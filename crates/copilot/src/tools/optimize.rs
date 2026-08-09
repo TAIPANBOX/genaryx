@@ -217,16 +217,12 @@ mod tests {
         // `<env>.traces/gateway` empty, so this took an empty directory and
         // failed the assert below instead of skipping. Same defect as
         // connectors/src/tokenfuse.rs had, in a copy of the same block.
-        let Some(traces_dir) = candidates
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| {
-                p.is_dir()
-                    && std::fs::read_dir(p)
-                        .map(|mut d| d.next().is_some())
-                        .unwrap_or(false)
-            })
-        else {
+        let Some(traces_dir) = candidates.iter().map(PathBuf::from).find(|p| {
+            p.is_dir()
+                && std::fs::read_dir(p)
+                    .map(|mut d| d.next().is_some())
+                    .unwrap_or(false)
+        }) else {
             eprintln!(
                 "SKIP live optimize-tools test: no populated traces dir among {candidates:?}"
             );
