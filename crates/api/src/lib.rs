@@ -38,6 +38,7 @@ pub mod copilot;
 pub mod credentials;
 pub mod crypto;
 pub mod drills;
+pub mod egress;
 pub mod evidence;
 pub mod identity;
 pub mod memory;

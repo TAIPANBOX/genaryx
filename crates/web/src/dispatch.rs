@@ -331,6 +331,15 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             Ok(ok(genaryx_api::graph::agent_slice(a.agent_id, &ctx.bus)))
         }
         "bus_status" => Ok(ok(genaryx_api::bus::bus_status(&ctx.bus))),
+        // The egress panel. A read, and classified as one in roles.rs.
+        "egress_recent" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                limit: usize,
+            }
+            let a: A = decode(args)?;
+            Ok(ok(genaryx_api::egress::egress_recent(a.limit, &ctx.bus)))
+        }
         "recent_events" => {
             #[derive(serde::Deserialize)]
             struct A {

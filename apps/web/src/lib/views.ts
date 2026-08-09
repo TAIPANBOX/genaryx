@@ -15,6 +15,7 @@ export type ViewId =
   | "replay"
   | "posture"
   | "bus"
+  | "egress"
   | "routines"
   | "copilot";
 
@@ -43,6 +44,7 @@ export const NAV_SECTIONS: readonly {
       { id: "graph", label: "Graph" },
       { id: "replay", label: "Replay" },
       { id: "bus", label: "Bus Explorer" },
+      { id: "egress", label: "Web Egress" },
       { id: "quality", label: "Quality" },
       { id: "memory", label: "Memory" },
     ],

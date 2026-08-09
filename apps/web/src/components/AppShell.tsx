@@ -23,6 +23,7 @@ import { OnboardView } from "./OnboardView";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
+import { EgressView } from "./EgressView";
 import { QualityView } from "./QualityView";
 import { RemoteView } from "./RemoteView";
 import { RoutinesView } from "./RoutinesView";
@@ -442,6 +443,7 @@ export function AppShell() {
         {view === "identity" && <IdentityView onOpenAgent={onOpenAgent} />}
         {view === "onboard" && <OnboardView />}
         {view === "quality" && <QualityView onOpenAgent={onOpenAgent} />}
+        {view === "egress" && <EgressView />}
         {view === "crypto" && <CryptoView />}
         {view === "memory" && <MemoryView onOpenAgent={onOpenAgent} />}
         {view === "drills" && <DrillsView />}
