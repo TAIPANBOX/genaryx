@@ -41,6 +41,22 @@ break in turn, because the command lived only in whoever ran it last. Copy
 `dist/` into the site's `demo/`, and delete the previous hashed asset files:
 the names change per build and stale ones are served forever otherwise.
 
+## Gates
+
+```sh
+./scripts/no-cloud-credentials.sh
+./scripts/no-fabricated-rows.sh
+./scripts/web-only-and-unpriced.sh
+./scripts/readme-numbers.sh          # runs the whole suite; slow
+./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
+```
+
+This list did not exist until 2026-08-09. The four gates above were named only
+inside the invariants that own them, and CI ran all four, so there was no one
+place a person could read to know what to run.
+
+`readme-numbers.sh` takes minutes because it runs `cargo test --workspace`.
+
 ## Hard invariants
 
 Each one carries how it is held today. Use `(gate: ...)`, `(test: ...)`,
@@ -115,6 +131,38 @@ an absent invariant.
    hardware-confirmed and an agent is literally named `dependency-upgrader`, so
    a word list would cry wolf and get disabled. What is forbidden is a
    purchase-surface component and `upgrade_url` reaching a component.)*
+
+7. **A check must be able to tell "did not fail" from "did not run", and every
+   gate here has been made to fail on purpose to prove it can.**
+   `readme-numbers.sh` says in its own words that a suite reporting no tests
+   means it measured nothing. That sentence was true and nothing had re-run it.
+
+   It also carried a nearer relative of the same fault, and this is the part
+   worth keeping. It took the test count from a run whose exit code it
+   discarded and whose stderr it sent to /dev/null. Cargo stops after the first
+   crate that fails, so ONE failing test cut the workspace from six crates to
+   two, the sum fell from 688 to 479, and the gate reported that the README was
+   lying. The README was correct throughout. **A number read from a broken run
+   is not a smaller number, it is a different measurement wearing the same
+   units.** It now passes `--no-fail-fast`, reads the exit code, and refuses to
+   compare anything when the suite did not pass.
+
+   The failing test was itself the same shape one level down: two live-skip
+   tests picked their traces directory with `is_dir()` while their own comments
+   asked for "populated", and the installer creates that directory empty. Two
+   copies of one block, both fixed.
+
+   The three grep-shaped gates are the other risk here: a pattern that stops
+   matching reports success, and each prints OK from an empty result set.
+   *(gate: `scripts/gates-have-teeth.sh`, 6 cases: four real faults, one
+   non-fault, and one planted test failure that must be reported as a broken
+   suite rather than as a stale badge. The non-fault is the one worth keeping:
+   `apps/web/src/lib/recentEvents.ts` is the single module allowed to import
+   fixtures, and a gate that flagged it would be flagging the design it
+   protects.)*
+
+   **What it does not cover.** It cannot test itself. It proves each gate
+   catches the faults named in it, not every fault of that kind.
 
 ## Decisions that have no gate yet
 
