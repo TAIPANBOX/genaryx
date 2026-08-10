@@ -76,11 +76,19 @@ const BLOCKED_TYPES: &[&str] = &[
 /// Events that mean an agent did something odd without necessarily being
 /// stopped for it.
 ///
-/// Idryx's seven detector names (`behavior_anomaly`, `impossible_travel` and
-/// the rest) are deliberately absent. SPEC 6.2 marks that whole row RESERVED:
-/// idryx's detections leave by OTLP and by Slack and never enter this envelope,
-/// so a column counting them would sit at zero forever while an operator read
-/// the zero as good news.
+/// Idryx's SEVEN RESERVED DETECTOR NAMES ARE STILL ABSENT, and one new type
+/// replaced the need for them. When this module was written, SPEC 6.2 marked
+/// the whole idryx row reserved: its detections left by OTLP and by Slack and
+/// never entered this envelope, so a column counting `behavior_anomaly` would
+/// have sat at zero forever while a reader took the zero for good news.
+///
+/// That changed on 2026-08-10. Idryx now emits, and it emits ONE type,
+/// `identity_finding`, with the detector name in `data.detector`, rather than
+/// registering twenty-five wire types. So the seven reserved names are still
+/// not counted (nothing emits them, and two never had a producer at all), and
+/// the single type that does exist is counted here. Which detector fired is a
+/// description of the behaviour rather than a category of it, and it reaches
+/// the operator through [`AgentStats::by_detector`].
 const ANOMALY_TYPES: &[&str] = &[
     // tokenfuse, the three runaway shapes.
     "sustained_loop",
@@ -90,7 +98,12 @@ const ANOMALY_TYPES: &[&str] = &[
     "quality_drift",
     "contradiction_found",
     "sim_finding",
+    // idryx, one type carrying twenty-five detectors.
+    "identity_finding",
 ];
+
+/// The idryx type whose `data.detector` says which of its detectors fired.
+const IDENTITY_FINDING: &str = "identity_finding";
 
 /// Events about an agent's budget.
 ///
@@ -218,6 +231,19 @@ pub struct AgentStats {
     /// Every event type seen for this agent, counted under its own raw name,
     /// including the ones no counter above recognizes. See the module doc.
     pub by_type: BTreeMap<String, usize>,
+
+    /// Which idryx detectors fired for this agent, by name.
+    ///
+    /// Separate from `by_type` because idryx deliberately ships ONE wire type
+    /// carrying twenty-five detector names, so `by_type` would say
+    /// `identity_finding: 9` and describe nothing. "Nine identity findings" and
+    /// "impossible_travel twice, over_privileged_nhi seven times" are the same
+    /// count and different information, and the second is the one an operator
+    /// can act on.
+    ///
+    /// Empty for an agent with no idryx findings, and for a box whose idryx
+    /// predates the emitter or runs without `IDRYX_EVENTS` set.
+    pub by_detector: BTreeMap<String, usize>,
 
     /// The newest event timestamp seen for this agent, so a table can sort by
     /// recency without a second read.
@@ -381,6 +407,21 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
         }
         if ANOMALY_TYPES.contains(&t) {
             entry.anomalies += 1;
+        }
+        // The detector name, when idryx sent one. Read defensively: a finding
+        // with no detector still counts as an anomaly above, it just cannot
+        // describe itself, and inventing a name for it would be worse than the
+        // gap.
+        if t == IDENTITY_FINDING {
+            if let Some(detector) = e
+                .data
+                .as_ref()
+                .and_then(|d| d.get("detector"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+            {
+                *entry.by_detector.entry(detector.to_string()).or_insert(0) += 1;
+            }
         }
         if BUDGET_TYPES.contains(&t) {
             entry.budget_events += 1;
