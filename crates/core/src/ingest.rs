@@ -220,20 +220,43 @@ impl IngestService {
         let journaled = self.store.get_source_state(&key)?;
         let live_inode = inode_of(path);
 
-        let offset = match (journaled, live_inode) {
-            (None, _) => 0,
-            (Some(state), Some(now)) => match state.inode {
-                Some(then) if then != now => {
+        let offset = match journaled {
+            None => 0,
+            Some(state) => {
+                // Two signals, and the order matters. A DIFFERING inode is
+                // conclusive: it is a different file. An identical one proves
+                // nothing, because Linux hands a rotated file the inode its
+                // predecessor just released, so the fingerprint of the bytes
+                // already consumed is what actually decides.
+                let inode_says_new = match (state.inode, live_inode) {
+                    (Some(then), Some(now)) => then != now,
+                    _ => false,
+                };
+                let live_head = crate::store::head_fingerprint(path, state.offset);
+                let head_says_new = match (&state.head_sha, &live_head) {
+                    (Some(then), Some(now)) => then != now,
+                    // No fingerprint on either side is "cannot tell": an older
+                    // store, or a file that has shrunk (which `FileTail`'s own
+                    // check handles). Neither is a reason to re-read.
+                    _ => false,
+                };
+
+                if inode_says_new || head_says_new {
+                    let why = if head_says_new {
+                        "its contents up to that point no longer match"
+                    } else {
+                        "its inode changed"
+                    };
                     eprintln!(
-                        "genaryx: {key} was replaced while this console was not reading it \
-                         (inode {then} -> {now}); re-reading from the top, already-stored lines \
-                         are skipped by their dedupe key"
+                        "genaryx: {key} is not the file this console was reading ({why}); \
+                         re-reading from the top, and lines already stored are skipped by their \
+                         dedupe key"
                     );
                     0
+                } else {
+                    state.offset
                 }
-                _ => state.offset,
-            },
-            (Some(state), None) => state.offset,
+            }
         };
 
         self.sources.push(Box::new(FileTail::new(id, path, offset)));
@@ -322,8 +345,13 @@ impl IngestService {
         // that rewrites a file the console has already seen.
         stats.inserted = self.store.insert_batch(&valid_events)?;
         for (file, offset) in &offsets_to_journal {
-            self.store
-                .set_offset(file, *offset, inode_of(Path::new(file)))?;
+            let path = Path::new(file);
+            self.store.set_offset(
+                file,
+                *offset,
+                inode_of(path),
+                crate::store::head_fingerprint(path, *offset).as_deref(),
+            )?;
         }
         for event in valid_events {
             // No subscribers is not a failure; ignore the send error.

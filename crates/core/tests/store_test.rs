@@ -198,7 +198,7 @@ fn offset_upsert_overwrites() {
     );
 
     store
-        .set_offset("tokenfuse.ndjson", 100, Some(7))
+        .set_offset("tokenfuse.ndjson", 100, Some(7), None)
         .expect("set_offset");
     assert_eq!(
         store.get_offset("tokenfuse.ndjson").expect("get_offset"),
@@ -206,7 +206,7 @@ fn offset_upsert_overwrites() {
     );
 
     store
-        .set_offset("tokenfuse.ndjson", 250, Some(7))
+        .set_offset("tokenfuse.ndjson", 250, Some(7), None)
         .expect("set_offset (upsert)");
     assert_eq!(
         store.get_offset("tokenfuse.ndjson").expect("get_offset"),
@@ -357,7 +357,7 @@ fn retention_drops_the_old_and_never_the_undated() {
 fn the_offset_journal_remembers_the_inode() {
     let store = Store::open_in_memory().expect("open in-memory store");
     store
-        .set_offset("tokenfuse.ndjson", 4096, Some(31337))
+        .set_offset("tokenfuse.ndjson", 4096, Some(31337), Some("deadbeef"))
         .expect("set_offset");
 
     let state = store
@@ -366,6 +366,11 @@ fn the_offset_journal_remembers_the_inode() {
         .expect("the file has been seen");
     assert_eq!(state.offset, 4096);
     assert_eq!(state.inode, Some(31337));
+    assert_eq!(
+        state.head_sha.as_deref(),
+        Some("deadbeef"),
+        "the fingerprint of the consumed bytes is what survives inode reuse"
+    );
 
     assert!(
         store

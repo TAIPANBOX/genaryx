@@ -17,7 +17,7 @@ use std::path::Path;
 /// version-gated step in [`migrate`] whenever a table shape changes; the
 /// `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
 /// themselves stay safe to rerun regardless.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Phase-0 schema (06 §2 subset): events, the per-file read-offset journal,
 /// the quarantine table for malformed/non-conforming lines, and the spend
@@ -128,6 +128,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedupe ON events(dedupe);
 CREATE INDEX IF NOT EXISTS idx_events_ts_ms ON events(ts_ms);
 ";
 
+/// Phase-3 follow-up: the fingerprint that actually detects a replaced file.
+///
+/// The inode alone does not, and CI proved it: on Linux a `remove` followed by
+/// a `create` routinely gets the SAME inode number back, so a rotated file
+/// looked like the file we were already reading and the tail resumed at an
+/// offset belonging to bytes that no longer existed. The test caught it because
+/// it asserted the count; without that assertion this would have shipped as
+/// silent, permanent event loss on every rotation.
+///
+/// `head_sha` is a hash of the bytes this console has ALREADY consumed, capped
+/// at [`HEAD_FINGERPRINT_BYTES`]. On resume the same span is re-read and
+/// compared: same bytes, same file, resume; different bytes, a different file,
+/// start from the top. That is filesystem-independent, which the inode is not.
+const MIGRATION_V4: &str = "
+ALTER TABLE source_offsets ADD COLUMN head_sha TEXT;
+";
+
 /// A row read back from `events`, shaped for the shells: envelope fields plus
 /// provenance, so every byte shown can point back to its source (06 §0.8).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -164,14 +181,21 @@ pub struct DelegationRow {
 }
 
 /// What the offset journal remembers about one tailed file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceState {
     pub offset: u64,
     /// The inode the offset was read from, when the platform reports one.
-    /// `None` on a store written before inodes were recorded, and on any
-    /// platform without them: a caller treats that as "cannot tell" and
-    /// resumes, which is the behaviour that existed before.
+    ///
+    /// Kept, but NOT sufficient on its own: Linux reuses inode numbers, so a
+    /// rotated file frequently comes back with the one its predecessor had.
+    /// A DIFFERING inode is still conclusive evidence of a different file, so
+    /// it stays as a cheap first check; an identical one proves nothing and
+    /// [`SourceState::head_sha`] is what decides.
     pub inode: Option<u64>,
+    /// Hash of the bytes already consumed from this file, capped at
+    /// [`HEAD_FINGERPRINT_BYTES`]. `None` on a store written before this
+    /// column existed, which a caller treats as "cannot tell".
+    pub head_sha: Option<String>,
 }
 
 /// Handle to the console's local store.
@@ -551,33 +575,42 @@ impl Store {
     /// smaller and catches nothing when it is larger, which is the case that
     /// silently loses events.
     pub fn get_source_state(&self, file: &str) -> Result<Option<SourceState>> {
-        let row: Option<(i64, Option<i64>)> = self
+        let row: Option<(i64, Option<i64>, Option<String>)> = self
             .conn
             .query_row(
-                "SELECT offset, inode FROM source_offsets WHERE file = ?1",
+                "SELECT offset, inode, head_sha FROM source_offsets WHERE file = ?1",
                 params![file],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(store_err)?;
-        let Some((offset, inode)) = row else {
+        let Some((offset, inode, head_sha)) = row else {
             return Ok(None);
         };
         Ok(Some(SourceState {
             offset: from_i64(offset)?,
             inode: inode.map(|i| i as u64),
+            head_sha,
         }))
     }
 
     /// Journal the read offset for `file` (upsert: the latest call wins).
-    pub fn set_offset(&self, file: &str, offset: u64, inode: Option<u64>) -> Result<()> {
+    pub fn set_offset(
+        &self,
+        file: &str,
+        offset: u64,
+        inode: Option<u64>,
+        head_sha: Option<&str>,
+    ) -> Result<()> {
         let offset = to_i64(offset)?;
         let inode = inode.map(to_i64).transpose()?;
         self.conn
             .execute(
-                "INSERT INTO source_offsets (file, offset, inode) VALUES (?1, ?2, ?3) \
-                 ON CONFLICT(file) DO UPDATE SET offset = excluded.offset, inode = excluded.inode",
-                params![file, offset, inode],
+                "INSERT INTO source_offsets (file, offset, inode, head_sha) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(file) DO UPDATE SET offset = excluded.offset, \
+                 inode = excluded.inode, head_sha = excluded.head_sha",
+                params![file, offset, inode, head_sha],
             )
             .map_err(store_err)?;
         Ok(())
@@ -664,6 +697,9 @@ fn migrate(conn: &Connection) -> Result<()> {
         // is what makes it run once; a store already at 3 skips it entirely.
         conn.execute_batch(MIGRATION_V3).map_err(store_err)?;
     }
+    if current < 4 {
+        conn.execute_batch(MIGRATION_V4).map_err(store_err)?;
+    }
     // Future migrations gate on `current < N` here, in order, before the final
     // `PRAGMA user_version` write below.
 
@@ -706,6 +742,50 @@ fn stored_event_from_row(row: &Row<'_>) -> Result<StoredEvent> {
         file: row.get(13).map_err(store_err)?,
         off: off.map(from_i64).transpose()?,
     })
+}
+
+/// How much of a file's already-consumed head is fingerprinted.
+///
+/// 64 KiB is far more than any event file's first lines and small enough to
+/// re-read on every resume without noticing. When the journaled offset is
+/// smaller than this, the fingerprint covers the ENTIRE consumed prefix and the
+/// check is exact rather than a heuristic, which is the ordinary case for these
+/// files.
+///
+/// The residual gap, stated rather than left to be found: a replacement whose
+/// first 64 KiB are byte-identical to the old file's and which then diverges
+/// would be resumed rather than re-read. Nothing in this estate rewrites a log
+/// that way, and the alternative (hashing the whole prefix each poll) costs
+/// real work on every tick to close a case nobody has.
+pub const HEAD_FINGERPRINT_BYTES: u64 = 64 * 1024;
+
+/// Fingerprint of the first `min(offset, HEAD_FINGERPRINT_BYTES)` bytes of
+/// `path`, or `None` when the file cannot be read or is shorter than `offset`
+/// (which is itself a signal the caller handles separately).
+///
+/// This is what tells "the file I was reading" from "a different file at the
+/// same path". The inode cannot: Linux reuses inode numbers, so a rotated file
+/// routinely comes back wearing its predecessor's.
+pub fn head_fingerprint(path: &Path, offset: u64) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    if offset == 0 {
+        return None;
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len < offset {
+        // Shorter than what we have read: a truncation, which `FileTail`
+        // already treats as "start again". No fingerprint to compare.
+        return None;
+    }
+    let span = offset.min(HEAD_FINGERPRINT_BYTES);
+    let mut buf = vec![0u8; span as usize];
+    file.read_exact(&mut buf).ok()?;
+    let mut h = Sha256::new();
+    h.update(&buf);
+    Some(format!("{:x}", h.finalize()))
 }
 
 /// The uniqueness of one stored line: where it came from and what it said.

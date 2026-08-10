@@ -66,6 +66,19 @@ fn unique_ndjson_path(tag: &str) -> PathBuf {
     dir.join("events.ndjson")
 }
 
+/// The inode of `path`, so a test can assert it did NOT change and prove the
+/// content fingerprint is what detected the rewrite.
+#[cfg(unix)]
+fn inode_of(path: &std::path::Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).expect("stat").ino()
+}
+
+#[cfg(not(unix))]
+fn inode_of(_path: &std::path::Path) -> u64 {
+    0
+}
+
 fn write_new(path: &std::path::Path, content: &str) {
     std::fs::write(path, content).expect("write test ndjson file");
 }
@@ -252,15 +265,24 @@ fn a_truncation_that_rewrites_the_same_lines_does_not_duplicate_them() {
     let _ = std::fs::remove_file(&db);
 }
 
-/// A file REPLACED while the console was down gets re-read from the top, even
-/// when the replacement is longer than the journaled offset.
+/// A file whose CONTENT was replaced while the console was down gets re-read
+/// from the top, even when the replacement is longer than the journaled offset
+/// and even when it is the same file on disk.
 ///
-/// `FileTail`'s own shorter-than-my-offset check cannot see this case: the new
-/// file is bigger, so the tail would seek into the middle of it and every event
-/// before that point would be lost with nothing reporting it. The inode in the
-/// offset journal is what catches it.
+/// Three things have to line up for this to be missed, and they do line up in
+/// the ordinary `stack-up` restart: the tail's own shorter-than-my-offset check
+/// does not fire (the new content is LONGER), the inode is unchanged (the file
+/// was rewritten in place, and on Linux even a delete-and-recreate usually
+/// reuses the number), and so a naive resume seeks into the middle of content
+/// it has never read. Everything before that point is then lost, permanently
+/// and silently.
+///
+/// Rewriting in place is deliberate here rather than `remove` + `create`: it
+/// pins the inode identical on every platform, so the test proves the
+/// fingerprint is doing the work instead of depending on how the filesystem
+/// happens to allocate.
 #[test]
-fn a_file_replaced_while_down_is_re_read_from_the_top() {
+fn a_file_rewritten_while_down_is_re_read_from_the_top() {
     let path = unique_ndjson_path("replaced");
     let db = path.with_extension("sqlite");
     write_new(&path, VALID_5);
@@ -273,13 +295,18 @@ fn a_file_replaced_while_down_is_re_read_from_the_top() {
         assert_eq!(svc.poll_once().expect("first run").inserted, 5);
     }
 
-    // Replaced by a DIFFERENT file: new inode, longer than the old one, and
-    // sharing none of its bytes. `remove_file` then a fresh create is what a
-    // rotation does. Sharing no bytes is what makes this a test: a replacement
-    // that began with the same content would be read correctly by a plain
-    // resume, and would prove nothing.
-    std::fs::remove_file(&path).expect("remove");
+    // Rewritten IN PLACE: same inode, longer than before, sharing none of the
+    // old bytes. Sharing no bytes is what makes this a test at all; a
+    // replacement that began with the same content would be read correctly by
+    // a plain resume and would prove nothing.
+    let inode_before = inode_of(&path);
     write_new(&path, REPLACEMENT_8);
+    assert_eq!(
+        inode_of(&path),
+        inode_before,
+        "rewriting in place must keep the inode, so this test cannot pass by \
+         accident on a filesystem that hands out a fresh one"
+    );
     assert!(
         REPLACEMENT_8.len() > VALID_5.len(),
         "the replacement must be LONGER, which is the case FileTail's own \
