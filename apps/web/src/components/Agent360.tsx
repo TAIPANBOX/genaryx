@@ -29,6 +29,7 @@ import { DelegationGraphView } from "./DelegationGraphView";
 import { Sparkline } from "./dash";
 import { SeverityBadge } from "./SeverityBadge";
 import { SourceChip } from "./SourceChip";
+import { AgentDetailCard } from "./AgentDetailCard";
 import { UnitCard } from "./UnitCard";
 import { WatchToggleButton } from "./WatchDock";
 
@@ -627,6 +628,25 @@ export function Agent360({
           </span>
         </div>
         <div className="flex-1" />
+        {/* The way BACK. `AgentDetailCard` has had an "open full" into this
+            panel since it was written, and nothing went the other way: an
+            operator who followed a link in here and then wanted the owned-thing
+            view (owner, unit, budget, behaviour envelope, lifecycle history,
+            the transfer and reassign actions) had to close this, find the agent
+            again somewhere else, and open the popover from there. */}
+        <button
+          type="button"
+          className="icon-btn"
+          style={{ width: "auto", padding: "0 8px", fontSize: 10.5 }}
+          title="The agent's owned-thing card: owner, unit, budget, behaviour and lifecycle"
+          onClick={(e) =>
+            open(<AgentDetailCard agentId={agentId} onOpenFull={onOpenAgent} />, {
+              anchor: e.currentTarget.getBoundingClientRect(),
+            })
+          }
+        >
+          Agent card &rsaquo;
+        </button>
         <FreezeToggleButton frozen={frozen} onToggle={() => blockAgent(agentId, !frozen).then(() => {})} />
         <KillRunButton
           run={liveRun}
