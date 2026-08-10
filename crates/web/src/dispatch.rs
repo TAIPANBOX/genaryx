@@ -359,9 +359,18 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             #[derive(serde::Deserialize)]
             struct A {
                 scan: usize,
+                /// Days of history to count over. `0` (and an older frontend
+                /// that omits it) means the recent slice of any age, which is
+                /// what this command did before durable history existed.
+                #[serde(default)]
+                window_days: u32,
             }
             let a: A = decode(args)?;
-            Ok(ok(genaryx_api::stats::stats_counts(a.scan, &ctx.bus)))
+            Ok(ok(genaryx_api::stats::stats_counts(
+                a.scan,
+                a.window_days,
+                &ctx.bus,
+            )))
         }
         "recent_events" => {
             #[derive(serde::Deserialize)]

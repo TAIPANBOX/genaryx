@@ -97,26 +97,45 @@ pub fn bootstrap<S: EventSink>(sink: S) -> genaryx_core::Result<BusBootstrap> {
     }
 }
 
-/// Tail a real environment's event files.
+/// Tail a real environment's event files, into a store that OUTLIVES the
+/// process.
 ///
-/// The store is per-process scratch, exactly as in demo mode, and that is a
-/// deliberate limit of this slice rather than an oversight. A store that
-/// persisted across restarts is what turns this bus into history, but it also
-/// needs an answer for re-ingestion: `stack-up` truncates its event files on
-/// every start, `FileTail` correctly resets to offset 0 when it sees that,
-/// and with no dedupe key the whole file would then be inserted a second
-/// time. Durable history is its own piece of work (the `runs` table and
-/// retention); until then a fresh store per launch is the honest option,
-/// because it can only ever show what the files really contain.
+/// This used to be per-process scratch, and the note here used to explain why:
+/// re-ingestion. `stack-up` truncates its event files on every start,
+/// `FileTail` correctly resets to offset 0 when it sees that, and with no
+/// dedupe key the whole file landed a second time. Both halves of the answer
+/// now exist in `genaryx-core`'s store, so the limit is lifted:
+///
+/// - every row carries a `dedupe` key over (env, file, offset, raw), so a
+///   replay of bytes already held is a no-op rather than a second copy;
+/// - the offset journal records the file's inode, so a file replaced while the
+///   console was down is re-read from the top instead of resumed at an offset
+///   that belongs to a file that is gone.
+///
+/// The store is per ENVIRONMENT, under the same `TAIPAN_HOME` the rest of the
+/// install honours. Two environments would otherwise share one history and
+/// answer each other's questions.
+///
+/// Demo mode stays scratch, deliberately. Its events are regenerated on every
+/// launch, so persisting them would accumulate fixture data that no product
+/// ever emitted and call it history, in the one product whose whole claim is
+/// that what you see is what happened.
 fn bootstrap_live<S: EventSink>(
     sink: S,
     resolved: genaryx_core::bus::ResolvedBus,
 ) -> genaryx_core::Result<BusBootstrap> {
-    let store_dir = unique_events_dir();
+    let store_dir = durable_store_dir(&resolved.env_name).unwrap_or_else(|| {
+        eprintln!(
+            "genaryx: neither TAIPAN_HOME nor HOME is set, so this session keeps no history; \
+             events are kept for this process only"
+        );
+        unique_events_dir()
+    });
     std::fs::create_dir_all(&store_dir)?;
 
     let db_path = store_dir.join("console.sqlite");
     let store = Store::open(&db_path)?;
+    prune_history(&store);
     let mut ingest = IngestService::new(store, resolved.env_name.as_str())?;
 
     // An events dir that does not exist yet is not an error: the environment
@@ -241,6 +260,77 @@ fn pick_up_new_sources(ingest: &mut IngestService, dir: &Path, tailed: &mut Vec<
 /// previous, feeder-extended run would then look like the file had been
 /// truncated, and the whole baseline would be re-ingested as new rows. Plain
 /// ephemeral scratch space; never cleaned up here (Phase-0 demo storage).
+/// Where one environment's durable history lives: `<TAIPAN_HOME>/genaryx/<env>`.
+///
+/// Under the same root the rest of the install already uses, and keyed by
+/// environment, because two environments hold different estates and a single
+/// shared history would let one answer questions about the other.
+///
+/// The environment name is sanitized to one path segment: it comes from a
+/// descriptor file, and a name carrying `..` or a slash must not be able to
+/// choose where the console writes.
+fn durable_store_dir(env: &str) -> Option<PathBuf> {
+    let root = genaryx_core::taipan_home::environments_dir()?
+        .parent()?
+        .join("genaryx");
+    let safe: String = env
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let safe = if safe.is_empty() {
+        "default".to_string()
+    } else {
+        safe
+    };
+    Some(root.join(safe))
+}
+
+/// How long a durable store keeps events, in days.
+///
+/// Ninety is a quarter, which is the shortest window an operator is plausibly
+/// asked about after the fact ("what did this agent do last quarter"). It is
+/// deliberately a plain number of days rather than a size cap: a size cap
+/// deletes the busy weeks first, which are the ones somebody comes back for.
+///
+/// `GENARYX_HISTORY_DAYS=0` keeps everything, for a box where an auditor owns
+/// the retention decision rather than this default.
+const DEFAULT_HISTORY_DAYS: i64 = 90;
+
+/// Drop anything past the retention horizon, and SAY how much went.
+///
+/// Announced rather than silent: a console that quietly deletes an operator's
+/// evidence is a worse failure than one that keeps too much, and the line in
+/// the log is the only place the trade-off is visible on a running box.
+fn prune_history(store: &Store) {
+    let days = std::env::var("GENARYX_HISTORY_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_HISTORY_DAYS);
+    if days <= 0 {
+        eprintln!(
+            "genaryx: history retention is off (GENARYX_HISTORY_DAYS={days}), keeping everything"
+        );
+        return;
+    }
+    let cutoff = chrono::Utc::now().timestamp_millis() - days * 86_400_000;
+    match store.prune_before(cutoff) {
+        Ok((0, 0)) => {}
+        Ok((events, quarantined)) => eprintln!(
+            "genaryx: history retention dropped {events} event(s) and {quarantined} quarantined \
+             line(s) older than {days} days"
+        ),
+        // A store that cannot be pruned is still a usable store. Say so and
+        // carry on rather than refusing to start over housekeeping.
+        Err(e) => eprintln!("genaryx: history retention could not run: {e}"),
+    }
+}
+
 fn unique_events_dir() -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

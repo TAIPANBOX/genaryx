@@ -54,11 +54,11 @@ function toStatsError(err: unknown): StatsError {
  * panel-shaped nothing (the same guard `lib/egress.ts` documents: the mock
  * transport answers `null` for a command it does not know, and a view that
  * cannot tell that from an empty result hangs on "loading" for ever). */
-export async function fetchStats(scan = STATS_SCAN): Promise<StatsPanel> {
+export async function fetchStats(scan = STATS_SCAN, windowDays = 0): Promise<StatsPanel> {
   if (!hasBackend()) throw NO_ENVIRONMENT_ERROR;
   let raw: unknown;
   try {
-    raw = await invokeBackend<unknown>("stats_counts", { scan });
+    raw = await invokeBackend<unknown>("stats_counts", { scan, window_days: windowDays });
   } catch (err) {
     throw toStatsError(err);
   }

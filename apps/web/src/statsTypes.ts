@@ -43,6 +43,17 @@ export interface StatsPanel {
   /** How many bus lines were actually read, so a reader can tell a quiet
    * estate from a short window. */
   scanned: number;
+  /** The window this panel counted over, in days. `0` means "the recent slice,
+   * any age", which is what a box with no durable history can offer. */
+  window_days: number;
+  /** The oldest event the box holds (RFC 3339), or null when it holds none
+   * that can be dated. A 90-day label over two days of history is true and
+   * misleading, and this is what lets the view say which it is. */
+  history_from: string | null;
+  /** Stored events whose timestamp this build cannot read. They are in no
+   * window at all, so a caller that hides this reports a smaller number
+   * without saying why. */
+  undated: number;
   agents: AgentStats[];
 }
 

@@ -234,6 +234,13 @@ pub struct StatsPanel {
     /// How many bus lines this panel actually looked at, so a reader can tell a
     /// quiet estate from a short window.
     pub scanned: usize,
+    /// The window asked for, in days. `0` means "the recent slice, any age".
+    pub window_days: u32,
+    /// The oldest event this box holds, RFC 3339, or `None` when it holds no
+    /// dated event. What stops a 90-day label being read as 90 days of data.
+    pub history_from: Option<String>,
+    /// Stored events with an unreadable timestamp. They are in no window.
+    pub undated: u64,
     pub agents: Vec<AgentStats>,
 }
 
@@ -243,6 +250,9 @@ impl StatsPanel {
             measured: false,
             note: Some(note.into()),
             scanned: 0,
+            window_days: 0,
+            history_from: None,
+            undated: 0,
             agents: Vec::new(),
         }
     }
@@ -295,13 +305,18 @@ fn overshoot_of(data: &serde_json::Value) -> Option<i64> {
     Some(over.round() as i64)
 }
 
-/// Per-agent counts over the recent bus window.
+/// Per-agent counts over a time window, or over the recent slice when no window
+/// is asked for.
 ///
-/// `scan` bounds the lines READ. Unlike a per-row panel there is nothing to cap
-/// on the way out: the result is one row per agent seen, and an estate with
-/// more agents than that is a fact the operator should see rather than a list
-/// this function truncates.
-pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
+/// `window_days` of 0 (or absent) keeps the old behaviour: the most recent
+/// `scan` lines, whatever their age. Anything else selects on the EVENT's own
+/// timestamp, which is the only reading of "the last 7 days" an operator means.
+/// A console restarted an hour ago answers for the estate's seven days, not for
+/// its own hour, because the store outlives the process now.
+///
+/// `scan` still bounds the lines READ in both modes: a window is a filter, not
+/// a licence to load a quarter of an estate's bus into memory.
+pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPanel {
     let Some(dir) = &state.events_dir else {
         return StatsPanel::unmeasured(
             "The console has no event store on this box, so nothing here was counted. \
@@ -320,7 +335,13 @@ pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
         }
     };
 
-    let rows = match store.recent_events(scan) {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let read = if window_days == 0 {
+        store.recent_events(scan)
+    } else {
+        store.events_since(now_ms - i64::from(window_days) * 86_400_000, scan)
+    };
+    let rows = match read {
         Ok(r) => r,
         Err(e) => {
             return StatsPanel::unmeasured(format!(
@@ -329,6 +350,13 @@ pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
             ));
         }
     };
+
+    // How far back this store actually reaches, and how much of it has no
+    // usable timestamp. Both are needed to label the window honestly: "last 30
+    // days" over a store holding two is true and misleading, and events with no
+    // clock are in no window at all.
+    let oldest_ms = store.ts_span().ok().flatten().map(|(oldest, _)| oldest);
+    let undated = store.undated_count().unwrap_or(0);
 
     let scanned = rows.len();
     let mut by_agent: BTreeMap<String, AgentStats> = BTreeMap::new();
@@ -401,13 +429,67 @@ pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
 
     StatsPanel {
         measured: true,
-        note: Some(format!(
-            "Counted from the {scanned} most recent events on the bus, which is what this \
-             console has ingested since it started. An older event than that is not counted here."
+        note: Some(window_note(
+            window_days,
+            scanned,
+            oldest_ms,
+            undated,
+            now_ms,
         )),
         scanned,
+        window_days,
+        history_from: oldest_ms.map(genaryx_core::store::ms_to_rfc3339),
+        undated,
         agents: by_agent.into_values().collect(),
     }
+}
+
+/// The sentence under the number, which has to survive being read on its own.
+///
+/// Three things it refuses to leave out: which window this is, how far back the
+/// store can actually see, and how many events could not be placed in time. A
+/// window label that outruns the data is the specific way this panel would
+/// mislead: "last 90 days" over a store that started yesterday reads as a quiet
+/// quarter rather than as a new install.
+fn window_note(
+    window_days: u32,
+    scanned: usize,
+    oldest_ms: Option<i64>,
+    undated: u64,
+    now_ms: i64,
+) -> String {
+    let mut note = if window_days == 0 {
+        format!("Counted from the {scanned} most recent events on the bus, of any age.")
+    } else {
+        format!(
+            "Counted from {scanned} event(s) in the last {window_days} day(s), by each event's own timestamp."
+        )
+    };
+
+    match oldest_ms {
+        Some(oldest) => {
+            let days_held = (now_ms - oldest).max(0) / 86_400_000;
+            note.push_str(&format!(
+                " This box holds {days_held} day(s) of history, from {}.",
+                genaryx_core::store::ms_to_rfc3339(oldest)
+            ));
+            if window_days > 0 && days_held < i64::from(window_days) {
+                note.push_str(
+                    " The window is longer than the history, so this is everything there is, \
+                     not a quiet period.",
+                );
+            }
+        }
+        None => note.push_str(" This box holds no dated events yet."),
+    }
+
+    if undated > 0 {
+        note.push_str(&format!(
+            " {undated} stored event(s) carry a timestamp this build cannot read and are in no \
+             window; a number that climbs means a producer's clock format changed."
+        ));
+    }
+    note
 }
 
 #[cfg(test)]
@@ -435,7 +517,23 @@ mod tests {
             .unwrap_or(0)
     }
 
+    /// One stored event.
+    ///
+    /// `raw` is the serialized envelope rather than a placeholder, because the
+    /// store's dedupe key hashes it: a fixture that gave every event the same
+    /// `raw` would have them collapse into one row, which is exactly what the
+    /// first version of this helper did and exactly what the durable store is
+    /// supposed to do with identical bytes from the same place.
     fn event(agent: &str, ts: &str, type_: &str, data: serde_json::Value) -> ConsoleEvent {
+        let raw = serde_json::json!({
+            "schema": SchemaVersion::SCHEMA_V0_2,
+            "ts": ts,
+            "source": "test",
+            "type": type_,
+            "agent_id": agent,
+            "data": data,
+        })
+        .to_string();
         ConsoleEvent {
             event: AgentEvent {
                 schema: SchemaVersion::SCHEMA_V0_2.to_string(),
@@ -458,7 +556,7 @@ mod tests {
                 endpoint: None,
                 received_ts: ts.to_string(),
             },
-            raw: "{}".into(),
+            raw,
             schema_version: SchemaVersion::V0_2,
         }
     }
@@ -574,7 +672,7 @@ mod tests {
             ],
         );
 
-        let p = stats_counts(500, &state);
+        let p = stats_counts(500, 0, &state);
         assert!(p.measured);
         assert_eq!(p.scanned, 9);
         assert_eq!(p.agents.len(), 2, "two agents seen, two rows");
@@ -626,7 +724,7 @@ mod tests {
     /// stopped, which is the one wrong answer that reads as good news.
     #[test]
     fn with_no_store_it_says_it_could_not_look_rather_than_reporting_zero() {
-        let p = stats_counts(500, &empty_state());
+        let p = stats_counts(500, 0, &empty_state());
         assert!(!p.measured, "an unread panel must not claim to be measured");
         let note = p.note.expect("an unmeasured panel must say why");
         assert!(
@@ -693,7 +791,7 @@ mod tests {
             )],
         );
 
-        let p = stats_counts(500, &state);
+        let p = stats_counts(500, 0, &state);
         let row = p
             .agents
             .iter()
@@ -733,7 +831,7 @@ mod tests {
             )],
         );
 
-        let p = stats_counts(500, &state);
+        let p = stats_counts(500, 0, &state);
         for id in [a, b] {
             let row = p.agents.iter().find(|r| r.agent_id == id).unwrap();
             assert_eq!(row.blocked_by_operator, 1, "{id} was halted by the stop");
@@ -767,7 +865,7 @@ mod tests {
             )],
         );
 
-        let p = stats_counts(500, &state);
+        let p = stats_counts(500, 0, &state);
         assert!(
             !p.agents.iter().any(|r| r.blocked_by_operator > 0),
             "an unblock is a release, not a stop"
@@ -800,10 +898,67 @@ mod tests {
             ],
         );
 
-        let p = stats_counts(500, &state);
+        let p = stats_counts(500, 0, &state);
         let row = p.agents.iter().find(|r| r.agent_id == agent).unwrap();
         assert_eq!(row.blocked, 1, "one kill, one stop");
         assert_eq!(row.blocked_by_operator, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The window selects on the EVENT's clock, not on when the console read
+    /// the line. A durable store holds events older than this process, and the
+    /// whole reason it exists is to answer for them.
+    #[test]
+    fn a_window_counts_by_the_events_own_age() {
+        let a = "agent://acme.local/sre/janitor";
+        let now = chrono::Utc::now();
+        let recent = (now - chrono::Duration::hours(2)).to_rfc3339();
+        let old = (now - chrono::Duration::days(40)).to_rfc3339();
+
+        let (state, dir) = seeded_state(
+            "window",
+            &[
+                event(a, &recent, "policy_deny", serde_json::json!({})),
+                event(a, &old, "policy_deny", serde_json::json!({})),
+            ],
+        );
+
+        let week = stats_counts(500, 7, &state);
+        assert_eq!(
+            week.agents[0].blocked, 1,
+            "only the event inside the window counts"
+        );
+        assert_eq!(week.window_days, 7);
+
+        let quarter = stats_counts(500, 90, &state);
+        assert_eq!(quarter.agents[0].blocked, 2, "a wider window reaches both");
+
+        let any = stats_counts(500, 0, &state);
+        assert_eq!(any.agents[0].blocked, 2, "no window means any age");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A window longer than the history must say so. "Last 90 days" over a box
+    /// holding two reads as a quiet quarter, which is the opposite of the
+    /// truth on a new install.
+    #[test]
+    fn a_window_longer_than_the_history_says_so() {
+        let a = "agent://acme.local/sre/janitor";
+        let ts = (chrono::Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+        let (state, dir) = seeded_state(
+            "short-history",
+            &[event(a, &ts, "policy_deny", serde_json::json!({}))],
+        );
+
+        let p = stats_counts(500, 90, &state);
+        let note = p.note.expect("a measured panel still explains its window");
+        assert!(
+            note.contains("longer than the history"),
+            "the note must refuse the quiet-quarter reading, got: {note}"
+        );
+        assert!(p.history_from.is_some(), "and say how far back it reaches");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -863,7 +1018,7 @@ mod tests {
             ],
         );
 
-        let p = stats_counts(500, &state);
+        let p = stats_counts(500, 0, &state);
         let row = &p.agents[0];
         assert_eq!(row.blocked, 6, "every one of them is a stop");
         assert_eq!(

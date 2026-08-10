@@ -41,6 +41,20 @@ import type { Run } from "../moneyTypes";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
+/** The windows offered, and why these four.
+ *
+ * Rolling rather than calendar: "the last 7 days" is what an operator means
+ * when something looks wrong now, and a calendar week resets to almost nothing
+ * every Monday. `0` is the honest option for a box whose history is younger
+ * than any of them, and stays the default so the first render of a fresh
+ * install shows what it has rather than an empty 24 hours. */
+const WINDOWS: { days: number; label: string }[] = [
+  { days: 0, label: "All held" },
+  { days: 1, label: "24h" },
+  { days: 7, label: "7d" },
+  { days: 30, label: "30d" },
+];
+
 const GROUPS: { id: GroupBy; label: string }[] = [
   { id: "agent", label: "Agent" },
   { id: "owner", label: "Owner" },
@@ -169,12 +183,24 @@ export function StatsView({
   const [loading, setLoading] = useState(true);
 
   const [group, setGroup] = useState<GroupBy>("agent");
+  const [windowDays, setWindowDays] = useState(0);
+  // The window the backend ANSWERED for, which is not always the one asked
+  // for: the preview holds one session's events and says so rather than
+  // pretending it filtered a month it never had. Every label reads this, so
+  // the caption can never describe a window the numbers did not come from.
+  const [answeredWindow, setAnsweredWindow] = useState(0);
+  const [historyFrom, setHistoryFrom] = useState<string | null>(null);
+  const [undated, setUndated] = useState(0);
   const [sortKey, setSortKey] = useState<SortKey>("spentUsd");
   const [desc, setDesc] = useState(true);
 
   const load = useCallback(async () => {
     // Settled, not `all`: one plane being down must not blank the other two.
-    const [r, i, s] = await Promise.allSettled([fetchRuns(), fetchIdentities(), fetchStats()]);
+    const [r, i, s] = await Promise.allSettled([
+      fetchRuns(),
+      fetchIdentities(),
+      fetchStats(undefined, windowDays),
+    ]);
     setRuns(r.status === "fulfilled" ? r.value : null);
     setIdentities(i.status === "fulfilled" ? i.value : null);
     if (s.status === "fulfilled") {
@@ -182,6 +208,9 @@ export function StatsView({
       setCountsMeasured(s.value.measured);
       setCountsNote(s.value.note);
       setScanned(s.value.scanned);
+      setAnsweredWindow(s.value.window_days ?? 0);
+      setHistoryFrom(s.value.history_from ?? null);
+      setUndated(s.value.undated ?? 0);
     } else {
       setCounts(null);
       setCountsMeasured(false);
@@ -190,10 +219,13 @@ export function StatsView({
           "and budget columns are blank. This is not a report that your agents were never stopped.",
       );
       setScanned(0);
+      setAnsweredWindow(0);
+      setHistoryFrom(null);
+      setUndated(0);
     }
     setAt(Date.now());
     setLoading(false);
-  }, []);
+  }, [windowDays]);
 
   // Re-read on any lifecycle action anywhere in the app, not just on the
   // timer. Freezing an agent from this table's own drill-down and watching its
@@ -221,10 +253,14 @@ export function StatsView({
       windows: [
         "spend and calls: the money plane's own window (TokenFuse Cloud)",
         countsMeasured
-          ? `blocked, odd behaviour and budget events: the ${scanned} most recent events this console has ingested since it started`
+          ? (answeredWindow === 0
+              ? `blocked, odd behaviour and budget events: ${scanned} event(s), every age this box still holds`
+              : `blocked, odd behaviour and budget events: ${scanned} event(s) from the last ${answeredWindow} day(s), by each event's own timestamp`)
           : "blocked, odd behaviour and budget events: NOT MEASURED, the event store could not be read",
       ],
       caveats: [
+        ...(historyFrom ? [`This box's event history starts at ${historyFrom}; a window longer than that is everything there is, not a quiet period.`] : []),
+        ...(undated > 0 ? [`${undated} stored event(s) carry a timestamp this build cannot read and are in no window.`] : []),
         ...(group === "owner"
           ? [
               "Owner comes from idryx. An agent idryx has no owner for is grouped under '(no owner in idryx)' rather than dropped.",
@@ -240,7 +276,7 @@ export function StatsView({
         "An empty worst_breach_usd means no event recorded the amounts, which is not the same as no overspend.",
       ],
     }),
-    [group, countsMeasured, scanned],
+    [group, countsMeasured, scanned, answeredWindow, historyFrom, undated],
   );
 
   const exportRows = useMemo(
@@ -333,7 +369,9 @@ export function StatsView({
             }
             noteRight={
               countsMeasured
-                ? `counts from the ${scanned.toLocaleString("en-US")} most recent bus events`
+                ? answeredWindow === 0
+                  ? `${scanned.toLocaleString("en-US")} bus events, every age held`
+                  : `${scanned.toLocaleString("en-US")} bus events in the last ${answeredWindow}d`
                 : "counts not measured"
             }
           />
@@ -371,6 +409,12 @@ export function StatsView({
         </Banner>
       )}
       {!countsMeasured && <Banner tone="warn">{countsNote}</Banner>}
+      {countsMeasured && windowDays !== answeredWindow && (
+        <Banner tone="info">
+          This box answered for {answeredWindow === 0 ? "every event it holds" : `the last ${answeredWindow} day(s)`}, not
+          the {windowDays}-day window asked for. {countsNote}
+        </Banner>
+      )}
       {group === "owner" && !identities && (
         <Banner tone="warn">
           The identity plane did not answer, so no agent could be matched to an owner and every row
@@ -398,6 +442,28 @@ export function StatsView({
               }}
             >
               {g.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1">
+          {WINDOWS.map((w) => (
+            <button
+              key={w.days}
+              type="button"
+              onClick={() => setWindowDays(w.days)}
+              className="mono text-[11.5px] px-3 py-1 rounded"
+              title={
+                w.days === 0
+                  ? "Every event this box still holds, of any age"
+                  : `Events from the last ${w.days} day(s), by each event's own timestamp`
+              }
+              style={{
+                background: windowDays === w.days ? "var(--accent-dim)" : "var(--panel-2)",
+                color: windowDays === w.days ? "var(--fg)" : "var(--dim)",
+                border: "1px solid var(--line)",
+              }}
+            >
+              {w.label}
             </button>
           ))}
         </div>

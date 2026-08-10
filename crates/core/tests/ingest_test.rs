@@ -31,6 +31,22 @@ const APPEND_3: &str = r#"{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-
 {"schema":"taipanbox.dev/agent-event/v0.1","ts":"2026-07-16T00:00:08Z","source":"tokenfuse","type":"budget_exhausted","agent_id":"agent://acme.example/support/bot"}
 "#;
 
+/// 8 lines that share NOTHING with `VALID_5`, and together are longer than it.
+///
+/// Used for the rotation test, and the "share nothing" is the whole point: a
+/// replacement that happens to begin with the same bytes is indistinguishable
+/// from an append, so a test built on one proves nothing about detecting the
+/// replacement.
+const REPLACEMENT_8: &str = r#"{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:00Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-a"}
+{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:01Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-b"}
+{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:02Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-c"}
+{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:03Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-d"}
+{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:04Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-e"}
+{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:05Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-f"}
+{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:06Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-g"}
+{"schema":"taipanbox.dev/agent-event/v0.2","ts":"2026-07-17T00:00:07Z","source":"wardryx","type":"policy_deny","agent_id":"agent://acme.example/ops/rotator-h"}
+"#;
+
 /// A single valid line: used to overwrite the test file with something
 /// shorter than the previously journaled offset (truncation resilience).
 const SHORT_VALID_LINE: &str = r#"{"schema":"taipanbox.dev/agent-event/v0.1","ts":"2026-07-16T00:00:09Z","source":"tokenfuse","type":"budget_exhausted","agent_id":"agent://acme.example/support/bot"}
@@ -132,4 +148,161 @@ fn poll_once_reingests_from_top_after_truncation() {
         6,
         "the 5 events from before truncation plus the 1 re-ingested"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Durable history: what a store that outlives its process has to survive.
+// ---------------------------------------------------------------------------
+
+/// A console restarted against the same store resumes where it left off and
+/// does not re-read what it already holds.
+///
+/// This is the property the whole durable store rests on. Before it, the store
+/// died with the process, so resuming was never tested by anything and the
+/// offset journal was write-only in practice.
+#[test]
+fn a_restart_against_the_same_store_resumes_instead_of_re_reading() {
+    let path = unique_ndjson_path("restart-resume");
+    let db = path.with_extension("sqlite");
+    write_new(&path, VALID_5);
+
+    {
+        let store = Store::open(&db).expect("open store");
+        let mut svc = IngestService::new(store, "test").expect("new IngestService");
+        svc.add_file_source("filetail:test", &path)
+            .expect("add_file_source");
+        assert_eq!(svc.poll_once().expect("first run").inserted, 5);
+    }
+
+    // The console stops and starts. Same file, same store, nothing new written.
+    {
+        let store = Store::open(&db).expect("reopen store");
+        let mut svc = IngestService::new(store, "test").expect("new IngestService");
+        svc.add_file_source("filetail:test", &path)
+            .expect("add_file_source");
+        assert_eq!(
+            svc.poll_once().expect("second run").inserted,
+            0,
+            "a restart with nothing new to read learns nothing new"
+        );
+        assert_eq!(
+            svc.store().event_count().expect("event_count"),
+            5,
+            "and the history is still one copy of each event"
+        );
+    }
+
+    // Now something IS appended while the console is up again.
+    {
+        append(&path, APPEND_3);
+        let store = Store::open(&db).expect("reopen store");
+        let mut svc = IngestService::new(store, "test").expect("new IngestService");
+        svc.add_file_source("filetail:test", &path)
+            .expect("add_file_source");
+        assert_eq!(svc.poll_once().expect("third run").inserted, 3);
+        assert_eq!(svc.store().event_count().expect("event_count"), 8);
+    }
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&db);
+}
+
+/// `stack-up` truncates its event files on every start. Against a durable
+/// store the tail re-reads from the top, and the dedupe key is what stops that
+/// becoming a second copy of every line the file still holds.
+///
+/// This is the exact scenario the old scratch-store note named as the reason
+/// durable history could not be turned on.
+#[test]
+fn a_truncation_that_rewrites_the_same_lines_does_not_duplicate_them() {
+    let path = unique_ndjson_path("truncate-rewrite");
+    let db = path.with_extension("sqlite");
+    write_new(&path, &format!("{VALID_5}{APPEND_3}"));
+
+    {
+        let store = Store::open(&db).expect("open store");
+        let mut svc = IngestService::new(store, "test").expect("new IngestService");
+        svc.add_file_source("filetail:test", &path)
+            .expect("add_file_source");
+        assert_eq!(svc.poll_once().expect("first run").inserted, 8);
+    }
+
+    // Truncated back to its first five lines, byte for byte, exactly as a
+    // restarted producer replaying its own state would leave it.
+    write_new(&path, VALID_5);
+
+    {
+        let store = Store::open(&db).expect("reopen store");
+        let mut svc = IngestService::new(store, "test").expect("new IngestService");
+        svc.add_file_source("filetail:test", &path)
+            .expect("add_file_source");
+        assert_eq!(
+            svc.poll_once().expect("after truncation").inserted,
+            0,
+            "the same bytes at the same offsets are the same events"
+        );
+        assert_eq!(
+            svc.store().event_count().expect("event_count"),
+            8,
+            "history keeps the three lines the truncation dropped, and no duplicates"
+        );
+    }
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&db);
+}
+
+/// A file REPLACED while the console was down gets re-read from the top, even
+/// when the replacement is longer than the journaled offset.
+///
+/// `FileTail`'s own shorter-than-my-offset check cannot see this case: the new
+/// file is bigger, so the tail would seek into the middle of it and every event
+/// before that point would be lost with nothing reporting it. The inode in the
+/// offset journal is what catches it.
+#[test]
+fn a_file_replaced_while_down_is_re_read_from_the_top() {
+    let path = unique_ndjson_path("replaced");
+    let db = path.with_extension("sqlite");
+    write_new(&path, VALID_5);
+
+    {
+        let store = Store::open(&db).expect("open store");
+        let mut svc = IngestService::new(store, "test").expect("new IngestService");
+        svc.add_file_source("filetail:test", &path)
+            .expect("add_file_source");
+        assert_eq!(svc.poll_once().expect("first run").inserted, 5);
+    }
+
+    // Replaced by a DIFFERENT file: new inode, longer than the old one, and
+    // sharing none of its bytes. `remove_file` then a fresh create is what a
+    // rotation does. Sharing no bytes is what makes this a test: a replacement
+    // that began with the same content would be read correctly by a plain
+    // resume, and would prove nothing.
+    std::fs::remove_file(&path).expect("remove");
+    write_new(&path, REPLACEMENT_8);
+    assert!(
+        REPLACEMENT_8.len() > VALID_5.len(),
+        "the replacement must be LONGER, which is the case FileTail's own \
+         shorter-than-my-offset check cannot see"
+    );
+
+    {
+        let store = Store::open(&db).expect("reopen store");
+        let mut svc = IngestService::new(store, "test").expect("new IngestService");
+        svc.add_file_source("filetail:test", &path)
+            .expect("add_file_source");
+        let stats = svc.poll_once().expect("after replacement");
+        assert_eq!(
+            stats.inserted, 8,
+            "every line of the new file, not just the bytes past the old offset"
+        );
+        assert_eq!(
+            stats.quarantined, 0,
+            "and no partial line, which is what resuming mid-file would produce"
+        );
+        assert_eq!(svc.store().event_count().expect("event_count"), 13);
+    }
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&db);
 }
