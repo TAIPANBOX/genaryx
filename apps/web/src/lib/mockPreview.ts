@@ -984,12 +984,20 @@ function mockStatsCounts() {
     protagonist.last_seen = new Date().toISOString();
   }
 
+  const scanned = agents.reduce((n, a) => n + a.blocked + a.anomalies + a.budget_events, 0);
   return {
     measured: true,
+    // The preview holds one session's worth of events and no more, so it
+    // reports the window it can actually answer for rather than echoing back
+    // whichever one was asked for. A real box keeps history on disk and
+    // answers 24h / 7d / 30d from it.
     note:
-      "Counted from the events this preview has produced since it loaded. A real box counts " +
-      "what it has ingested since it started.",
-    scanned: agents.reduce((n, a) => n + a.blocked + a.anomalies + a.budget_events, 0),
+      `Counted from ${scanned} event(s) this preview has produced since it loaded. A real box ` +
+      "keeps its history on disk and answers a window by each event's own timestamp.",
+    scanned,
+    window_days: 0,
+    history_from: null,
+    undated: 0,
     agents,
   };
 }

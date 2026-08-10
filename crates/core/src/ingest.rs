@@ -131,6 +131,23 @@ impl EventSource for FileTail {
     }
 }
 
+/// The inode of `path`, when the platform reports one.
+///
+/// `None` on a platform without inodes and on any file that cannot be stat-ed
+/// right now (it may simply not exist yet). Both are "cannot tell", and every
+/// caller treats that as a reason to keep the previous behaviour rather than to
+/// act on a guess.
+#[cfg(unix)]
+fn inode_of(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| m.ino())
+}
+
+#[cfg(not(unix))]
+fn inode_of(_path: &Path) -> Option<u64> {
+    None
+}
+
 /// Outcome of one [`IngestService::poll_once`] cycle.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IngestStats {
@@ -182,10 +199,66 @@ impl IngestService {
     /// Register a `FileTail` source for `path`, seeding its offset from the
     /// store's journal when this file has been ingested before (a never-seen
     /// file starts at 0).
+    ///
+    /// The journaled offset is only trusted when the file is still the SAME
+    /// file. Against a scratch store this never mattered, because the journal
+    /// died with the process; against a durable one, a file rotated away and
+    /// replaced while the console was down would otherwise be resumed at an
+    /// offset that belongs to a file that no longer exists. `FileTail` catches
+    /// that only when the replacement is SHORTER than the old offset. When it
+    /// is longer, the tail silently starts in the middle and every event before
+    /// that point is lost with nothing reporting it.
+    ///
+    /// So: same inode, resume; different inode, start at the top and let the
+    /// dedupe key sort out anything already stored. No inode recorded (an older
+    /// store, or a platform that does not report one) means "cannot tell", and
+    /// the answer there is to resume, which is exactly the behaviour that came
+    /// before.
     pub fn add_file_source(&mut self, id: impl Into<String>, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let key = path.to_string_lossy().into_owned();
-        let offset = self.store.get_offset(&key)?.unwrap_or(0);
+        let journaled = self.store.get_source_state(&key)?;
+        let live_inode = inode_of(path);
+
+        let offset = match journaled {
+            None => 0,
+            Some(state) => {
+                // Two signals, and the order matters. A DIFFERING inode is
+                // conclusive: it is a different file. An identical one proves
+                // nothing, because Linux hands a rotated file the inode its
+                // predecessor just released, so the fingerprint of the bytes
+                // already consumed is what actually decides.
+                let inode_says_new = match (state.inode, live_inode) {
+                    (Some(then), Some(now)) => then != now,
+                    _ => false,
+                };
+                let live_head = crate::store::head_fingerprint(path, state.offset);
+                let head_says_new = match (&state.head_sha, &live_head) {
+                    (Some(then), Some(now)) => then != now,
+                    // No fingerprint on either side is "cannot tell": an older
+                    // store, or a file that has shrunk (which `FileTail`'s own
+                    // check handles). Neither is a reason to re-read.
+                    _ => false,
+                };
+
+                if inode_says_new || head_says_new {
+                    let why = if head_says_new {
+                        "its contents up to that point no longer match"
+                    } else {
+                        "its inode changed"
+                    };
+                    eprintln!(
+                        "genaryx: {key} is not the file this console was reading ({why}); \
+                         re-reading from the top, and lines already stored are skipped by their \
+                         dedupe key"
+                    );
+                    0
+                } else {
+                    state.offset
+                }
+            }
+        };
+
         self.sources.push(Box::new(FileTail::new(id, path, offset)));
         Ok(())
     }
@@ -244,7 +317,6 @@ impl IngestService {
                             raw: record.raw,
                             schema_version,
                         });
-                        stats.inserted += 1;
                     }
                     Err(report) => {
                         let reason = if report.errors.is_empty() {
@@ -266,9 +338,20 @@ impl IngestService {
             }
         }
 
-        self.store.insert_batch(&valid_events)?;
+        // The store's own count, not the size of the batch: a durable store
+        // skips lines it already holds, and reporting the batch size would
+        // describe how much this cycle READ rather than how much it learned.
+        // The two differ on every restart, and on every `stack-up` restart
+        // that rewrites a file the console has already seen.
+        stats.inserted = self.store.insert_batch(&valid_events)?;
         for (file, offset) in &offsets_to_journal {
-            self.store.set_offset(file, *offset, None)?;
+            let path = Path::new(file);
+            self.store.set_offset(
+                file,
+                *offset,
+                inode_of(path),
+                crate::store::head_fingerprint(path, *offset).as_deref(),
+            )?;
         }
         for event in valid_events {
             // No subscribers is not a failure; ignore the send error.
