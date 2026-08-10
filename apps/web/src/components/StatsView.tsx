@@ -8,6 +8,7 @@ import { formatUsd } from "../lib/format";
 import { prettyUnit } from "../lib/views";
 import { Hero, HeroBand, KpiTile } from "./dash";
 import { FreshBadge } from "./FreshBadge";
+import { useConsoleStateVersion } from "../lib/consoleState";
 import type { AgentStats } from "../statsTypes";
 import type { IdryxIdentity } from "../identityTypes";
 import type { Run } from "../moneyTypes";
@@ -194,11 +195,16 @@ export function StatsView({
     setLoading(false);
   }, []);
 
+  // Re-read on any lifecycle action anywhere in the app, not just on the
+  // timer. Freezing an agent from this table's own drill-down and watching its
+  // row sit unchanged for half a minute reads as the freeze not having worked.
+  const consoleVersion = useConsoleStateVersion();
+
   useEffect(() => {
     void load();
     const t = setInterval(() => void load(), REFRESH_INTERVAL_MS);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, consoleVersion]);
 
   const rows = useMemo(() => {
     if (!runs && !counts) return [];

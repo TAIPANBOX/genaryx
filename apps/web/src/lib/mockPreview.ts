@@ -941,11 +941,19 @@ function mockStatsCounts() {
     if (anomalies) by_type["sustained_loop"] = anomalies;
     if (budget) by_type["budget_threshold"] = budget;
     // A slice of the fleet's stops were a person's call, so the preview shows
-    // the split the real counter makes rather than a column of zeros.
-    const byOperator = blocked > 0 && p < 0.12 ? 1 : 0;
+    // the split the real counter makes rather than a column of zeros. On top
+    // of that, an agent an operator has ACTUALLY halted in this session counts
+    // now, exactly as it does on a real box: there the freeze journals a
+    // `console.block_agent` line naming the agents it stopped, and
+    // `crates/api/src/stats/mod.rs` credits each of them. Without this the
+    // demo would let you freeze an agent and watch the column not move, which
+    // is the one thing that would teach a viewer the wrong lesson about what
+    // the column means.
+    const haltedNow = frozenAgents.has(a.id) || stoppedUnits.has(a.team) || stoppedUsers.has(a.owner) ? 1 : 0;
+    const byOperator = (blocked > 0 && p < 0.12 ? 1 : 0) + haltedNow;
     return {
       agent_id: id,
-      blocked,
+      blocked: blocked + haltedNow,
       blocked_by_operator: byOperator,
       anomalies,
       budget_events: budget,
