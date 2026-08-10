@@ -193,7 +193,7 @@ async fn apply_block(
         }
     }
 
-    journal_block(ctx, kind, key, blocked, affected);
+    journal_block(ctx, kind, key, blocked, affected, &members);
 
     // The reply stays `null` deliberately: this box keeps no per-entity record
     // to echo, and the frontend re-reads `lifecycle_blocks` + `money_runs` for
@@ -217,12 +217,24 @@ async fn apply_block(
 /// journaling through it for some time. What was missing was the signing
 /// METADATA, and `crate::journal` supplies it the same way they do, from the
 /// request's own ceremony.
-fn journal_block(ctx: &Arc<Ctx>, kind: &str, key: &str, blocked: bool, affected: usize) {
+fn journal_block(
+    ctx: &Arc<Ctx>,
+    kind: &str,
+    key: &str,
+    blocked: bool,
+    affected: usize,
+    members: &[String],
+) {
+    // `members` as well as the count, because "3 policies written" does not
+    // say WHICH agents an operator halted, and a unit stop can halt a dozen.
+    // A reader of the chain (or of the Statistics tab, which credits the stop
+    // to each agent named here) otherwise has to reconstruct the unit's
+    // membership as it was at that moment, which nothing records.
     let _ = genaryx_api::journal::record_console_action(
         wg_journal(ctx).as_ref(),
         block_action(kind, blocked),
         key,
-        serde_json::json!({ "policies": affected }),
+        serde_json::json!({ "policies": affected, "members": members }),
         format!("blocked:{blocked}"),
     );
 }

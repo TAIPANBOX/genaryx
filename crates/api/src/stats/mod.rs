@@ -101,6 +101,70 @@ const ANOMALY_TYPES: &[&str] = &[
 /// these two.
 const BUDGET_TYPES: &[&str] = &["budget_exhausted", "budget_threshold"];
 
+/// The console's own `data.action` values that mean "an operator halted this".
+///
+/// A freeze or a unit stop is enforced by writing an ordinary deny-all wardryx
+/// policy, so the refusals that follow are indistinguishable from any other
+/// policy denial on the bus. The ACTION, though, is journaled: one
+/// `console_command` per toggle, carrying the entity in `data.target` and the
+/// agents it actually halted in `data.members`
+/// (`genaryx/crates/web/src/dispatch.rs`, `journal_block`). That record is what
+/// this reads, which is why it is the one `console_command` shape counted here.
+///
+/// The UNBLOCK actions are absent on purpose: starting something again is not a
+/// stop, and counting it would make an operator who froze and unfroze an agent
+/// look twice as heavy-handed as one who left it frozen.
+///
+/// `console.kill_run` is absent for a different reason: the money plane emits
+/// its own `run_killed` for the same kill, and that one is already counted.
+const OPERATOR_BLOCK_ACTIONS: &[&str] = &[
+    "console.block_agent",
+    "console.block_unit",
+    "console.block_user",
+];
+
+/// The console's own event type, whose `agent_id` is the CONSOLE rather than
+/// the agent it acted on.
+const CONSOLE_COMMAND: &str = "console_command";
+
+/// Every agent one console block halted, read from the record it wrote.
+///
+/// `data.target` is the entity: an agent id for a freeze, a unit id or a user
+/// handle otherwise. `data.members` is the list of agents the policies were
+/// actually written for, which is the same single agent for a freeze and the
+/// whole membership for a unit or user stop. Reading members rather than
+/// re-deriving the membership matters: a unit's roster at read time is not
+/// necessarily its roster at the moment the operator stopped it.
+fn agents_halted_by(data: Option<&serde_json::Value>) -> Vec<String> {
+    let Some(data) = data else { return Vec::new() };
+    let action = data.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    if !OPERATOR_BLOCK_ACTIONS.contains(&action) {
+        return Vec::new();
+    }
+    let members: Vec<String> = data
+        .get("members")
+        .and_then(|v| v.as_array())
+        .map(|xs| {
+            xs.iter()
+                .filter_map(|x| x.as_str())
+                .filter(|x| x.starts_with("agent://"))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    if !members.is_empty() {
+        return members;
+    }
+    // A record written before `members` was added, or a stop that halted
+    // nothing. Fall back to the target when it is itself an agent; a unit id
+    // or a user handle names no agent and is deliberately not guessed at.
+    data.get("target")
+        .and_then(|v| v.as_str())
+        .filter(|t| t.starts_with("agent://"))
+        .map(|t| vec![t.to_string()])
+        .unwrap_or_default()
+}
+
 /// One agent's counts. Every field is a count of lines actually on the bus, so
 /// a zero means "none in this window", never "not measured": that distinction
 /// is carried once, by [`StatsPanel::measured`], for the whole panel.
@@ -268,6 +332,7 @@ pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
 
     let scanned = rows.len();
     let mut by_agent: BTreeMap<String, AgentStats> = BTreeMap::new();
+    let mut halts: Vec<String> = Vec::new();
 
     for e in rows {
         let entry = by_agent
@@ -300,6 +365,16 @@ pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
                 Some(entry.worst_overshoot_microusd.unwrap_or(0).max(over));
         }
 
+        // A console block names the agents it halted, and they are not this
+        // event's own `agent_id` (that is the console). Collected here and
+        // applied after the loop, so one operator action lands on every agent
+        // it actually stopped.
+        for halted in agents_halted_by(e.data.as_ref()) {
+            if e.type_ == CONSOLE_COMMAND {
+                halts.push(halted);
+            }
+        }
+
         // `recent_events` is newest-first by insertion id, but `ts` is the
         // producer's clock and the ingest pipeline drains one file at a time,
         // so the first row seen for an agent is not reliably its latest event.
@@ -307,6 +382,21 @@ pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
         if e.ts > entry.last_seen {
             entry.last_seen = e.ts;
         }
+    }
+
+    // An operator stop counts for every agent it halted, on top of whatever
+    // the services did to them. The agent gets a row even if the bus holds
+    // nothing else about it: "frozen by an operator, and otherwise silent" is
+    // a true and useful line.
+    for agent_id in halts {
+        let entry = by_agent
+            .entry(agent_id.clone())
+            .or_insert_with(|| AgentStats {
+                agent_id,
+                ..Default::default()
+            });
+        entry.blocked += 1;
+        entry.blocked_by_operator += 1;
     }
 
     StatsPanel {
@@ -375,9 +465,17 @@ mod tests {
 
     /// A temp events dir holding a `console.sqlite` seeded with `events`, in
     /// the exact place [`stats_counts`] looks for it.
-    fn seeded_state(events: &[ConsoleEvent]) -> (AppState, PathBuf) {
+    ///
+    /// `tag` is per TEST and is not decoration. Keyed on pid and a timestamp
+    /// alone, two of these tests running on parallel cargo threads landed in
+    /// the same directory and read each other's events: the first version of
+    /// this file failed two tests that the change under test could not
+    /// possibly have affected, which is how the collision was found. A flaky
+    /// test is worse than no test, so the name carries something that cannot
+    /// collide.
+    fn seeded_state(tag: &str, events: &[ConsoleEvent]) -> (AppState, PathBuf) {
         let dir = std::env::temp_dir().join(format!(
-            "genaryx-stats-test-{}-{}",
+            "genaryx-stats-test-{}-{tag}-{}",
             std::process::id(),
             nanos()
         ));
@@ -409,69 +507,72 @@ mod tests {
         // That is the real shape (the ingest pipeline drains one file's whole
         // backlog before the next), and an implementation that kept the first
         // ts instead of the maximum passes any test seeded in order.
-        let (state, dir) = seeded_state(&[
-            event(
-                a,
-                "2026-08-09T10:05:00Z",
-                "some_future_type",
-                serde_json::json!({}),
-            ),
-            event(
-                a,
-                "2026-08-09T10:00:00Z",
-                "policy_deny",
-                serde_json::json!({}),
-            ),
-            event(
-                a,
-                "2026-08-09T10:01:00Z",
-                "dlp_block",
-                serde_json::json!({}),
-            ),
-            event(
-                a,
-                "2026-08-09T10:02:00Z",
-                "sustained_loop",
-                serde_json::json!({}),
-            ),
-            event(
-                a,
-                "2026-08-09T10:03:00Z",
-                "budget_threshold",
-                serde_json::json!({ "budget_micros": 1_000_000, "spent_micros": 1_250_000 }),
-            ),
-            // The gateway's own shape: USD floats on an enforcement event that
-            // is not one of the named budget types, and a WORSE breach than
-            // the threshold line above.
-            event(
-                a,
-                "2026-08-09T10:03:30Z",
-                "breaker_tripped",
-                serde_json::json!({ "budget_usd": 1.0, "spent_usd": 1.75, "reason": "budget_exceeded" }),
-            ),
-            // A second, smaller breach: the worst must win, and the three must
-            // not be added into an overspend that never happened.
-            event(
-                a,
-                "2026-08-09T10:03:45Z",
-                "breaker_tripped",
-                serde_json::json!({ "budget_usd": 1.0, "spent_usd": 1.10, "reason": "budget_exceeded" }),
-            ),
-            // The Cloud's own export shape: a budget event with no amounts.
-            event(
-                a,
-                "2026-08-09T10:04:00Z",
-                "budget_exhausted",
-                serde_json::json!({ "org": "acme", "occurrences": 2 }),
-            ),
-            // A second agent, so the fold is proven to separate them.
-            event(
-                b,
-                "2026-08-09T09:00:00Z",
-                "policy_deny",
-                serde_json::json!({}),
-            ),
-        ]);
+        let (state, dir) = seeded_state(
+            "counts",
+            &[
+                event(
+                    a,
+                    "2026-08-09T10:05:00Z",
+                    "some_future_type",
+                    serde_json::json!({}),
+                ),
+                event(
+                    a,
+                    "2026-08-09T10:00:00Z",
+                    "policy_deny",
+                    serde_json::json!({}),
+                ),
+                event(
+                    a,
+                    "2026-08-09T10:01:00Z",
+                    "dlp_block",
+                    serde_json::json!({}),
+                ),
+                event(
+                    a,
+                    "2026-08-09T10:02:00Z",
+                    "sustained_loop",
+                    serde_json::json!({}),
+                ),
+                event(
+                    a,
+                    "2026-08-09T10:03:00Z",
+                    "budget_threshold",
+                    serde_json::json!({ "budget_micros": 1_000_000, "spent_micros": 1_250_000 }),
+                ),
+                // The gateway's own shape: USD floats on an enforcement event that
+                // is not one of the named budget types, and a WORSE breach than
+                // the threshold line above.
+                event(
+                    a,
+                    "2026-08-09T10:03:30Z",
+                    "breaker_tripped",
+                    serde_json::json!({ "budget_usd": 1.0, "spent_usd": 1.75, "reason": "budget_exceeded" }),
+                ),
+                // A second, smaller breach: the worst must win, and the three must
+                // not be added into an overspend that never happened.
+                event(
+                    a,
+                    "2026-08-09T10:03:45Z",
+                    "breaker_tripped",
+                    serde_json::json!({ "budget_usd": 1.0, "spent_usd": 1.10, "reason": "budget_exceeded" }),
+                ),
+                // The Cloud's own export shape: a budget event with no amounts.
+                event(
+                    a,
+                    "2026-08-09T10:04:00Z",
+                    "budget_exhausted",
+                    serde_json::json!({ "org": "acme", "occurrences": 2 }),
+                ),
+                // A second agent, so the fold is proven to separate them.
+                event(
+                    b,
+                    "2026-08-09T09:00:00Z",
+                    "policy_deny",
+                    serde_json::json!({}),
+                ),
+            ],
+        );
 
         let p = stats_counts(500, &state);
         assert!(p.measured);
@@ -569,6 +670,144 @@ mod tests {
         }
     }
 
+    /// A freeze emits no enforcement event of its own: the deny-all policy it
+    /// writes produces ordinary `policy_deny` lines that name nobody. The one
+    /// record of WHO did it is the console's own journal line, and this is the
+    /// test that it reaches the agent it froze rather than the console.
+    #[test]
+    fn an_operator_freeze_counts_against_the_agent_it_froze() {
+        let frozen = "agent://acme.local/sre/janitor";
+        let console = "agent://acme.local/console/box";
+        let (state, dir) = seeded_state(
+            "freeze",
+            &[event(
+                console,
+                "2026-08-09T10:00:00Z",
+                "console_command",
+                serde_json::json!({
+                    "action": "console.block_agent",
+                    "target": frozen,
+                    "members": [frozen],
+                    "policies": 1,
+                }),
+            )],
+        );
+
+        let p = stats_counts(500, &state);
+        let row = p
+            .agents
+            .iter()
+            .find(|r| r.agent_id == frozen)
+            .expect("the frozen agent must get a row even with nothing else on the bus");
+        assert_eq!(row.blocked, 1);
+        assert_eq!(row.blocked_by_operator, 1);
+
+        let console_row = p.agents.iter().find(|r| r.agent_id == console).unwrap();
+        assert_eq!(
+            console_row.blocked, 0,
+            "the console did the stopping, it was not stopped"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Stopping a unit halts everything in it, and the record says which. The
+    /// membership at the time of the stop is not recoverable later, so reading
+    /// it back out of the event is the only honest attribution.
+    #[test]
+    fn a_unit_stop_counts_against_every_agent_it_halted() {
+        let a = "agent://acme.local/sre/one";
+        let b = "agent://acme.local/sre/two";
+        let (state, dir) = seeded_state(
+            "unit-stop",
+            &[event(
+                "agent://acme.local/console/box",
+                "2026-08-09T10:00:00Z",
+                "console_command",
+                serde_json::json!({
+                    "action": "console.block_unit",
+                    "target": "sre",
+                    "members": [a, b],
+                    "policies": 2,
+                }),
+            )],
+        );
+
+        let p = stats_counts(500, &state);
+        for id in [a, b] {
+            let row = p.agents.iter().find(|r| r.agent_id == id).unwrap();
+            assert_eq!(row.blocked_by_operator, 1, "{id} was halted by the stop");
+        }
+        assert!(
+            !p.agents.iter().any(|r| r.agent_id == "sre"),
+            "a unit id is not an agent and must never become a row"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Starting something again is not a stop. An operator who froze and then
+    /// unfroze must not read as twice as heavy-handed as one who left it
+    /// frozen.
+    #[test]
+    fn an_unblock_is_not_counted_as_a_stop() {
+        let agent = "agent://acme.local/sre/janitor";
+        let (state, dir) = seeded_state(
+            "unblock",
+            &[event(
+                "agent://acme.local/console/box",
+                "2026-08-09T10:01:00Z",
+                "console_command",
+                serde_json::json!({
+                    "action": "console.unblock_agent",
+                    "target": agent,
+                    "members": [agent],
+                    "policies": 1,
+                }),
+            )],
+        );
+
+        let p = stats_counts(500, &state);
+        assert!(
+            !p.agents.iter().any(|r| r.blocked_by_operator > 0),
+            "an unblock is a release, not a stop"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The kill still must not double count. The console journals
+    /// `console.kill_run` AND the money plane emits `run_killed` for the same
+    /// act, and only the second is counted.
+    #[test]
+    fn a_console_kill_is_counted_once_not_twice() {
+        let agent = "agent://acme.local/sre/janitor";
+        let (state, dir) = seeded_state(
+            "kill-once",
+            &[
+                event(
+                    "agent://acme.local/console/box",
+                    "2026-08-09T10:00:00Z",
+                    "console_command",
+                    serde_json::json!({ "action": "console.kill_run", "target": "run-1" }),
+                ),
+                event(
+                    agent,
+                    "2026-08-09T10:00:01Z",
+                    "run_killed",
+                    serde_json::json!({ "org": "acme", "actor": "user://acme.local/d.hayes" }),
+                ),
+            ],
+        );
+
+        let p = stats_counts(500, &state);
+        let row = p.agents.iter().find(|r| r.agent_id == agent).unwrap();
+        assert_eq!(row.blocked, 1, "one kill, one stop");
+        assert_eq!(row.blocked_by_operator, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A kill by a person and a kill by the plane are the same event type and
     /// differ only by one field. Getting this backwards would credit the
     /// services with an operator's decisions, or blame an operator for the
@@ -576,50 +815,53 @@ mod tests {
     #[test]
     fn a_stop_is_the_operators_only_when_the_event_names_one() {
         let a = "agent://acme.local/sre/janitor";
-        let (state, dir) = seeded_state(&[
-            // The plane killed this one: no actor field at all.
-            event(
-                a,
-                "2026-08-09T10:00:00Z",
-                "run_killed",
-                serde_json::json!({ "org": "acme" }),
-            ),
-            // An operator killed this one.
-            event(
-                a,
-                "2026-08-09T10:01:00Z",
-                "run_killed",
-                serde_json::json!({ "org": "acme", "actor": "user://acme.local/d.hayes" }),
-            ),
-            // A person answered the hold with a no.
-            event(
-                a,
-                "2026-08-09T10:02:00Z",
-                "approval_denied",
-                serde_json::json!({ "approval_id": "ap-1", "decided_by": "d.hayes" }),
-            ),
-            // Nobody answered: the opposite case, and it stays with the system.
-            event(
-                a,
-                "2026-08-09T10:03:00Z",
-                "approval_unanswered",
-                serde_json::json!({}),
-            ),
-            // An empty actor names nobody, so it is not an operator stop.
-            event(
-                a,
-                "2026-08-09T10:04:00Z",
-                "run_killed",
-                serde_json::json!({ "org": "acme", "actor": "  " }),
-            ),
-            // Ordinary enforcement.
-            event(
-                a,
-                "2026-08-09T10:05:00Z",
-                "policy_deny",
-                serde_json::json!({}),
-            ),
-        ]);
+        let (state, dir) = seeded_state(
+            "operator",
+            &[
+                // The plane killed this one: no actor field at all.
+                event(
+                    a,
+                    "2026-08-09T10:00:00Z",
+                    "run_killed",
+                    serde_json::json!({ "org": "acme" }),
+                ),
+                // An operator killed this one.
+                event(
+                    a,
+                    "2026-08-09T10:01:00Z",
+                    "run_killed",
+                    serde_json::json!({ "org": "acme", "actor": "user://acme.local/d.hayes" }),
+                ),
+                // A person answered the hold with a no.
+                event(
+                    a,
+                    "2026-08-09T10:02:00Z",
+                    "approval_denied",
+                    serde_json::json!({ "approval_id": "ap-1", "decided_by": "d.hayes" }),
+                ),
+                // Nobody answered: the opposite case, and it stays with the system.
+                event(
+                    a,
+                    "2026-08-09T10:03:00Z",
+                    "approval_unanswered",
+                    serde_json::json!({}),
+                ),
+                // An empty actor names nobody, so it is not an operator stop.
+                event(
+                    a,
+                    "2026-08-09T10:04:00Z",
+                    "run_killed",
+                    serde_json::json!({ "org": "acme", "actor": "  " }),
+                ),
+                // Ordinary enforcement.
+                event(
+                    a,
+                    "2026-08-09T10:05:00Z",
+                    "policy_deny",
+                    serde_json::json!({}),
+                ),
+            ],
+        );
 
         let p = stats_counts(500, &state);
         let row = &p.agents[0];
