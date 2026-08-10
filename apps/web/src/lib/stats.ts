@@ -4,7 +4,7 @@ import { ownerByAgent } from "./entityFolds";
 import { unitForTeam } from "./views";
 import type { AgentStats, StatsError, StatsPanel } from "../statsTypes";
 import type { IdryxIdentity } from "../identityTypes";
-import type { Run } from "../moneyTypes";
+import type { Owner, Run } from "../moneyTypes";
 
 /**
  * The Statistics view's data layer: one fold, three keys.
@@ -73,7 +73,19 @@ export async function fetchStats(scan = STATS_SCAN, windowDays = 0): Promise<Sta
   return raw as StatsPanel;
 }
 
-export type GroupBy = "agent" | "owner" | "unit";
+/** The four cuts, and two of them are about people on purpose.
+ *
+ * `owner` joins through idryx: who OWNS the agent, a registry fact about
+ * accountability. `launcher` reads the money plane's `/v1/owners`: the root of
+ * the delegation chain, so who STARTED the run, a runtime fact about what
+ * actually happened. An agent owned by one person and run on another's behalf
+ * appears under different names in the two.
+ *
+ * They stay separate rather than being reconciled into one "owner" column. A
+ * single merged figure would answer neither question and would do it without
+ * saying so, which is the shape of defect this console has already paid for
+ * once (a unit reading 12 agents on one screen and 16 on another). */
+export type GroupBy = "agent" | "owner" | "launcher" | "unit";
 
 /** One line of the table. Money fields and count fields are both here, but they
  * come from the two different windows named in this module's doc, and the view
@@ -109,6 +121,14 @@ export interface StatsRow {
   /** True for the single row collecting agents this grouping could not place.
    * Rendered as itself, never hidden. */
   unattributed: boolean;
+
+  /** Whether the bus-derived count columns mean anything for this row.
+   *
+   * False for the `launcher` grouping: the counts are per AGENT, and the money
+   * plane's per-person rollup is an aggregate with no agent list to join them
+   * to. Rendering 0 there would say "this person's agents were never stopped",
+   * which nothing measured. The cells show a dash instead. */
+  countsApply: boolean;
 }
 
 /** The key an owner grouping puts agents under when idryx has no owner for
@@ -226,8 +246,43 @@ export function groupRows(
     budgetEvents: r.budgetEvents,
     worstOvershootMicrousd: r.overshoot,
     unattributed: r.unattributed,
+    countsApply: true,
   }));
 }
+
+/** Rows straight from the money plane's own per-person rollup.
+ *
+ * No fold here at all: the plane already aggregated, and re-deriving it
+ * console-side from runs would produce a second number for the same question.
+ *
+ * The count columns are marked inapplicable rather than zeroed. `/v1/owners`
+ * returns totals per person with no agent list, so there is nothing to join the
+ * per-agent bus counts to, and a 0 in the blocked column would be a claim
+ * nobody measured. */
+export function rowsFromOwners(owners: Owner[]): StatsRow[] {
+  return owners.map((o) => ({
+    key: o.owner,
+    // "unassigned" is the plane's own literal for a run whose chain named
+    // nobody. Rendered as the sentence it is, and pinned last like every other
+    // unattributed row.
+    label: o.owner === "unassigned" ? NO_CHAIN_KEY : o.owner,
+    agentCount: o.agents,
+    spentUsd: o.spent_usd,
+    calls: o.calls,
+    runs: o.runs,
+    blocked: 0,
+    blockedByOperator: 0,
+    anomalies: 0,
+    budgetEvents: 0,
+    worstOvershootMicrousd: null,
+    unattributed: o.owner === "unassigned",
+    countsApply: false,
+  }));
+}
+
+/** What the money plane calls a run whose delegation chain named no human,
+ * spelled for a reader rather than as the wire literal `"unassigned"`. */
+export const NO_CHAIN_KEY = "(no delegation chain)";
 
 /** Last path segment of an agent id, for a row whose agent never appeared in
  * the money window (so `spendByAgent` never named it). */

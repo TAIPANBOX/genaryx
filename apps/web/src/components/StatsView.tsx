@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchStats, groupRows, sortRows } from "../lib/stats";
+import { fetchStats, groupRows, rowsFromOwners, sortRows } from "../lib/stats";
 import type { GroupBy, SortKey, StatsRow } from "../lib/stats";
-import { fetchRuns } from "../lib/money";
+import { fetchOwners, fetchRuns } from "../lib/money";
 import { fetchIdentities } from "../lib/identity";
 import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
 import { formatUsd } from "../lib/format";
@@ -11,7 +11,7 @@ import { FreshBadge } from "./FreshBadge";
 import { useConsoleStateVersion } from "../lib/consoleState";
 import type { AgentStats } from "../statsTypes";
 import type { IdryxIdentity } from "../identityTypes";
-import type { Run } from "../moneyTypes";
+import type { Owner, Run } from "../moneyTypes";
 
 /** Statistics: the same estate cut three ways.
  *
@@ -55,10 +55,20 @@ const WINDOWS: { days: number; label: string }[] = [
   { days: 30, label: "30d" },
 ];
 
-const GROUPS: { id: GroupBy; label: string }[] = [
-  { id: "agent", label: "Agent" },
-  { id: "owner", label: "Owner" },
-  { id: "unit", label: "Business unit" },
+const GROUPS: { id: GroupBy; label: string; title: string }[] = [
+  { id: "agent", label: "Agent", title: "One row per agent" },
+  {
+    id: "owner",
+    label: "Owner",
+    title: "Who OWNS the agent, from the identity plane. Accountability.",
+  },
+  {
+    id: "launcher",
+    label: "Ran on behalf of",
+    title:
+      "Who STARTED the run, from the delegation chain the money plane recorded. Not the same question as Owner, and deliberately not merged with it.",
+  },
+  { id: "unit", label: "Business unit", title: "Derived from the agent id's team segment" },
 ];
 
 interface Column {
@@ -174,6 +184,7 @@ export function StatsView({
   onOpenUnit: (unitId: string) => void;
 }) {
   const [runs, setRuns] = useState<Run[] | null>(null);
+  const [owners, setOwners] = useState<Owner[] | null>(null);
   const [identities, setIdentities] = useState<IdryxIdentity[] | null>(null);
   const [counts, setCounts] = useState<AgentStats[] | null>(null);
   const [countsNote, setCountsNote] = useState<string | null>(null);
@@ -196,12 +207,17 @@ export function StatsView({
 
   const load = useCallback(async () => {
     // Settled, not `all`: one plane being down must not blank the other two.
-    const [r, i, s] = await Promise.allSettled([
+    const [r, i, s, o] = await Promise.allSettled([
       fetchRuns(),
       fetchIdentities(),
       fetchStats(undefined, windowDays),
+      // A box whose money plane predates tokenfuse #192 has no `/v1/owners`,
+      // and that is a missing grouping rather than a broken panel: settled,
+      // like the other three.
+      fetchOwners(),
     ]);
     setRuns(r.status === "fulfilled" ? r.value : null);
+    setOwners(o.status === "fulfilled" ? o.value : null);
     setIdentities(i.status === "fulfilled" ? i.value : null);
     if (s.status === "fulfilled") {
       setCounts(s.value.agents);
@@ -239,15 +255,18 @@ export function StatsView({
   }, [load, consoleVersion]);
 
   const rows = useMemo(() => {
+    // The money plane aggregated this one itself; folding it again console-side
+    // would be a second number for the same question.
+    if (group === "launcher") return owners ? rowsFromOwners(owners) : [];
     if (!runs && !counts) return [];
     return groupRows(runs ?? [], identities ?? [], counts ?? [], group);
-  }, [runs, identities, counts, group]);
+  }, [runs, identities, counts, owners, group]);
 
   const sorted = useMemo(() => sortRows(rows, sortKey, desc), [rows, sortKey, desc]);
 
   const meta = useCallback(
     (): ExportMeta => ({
-      subject: `Genaryx statistics by ${group}`,
+      subject: `Genaryx statistics by ${group === "launcher" ? "who ran it (delegation chain)" : group}`,
       environment: window.location.host || "unknown",
       takenAt: new Date().toISOString(),
       windows: [
@@ -261,6 +280,12 @@ export function StatsView({
       caveats: [
         ...(historyFrom ? [`This box's event history starts at ${historyFrom}; a window longer than that is everything there is, not a quiet period.`] : []),
         ...(undated > 0 ? [`${undated} stored event(s) carry a timestamp this build cannot read and are in no window.`] : []),
+        ...(group === "launcher"
+          ? [
+              "Owner here is the root of the delegation chain: who STARTED the run, as the money plane recorded it. This is NOT the same figure as the Owner grouping, which names who owns the agent.",
+              "The blocked, odd-behaviour and budget columns are empty at this grouping: those counts are per agent, and this rollup has no agent list to join them to.",
+            ]
+          : []),
         ...(group === "owner"
           ? [
               "Owner comes from idryx. An agent idryx has no owner for is grouped under '(no owner in idryx)' rather than dropped.",
@@ -290,12 +315,12 @@ export function StatsView({
         spend_usd: runs ? usd4(r.spentUsd) : null,
         calls: runs ? r.calls : null,
         runs: runs ? r.runs : null,
-        blocked: countsMeasured ? r.blocked : null,
-        blocked_by_operator: countsMeasured ? r.blockedByOperator : null,
-        odd_behaviour: countsMeasured ? r.anomalies : null,
-        budget_events: countsMeasured ? r.budgetEvents : null,
+        blocked: countsMeasured && r.countsApply ? r.blocked : null,
+        blocked_by_operator: countsMeasured && r.countsApply ? r.blockedByOperator : null,
+        odd_behaviour: countsMeasured && r.countsApply ? r.anomalies : null,
+        budget_events: countsMeasured && r.countsApply ? r.budgetEvents : null,
         worst_breach_usd:
-          countsMeasured && r.worstOvershootMicrousd !== null
+          countsMeasured && r.countsApply && r.worstOvershootMicrousd !== null
             ? usd4(r.worstOvershootMicrousd / 1_000_000)
             : null,
         unattributed: r.unattributed,
@@ -343,6 +368,10 @@ export function StatsView({
   }
 
   const totalSpend = sorted.reduce((a, r) => a + r.spentUsd, 0);
+  // Only sum the counts where they mean something. At a grouping with nothing
+  // to join them to, the honest tile is a dash, not a confident zero in the
+  // blocked column.
+  const countsApply = sorted.length > 0 && sorted.every((r) => r.countsApply);
   const totalBlocked = sorted.reduce((a, r) => a + r.blocked, 0);
   const totalAnomalies = sorted.reduce((a, r) => a + r.anomalies, 0);
   const unattributed = sorted.find((r) => r.unattributed);
@@ -363,7 +392,15 @@ export function StatsView({
           <Hero
             cap={`Statistics · by ${GROUPS.find((g) => g.id === group)?.label.toLowerCase()}`}
             value={sorted.length.toLocaleString("en-US")}
-            sub={group === "agent" ? "agents" : group === "owner" ? "owners" : "units"}
+            sub={
+              group === "agent"
+                ? "agents"
+                : group === "owner"
+                  ? "owners"
+                  : group === "launcher"
+                    ? "people who ran something"
+                    : "units"
+            }
             noteLeft={
               at ? <FreshBadge variant="auto" detail="30s" title={countsNote ?? undefined} /> : null
             }
@@ -385,13 +422,25 @@ export function StatsView({
             />
             <KpiTile
               label="Blocked"
-              value={countsMeasured ? totalBlocked.toLocaleString("en-US") : "-"}
-              sub={countsMeasured ? "bus window" : "not measured"}
+              value={countsMeasured && countsApply ? totalBlocked.toLocaleString("en-US") : "-"}
+              sub={
+                !countsMeasured
+                  ? "not measured"
+                  : countsApply
+                    ? "bus window"
+                    : "not countable at this grouping"
+              }
             />
             <KpiTile
               label="Odd behaviour"
-              value={countsMeasured ? totalAnomalies.toLocaleString("en-US") : "-"}
-              sub={countsMeasured ? "bus window" : "not measured"}
+              value={countsMeasured && countsApply ? totalAnomalies.toLocaleString("en-US") : "-"}
+              sub={
+                !countsMeasured
+                  ? "not measured"
+                  : countsApply
+                    ? "bus window"
+                    : "not countable at this grouping"
+              }
             />
             <KpiTile
               label="Rows"
@@ -421,6 +470,22 @@ export function StatsView({
           is under "(no owner in idryx)". This is not a report that these agents are unowned.
         </Banner>
       )}
+      {group === "launcher" && (
+        <Banner tone="info">
+          Who <strong>started</strong> the run, from the delegation chain the money plane recorded.
+          The Owner grouping beside it answers a different question, who <strong>owns</strong> the
+          agent, from the identity plane. An agent owned by one person and run on another's behalf
+          appears under both names, and neither number is wrong. They are not added together
+          anywhere.
+        </Banner>
+      )}
+      {group === "launcher" && !owners && (
+        <Banner tone="warn">
+          The money plane did not answer for this grouping. A box running a Cloud older than the
+          per-person rollup has no such record at all; this is not a report that nobody ran
+          anything.
+        </Banner>
+      )}
       {group === "unit" && (
         <Banner tone="info">
           Unit is read from the team segment of each agent id, not from a separate org chart.
@@ -434,6 +499,7 @@ export function StatsView({
               key={g.id}
               type="button"
               onClick={() => setGroup(g.id)}
+              title={g.title}
               className="mono text-[11.5px] px-3 py-1 rounded"
               style={{
                 background: group === g.id ? "var(--accent-dim)" : "var(--panel-2)",
@@ -541,7 +607,12 @@ export function StatsView({
                         ? () => onOpenAgent(r.key)
                         : group === "owner"
                           ? () => onOpenUser(r.key)
-                          : () => onOpenUnit(r.key)
+                          : group === "launcher"
+                            // The owner card is keyed on the handle the console
+                            // pins people under, which is the last path segment
+                            // of the `user://` principal this rollup returns.
+                            ? () => onOpenUser(r.key.split("/").filter(Boolean).pop() ?? r.key)
+                            : () => onOpenUnit(r.key)
                   }
                 />
               ))}
@@ -574,6 +645,12 @@ function StatsTableRow({
   onOpen?: () => void;
 }) {
   const num = (v: number, on: boolean) => (on ? v.toLocaleString("en-US") : "-");
+  // A dash where a COUNT would be a claim nobody measured: either the bus could
+  // not be read at all, or this grouping has nothing to join per-agent counts
+  // to (see `StatsRow.countsApply`). Deliberately separate from `num`: `calls`
+  // is a money-plane column and this must never blank it, which the first cut
+  // of this did.
+  const count = (v: number) => (hasCounts && row.countsApply ? v.toLocaleString("en-US") : "-");
   const shown = group === "unit" && !row.unattributed ? prettyUnit(row.label) : row.label;
   return (
     <tr style={{ borderTop: "1px solid var(--line)" }}>
@@ -612,22 +689,22 @@ function StatsTableRow({
         {num(row.calls, hasMoney)}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
-        {num(row.blocked, hasCounts)}
+        {count(row.blocked)}
       </td>
       <td
         className="mono text-[11px] px-3 py-2 text-right"
         style={{ color: row.blockedByOperator > 0 ? "var(--fg)" : "var(--faint)" }}
       >
-        {num(row.blockedByOperator, hasCounts)}
+        {count(row.blockedByOperator)}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
-        {num(row.anomalies, hasCounts)}
+        {count(row.anomalies)}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
-        {num(row.budgetEvents, hasCounts)}
+        {count(row.budgetEvents)}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
-        {hasCounts ? overshootCell(row.worstOvershootMicrousd) : "-"}
+        {hasCounts && row.countsApply ? overshootCell(row.worstOvershootMicrousd) : "-"}
       </td>
     </tr>
   );

@@ -819,6 +819,50 @@ function mockSavings() {
  * gone again once a fresh arc loops in. Every arc-specific incident id is
  * suffixed with the arc's own `armedAt`, so an ack from a PAST arc can never
  * silently apply to a fresh one reusing the same kind. */
+/** The money plane's own per-person rollup (`/v1/owners`, tokenfuse #192).
+ *
+ * Built from the SAME delegation chain the preview already puts on every bus
+ * event (`makeEvent`'s `on_behalf_of: [userId(a.owner)]`), so the demo's two
+ * owner answers agree with each other here. On a real estate they routinely
+ * will not, because an agent can be owned by one person and run on another's
+ * behalf, and the console shows the two groupings side by side rather than
+ * reconciling them. The preview cannot manufacture that disagreement honestly,
+ * so it does not try to.
+ *
+ * One row is deliberately `unassigned`: a run whose chain named nobody is the
+ * ordinary case on a real box, and a demo where everything is attributed would
+ * teach the wrong shape. */
+function mockOwners() {
+  const byOwner = new Map<string, { spent: number; calls: number; runs: number; agents: Set<string>; last: string }>();
+  for (const a of FLEET) {
+    const e = byOwner.get(a.owner) ?? { spent: 0, calls: 0, runs: 0, agents: new Set<string>(), last: ago(0) };
+    e.spent += a.spentUsd;
+    e.calls += a.calls;
+    e.runs += 1;
+    e.agents.add(a.id);
+    byOwner.set(a.owner, e);
+  }
+  const out = [...byOwner.entries()].map(([owner, e]) => ({
+    owner: userId(owner),
+    spent_usd: Number(e.spent.toFixed(2)),
+    calls: e.calls,
+    runs: e.runs,
+    agents: e.agents.size,
+    last_seen: e.last,
+    tool_calls: Math.round(e.calls * 0.4),
+  }));
+  out.push({
+    owner: "unassigned",
+    spent_usd: 12.4,
+    calls: 806,
+    runs: 3,
+    agents: 2,
+    last_seen: ago(45 * 60_000),
+    tool_calls: 240,
+  });
+  return out.sort((a, b) => b.spent_usd - a.spent_usd);
+}
+
 /** Recent web egress for the Web Egress panel, mirroring
  * `crates/api/src/egress/mod.rs`'s shape.
  *
@@ -2959,6 +3003,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // operator's own kill/budget/ack/decide, newest-first already) goes in
     // front of all of it: a just-issued console_command is genuinely the
     // newest thing on the bus.
+    case "money_owners": return r(mockOwners());
     case "stats_counts": return r(mockStatsCounts());
     case "egress_recent": return r(mockEgress());
     case "recent_events": return r([...recentCommandEvents, ...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
