@@ -972,40 +972,102 @@ function mockEgress() {
  * Most of the fleet counts zero, and that is deliberate rather than thin: a
  * governed estate where every agent is being blocked daily is not the story
  * this console tells. */
-function mockStatsCounts() {
+/** A year of events per agent, deterministic and dated, so the preview can
+ * answer a window the way a box with durable history does.
+ *
+ * This used to be a single static count per agent with a note explaining that
+ * the preview only held one session. That note was true and it was also the
+ * reason the window buttons did nothing here. Seeding real dated events instead
+ * removes the need for the explanation rather than hiding it: 24h, 7d, 30d and
+ * 1y now select genuinely different slices, because there is genuinely a year
+ * of events behind them.
+ *
+ * Weighted toward the recent end (`p ** 1.7`), because an estate that has been
+ * running a year has grown, and a flat spread over twelve months reads as
+ * synthetic at a glance. */
+const YEAR_MS = 365 * DAY;
+
+interface SeededEvent {
+  atMs: number;
+  kind: "blocked" | "anomaly" | "budget";
+  byOperator: boolean;
+}
+
+/** One agent's year, built once and reused across renders and windows. */
+const seededYear = new Map<string, SeededEvent[]>();
+
+function yearFor(a: FleetAgent): SeededEvent[] {
+  const cached = seededYear.get(a.id);
+  if (cached) return cached;
+
+  const id = agentId(a);
+  const base = pseudo(id);
+  // Between 0 and ~48 events over the year. A third of the fleet is quiet all
+  // year, which is what a governed estate actually looks like.
+  const total = base < 0.34 ? 0 : Math.round(base * 48);
+  const out: SeededEvent[] = [];
+  for (let i = 0; i < total; i++) {
+    const p = pseudo(`${id}:${i}`);
+    // Recent-weighted: p**1.7 clusters toward 0, which is "days ago = few".
+    const daysAgo = Math.pow(p, 1.7) * 365;
+    const roll = pseudo(`${id}:kind:${i}`);
+    const kind: SeededEvent["kind"] = roll < 0.62 ? "blocked" : roll < 0.88 ? "anomaly" : "budget";
+    out.push({
+      atMs: now - daysAgo * DAY,
+      kind,
+      // A small slice of stops were a person's call, the same shape the real
+      // counter reports from `console.block_*` and an actor-named kill.
+      byOperator: kind === "blocked" && pseudo(`${id}:op:${i}`) < 0.08,
+    });
+  }
+  seededYear.set(a.id, out);
+  return out;
+}
+
+/** Per-agent event counts for the Statistics view, mirroring
+ * `crates/api/src/stats/mod.rs`'s shape, over a real window.
+ *
+ * `windowDays` of 0 means every event held, which here is the full seeded year.
+ * Anything else selects by each event's own timestamp, exactly as the real
+ * counter does against a durable store. */
+function mockStatsCounts(windowDays: number) {
+  const cutoff = windowDays > 0 ? now - windowDays * DAY : now - YEAR_MS - DAY;
+  let scanned = 0;
+
   const agents = FLEET.map((a) => {
     const id = agentId(a);
-    const p = pseudo(id);
-    // Roughly a third of the fleet has met a guard at all.
-    const blocked = p < 0.34 ? Math.max(1, Math.round(p * 9)) : 0;
-    const anomalies = p > 0.78 ? Math.max(1, Math.round((1 - p) * 8)) : 0;
-    const budget = p > 0.62 && p < 0.72 ? 1 : 0;
+    const inWindow = yearFor(a).filter((e) => e.atMs >= cutoff);
+    scanned += inWindow.length;
+
+    const blocked = inWindow.filter((e) => e.kind === "blocked").length;
+    const anomalies = inWindow.filter((e) => e.kind === "anomaly").length;
+    const budget = inWindow.filter((e) => e.kind === "budget").length;
+    const byOperator = inWindow.filter((e) => e.byOperator).length;
+
+    // An agent an operator has ACTUALLY halted in this session counts now,
+    // exactly as it does on a real box, where the freeze journals a
+    // `console.block_agent` line naming the agents it stopped.
+    const haltedNow =
+      frozenAgents.has(a.id) || stoppedUnits.has(a.team) || stoppedUsers.has(a.owner) ? 1 : 0;
+    if (haltedNow) scanned += 1;
+
     const by_type: Record<string, number> = {};
     if (blocked) by_type["policy_deny"] = blocked;
     if (anomalies) by_type["sustained_loop"] = anomalies;
     if (budget) by_type["budget_threshold"] = budget;
-    // A slice of the fleet's stops were a person's call, so the preview shows
-    // the split the real counter makes rather than a column of zeros. On top
-    // of that, an agent an operator has ACTUALLY halted in this session counts
-    // now, exactly as it does on a real box: there the freeze journals a
-    // `console.block_agent` line naming the agents it stopped, and
-    // `crates/api/src/stats/mod.rs` credits each of them. Without this the
-    // demo would let you freeze an agent and watch the column not move, which
-    // is the one thing that would teach a viewer the wrong lesson about what
-    // the column means.
-    const haltedNow = frozenAgents.has(a.id) || stoppedUnits.has(a.team) || stoppedUsers.has(a.owner) ? 1 : 0;
-    const byOperator = (blocked > 0 && p < 0.12 ? 1 : 0) + haltedNow;
+
+    const last = inWindow.reduce((m, e) => Math.max(m, e.atMs), 0);
     return {
       agent_id: id,
       blocked: blocked + haltedNow,
-      blocked_by_operator: byOperator,
+      blocked_by_operator: byOperator + haltedNow,
       anomalies,
       budget_events: budget,
-      // Only the agents whose events carried both amounts. The rest read as
-      // "not recorded", which is the honest common case on a real box too.
-      worst_overshoot_microusd: budget ? Math.round(p * 400_000) : null,
+      // Only where a budget event carried both amounts, which is the honest
+      // common case on a real box too.
+      worst_overshoot_microusd: budget ? Math.round(pseudo(`${id}:over`) * 400_000) : null,
       by_type,
-      last_seen: ago(Math.round(p * 3 * 3_600_000)),
+      last_seen: new Date(last || now).toISOString(),
     };
   });
 
@@ -1015,32 +1077,27 @@ function mockStatsCounts() {
     const state = currentScenario === "incident" ? reconcileProtagonist() : null;
     const over = state ? Math.max(0, state.fraction - 1) : 0;
     protagonist.blocked += 26;
-    // The runaway was killed break-glass by sre-oncall, which is exactly the
-    // one stop on this fleet a person made.
-    protagonist.blocked_by_operator += 1;
     protagonist.anomalies += 3;
     protagonist.budget_events += 2;
+    protagonist.blocked_by_operator += 1;
     protagonist.by_type["breaker_tripped"] = 26;
     protagonist.by_type["fanout_explosion"] = 3;
     protagonist.worst_overshoot_microusd = Math.round(
       Math.max(over, 0.28) * PROTAGONIST_RUN_BUDGET_USD * 1_000_000,
     );
     protagonist.last_seen = new Date().toISOString();
+    scanned += 31;
   }
 
-  const scanned = agents.reduce((n, a) => n + a.blocked + a.anomalies + a.budget_events, 0);
   return {
     measured: true,
-    // The preview holds one session's worth of events and no more, so it
-    // reports the window it can actually answer for rather than echoing back
-    // whichever one was asked for. A real box keeps history on disk and
-    // answers 24h / 7d / 30d from it.
     note:
-      `Counted from ${scanned} event(s) this preview has produced since it loaded. A real box ` +
-      "keeps its history on disk and answers a window by each event's own timestamp.",
+      windowDays === 0
+        ? `Counted from ${scanned} event(s), every age this box holds.`
+        : `Counted from ${scanned} event(s) in the last ${windowDays} day(s), by each event's own timestamp.`,
     scanned,
-    window_days: 0,
-    history_from: null,
+    window_days: windowDays,
+    history_from: new Date(now - YEAR_MS).toISOString(),
     undated: 0,
     agents,
   };
@@ -3004,7 +3061,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // front of all of it: a just-issued console_command is genuinely the
     // newest thing on the bus.
     case "money_owners": return r(mockOwners());
-    case "stats_counts": return r(mockStatsCounts());
+    case "stats_counts": return r(mockStatsCounts(Number(args?.window_days ?? 0)));
     case "egress_recent": return r(mockEgress());
     case "recent_events": return r([...recentCommandEvents, ...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
     case "run_events": return r(seedEvents(20));

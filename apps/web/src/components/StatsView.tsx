@@ -53,6 +53,7 @@ const WINDOWS: { days: number; label: string }[] = [
   { days: 1, label: "24h" },
   { days: 7, label: "7d" },
   { days: 30, label: "30d" },
+  { days: 365, label: "1y" },
 ];
 
 const GROUPS: { id: GroupBy; label: string; title: string }[] = [
