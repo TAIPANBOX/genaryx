@@ -88,6 +88,24 @@ export interface Incident {
   acknowledged: boolean;
 }
 
+/** Mirrors `money::commands::OwnerDto`: the money plane's own per-person
+ * rollup.
+ *
+ * The person here is the root of the delegation chain, so this says who STARTED
+ * the run. The console's other owner view joins through idryx and says who OWNS
+ * the agent. An agent owned by one person and run on another's behalf lands
+ * under different names in the two, and both are right about their own
+ * question, which is why nothing in this app adds them together. */
+export interface Owner {
+  owner: string;
+  spent_usd: number;
+  calls: number;
+  runs: number;
+  agents: number;
+  last_seen: string;
+  tool_calls: number;
+}
+
 /** Mirrors `money::commands::SavingsDto`. */
 export interface Savings {
   blocked_spend_usd: number;

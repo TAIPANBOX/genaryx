@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupRows, sortRows, NO_OWNER_KEY, NO_UNIT_KEY } from "./stats";
+import { groupRows, rowsFromOwners, sortRows, NO_CHAIN_KEY, NO_OWNER_KEY, NO_UNIT_KEY } from "./stats";
 import { toCsv } from "./download";
 import type { AgentStats } from "../statsTypes";
 import type { IdryxIdentity } from "../identityTypes";
@@ -202,5 +202,69 @@ describe("export", () => {
       META,
     );
     expect(csv).toContain('"fraud, kyc-aml and ""ops"""');
+  });
+});
+
+describe("rowsFromOwners", () => {
+  const OWNERS = [
+    {
+      owner: "user://acme.local/d.hayes",
+      spent_usd: 15,
+      calls: 150,
+      runs: 4,
+      agents: 2,
+      last_seen: "2026-08-09T10:00:00Z",
+      tool_calls: 60,
+    },
+    {
+      owner: "unassigned",
+      spent_usd: 2,
+      calls: 20,
+      runs: 1,
+      agents: 1,
+      last_seen: "2026-08-09T09:00:00Z",
+      tool_calls: 8,
+    },
+  ];
+
+  it("passes the money plane's own totals through without re-folding them", () => {
+    const rows = rowsFromOwners(OWNERS);
+    const hayes = rows.find((r) => r.key === "user://acme.local/d.hayes")!;
+    expect(hayes.spentUsd).toBe(15);
+    expect(hayes.calls).toBe(150);
+    expect(hayes.runs).toBe(4);
+    expect(hayes.agentCount, "distinct agents that ran on their behalf").toBe(2);
+  });
+
+  // The property that keeps this grouping from claiming something nobody
+  // measured: the bus counts are per agent, and this rollup has no agent list.
+  it("marks the count columns inapplicable rather than reporting zero", () => {
+    for (const row of rowsFromOwners(OWNERS)) {
+      expect(
+        row.countsApply,
+        "a 0 in the blocked column here would say 'never stopped', which nothing measured",
+      ).toBe(false);
+    }
+  });
+
+  it("renders the plane's 'unassigned' as a sentence and pins it last", () => {
+    const rows = rowsFromOwners(OWNERS);
+    const none = rows.find((r) => r.key === "unassigned")!;
+    expect(none.unattributed).toBe(true);
+    expect(none.label).toBe(NO_CHAIN_KEY);
+    expect(none.label).not.toBe("unassigned");
+
+    const sorted = sortRows(rows, "spentUsd", false);
+    expect(sorted[sorted.length - 1].unattributed).toBe(true);
+  });
+
+  // The two owner answers are separate on purpose. A test that asserted they
+  // MATCH would be wrong: an agent owned by one person and run on another's
+  // behalf lands under different names, and that is the point.
+  it("is a different question from the idryx owner grouping, and stays one", () => {
+    const viaIdryx = groupRows(RUNS, IDENTITIES, COUNTS, "owner");
+    const viaChain = rowsFromOwners(OWNERS);
+    expect(viaIdryx.some((r) => r.countsApply)).toBe(true);
+    expect(viaChain.every((r) => !r.countsApply)).toBe(true);
   });
 });

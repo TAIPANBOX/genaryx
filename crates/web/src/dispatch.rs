@@ -692,6 +692,13 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 });
             Ok(reply(projected))
         }
+        // The money plane's own per-person rollup. A read, and classified as
+        // one in roles.rs. Deliberately a SEPARATE command from the console's
+        // idryx-based owner grouping: they answer different questions and the
+        // frontend keeps them apart (see `genaryx_api::money::money_owners`).
+        "money_owners" => Ok(reply(
+            genaryx_api::money::commands::money_owners(&ctx.money).await,
+        )),
         "money_savings" => Ok(reply(
             genaryx_api::money::commands::money_savings(&ctx.money).await,
         )),

@@ -269,6 +269,20 @@ impl CloudClient {
         self.get_json("/v1/agents").await
     }
 
+    /// `GET /v1/owners` - per-person spend rollup, highest spend first
+    /// (`http.rs::owners`, `OwnerAgg` in `store.rs`), added in tokenfuse #192.
+    ///
+    /// This answers a DIFFERENT question from the console's own owner join,
+    /// and the difference is the whole reason both exist. Here the person is
+    /// the root of the delegation chain the gateway forwarded: whoever STARTED
+    /// the run. The console's join through idryx names whoever OWNS the agent.
+    /// An agent owned by one person and run on another's behalf lands under
+    /// different names in the two, and both are correct answers to their own
+    /// question. Never fold them together.
+    pub async fn owners(&self) -> Result<Vec<OwnerAgg>, ConnectorError> {
+        self.get_json("/v1/owners").await
+    }
+
     /// `GET /v1/savings` - FinOps savings totals (`http.rs::savings`,
     /// `SavingsSummary` in `store.rs`).
     pub async fn savings(&self) -> Result<SavingsSummary, ConnectorError> {
@@ -547,6 +561,26 @@ pub struct AgentAgg {
     pub calls: u64,
     pub runs: u64,
     pub last_seen_millis: i64,
+}
+
+/// `GET /v1/owners` body. Exact shape of `store.rs::OwnerAgg`.
+///
+/// No month columns, deliberately, and the reason travels with the type: unit
+/// budgets are enforced monthly by the gateway, nothing budgets a person, and a
+/// monthly figure with no enforcement behind it is the kind of number this
+/// stack does not ship.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OwnerAgg {
+    /// The human as a `user://` principal, or the literal `"unassigned"` for
+    /// runs whose chain named none. Never blank.
+    pub owner: String,
+    pub spent_microusd: i64,
+    pub calls: u64,
+    pub runs: u64,
+    /// Distinct agents that ran on this person's behalf.
+    pub agents: u64,
+    pub last_seen_millis: i64,
+    pub tool_calls: u64,
 }
 
 /// `GET /v1/savings` body. Exact shape of `store.rs::SavingsSummary` - the

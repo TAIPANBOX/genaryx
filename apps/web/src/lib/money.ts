@@ -7,6 +7,7 @@ import type {
   MoneyStatus,
   MutationOutcome,
   Overview,
+  Owner,
   Run,
   Savings,
 } from "../moneyTypes";
@@ -80,6 +81,10 @@ export const fetchOverview = (): Promise<Overview> => call<Overview>("money_over
 export const fetchRuns = (): Promise<Run[]> => call<Run[]>("money_runs");
 export const fetchIncidents = (): Promise<Incident[]> => call<Incident[]>("money_incidents");
 export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings");
+/** The money plane's per-person rollup (`GET /v1/owners`). Attributes by who
+ * STARTED the run; see `Owner` for why that is not the console's other owner
+ * number and must never be folded into it. */
+export const fetchOwners = (): Promise<Owner[]> => call<Owner[]>("money_owners");
 
 // Argument keys are snake_case on purpose, matching the Rust side's own
 // snake_case field names (`crates/api/src/money/commands.rs`) - one

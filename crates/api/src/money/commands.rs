@@ -38,7 +38,9 @@
 
 use super::env::EnvSource;
 use super::state::{MoneyClient, MoneyInner, MoneyState};
-use genaryx_connectors::{ConnectorError, Incident, RunAgg, SavingsSummary, Severity, Summary};
+use genaryx_connectors::{
+    ConnectorError, Incident, OwnerAgg, RunAgg, SavingsSummary, Severity, Summary,
+};
 use genaryx_core::{CommandRecord, command};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -163,6 +165,40 @@ impl From<&SavingsSummary> for SavingsDto {
             router_saved_usd: micros_to_usd(s.router_saved_microusd),
             budget_breaks: s.budget_breaks,
             total_saved_usd: micros_to_usd(s.total_saved_microusd),
+        }
+    }
+}
+
+/// One row of the money plane's own per-person rollup.
+///
+/// The person here is the root of the delegation chain: whoever STARTED the
+/// run. That is a different question from the one the console's idryx join
+/// answers (whoever OWNS the agent), and the two are never merged - see
+/// [`money_owners`].
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerDto {
+    /// `user://org/handle`, or the literal `"unassigned"` when the run's chain
+    /// named no human. Never blank.
+    pub owner: String,
+    pub spent_usd: f64,
+    pub calls: u64,
+    pub runs: u64,
+    /// Distinct agents that ran on this person's behalf.
+    pub agents: u64,
+    pub last_seen: String,
+    pub tool_calls: u64,
+}
+
+impl From<&OwnerAgg> for OwnerDto {
+    fn from(o: &OwnerAgg) -> Self {
+        Self {
+            owner: o.owner.clone(),
+            spent_usd: micros_to_usd(o.spent_microusd),
+            calls: o.calls,
+            runs: o.runs,
+            agents: o.agents,
+            last_seen: millis_to_iso(o.last_seen_millis),
+            tool_calls: o.tool_calls,
         }
     }
 }
@@ -563,6 +599,27 @@ pub async fn money_savings(state: &MoneyState) -> Result<SavingsDto, MoneyError>
     let client = ready_client(&state).await?;
     let savings = client.client.savings().await.map_err(MoneyError::from)?;
     Ok(SavingsDto::from(&savings))
+}
+
+/// Spend rolled up by the human each run answers to (`GET /v1/owners`,
+/// tokenfuse #192).
+///
+/// # WHY THE CONSOLE HAS TWO ANSWERS TO "WHOSE SPEND IS THIS"
+///
+/// This one attributes to the root of the delegation chain the gateway
+/// forwarded: whoever STARTED the run. The console's own owner grouping
+/// attributes through idryx, to whoever OWNS the agent. An agent owned by one
+/// person and run on another's behalf appears under different names in the two,
+/// and neither is wrong.
+///
+/// They are surfaced as two separate groupings for exactly that reason. Folding
+/// them into one "owner" number would produce a figure that answers neither
+/// question, and would do it silently, which is the shape of defect this
+/// console has already paid for once.
+pub async fn money_owners(state: &MoneyState) -> Result<Vec<OwnerDto>, MoneyError> {
+    let client = ready_client(&state).await?;
+    let owners = client.client.owners().await.map_err(MoneyError::from)?;
+    Ok(owners.iter().map(OwnerDto::from).collect())
 }
 
 // ============================================================================
