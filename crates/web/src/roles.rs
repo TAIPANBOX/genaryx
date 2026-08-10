@@ -178,6 +178,7 @@ const VIEWER_COMMANDS: &[&str] = &[
     "routines_history",
     "routines_status",
     "run_events",
+    "stats_counts",
 ];
 
 #[cfg(test)]

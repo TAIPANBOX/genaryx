@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-690-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-701-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -124,7 +124,7 @@ Run the whole open stack locally with one command via [**stack-up**](https://git
 
 ## What it looks like
 
-Four of the seventeen tabs, on the frozen e01 campaign data described below.
+Four of the nineteen tabs, on the frozen e01 campaign data described below.
 
 <table>
 <tr>

@@ -782,6 +782,31 @@ body {
 .d-run .rag:hover {
   color: var(--fg);
 }
+/* A name in the Statistics table that opens what it names: the agent, the
+   owner, or the unit. Underlined on hover rather than always, because a table
+   of forty underlined names reads as noise and the pointer already says it is
+   a control. */
+.statslink {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.statslink:hover,
+.statslink:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .d-spentcell {
   font-family: var(--font-m);
   font-variant-numeric: tabular-nums;

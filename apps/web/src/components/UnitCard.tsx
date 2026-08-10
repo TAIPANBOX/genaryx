@@ -95,6 +95,9 @@ export function UnitCard({ team, onOpenFullAgent }: { team: string; onOpenFullAg
   const serverBlocks = useLifecycleBlocks();
   const stopped = isUnitStopped(rec) || serverBlocks.units.includes(team);
 
+  const currentAgents = (rec?.agents ?? []).filter((a) => a.current);
+  const pastAgents = (rec?.agents ?? []).filter((a) => !a.current);
+
   return (
     <div className="flex flex-col">
       <PopoverHeader kicker="Business unit" title={prettyUnit(rec?.team ?? team)} />
@@ -113,9 +116,32 @@ export function UnitCard({ team, onOpenFullAgent }: { team: string; onOpenFullAg
       ) : (
         <>
           <div className="flex flex-wrap gap-x-6 gap-y-1" style={{ padding: "6px 16px 12px" }}>
-            <Stat label="agents" value={String(rec.agents.length)} />
+            {/* Current members, not every agent ever listed here. The record
+                deliberately carries both: an agent that has moved on still
+                appears in the list below, badged "past", because this unit was
+                charged for what it spent while it was here. Counting those in
+                the headline made this card say 16 where the Statistics table,
+                the watch dock and this card's own "users" and "calls" all
+                said 12. One membership number, and the past ones get their
+                own figure rather than being folded in or hidden. */}
+            <Stat label="agents" value={String(currentAgents.length)} />
+            {pastAgents.length > 0 && (
+              <Stat
+                label="past"
+                value={String(pastAgents.length)}
+                title="Agents that were in this unit and have since moved. Listed below, badged, and still counted in total spend for the period they were here."
+              />
+            )}
             <Stat label="users" value={String(rec.owners.length)} />
-            <Stat label="total spend" value={formatUsd(rec.totalSpentUsd)} />
+            <Stat
+              label="total spend"
+              value={formatUsd(rec.totalSpentUsd)}
+              title={
+                pastAgents.length > 0
+                  ? "This unit's share across time: every agent's spend for the period it belonged here, which is why it does not equal the current members' totals."
+                  : undefined
+              }
+            />
             <Stat label="calls" value={rec.totalCalls.toLocaleString("en-US")} />
           </div>
 
@@ -156,7 +182,7 @@ export function UnitCard({ team, onOpenFullAgent }: { team: string; onOpenFullAg
 
           <div style={{ padding: "10px 16px 14px", borderTop: "1px solid var(--line)" }}>
             <div className="mono text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)", paddingBottom: 6 }}>
-              agents in unit ({rec.agents.length})
+              agents in unit ({currentAgents.length}{pastAgents.length > 0 ? ` + ${pastAgents.length} past` : ""})
             </div>
             <div className="flex flex-col">
               {rec.agents.map((a) => (
@@ -201,9 +227,9 @@ export function UnitCard({ team, onOpenFullAgent }: { team: string; onOpenFullAg
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" title={title}>
       <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
         {label}
       </span>

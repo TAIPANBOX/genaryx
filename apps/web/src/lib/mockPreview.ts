@@ -36,6 +36,7 @@
 import type { UiEvent } from "../types";
 import { getScenario, onScenarioChange, type DemoScenario } from "../demo/scenario";
 import type { EntityLifecycleState } from "./lifecycleTypes";
+import type { EgressRow } from "../egressTypes";
 
 export const MOCK = import.meta.env.VITE_GENARYX_MOCK === "1";
 
@@ -818,6 +819,181 @@ function mockSavings() {
  * gone again once a fresh arc loops in. Every arc-specific incident id is
  * suffixed with the arc's own `armedAt`, so an ack from a PAST arc can never
  * silently apply to a fresh one reusing the same kind. */
+/** Recent web egress for the Web Egress panel, mirroring
+ * `crates/api/src/egress/mod.rs`'s shape.
+ *
+ * WP13 shipped that panel with no preview handler at all, so the published
+ * demo showed its honest "nothing was read" card, which is the right card for
+ * a box that could not look and the wrong one for a demo that has plenty to
+ * show.
+ *
+ * The fidelity story is the point of the panel, so these rows carry it: a
+ * majority served by a backend that enforces per request, a visible minority
+ * served only at the navigation, and two refusals with different verdicts.
+ * Deterministic (`pseudo`) so screenshots do not jitter. Hosts are RFC 2606
+ * documentation domains, never anywhere real. */
+function mockEgress() {
+  const hosts = [
+    "https://docs.example.com",
+    "https://status.example.net",
+    "https://api.example.org",
+    "https://registry.example.com",
+    "https://blog.example.net",
+  ];
+  const fleet = FLEET.slice(0, 8);
+  const rows: EgressRow[] = fleet.flatMap((a, i): EgressRow[] => {
+    const id = agentId(a);
+    const p = pseudo(id + "egress");
+    const origin = hosts[i % hosts.length];
+    // Every third agent's backend governs the navigation only: the number the
+    // panel exists to surface.
+    const navigationOnly = i % 3 === 2;
+    const out: EgressRow[] = [
+      {
+        ts: ago(Math.round(p * 90 * 60_000)),
+        agent_id: id,
+        run_id: `${a.name}-live`,
+        outcome: "fetched",
+        origin,
+        url_sha384: null,
+        backend: navigationOnly ? "browser-run" : "kitesurf",
+        enforcement: navigationOnly ? "navigation_only" : "per_request",
+        content_bytes: 1_200 + Math.round(p * 40_000),
+        verdict: null,
+        reason: null,
+      },
+    ];
+    if (i === 1) {
+      out.push({
+        ts: ago(Math.round(p * 40 * 60_000)),
+        agent_id: id,
+        run_id: `${a.name}-live`,
+        outcome: "blocked",
+        origin: "https://paste.example.org",
+        url_sha384: null,
+        backend: null,
+        enforcement: null,
+        content_bytes: null,
+        verdict: "deny_policy",
+        reason: "destination outside the allowed set for this run",
+      });
+    }
+    if (i === 4) {
+      out.push({
+        ts: ago(Math.round(p * 20 * 60_000)),
+        agent_id: id,
+        run_id: `${a.name}-live`,
+        outcome: "blocked",
+        origin: "https://internal.example.com",
+        url_sha384: null,
+        backend: null,
+        enforcement: null,
+        content_bytes: null,
+        verdict: "deny_address_range",
+        reason: "resolves inside a private address range",
+      });
+    }
+    return out;
+  });
+
+  const fetched = rows.filter((r) => r.outcome === "fetched");
+  const blocked = rows.filter((r) => r.outcome === "blocked");
+  const by_verdict: Record<string, number> = {};
+  for (const b of blocked) by_verdict[b.verdict ?? "unrecorded"] = (by_verdict[b.verdict ?? "unrecorded"] ?? 0) + 1;
+
+  return {
+    measured: true,
+    note: `Read from the ${rows.length * 12} most recent events on the bus. An older fetch than that is in the Bus Explorer, not here.`,
+    totals: {
+      fetched: fetched.length,
+      blocked: blocked.length,
+      by_verdict,
+      navigation_only: fetched.filter((r) => r.enforcement === "navigation_only").length,
+      // The passthrough backend reports what a page asked for; the
+      // navigation-only one cannot, and that gap is a count of its own.
+      subresources_unknown: fetched.filter((r) => r.enforcement === "navigation_only").length,
+    },
+    rows: rows.sort((x, y) => (x.ts < y.ts ? 1 : -1)),
+  };
+}
+
+/** Per-agent event counts for the Statistics view, mirroring
+ * `crates/api/src/stats/mod.rs`'s shape.
+ *
+ * Deterministic per agent (`pseudo`), for the same reason spend is: a
+ * screenshot must not jitter between reloads. The protagonist's row is layered
+ * on top from the live incident arc, so the agent the demo is about is the one
+ * that stands out here too, exactly as it does on Overview and Money.
+ *
+ * Most of the fleet counts zero, and that is deliberate rather than thin: a
+ * governed estate where every agent is being blocked daily is not the story
+ * this console tells. */
+function mockStatsCounts() {
+  const agents = FLEET.map((a) => {
+    const id = agentId(a);
+    const p = pseudo(id);
+    // Roughly a third of the fleet has met a guard at all.
+    const blocked = p < 0.34 ? Math.max(1, Math.round(p * 9)) : 0;
+    const anomalies = p > 0.78 ? Math.max(1, Math.round((1 - p) * 8)) : 0;
+    const budget = p > 0.62 && p < 0.72 ? 1 : 0;
+    const by_type: Record<string, number> = {};
+    if (blocked) by_type["policy_deny"] = blocked;
+    if (anomalies) by_type["sustained_loop"] = anomalies;
+    if (budget) by_type["budget_threshold"] = budget;
+    // A slice of the fleet's stops were a person's call, so the preview shows
+    // the split the real counter makes rather than a column of zeros. On top
+    // of that, an agent an operator has ACTUALLY halted in this session counts
+    // now, exactly as it does on a real box: there the freeze journals a
+    // `console.block_agent` line naming the agents it stopped, and
+    // `crates/api/src/stats/mod.rs` credits each of them. Without this the
+    // demo would let you freeze an agent and watch the column not move, which
+    // is the one thing that would teach a viewer the wrong lesson about what
+    // the column means.
+    const haltedNow = frozenAgents.has(a.id) || stoppedUnits.has(a.team) || stoppedUsers.has(a.owner) ? 1 : 0;
+    const byOperator = (blocked > 0 && p < 0.12 ? 1 : 0) + haltedNow;
+    return {
+      agent_id: id,
+      blocked: blocked + haltedNow,
+      blocked_by_operator: byOperator,
+      anomalies,
+      budget_events: budget,
+      // Only the agents whose events carried both amounts. The rest read as
+      // "not recorded", which is the honest common case on a real box too.
+      worst_overshoot_microusd: budget ? Math.round(p * 400_000) : null,
+      by_type,
+      last_seen: ago(Math.round(p * 3 * 3_600_000)),
+    };
+  });
+
+  // The runaway, from the same incident arc every other panel reads.
+  const protagonist = agents.find((a) => a.agent_id === PROTAGONIST_ID);
+  if (protagonist) {
+    const state = currentScenario === "incident" ? reconcileProtagonist() : null;
+    const over = state ? Math.max(0, state.fraction - 1) : 0;
+    protagonist.blocked += 26;
+    // The runaway was killed break-glass by sre-oncall, which is exactly the
+    // one stop on this fleet a person made.
+    protagonist.blocked_by_operator += 1;
+    protagonist.anomalies += 3;
+    protagonist.budget_events += 2;
+    protagonist.by_type["breaker_tripped"] = 26;
+    protagonist.by_type["fanout_explosion"] = 3;
+    protagonist.worst_overshoot_microusd = Math.round(
+      Math.max(over, 0.28) * PROTAGONIST_RUN_BUDGET_USD * 1_000_000,
+    );
+    protagonist.last_seen = new Date().toISOString();
+  }
+
+  return {
+    measured: true,
+    note:
+      "Counted from the events this preview has produced since it loaded. A real box counts " +
+      "what it has ingested since it started.",
+    scanned: agents.reduce((n, a) => n + a.blocked + a.anomalies + a.budget_events, 0),
+    agents,
+  };
+}
+
 function mockIncidents() {
   const ra = PROTAGONIST;
   const rid = PROTAGONIST_ID;
@@ -2775,6 +2951,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // operator's own kill/budget/ack/decide, newest-first already) goes in
     // front of all of it: a just-issued console_command is genuinely the
     // newest thing on the bus.
+    case "stats_counts": return r(mockStatsCounts());
+    case "egress_recent": return r(mockEgress());
     case "recent_events": return r([...recentCommandEvents, ...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
     case "run_events": return r(seedEvents(20));
 

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { userHandle } from "../lib/agentRecord";
 import { blockAgent } from "../lib/agentActions";
 import { cssVar } from "../lib/cssVars";
-import { agentTeam, spendByAgent, usd0 } from "../lib/dashData";
+import { spendByAgent, usd0 } from "../lib/dashData";
 import { blockUnit, blockUser, fetchUnitRecord, fetchUserRecord, type UnitRecord, type UserRecord } from "../lib/entityRecords";
+import { unitSpendFromRuns, userSpendFromRuns } from "../lib/entityFolds";
 import { formatUsd } from "../lib/format";
 import { shortAgentLabel } from "../lib/graph";
 import { fetchIdentities } from "../lib/identity";
@@ -22,7 +22,7 @@ import { useLifecycleBlocks } from "../lib/lifecycleBlocks";
 import { usePopover } from "../lib/popover";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
-import { prettyUnit, unitForTeam } from "../lib/views";
+import { prettyUnit } from "../lib/views";
 import type { IdryxIdentity } from "../identityTypes";
 import type { Run } from "../moneyTypes";
 import { UserCard } from "./UserCard";
@@ -481,112 +481,6 @@ function topRunForAgent(agentRuns: Run[]): Run | null {
 /** One unit's real, runs-derived aggregate - see the module doc comment
  * above for why this (not `UnitRecord`/`fetchUnitRecord`) is the number this
  * dock leads with. */
-interface UnitSpendAgg {
-  /** This window's total spend across every agent whose id parses to this
-   * team, straight off `Run.spent_usd` - the same number `spendByAgent`
-   * already totals per agent, just grouped one level up. */
-  spentUsd: number;
-  /** Count of DISTINCT agents (not runs) seen for this team in the current
-   * fetch - what the dock shows as "N agents". */
-  agentCount: number;
-  /** Sum of every LIVE run's own `budget_usd` for this team's agents, when
-   * at least one such run carries a budget - the nearest honest, already-real
-   * proxy this data model has for "this unit's cap" (there is no literal
-   * unit-level budget field or command, mock or real). `null` when not a
-   * single live run in the unit has a budget set, so the dock never draws a
-   * used/cap bar against a fabricated ceiling. Deliberately summed off the
-   * runs directly (not off `spendByAgent`'s per-agent totals): a run's
-   * `budget_usd` is a per-run ceiling, not a per-agent one, so an agent with
-   * two runs must contribute both runs' budgets, not just one. */
-  budgetUsd: number | null;
-}
-
-/** Groups `fetchRuns()`'s result by business unit (`agentTeam()` of each
- * run's `agent_id`) - the one unit-spend source that also answers on a real
- * box, since it rides `money_runs` rather than the mock-only `unit_record`.
- * Keyed by the SAME raw team string `agentTeam()`/`UnitRecord.team` use
- * everywhere else in this app (no prettifying here - that is a display-only
- * concern, done once at render time via `prettyUnit`). A team absent from
- * `runs` entirely (no agent in the current fetch belongs to it) is simply
- * absent from the returned map, not a zero entry - callers fall back to
- * `fetchUnitRecord`'s mock enrichment or a muted dash exactly as they would
- * for any other not-yet-resolved pin. */
-function unitSpendFromRuns(runs: Run[]): Map<string, UnitSpendAgg> {
-  // Keyed by business UNIT (via unitForTeam), not raw team, so a pinned unit
-  // id like "financial-crime" matches and multi-team units (fraud + kyc-aml)
-  // aggregate into one row instead of never resolving.
-  const byTeam = new Map<string, { spentUsd: number; agents: Set<string>; budgetUsd: number; hasBudget: boolean }>();
-  for (const agent of spendByAgent(runs)) {
-    const unit = unitForTeam(agent.team);
-    const entry = byTeam.get(unit) ?? { spentUsd: 0, agents: new Set<string>(), budgetUsd: 0, hasBudget: false };
-    entry.spentUsd += agent.spent;
-    entry.agents.add(agent.agent);
-    byTeam.set(unit, entry);
-  }
-  for (const r of runs) {
-    if (r.killed || r.budget_usd === null || r.budget_usd <= 0) continue;
-    const entry = byTeam.get(unitForTeam(agentTeam(r.agent_id)));
-    if (!entry) continue; // agentTeam() disagreeing with spendByAgent() above never happens (same parse), but never trust that silently.
-    entry.budgetUsd += r.budget_usd;
-    entry.hasBudget = true;
-  }
-  const out = new Map<string, UnitSpendAgg>();
-  for (const [team, entry] of byTeam) {
-    // budgetUsd stays null on purpose: summing per-run ceilings is not a unit
-    // monthly cap (it produced absurd "33000%" bars), and no real unit-cap
-    // field/command exists client-side. Show the spend number + agent count,
-    // not a fabricated used/cap bar.
-    void entry.hasBudget;
-    out.set(team, { spentUsd: entry.spentUsd, agentCount: entry.agents.size, budgetUsd: null });
-  }
-  return out;
-}
-
-/** One user's real, runs-derived aggregate - the identity-joined mirror of
- * [`UnitSpendAgg`] above. No budget field: same as units, there is no
- * per-user budget/ceiling anywhere in this data model, mock or real. */
-interface UserSpendAgg {
-  spentUsd: number;
-  agentCount: number;
-}
-
-/** Groups `fetchRuns()`'s result by OWNER, joined through
- * `fetchIdentities()`'s own `owner` field rather than anything on `Run`
- * itself - `Run` (`moneyTypes.ts`) carries no owner/on_behalf_of field at
- * all, unlike `agent_id` (`agentTeam`) which [`unitSpendFromRuns`] above
- * groups by directly. `identity_list_identities`, like `money_runs`, has a
- * REAL `crates/web/src/dispatch.rs` handler (unlike the mock-only
- * `user_record`/`unit_record`), so this resolves genuine spend and distinct
- * agent count on a real box too, not just the preview. Mock owners come
- * back `user://<org>/<handle>` (`userId()`, `lib/mockPreview.ts`); a real
- * idryx owner may already be a bare handle - `userHandle()`
- * (`lib/agentRecord.ts`, the SAME parse `AgentDetailCard.tsx`'s own "owner"
- * field already uses) takes the last path segment either way, so both
- * shapes land on the exact key `UserCard`/`WatchToggleButton` use. An
- * identity with no owner at all (`""`) contributes no entry, never a fake
- * "" user; an agent whose id is simply absent from the current identities
- * fetch is likewise excluded, not zero-charged to a guessed owner. */
-function userSpendFromRuns(runs: Run[], identities: IdryxIdentity[]): Map<string, UserSpendAgg> {
-  const ownerByAgent = new Map<string, string>();
-  for (const identity of identities) {
-    if (identity.owner) ownerByAgent.set(identity.id, userHandle(identity.owner));
-  }
-  const byOwner = new Map<string, { spentUsd: number; agents: Set<string> }>();
-  for (const agent of spendByAgent(runs)) {
-    const owner = ownerByAgent.get(agent.agent);
-    if (!owner) continue;
-    const entry = byOwner.get(owner) ?? { spentUsd: 0, agents: new Set<string>() };
-    entry.spentUsd += agent.spent;
-    entry.agents.add(agent.agent);
-    byOwner.set(owner, entry);
-  }
-  const out = new Map<string, UserSpendAgg>();
-  for (const [owner, entry] of byOwner) {
-    out.set(owner, { spentUsd: entry.spentUsd, agentCount: entry.agents.size });
-  }
-  return out;
-}
-
 /** Units carry no per-unit budget in this data model (`UnitRecord` has none -
  * see `lib/entityRecords.ts`), so "percent of cap" has no literal field to
  * read. The nearest honest, already-available proxy for "at a glance
