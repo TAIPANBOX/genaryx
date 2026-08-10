@@ -1,6 +1,7 @@
 /** The top-level views the app shell switches between. */
 export type ViewId =
   | "overview"
+  | "stats"
   | "money"
   | "policy"
   | "identity"
@@ -32,6 +33,10 @@ export const NAV_SECTIONS: readonly {
     label: "Operate",
     items: [
       { id: "overview", label: "Overview" },
+      // Next to Overview on purpose. Overview answers "is anything on fire",
+      // Statistics answers "who, and how much", and both are the daily
+      // governance surface rather than an investigation.
+      { id: "stats", label: "Statistics" },
       { id: "money", label: "Money" },
       { id: "policy", label: "Policy" },
       { id: "identity", label: "Identity" },

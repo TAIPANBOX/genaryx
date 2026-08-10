@@ -340,6 +340,17 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             let a: A = decode(args)?;
             Ok(ok(genaryx_api::egress::egress_recent(a.limit, &ctx.bus)))
         }
+        // Per-agent event counts for the Statistics view. A read, and
+        // classified as one in roles.rs. `scan` bounds the bus lines read, not
+        // the agents returned: see `genaryx_api::stats`.
+        "stats_counts" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                scan: usize,
+            }
+            let a: A = decode(args)?;
+            Ok(ok(genaryx_api::stats::stats_counts(a.scan, &ctx.bus)))
+        }
         "recent_events" => {
             #[derive(serde::Deserialize)]
             struct A {

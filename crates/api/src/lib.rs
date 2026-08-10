@@ -48,6 +48,7 @@ pub mod policy;
 pub mod quality;
 pub mod remote;
 pub mod routines;
+pub mod stats;
 
 pub use bus::{AppState, BusMode};
 pub use events::UiEvent;
