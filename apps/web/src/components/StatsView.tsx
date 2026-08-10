@@ -53,11 +53,24 @@ interface Column {
    * a dash when that window could not be read. */
   band: "money" | "counts" | "key";
   align: "left" | "right";
+  /** Overrides the band's own tooltip where the column needs to say something
+   * more specific than which window it came from. */
+  title?: string;
 }
 
 const COLUMNS: Column[] = [
   { key: "label", header: "Name", band: "key", align: "left" },
-  { key: "agentCount", header: "Agents", band: "key", align: "right" },
+  {
+    key: "agentCount",
+    header: "Agents",
+    band: "key",
+    align: "right",
+    // Says what it counts, because the detail card behind the row counts
+    // something else. This is agents that appear in one of the two windows;
+    // the unit and owner cards list the full roster, including agents that
+    // have not run. Both numbers are right and they are not the same number.
+    title: "Agents seen in these windows, not the full roster the detail card lists",
+  },
   { key: "spentUsd", header: "Spend", band: "money", align: "right" },
   { key: "calls", header: "Calls", band: "money", align: "right" },
   { key: "blocked", header: "Blocked", band: "counts", align: "right" },
@@ -118,7 +131,18 @@ function usd4(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
 
-export function StatsView() {
+export function StatsView({
+  onOpenAgent,
+  onOpenUser,
+  onOpenUnit,
+}: {
+  /** Opens the full Agent 360 view, the same one the Overview bars open. */
+  onOpenAgent: (agentId: string) => void;
+  /** Opens the owner card: every agent they own and what those agents spend. */
+  onOpenUser: (handle: string) => void;
+  /** Opens the business-unit card. */
+  onOpenUnit: (unitId: string) => void;
+}) {
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [identities, setIdentities] = useState<IdryxIdentity[] | null>(null);
   const [counts, setCounts] = useState<AgentStats[] | null>(null);
@@ -394,11 +418,12 @@ export function StatsView() {
                       borderBottom: "1px solid var(--line)",
                     }}
                     title={
-                      c.band === "money"
+                      c.title ??
+                      (c.band === "money"
                         ? "money plane window"
                         : c.band === "counts"
                           ? "bus window: since this console started"
-                          : undefined
+                          : undefined)
                     }
                   >
                     {c.header}
@@ -415,6 +440,19 @@ export function StatsView() {
                   group={group}
                   hasMoney={!!runs}
                   hasCounts={countsMeasured}
+                  onOpen={
+                    // The unattributed row has nothing to open: there is no
+                    // owner and no unit behind it, only the agents that lacked
+                    // one. A control that looked clickable and did nothing
+                    // would suggest the console knows something it does not.
+                    r.unattributed
+                      ? undefined
+                      : group === "agent"
+                        ? () => onOpenAgent(r.key)
+                        : group === "owner"
+                          ? () => onOpenUser(r.key)
+                          : () => onOpenUnit(r.key)
+                  }
                 />
               ))}
             </tbody>
@@ -435,19 +473,44 @@ function StatsTableRow({
   group,
   hasMoney,
   hasCounts,
+  onOpen,
 }: {
   row: StatsRow;
   group: GroupBy;
   hasMoney: boolean;
   hasCounts: boolean;
+  /** Opens whatever this row is: the agent, the owner, or the unit. Absent for
+   * the unattributed row, which is not a thing that can be opened. */
+  onOpen?: () => void;
 }) {
   const num = (v: number, on: boolean) => (on ? v.toLocaleString("en-US") : "-");
+  const shown = group === "unit" && !row.unattributed ? prettyUnit(row.label) : row.label;
   return (
     <tr style={{ borderTop: "1px solid var(--line)" }}>
       <td className="px-3 py-2" style={{ color: row.unattributed ? "var(--faint)" : "var(--fg)" }}>
-        <span className="mono text-[11.5px]">
-          {group === "unit" && !row.unattributed ? prettyUnit(row.label) : row.label}
-        </span>
+        {onOpen ? (
+          // A button rather than a click handler on the cell: this is a real
+          // control, so it takes focus, answers Enter and Space, and reads as
+          // one to a screen reader. The whole row is deliberately NOT the
+          // target - a table whose every cell navigates makes selecting a
+          // number to copy impossible.
+          <button
+            type="button"
+            onClick={onOpen}
+            className="mono text-[11.5px] statslink"
+            title={
+              group === "agent"
+                ? `Open ${row.key}`
+                : group === "owner"
+                  ? `Open ${row.label}, and every agent they own`
+                  : `Open the ${shown} unit`
+            }
+          >
+            {shown}
+          </button>
+        ) : (
+          <span className="mono text-[11.5px]">{shown}</span>
+        )}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
         {row.agentCount.toLocaleString("en-US")}

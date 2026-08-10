@@ -407,6 +407,16 @@ export function AppShell() {
     [open, onOpenAgent],
   );
 
+  // The owner twin of `onOpenUnit`, for the same reason and to the same card
+  // the owner deep-link already opens above. Statistics needs it as a prop
+  // rather than inline, because every row of its owner grouping is a way in.
+  const onOpenUser = useCallback(
+    (handle: string) => {
+      open(<UserCard handle={handle} onOpenFullAgent={onOpenAgent} />);
+    },
+    [open, onOpenAgent],
+  );
+
   return (
     <div className="app">
       <AppHeader
@@ -445,7 +455,9 @@ export function AppShell() {
         {view === "onboard" && <OnboardView />}
         {view === "quality" && <QualityView onOpenAgent={onOpenAgent} />}
         {view === "egress" && <EgressView />}
-        {view === "stats" && <StatsView />}
+        {view === "stats" && (
+          <StatsView onOpenAgent={onOpenAgent} onOpenUser={onOpenUser} onOpenUnit={onOpenUnit} />
+        )}
         {view === "crypto" && <CryptoView />}
         {view === "memory" && <MemoryView onOpenAgent={onOpenAgent} />}
         {view === "drills" && <DrillsView />}

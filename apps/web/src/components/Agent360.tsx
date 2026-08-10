@@ -9,8 +9,11 @@ import { formatTimestamp, formatUsd } from "../lib/format";
 import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph";
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
 import { isQualityDriftEvent } from "../lib/incidents";
-import { describeMoneyError, fetchRuns } from "../lib/money";
-import { runBlockedState, StateBadge } from "../lib/lifecycle";
+import { describeMoneyError, fetchRuns, killRun } from "../lib/money";
+import { FreezeToggleButton, KillRunButton, runBlockedState, StateBadge } from "../lib/lifecycle";
+import { useLifecycleBlocks } from "../lib/lifecycleBlocks";
+import { useConsoleStateVersion } from "../lib/consoleState";
+import { blockAgent } from "../lib/agentActions";
 import { describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
 import { effectiveOverlay, matchedPolicies, mcpReachForAgent, mcpServerIdentities, permissionRollup, shadowServerIds } from "../lib/access";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
@@ -476,6 +479,12 @@ export function Agent360({
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [moneyError, setMoneyError] = useState<MoneyError | null>(null);
 
+  // `consoleVersion` is in the deps so a Freeze or a Kill issued from this
+  // panel's own header re-reads the runs it derives its state from. Without
+  // it the command lands, the box changes, and the header keeps saying
+  // "Freeze" at an agent that is already frozen.
+  const consoleVersion = useConsoleStateVersion();
+
   useEffect(() => {
     if (!moneyReady) return;
     let cancelled = false;
@@ -493,7 +502,29 @@ export function Agent360({
     return () => {
       cancelled = true;
     };
-  }, [moneyReady, agentId]);
+  }, [moneyReady, agentId, consoleVersion]);
+
+  // Freeze and kill live HERE as well as on the agent popover, because this
+  // panel is where an operator ENDS UP: every deep link, every row of the
+  // Statistics table and the popover's own "open full" lead here, and the
+  // panel that shows you the runaway was the one panel that could not stop it.
+  // Same two controls, same commands, same break-glass ceremony as
+  // `AgentDetailCard.tsx`; no new capability, just where the hand already is.
+  //
+  // The frozen flag comes from the server's own block list rather than from a
+  // record, since `agent_record` is preview-only and this panel must answer on
+  // a real box. `liveRun` is the run a kill would target: killing needs a run,
+  // and `KillRunButton` renders itself disabled when there is none.
+  // Two sources, because neither answers everywhere. `lifecycle_blocks` is the
+  // real box's durable set and returns empty under the mock by design (see its
+  // own module doc); `money_runs` stamps `Run.lifecycle` on a blocked agent's
+  // runs and is what the preview has. Reading only the first left the demo's
+  // button saying "Freeze" at an agent it had just frozen.
+  const serverBlocks = useLifecycleBlocks();
+  const frozen =
+    serverBlocks.agents.includes(agentId) ||
+    (runs ?? []).some((r) => runBlockedState(r) === "frozen");
+  const liveRun = (runs ?? []).find((r) => !r.killed) ?? null;
 
   // ---- Policy: wardryx.* decisions (from `agent_events`) + approvals. ----
   const policyStatus = usePolicyStatus();
@@ -596,6 +627,12 @@ export function Agent360({
           </span>
         </div>
         <div className="flex-1" />
+        <FreezeToggleButton frozen={frozen} onToggle={() => blockAgent(agentId, !frozen).then(() => {})} />
+        <KillRunButton
+          run={liveRun}
+          detail={liveRun ? `run ${liveRun.run_id} · spent ${formatUsd(liveRun.spent_usd)}` : undefined}
+          onKill={(runId, reason) => killRun(runId, reason).then(() => {})}
+        />
         <WatchToggleButton kind="agent" id={agentId} label={shortAgentLabel(agentId)} />
         <button type="button" className="icon-btn" aria-label="Close Agent 360" onClick={onClose}>
           &times;
