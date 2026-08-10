@@ -940,9 +940,13 @@ function mockStatsCounts() {
     if (blocked) by_type["policy_deny"] = blocked;
     if (anomalies) by_type["sustained_loop"] = anomalies;
     if (budget) by_type["budget_threshold"] = budget;
+    // A slice of the fleet's stops were a person's call, so the preview shows
+    // the split the real counter makes rather than a column of zeros.
+    const byOperator = blocked > 0 && p < 0.12 ? 1 : 0;
     return {
       agent_id: id,
       blocked,
+      blocked_by_operator: byOperator,
       anomalies,
       budget_events: budget,
       // Only the agents whose events carried both amounts. The rest read as
@@ -959,6 +963,9 @@ function mockStatsCounts() {
     const state = currentScenario === "incident" ? reconcileProtagonist() : null;
     const over = state ? Math.max(0, state.fraction - 1) : 0;
     protagonist.blocked += 26;
+    // The runaway was killed break-glass by sre-oncall, which is exactly the
+    // one stop on this fleet a person made.
+    protagonist.blocked_by_operator += 1;
     protagonist.anomalies += 3;
     protagonist.budget_events += 2;
     protagonist.by_type["breaker_tripped"] = 26;

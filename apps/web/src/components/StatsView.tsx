@@ -73,7 +73,22 @@ const COLUMNS: Column[] = [
   },
   { key: "spentUsd", header: "Spend", band: "money", align: "right" },
   { key: "calls", header: "Calls", band: "money", align: "right" },
-  { key: "blocked", header: "Blocked", band: "counts", align: "right" },
+  {
+    key: "blocked",
+    header: "Blocked",
+    band: "counts",
+    align: "right",
+    title:
+      "Stops by our own services: a policy denial, a tripped breaker, a DLP or taint block, a refused fetch. An operator freeze is enforced as an ordinary policy, so its refusals land here too and are not attributed to the person.",
+  },
+  {
+    key: "blockedByOperator",
+    header: "By operator",
+    band: "counts",
+    align: "right",
+    title:
+      "Of those, the ones a person caused: a kill naming an actor, or a hold a human denied. Everything else was the services acting on their own.",
+  },
   { key: "anomalies", header: "Odd behaviour", band: "counts", align: "right" },
   { key: "budgetEvents", header: "Budget events", band: "counts", align: "right" },
   { key: "worstOvershootMicrousd", header: "Worst breach", band: "counts", align: "right" },
@@ -214,6 +229,7 @@ export function StatsView({
               "Unit is derived from the team segment of the agent id, not from a separate org chart.",
             ]
           : []),
+        "blocked counts every stop; blocked_by_operator is the subset a person caused. An operator freeze is enforced as an ordinary policy, so its refusals are counted as the system's.",
         "worst_breach_usd is the single worst breach, never a sum: one runaway run trips its breaker on every call.",
         "An empty worst_breach_usd means no event recorded the amounts, which is not the same as no overspend.",
       ],
@@ -233,6 +249,7 @@ export function StatsView({
         calls: runs ? r.calls : null,
         runs: runs ? r.runs : null,
         blocked: countsMeasured ? r.blocked : null,
+        blocked_by_operator: countsMeasured ? r.blockedByOperator : null,
         odd_behaviour: countsMeasured ? r.anomalies : null,
         budget_events: countsMeasured ? r.budgetEvents : null,
         worst_breach_usd:
@@ -253,6 +270,7 @@ export function StatsView({
         { key: "calls" as const, header: "calls" },
         { key: "runs" as const, header: "runs" },
         { key: "blocked" as const, header: "blocked" },
+        { key: "blocked_by_operator" as const, header: "blocked_by_operator" },
         { key: "odd_behaviour" as const, header: "odd_behaviour" },
         { key: "budget_events" as const, header: "budget_events" },
         { key: "worst_breach_usd" as const, header: "worst_breach_usd" },
@@ -523,6 +541,12 @@ function StatsTableRow({
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
         {num(row.blocked, hasCounts)}
+      </td>
+      <td
+        className="mono text-[11px] px-3 py-2 text-right"
+        style={{ color: row.blockedByOperator > 0 ? "var(--fg)" : "var(--faint)" }}
+      >
+        {num(row.blockedByOperator, hasCounts)}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
         {num(row.anomalies, hasCounts)}

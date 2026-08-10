@@ -44,6 +44,11 @@ use crate::bus::AppState;
 /// Read from agent-passport SPEC 6.2 plus the two planes that emit outside it
 /// today: the TokenFuse gateway's enforcement path and the egress plane.
 ///
+/// WHO stopped it is a separate axis, carried in
+/// [`AgentStats::blocked_by_operator`]: the same event set, split by whether a
+/// human pulled the switch or a service did. See that field for what the split
+/// can and cannot see.
+///
 /// `console_command` is deliberately NOT here, and it is the one exclusion
 /// worth stating. One operator kill writes two lines: a `console_command` into
 /// the console's own chain, and a `run_killed` from the money plane that
@@ -102,7 +107,31 @@ const BUDGET_TYPES: &[&str] = &["budget_exhausted", "budget_threshold"];
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct AgentStats {
     pub agent_id: String,
+    /// Every stop, whoever caused it.
     pub blocked: usize,
+
+    /// The subset of `blocked` a HUMAN caused, so the other part of the column
+    /// is what the services did on their own.
+    ///
+    /// Two events say so in their own data and nothing else does:
+    ///
+    /// - `run_killed` carries `data.actor` when an operator pulled it and
+    ///   omits the field entirely when the plane killed the run itself
+    ///   (`tokenfuse/crates/cloud/src/store.rs`, `emit_run_killed`).
+    /// - `approval_denied` carries `data.decided_by`: a person answered the
+    ///   hold with a no. Its siblings `approval_timeout` and
+    ///   `approval_unanswered` are the opposite case, nobody answered, so they
+    ///   stay on the system side.
+    ///
+    /// WHAT THIS CANNOT SEE, and it matters: an operator FREEZE is enforced by
+    /// writing an ordinary deny-all wardryx policy
+    /// (`genaryx/crates/web/src/lifecycle.rs`), so the refusals that follow
+    /// arrive as plain `policy_deny` with an ordinary PDP reason. Nothing on
+    /// the bus marks them as the operator's doing, and this counter does not
+    /// guess: they land on the system side. The freeze ITSELF emits no event at
+    /// all, so it is never counted here as a stop in its own right.
+    pub blocked_by_operator: usize,
+
     pub anomalies: usize,
     pub budget_events: usize,
 
@@ -153,6 +182,22 @@ impl StatsPanel {
             agents: Vec::new(),
         }
     }
+}
+
+/// Whether a stop was a person's decision, read from the event's own data.
+///
+/// Absent fields mean "no, or not recorded", and both fall to the system side:
+/// the honest default for an unattributed enforcement is the service that
+/// enforced it, not a human nobody named.
+fn is_operator_stop(type_: &str, data: Option<&serde_json::Value>) -> bool {
+    let field = match type_ {
+        "run_killed" => "actor",
+        "approval_denied" => "decided_by",
+        _ => return false,
+    };
+    data.and_then(|d| d.get(field))
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.trim().is_empty())
 }
 
 /// How far over budget one event says the agent went, in micro-USD.
@@ -237,6 +282,9 @@ pub fn stats_counts(scan: usize, state: &AppState) -> StatsPanel {
 
         if BLOCKED_TYPES.contains(&t) {
             entry.blocked += 1;
+            if is_operator_stop(t, e.data.as_ref()) {
+                entry.blocked_by_operator += 1;
+            }
         }
         if ANOMALY_TYPES.contains(&t) {
             entry.anomalies += 1;
@@ -519,6 +567,85 @@ mod tests {
                  counting it would sit at zero forever"
             );
         }
+    }
+
+    /// A kill by a person and a kill by the plane are the same event type and
+    /// differ only by one field. Getting this backwards would credit the
+    /// services with an operator's decisions, or blame an operator for the
+    /// breaker doing its job.
+    #[test]
+    fn a_stop_is_the_operators_only_when_the_event_names_one() {
+        let a = "agent://acme.local/sre/janitor";
+        let (state, dir) = seeded_state(&[
+            // The plane killed this one: no actor field at all.
+            event(
+                a,
+                "2026-08-09T10:00:00Z",
+                "run_killed",
+                serde_json::json!({ "org": "acme" }),
+            ),
+            // An operator killed this one.
+            event(
+                a,
+                "2026-08-09T10:01:00Z",
+                "run_killed",
+                serde_json::json!({ "org": "acme", "actor": "user://acme.local/d.hayes" }),
+            ),
+            // A person answered the hold with a no.
+            event(
+                a,
+                "2026-08-09T10:02:00Z",
+                "approval_denied",
+                serde_json::json!({ "approval_id": "ap-1", "decided_by": "d.hayes" }),
+            ),
+            // Nobody answered: the opposite case, and it stays with the system.
+            event(
+                a,
+                "2026-08-09T10:03:00Z",
+                "approval_unanswered",
+                serde_json::json!({}),
+            ),
+            // An empty actor names nobody, so it is not an operator stop.
+            event(
+                a,
+                "2026-08-09T10:04:00Z",
+                "run_killed",
+                serde_json::json!({ "org": "acme", "actor": "  " }),
+            ),
+            // Ordinary enforcement.
+            event(
+                a,
+                "2026-08-09T10:05:00Z",
+                "policy_deny",
+                serde_json::json!({}),
+            ),
+        ]);
+
+        let p = stats_counts(500, &state);
+        let row = &p.agents[0];
+        assert_eq!(row.blocked, 6, "every one of them is a stop");
+        assert_eq!(
+            row.blocked_by_operator, 2,
+            "the named kill and the answered denial, and nothing else"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An operator freeze writes an ordinary deny-all policy, so its refusals
+    /// arrive as plain `policy_deny` and nothing on the bus marks them. The
+    /// counter must not guess: it credits them to the system rather than
+    /// inventing an attribution the event does not carry.
+    #[test]
+    fn a_frozen_agents_refusals_are_not_guessed_to_be_the_operators() {
+        assert!(!is_operator_stop(
+            "policy_deny",
+            Some(&serde_json::json!({ "reason": "cost above threshold" }))
+        ));
+        assert!(!is_operator_stop(
+            "breaker_tripped",
+            Some(&serde_json::json!({ "reason": "budget_exceeded" }))
+        ));
     }
 
     /// An event with no amounts must leave `overshoot` absent rather than

@@ -95,6 +95,9 @@ export interface StatsRow {
 
   // Bus window (this console, since it started).
   blocked: number;
+  /** Of `blocked`, the ones a person caused. `blocked - blockedByOperator` is
+   * what the services stopped on their own. */
+  blockedByOperator: number;
   anomalies: number;
   budgetEvents: number;
   /** The worst single breach in micro-USD, or `null` when no event carried the
@@ -125,6 +128,7 @@ interface Acc {
   calls: number;
   runs: number;
   blocked: number;
+  blockedByOperator: number;
   anomalies: number;
   budgetEvents: number;
   overshoot: number | null;
@@ -180,6 +184,7 @@ export function groupRows(
       calls: 0,
       runs: 0,
       blocked: 0,
+      blockedByOperator: 0,
       anomalies: 0,
       budgetEvents: 0,
       overshoot: null,
@@ -196,6 +201,7 @@ export function groupRows(
     const c = byAgentCount.get(agentId);
     if (c) {
       row.blocked += c.blocked;
+      row.blockedByOperator += c.blocked_by_operator;
       row.anomalies += c.anomalies;
       row.budgetEvents += c.budget_events;
       // The worst of the group, not the sum. A null stays null rather than
@@ -215,6 +221,7 @@ export function groupRows(
     calls: r.calls,
     runs: r.runs,
     blocked: r.blocked,
+    blockedByOperator: r.blockedByOperator,
     anomalies: r.anomalies,
     budgetEvents: r.budgetEvents,
     worstOvershootMicrousd: r.overshoot,
@@ -233,6 +240,7 @@ export type SortKey =
   | "spentUsd"
   | "calls"
   | "blocked"
+  | "blockedByOperator"
   | "anomalies"
   | "budgetEvents"
   | "worstOvershootMicrousd"

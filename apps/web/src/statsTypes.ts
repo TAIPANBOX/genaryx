@@ -16,7 +16,13 @@
 /** One agent's counts over the bus window. */
 export interface AgentStats {
   agent_id: string;
+  /** Every stop, whoever caused it. */
   blocked: number;
+  /** The subset of `blocked` a human caused: a kill naming an actor, or an
+   * approval a person denied. An operator FREEZE is invisible here, because it
+   * is enforced as an ordinary policy and its refusals carry no mark; those
+   * count on the system side rather than being guessed. See the Rust doc. */
+  blocked_by_operator: number;
   anomalies: number;
   budget_events: number;
   /** The WORST single breach, in micro-USD, not the sum of them: one runaway

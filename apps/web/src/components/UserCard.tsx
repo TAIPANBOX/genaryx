@@ -87,6 +87,8 @@ export function UserCard({ handle, onOpenFullAgent }: { handle: string; onOpenFu
 
   // Same as the unit card: the record is preview-only, the box's own block
   // list is the real-box source.
+  const currentAgents = (rec?.agents ?? []).filter((x) => x.current);
+  const pastAgents = (rec?.agents ?? []).filter((x) => !x.current);
   const serverBlocks = useLifecycleBlocks();
   const stopped = isUserStopped(rec) || serverBlocks.users.includes(handle);
 
@@ -108,8 +110,28 @@ export function UserCard({ handle, onOpenFullAgent }: { handle: string; onOpenFu
       ) : (
         <>
           <div className="flex flex-wrap gap-x-6 gap-y-1" style={{ padding: "6px 16px 12px" }}>
-            <Stat label="agents" value={String(rec.agents.length)} />
-            <Stat label="total spend" value={formatUsd(rec.totalSpentUsd)} />
+            {/* Agents this user owns NOW. One they used to own still appears
+                in the list below, badged, because their spend for that period
+                is theirs; counting it here would disagree with the Statistics
+                table, with "calls" on this same line, and with any sensible
+                reading of "how many agents does this person run". */}
+            <Stat label="agents" value={String(currentAgents.length)} />
+            {pastAgents.length > 0 && (
+              <Stat
+                label="past"
+                value={String(pastAgents.length)}
+                title="Agents this user used to own. Listed below, badged, and still counted in total spend for the period they owned them."
+              />
+            )}
+            <Stat
+              label="total spend"
+              value={formatUsd(rec.totalSpentUsd)}
+              title={
+                pastAgents.length > 0
+                  ? "This user's share across time: each agent's spend for the period they owned it, which is why it does not equal their current agents' totals."
+                  : undefined
+              }
+            />
             <Stat label="calls" value={rec.totalCalls.toLocaleString("en-US")} />
           </div>
           <div className="flex flex-wrap gap-1.5" style={{ padding: "0 16px 12px" }}>
@@ -181,9 +203,9 @@ export function UserCard({ handle, onOpenFullAgent }: { handle: string; onOpenFu
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" title={title}>
       <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
         {label}
       </span>

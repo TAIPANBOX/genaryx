@@ -46,6 +46,7 @@ function counts(agentId: string, over: Partial<AgentStats> = {}): AgentStats {
   return {
     agent_id: agentId,
     blocked: 0,
+    blocked_by_operator: 0,
     anomalies: 0,
     budget_events: 0,
     worst_overshoot_microusd: null,
@@ -65,7 +66,13 @@ const IDENTITIES: IdryxIdentity[] = [
 ];
 
 const COUNTS: AgentStats[] = [
-  counts(FRAUD_BOT, { blocked: 3, anomalies: 1, budget_events: 2, worst_overshoot_microusd: 250_000 }),
+  counts(FRAUD_BOT, {
+    blocked: 3,
+    blocked_by_operator: 1,
+    anomalies: 1,
+    budget_events: 2,
+    worst_overshoot_microusd: 250_000,
+  }),
   counts(KYC_BOT, { blocked: 1 }),
   counts(ORPHAN, { blocked: 7, anomalies: 2 }),
 ];
@@ -88,6 +95,10 @@ describe("groupRows", () => {
     expect(hayes!.agentCount).toBe(2);
     expect(hayes!.spentUsd).toBe(15);
     expect(hayes!.blocked).toBe(4);
+    expect(
+      hayes!.blockedByOperator,
+      "one of the four was a person's decision, the rest were the services'",
+    ).toBe(1);
   });
 
   // The property that keeps this table's totals honest against the Money tab.
