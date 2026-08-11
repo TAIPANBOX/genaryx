@@ -34,6 +34,8 @@
 //! carries [`StatsPanel::measured`] and a note, and the frontend is required to
 //! render the note rather than the table.
 
+pub mod profile;
+
 use serde::Serialize;
 use std::collections::BTreeMap;
 

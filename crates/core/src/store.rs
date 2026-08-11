@@ -17,7 +17,7 @@ use std::path::Path;
 /// version-gated step in [`migrate`] whenever a table shape changes; the
 /// `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
 /// themselves stay safe to rerun regardless.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// Phase-0 schema (06 §2 subset): events, the per-file read-offset journal,
 /// the quarantine table for malformed/non-conforming lines, and the spend
@@ -145,6 +145,16 @@ const MIGRATION_V4: &str = "
 ALTER TABLE source_offsets ADD COLUMN head_sha TEXT;
 ";
 
+/// The index a per-agent time series needs.
+///
+/// `idx_events_agent_ts` already exists and is on the TEXT `ts`, which is what
+/// the per-agent event list uses. A profile groups one agent's events by DAY,
+/// and days come from `ts_ms`; without this the query is a scan of every event
+/// the agent ever produced, filtered afterwards.
+const MIGRATION_V5: &str = "
+CREATE INDEX IF NOT EXISTS idx_events_agent_ts_ms ON events(agent_id, ts_ms);
+";
+
 /// A row read back from `events`, shaped for the shells: envelope fields plus
 /// provenance, so every byte shown can point back to its source (06 §0.8).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -196,6 +206,16 @@ pub struct SourceState {
     /// [`HEAD_FINGERPRINT_BYTES`]. `None` on a store written before this
     /// column existed, which a caller treats as "cannot tell".
     pub head_sha: Option<String>,
+}
+
+/// One agent's events of one type on one UTC day.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DayTypeCount {
+    /// UTC day index: epoch milliseconds divided by a day. Comparable and
+    /// sortable; turn it back into a date at the edge, not here.
+    pub day: i64,
+    pub type_: String,
+    pub count: u64,
 }
 
 /// Handle to the console's local store.
@@ -451,6 +471,58 @@ impl Store {
         Ok(out)
     }
 
+    /// One agent's events bucketed by UTC day and by type, oldest day first.
+    ///
+    /// Raw (day, type, count) rather than anything categorised: which types
+    /// count as "blocked" or "odd" is the console's reading of SPEC 6.2 and it
+    /// lives in `genaryx_api::stats`, in one place. A store that also held an
+    /// opinion about it would be a second copy to drift.
+    ///
+    /// Days with no events produce NO ROW. That is not the same as a zero, and
+    /// the caller has to fill them: a median taken over only the days an agent
+    /// was busy is a median of its busy days, which is exactly the number that
+    /// makes a quiet agent's first bad day look normal.
+    pub fn daily_type_counts(&self, agent_id: &str, since_ms: i64) -> Result<Vec<DayTypeCount>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT ts_ms / 86400000 AS day, type, COUNT(*) \
+                 FROM events \
+                 WHERE agent_id = ?1 AND ts_ms IS NOT NULL AND ts_ms >= ?2 \
+                 GROUP BY day, type ORDER BY day ASC",
+            )
+            .map_err(store_err)?;
+        let mut rows = stmt.query(params![agent_id, since_ms]).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            let count: i64 = row.get(2).map_err(store_err)?;
+            out.push(DayTypeCount {
+                day: row.get(0).map_err(store_err)?,
+                type_: row.get(1).map_err(store_err)?,
+                count: u64::try_from(count).unwrap_or(0),
+            });
+        }
+        Ok(out)
+    }
+
+    /// The UTC day of an agent's FIRST stored event, or `None` when it has
+    /// none. What "how long have we watched this agent" is measured from: an
+    /// agent registered yesterday has no normal, however quiet it looks.
+    pub fn first_day_for_agent(&self, agent_id: &str) -> Result<Option<i64>> {
+        let day: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT MIN(ts_ms) / 86400000 FROM events \
+                 WHERE agent_id = ?1 AND ts_ms IS NOT NULL",
+                params![agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(store_err)?
+            .flatten();
+        Ok(day)
+    }
+
     /// How many stored events carry no usable timestamp, and so appear in no
     /// window. Small or zero on a healthy bus; a number that climbs means a
     /// producer is writing a `ts` this build cannot read, which is worth
@@ -699,6 +771,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 4 {
         conn.execute_batch(MIGRATION_V4).map_err(store_err)?;
+    }
+    if current < 5 {
+        conn.execute_batch(MIGRATION_V5).map_err(store_err)?;
     }
     // Future migrations gate on `current < N` here, in order, before the final
     // `PRAGMA user_version` write below.
