@@ -65,6 +65,25 @@ export async function fetchAgentEvents(agentId: string, limit: number): Promise<
  * unchanged for anything that does not look like one of those two schemes -
  * same "an unrecognized shape still renders, just without special handling"
  * tolerance every other id-shaped field in this app follows. */
+/** Whether an id names a PERSON rather than an agent.
+ *
+ * The delegation chain carries both. `on_behalf_of` bottoms out in a human
+ * (`user://meridian.io/n.foster`), and the delegation graph gives those their
+ * own node kind, so every surface that lets you click a principal will be
+ * handed one sooner or later.
+ *
+ * This exists because for a while none of them checked. Every chip and every
+ * graph node routed straight to Agent 360, so clicking a person opened an agent
+ * card about a person: "this agent has never been seen on the delegation
+ * graph", "no idryx identity record for this agent", "no runs for this agent
+ * yet". Each sentence true, all of them nonsense, and the card looked like it
+ * was working because `shortAgentLabel` already handled `user://` and rendered
+ * the name correctly. The label knew; the click did not.
+ */
+export function isUserId(id: string): boolean {
+  return id.startsWith("user://");
+}
+
 export function shortAgentLabel(id: string): string {
   const match = /^(?:user|agent):\/\/[^/]+\/(.+)$/.exec(id);
   return match ? match[1] : id;

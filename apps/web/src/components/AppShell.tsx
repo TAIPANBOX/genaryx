@@ -31,6 +31,8 @@ import { RoutinesView } from "./RoutinesView";
 import { RunReplayView } from "./RunReplayView";
 import { UnitCard } from "./UnitCard";
 import { UserCard } from "./UserCard";
+import { isUserId } from "../lib/graph";
+import { userHandle } from "../lib/agentRecord";
 import { WatchDock } from "./WatchDock";
 
 /** How long a notification's deep-link target stays "focused" (drives
@@ -238,13 +240,28 @@ export function AppShell() {
   //   rule: comparing agent A against B, then clicking a delegate C inside
   //   either card, keeps A anchored and swaps C in for B, rather than
   //   silently dropping the agent the operator opened first.
-  const onOpenAgent = useCallback((agentId: string) => {
-    setFocusedAgentIds((prev) => {
-      if (prev.includes(agentId)) return prev;
-      if (prev.length === 0) return [agentId];
-      return [prev[0], agentId];
-    });
-  }, []);
+  //
+  // It also routes by SCHEME, and that is not a detail of this callback: it is
+  // the one place every surface funnels through. The delegation chain and the
+  // delegation graph both carry people as well as agents, and until 2026-08-11
+  // each caller passed whatever it had straight in, so clicking `n.foster`
+  // opened an Agent 360 about a person. Fixing the two callers would have left
+  // the third to be written wrong later; fixing the funnel cannot.
+  const onOpenAgent = useCallback(
+    (id: string) => {
+      if (isUserId(id)) {
+        open(<UserCard handle={userHandle(id)} onOpenFullAgent={onOpenAgent} />);
+        return;
+      }
+      setFocusedAgentIds((prev) => {
+        if (prev.includes(id)) return prev;
+        if (prev.length === 0) return [id];
+        return [prev[0], id];
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open],
+  );
   // Closes exactly one card - the render site below binds each card's own
   // `onClose` to its own `agentId`, so a card's close button only ever
   // removes itself, never its neighbor. Whichever id remains keeps its
