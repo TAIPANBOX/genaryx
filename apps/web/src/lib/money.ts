@@ -79,6 +79,32 @@ export async function fetchMoneyStatus(): Promise<MoneyStatus> {
 
 export const fetchOverview = (): Promise<Overview> => call<Overview>("money_overview");
 export const fetchRuns = (): Promise<Run[]> => call<Run[]>("money_runs");
+
+/** What the Cloud says it did with the window it was asked for.
+ *
+ * `unsupported` is the one that matters: a Cloud older than tokenfuse #198
+ * ignores the filter and returns every run, with a perfectly ordinary
+ * response. Without this a caller would ask for seven days, receive all of
+ * history, and label it seven days. */
+export type AppliedWindow =
+  | { kind: "since"; since_millis: number }
+  | { kind: "all" }
+  | { kind: "unsupported" };
+
+export interface RunsPanel {
+  runs: Run[];
+  applied: AppliedWindow;
+}
+
+/** Runs narrowed to a window, WITH what the box actually applied.
+ *
+ * Note what the window selects, and carry it into any wording built on this:
+ * runs last SEEN in the period, each still reporting its LIFETIME totals. A run
+ * that started three weeks ago and is still going brings all three weeks of its
+ * spend into a seven-day window. "Runs active in the window" is true of this;
+ * "spend in the window" is not. */
+export const fetchRunsWindowed = (windowDays: number): Promise<RunsPanel> =>
+  call<RunsPanel>("money_runs_windowed", { window_days: windowDays });
 export const fetchIncidents = (): Promise<Incident[]> => call<Incident[]>("money_incidents");
 export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings");
 /** The money plane's per-person rollup (`GET /v1/owners`). Attributes by who

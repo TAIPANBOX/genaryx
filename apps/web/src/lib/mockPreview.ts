@@ -807,7 +807,20 @@ function baseRunFor(a: FleetAgent, opts: { ignoreClosed?: boolean } = {}) {
     calls,
     cache_hits: Math.round(calls * 0.12),
     steps: Math.min(calls, 40),
-    last_seen: ago(Math.random() * 60_000),
+    // When this run was last active, spread across the agent's life rather
+    // than pinned to "a moment ago".
+    //
+    // It was `ago(Math.random() * 60_000)`: every run in the fleet last seen
+    // inside the last minute. Two things wrong with that. It is not what an
+    // estate looks like, where most runs finished days or weeks back, and it
+    // made `/v1/runs?since_millis=` invisible in the preview: all 42 runs
+    // survived every window, so the money columns did not move and the feature
+    // read as broken.
+    //
+    // Weighted toward the recent end (cubed), so the fleet is mostly warm with
+    // a real tail, and `pseudo` rather than `Math.random` so a reload does not
+    // reshuffle which agents are stale.
+    last_seen: ago(Math.round(pseudo(a.name + "seen") ** 3 * 45 * DAY)),
     killed: lifecycle !== "live",
     lifecycle,
   };
@@ -3270,6 +3283,21 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
 
     case "money_overview": return r(mockOverview());
     case "money_runs": return r(mockRuns());
+    // The preview stands in for a CURRENT Cloud, so it honours the window and
+    // says so. `unsupported` is the older-Cloud path and the console labels it
+    // differently; the demo must not exercise it by omission.
+    case "money_runs_windowed": {
+      const days = Number(args?.window_days ?? 0);
+      const runs = mockRuns();
+      if (days <= 0) return r({ runs, applied: { kind: "all" } });
+      const cutoff = now - days * DAY;
+      return r({
+        // Selected by last activity, exactly as `Store::runs_since` does it,
+        // and each surviving run keeps its lifetime totals.
+        runs: runs.filter((x) => Date.parse(x.last_seen) >= cutoff),
+        applied: { kind: "since", since_millis: cutoff },
+      });
+    }
     case "money_incidents": return r(mockIncidents());
     case "money_savings": return r(mockSavings());
     case "money_kill_run": {

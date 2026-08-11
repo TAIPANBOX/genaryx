@@ -260,7 +260,50 @@ impl CloudClient {
     /// `GET /v1/runs` - the caller org's aggregated runs (`http.rs::runs`,
     /// `RunAgg` in `store.rs`).
     pub async fn runs(&self) -> Result<Vec<RunAgg>, ConnectorError> {
-        self.get_json("/v1/runs").await
+        self.runs_since(None).await.map(|(runs, _)| runs)
+    }
+
+    /// The caller org's runs, optionally narrowed, WITH what the Cloud says it
+    /// actually did.
+    ///
+    /// The second half of the return is not decoration. Sending a filter whose
+    /// application you cannot confirm is worse than sending none: the answer
+    /// looks the same either way, and only the label would be wrong. See
+    /// [`AppliedWindow`].
+    ///
+    /// Note what the window selects, which the caller must carry into its own
+    /// wording: runs last SEEN in the period, each still reporting its lifetime
+    /// totals. Not spend incurred during it (`tokenfuse/crates/cloud/src/store.rs`,
+    /// `runs_since`).
+    pub async fn runs_since(
+        &self,
+        since_millis: Option<i64>,
+    ) -> Result<(Vec<RunAgg>, AppliedWindow), ConnectorError> {
+        let path = match since_millis {
+            Some(ms) => format!("/v1/runs?since_millis={ms}"),
+            None => "/v1/runs".to_string(),
+        };
+        let resp = self
+            .http
+            .get(format!("{}{path}", self.base_url))
+            .bearer_auth(&self.bearer_token)
+            .send()
+            .await?;
+        let applied = match resp
+            .headers()
+            .get(RUNS_WINDOW_HEADER)
+            .and_then(|v| v.to_str().ok())
+        {
+            None => AppliedWindow::Unsupported,
+            Some("none") => AppliedWindow::All,
+            Some(v) => match v.parse::<i64>() {
+                Ok(ms) => AppliedWindow::Since { since_millis: ms },
+                // A header this build cannot read is not a window it can claim.
+                Err(_) => AppliedWindow::Unsupported,
+            },
+        };
+        let runs = parse_response(resp).await?;
+        Ok((runs, applied))
     }
 
     /// `GET /v1/agents` - per-agent spend rollup, highest spend first
@@ -538,6 +581,27 @@ pub struct Summary {
 
 /// One element of `GET /v1/runs`. Exact shape of `store.rs::RunAgg` -
 /// `last_seen_millis` on the wire (the Rust field there is `last_seen`, `#[serde(rename)]`'d;
+/// The window `/v1/runs` says it applied, and whether it applied one at all.
+///
+/// A Cloud older than tokenfuse #198 sends no `x-fuse-runs-window` header, and
+/// that absence is the whole signal: it ignored the query string and returned
+/// every run. A caller that assumed otherwise would ask for seven days, receive
+/// all of history, and label it seven days, which is an answer honest about
+/// itself and false about the question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AppliedWindow {
+    /// Narrowed to this epoch-millisecond cutoff.
+    Since { since_millis: i64 },
+    /// Every run, and that is what the caller asked for.
+    All,
+    /// This Cloud cannot window. Never describe its answer as windowed.
+    Unsupported,
+}
+
+/// The header tokenfuse #198 stamps on `/v1/runs`.
+const RUNS_WINDOW_HEADER: &str = "x-fuse-runs-window";
+
 /// named `last_seen_millis` here directly since only the wire name matters to a reader).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RunAgg {

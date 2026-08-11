@@ -726,6 +726,39 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 });
             Ok(reply(projected))
         }
+        // The same runs, narrowed to a window, WITH what the Cloud says it
+        // applied. A read, and classified as one in roles.rs.
+        //
+        // A separate command rather than a parameter on `money_runs`, because
+        // `money_runs` returns a bare array that Overview, the watch dock and
+        // Agent 360 all read. Wrapping it to carry provenance would change the
+        // shape under three callers that do not need it; the one view that asks
+        // for a window is the one view that must be told whether it got it.
+        "money_runs_windowed" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                /// `0` (and an older frontend that omits it) means every run,
+                /// which is what this command did before windows existed.
+                #[serde(default)]
+                window_days: i64,
+            }
+            let a: A = decode(args)?;
+            let since = (a.window_days > 0)
+                .then(|| chrono::Utc::now().timestamp_millis() - a.window_days * 86_400_000);
+            let projected = genaryx_api::money::commands::money_runs_since(&ctx.money, since)
+                .await
+                .map(|panel| {
+                    let mut v = serde_json::to_value(panel).unwrap_or(Value::Null);
+                    if let Some(runs) = v.get_mut("runs") {
+                        crate::lifecycle::project_runs(
+                            runs,
+                            &ctx.lifecycle.read().expect("lifecycle store lock"),
+                        );
+                    }
+                    v
+                });
+            Ok(reply(projected))
+        }
         // The money plane's own per-person rollup. A read, and classified as
         // one in roles.rs. Deliberately a SEPARATE command from the console's
         // idryx-based owner grouping: they answer different questions and the

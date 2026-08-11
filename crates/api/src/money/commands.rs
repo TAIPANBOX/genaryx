@@ -560,9 +560,27 @@ pub async fn money_overview(state: &MoneyState) -> Result<OverviewDto, MoneyErro
 /// this console session itself has set - see
 /// [`MoneyState::budget_overrides`].
 pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
+    money_runs_since(state, None).await.map(|r| r.runs)
+}
+
+/// The runs panel's rows, optionally narrowed to a window, WITH what the Cloud
+/// says it actually applied.
+///
+/// The `applied` half travels with the rows on purpose. A Cloud older than
+/// tokenfuse #198 ignores the filter and returns everything, so a caller that
+/// only received rows would label all of history as one week. See
+/// [`genaryx_connectors::cloud_rest::AppliedWindow`].
+pub async fn money_runs_since(
+    state: &MoneyState,
+    since_millis: Option<i64>,
+) -> Result<RunsPanel, MoneyError> {
     let client = ready_client(&state).await?;
-    let (runs, alerts) =
-        tokio::try_join!(client.client.runs(), client.client.alerts()).map_err(MoneyError::from)?;
+    let (runs_and_window, alerts) = tokio::try_join!(
+        client.client.runs_since(since_millis),
+        client.client.alerts()
+    )
+    .map_err(MoneyError::from)?;
+    let (runs, applied) = runs_and_window;
 
     let alert_budgets: HashMap<&str, i64> = alerts
         .iter()
@@ -570,7 +588,7 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
         .collect();
     let overrides = state.budget_overrides.lock().await;
 
-    Ok(runs
+    let rows: Vec<RunDto> = runs
         .iter()
         .map(|r| {
             let budget_micros = overrides
@@ -591,7 +609,22 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
                 killed: r.killed,
             }
         })
-        .collect())
+        .collect();
+    Ok(RunsPanel {
+        runs: rows,
+        applied,
+    })
+}
+
+/// The runs rows together with the window the Cloud says it applied.
+///
+/// One shape rather than two returns, so a caller cannot take the rows and drop
+/// the provenance. The rows alone would render identically whether the window
+/// was honoured or silently ignored, and only the label would be wrong.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunsPanel {
+    pub runs: Vec<RunDto>,
+    pub applied: genaryx_connectors::AppliedWindow,
 }
 
 pub async fn money_incidents(state: &MoneyState) -> Result<Vec<IncidentDto>, MoneyError> {

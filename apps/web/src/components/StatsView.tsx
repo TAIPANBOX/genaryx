@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchStats, groupRows, rowsFromOwners, sortRows, unitSource } from "../lib/stats";
 import type { GroupBy, SortKey, StatsRow } from "../lib/stats";
-import { fetchOwners, fetchRuns } from "../lib/money";
+import { fetchOwners, fetchRunsWindowed, type AppliedWindow } from "../lib/money";
 import { fetchIdentities } from "../lib/identity";
 import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
 import { formatUsd } from "../lib/format";
@@ -132,6 +132,33 @@ const COLUMNS: Column[] = [
   },
 ];
 
+/** What the money columns actually answer for, in the box's own words.
+ *
+ * # THREE STATES AND WHY NONE OF THEM MAY BE GUESSED
+ *
+ * `since` is the good case: the Cloud narrowed the runs and said so. The
+ * wording still says **runs active in the window**, never "spend in the
+ * window", because a run that started before it and is still going brings all
+ * of its spend along; the store folds per run, not per time bucket
+ * (`tokenfuse/crates/cloud/src/store.rs`, `runs_since`).
+ *
+ * `all` is the caller asking for everything and getting it.
+ *
+ * `unsupported` is the one this exists for. A Cloud older than tokenfuse #198
+ * ignores the filter and returns every run with an ordinary 200, so its answer
+ * is indistinguishable from a narrowed one by looking at it. Saying "7 days"
+ * over all of history would be the same defect this view has now been through
+ * three times: honest about itself, false about the question. */
+const MONEY_WINDOW_LEGEND = (w: AppliedWindow): string => {
+  if (w.kind === "since") {
+    return "runs this money plane saw in the selected window; each reports its lifetime total, so one that started earlier and is still going brings all of its spend with it";
+  }
+  if (w.kind === "all") {
+    return "every run the money plane holds, of any age";
+  }
+  return "this box's money plane cannot narrow by window, so these two columns are every run it holds whatever the selector says";
+};
+
 /** One sentence per source, and each says what the reader can DO about it.
  *
  * The `agent-id` line is the one that matters. `unitForTeam`'s table mirrors
@@ -224,6 +251,10 @@ export function StatsView({
   // The counts stay exact; these two say which OTHER columns went partial.
   const [detailScanned, setDetailScanned] = useState(0);
   const [detailTruncated, setDetailTruncated] = useState(false);
+  // What the money plane says it DID with the window, which is not the same as
+  // what was asked for. A Cloud older than tokenfuse #198 ignores the filter
+  // and returns everything; only this tells the two apart.
+  const [moneyWindow, setMoneyWindow] = useState<AppliedWindow>({ kind: "unsupported" });
   const [at, setAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -242,7 +273,7 @@ export function StatsView({
   const load = useCallback(async () => {
     // Settled, not `all`: one plane being down must not blank the other two.
     const [r, i, s, o] = await Promise.allSettled([
-      fetchRuns(),
+      fetchRunsWindowed(windowDays),
       fetchIdentities(),
       fetchStats(undefined, windowDays),
       // A box whose money plane predates tokenfuse #192 has no `/v1/owners`,
@@ -250,7 +281,8 @@ export function StatsView({
       // like the other three.
       fetchOwners(),
     ]);
-    setRuns(r.status === "fulfilled" ? r.value : null);
+    setRuns(r.status === "fulfilled" ? r.value.runs : null);
+    setMoneyWindow(r.status === "fulfilled" ? r.value.applied : { kind: "unsupported" });
     setOwners(o.status === "fulfilled" ? o.value : null);
     setIdentities(i.status === "fulfilled" ? i.value : null);
     if (s.status === "fulfilled") {
@@ -317,7 +349,7 @@ export function StatsView({
       environment: window.location.host || "unknown",
       takenAt: new Date().toISOString(),
       windows: [
-        "spend and calls: the money plane's own window (TokenFuse Cloud)",
+        `spend and calls: ${MONEY_WINDOW_LEGEND(moneyWindow)}`,
         countsMeasured
           ? (answeredWindow === 0
               ? `blocked, odd behaviour and budget events: ${scanned} event(s), every age this box still holds`
@@ -349,7 +381,7 @@ export function StatsView({
         "An empty worst_breach_usd means no event recorded the amounts, which is not the same as no overspend.",
       ],
     }),
-    [group, countsMeasured, scanned, answeredWindow, historyFrom, undated, detailTruncated, detailScanned, unitFrom],
+    [group, countsMeasured, scanned, answeredWindow, historyFrom, undated, detailTruncated, detailScanned, unitFrom, moneyWindow],
   );
 
   const exportRows = useMemo(
@@ -630,7 +662,7 @@ export function StatsView({
 
       <div className="px-4 pb-1">
         <span className="mono text-[10px]" style={{ color: "var(--faint)" }}>
-          {"\u00B0"} the money plane's own window; the selector above moves only the bus columns
+          {"\u00B0"} {MONEY_WINDOW_LEGEND(moneyWindow)}
         </span>
       </div>
 
@@ -668,7 +700,7 @@ export function StatsView({
                         rather than in a tooltip nobody hovers. The two are
                         different periods and the selector only moves one. */}
                     {c.band === "money" ? (
-                      <span style={{ color: "var(--faint)" }} title="The money plane's own window, which the selector above does not change.">
+                      <span style={{ color: "var(--faint)" }} title={MONEY_WINDOW_LEGEND(moneyWindow)}>
                         {" \u00B0"}
                       </span>
                     ) : null}

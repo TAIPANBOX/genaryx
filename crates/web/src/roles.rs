@@ -159,6 +159,7 @@ const VIEWER_COMMANDS: &[&str] = &[
     "money_overview",
     "money_owners",
     "money_runs",
+    "money_runs_windowed",
     "money_savings",
     "egress_recent",
     "money_status",
