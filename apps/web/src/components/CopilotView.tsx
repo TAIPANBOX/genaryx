@@ -564,42 +564,25 @@ function MessageBubble({
   );
 }
 
-/** Preview-only seed conversation (see the seeding effect below). */
-const DEMO_MESSAGES: ChatMessage[] = [
-  { id: -1, role: "user", text: "Which agent is the runaway, and what did it cost us?" },
-  {
-    id: -2,
-    role: "assistant",
-    text:
-      "The caught runaway is sre/rca-copilot: it looped on an oversized incident trace, burned past its $1.25 per-run ceiling 26 times across shards, and tripped budget_exhausted and fanout_explosion. sre-oncall killed it break-glass; its all-time spend is $41.60. The top legitimate spender is finops/unit-economics-analyst at $77.46 (Opus, modelling unit cost), inside budget at 79% utilisation.",
-    toolTrace: [
-      { name: "money_incidents", ok: true, result_preview: "7 open; worst fanout_explosion x12 on rca-copilot" },
-      { name: "list_runs", ok: true, result_preview: "42 runs, 1 killed, top spend $77.46" },
-    ],
-    proposals: [
-      {
-        action: {
-          kind: "budget",
-          target: "unit-economics-analyst-live",
-          params: { usd_cap: 60 },
-          rationale: "The top legitimate spender has no central cap; $60/day bounds it without blocking its weekly unit-cost run.",
-          confidence: 0.72,
-          evidence_refs: ["unit-economics-analyst-live"],
-          policy_context: ["finops-spend-cap"],
-        },
-        status: "pending",
-      },
-    ],
-  },
-  { id: -3, role: "user", text: "How many approvals are pending right now?" },
-  {
-    id: -4,
-    role: "assistant",
-    text:
-      "Six approvals are awaiting a human decision, all from agents whose policy requires sign-off above a cost threshold: sre/runbook-executor, sre/deploy-guard, finops/commitment-planner, finops/idle-resource-sweeper and platform/api-gateway-tuner. The oldest has waited about nine minutes. None can act until a human grants them.",
-    toolTrace: [{ name: "list_approvals", ok: true, result_preview: "6 pending, oldest ~9m" }],
-  },
-];
+/** The question the preview seeds. The ANSWER is not written here.
+ *
+ * # WHY THE TEXT IS NOT IN THIS FILE ANY MORE
+ *
+ * It used to be, as a hand-written `DEMO_MESSAGES` transcript, and it carried
+ * its own dollar figures: "$41.60 all-time spend", "top spend $77.46", a
+ * "$60 cap" proposal. The mock's live answer to the SAME question carried its
+ * own copy of the same sentences.
+ *
+ * Two copies of one answer is one copy too many, and on 2026-08-11 they parted
+ * company: the fleet's call volume was recalibrated, every live panel moved to
+ * the new numbers, and this transcript went on saying $77.46 underneath them.
+ * A stale number in a table looks like a bug; a stale number in PROSE looks
+ * like the assistant knows something the panels do not.
+ *
+ * So the seed now asks the mock the question and renders what it answers,
+ * through the same `askCopilot` path a typed question uses. One generator, one
+ * answer, and nothing here to go stale. */
+const DEMO_QUESTION = "Which agent is the runaway, and what did it cost us?";
 
 /**
  * The Copilot panel (Phase 6, C0 - docs/PHASE6.md, itrat-console/13 D13): a
@@ -669,7 +652,28 @@ export function CopilotView({
   useEffect(() => {
     if (import.meta.env.VITE_GENARYX_MOCK !== "1") return;
     if (!status?.enabled) return;
-    setMessages((m) => (m.length > 0 ? m : DEMO_MESSAGES));
+    let alive = true;
+    void (async () => {
+      const answer = await askCopilot(DEMO_QUESTION).catch(() => null);
+      if (!alive || !answer) return;
+      setMessages((m) =>
+        m.length > 0
+          ? m
+          : [
+              { id: -1, role: "user", text: DEMO_QUESTION },
+              {
+                id: -2,
+                role: "assistant",
+                text: answer.text,
+                toolTrace: answer.tool_trace,
+                proposals: toProposalState(answer.proposals),
+              },
+            ],
+      );
+    })();
+    return () => {
+      alive = false;
+    };
   }, [status?.enabled]);
 
   // Keep the transcript pinned to the newest message, mirroring any chat
