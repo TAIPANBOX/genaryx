@@ -142,6 +142,43 @@ const OPERATOR_BLOCK_ACTIONS: &[&str] = &[
 /// the agent it acted on.
 const CONSOLE_COMMAND: &str = "console_command";
 
+/// The event types whose full row this module needs, because the fact it wants
+/// is inside `data` and no count can carry it.
+///
+/// Everything else on the bus is answered by [`Store::type_counts_since`],
+/// which reads no rows at all. This list is what keeps that split honest: it is
+/// the exact set of types where a count alone would lose information, and
+/// `every_type_that_needs_its_data_is_read_in_full` holds it against the two
+/// functions that actually do the reading, so adding an attribution rule
+/// without adding its type here fails rather than quietly reporting zero.
+///
+/// The budget amounts are NOT here. They are matched by field instead, see
+/// [`AMOUNT_FIELDS`].
+const DETAIL_TYPES: &[&str] = &[
+    // data.detector, which detector fired.
+    IDENTITY_FINDING,
+    // data.actor, whether a person pulled the switch.
+    "run_killed",
+    // data.decided_by, whether a person answered the hold.
+    "approval_denied",
+    // data.members, which agents an operator's block actually halted.
+    CONSOLE_COMMAND,
+];
+
+/// The (budget, spent) field pairs [`overshoot_of`] understands, named once so
+/// that the query which FINDS those events and the function which READS them
+/// cannot drift apart.
+///
+/// Passed to the store as a field-pair predicate rather than folded into
+/// [`DETAIL_TYPES`], and that is deliberate: this module must not need to know
+/// every type that might carry amounts. It already does not. The live TokenFuse
+/// gateway writes them on `breaker_tripped`, an enforcement event and not a
+/// budget one, and a list of types would have missed it.
+const AMOUNT_FIELDS: &[(&str, &str)] = &[
+    ("budget_micros", "spent_micros"),
+    ("budget_usd", "spent_usd"),
+];
+
 /// Every agent one console block halted, read from the record it wrote.
 ///
 /// `data.target` is the entity: an agent id for a freeze, a unit id or a user
@@ -259,9 +296,31 @@ pub struct StatsPanel {
     /// case and must NOT render the empty table as an answer.
     pub measured: bool,
     pub note: Option<String>,
-    /// How many bus lines this panel actually looked at, so a reader can tell a
-    /// quiet estate from a short window.
+
+    /// How many bus lines are in this window. EVERY one of them, counted by
+    /// SQLite rather than read.
+    ///
+    /// This changed meaning on 2026-08-11 and the old meaning is why. It used
+    /// to be "how many lines this panel looked at", capped, and on a busy
+    /// estate the cap was hit long before the window ended: 378,000 events in
+    /// ninety days against a frontend cap of 20,000. The number was honest
+    /// about itself and answered a different question than the one on screen,
+    /// and no field distinguished the two cases.
     pub scanned: usize,
+
+    /// How many full rows were read for the parts a count cannot carry:
+    /// detector names, budget amounts, and who halted whom. A small fraction of
+    /// `scanned` on any real bus.
+    pub detail_scanned: usize,
+
+    /// True when that second read hit its cap, so those columns describe the
+    /// most recent `detail_scanned` events rather than the whole window.
+    ///
+    /// The counts above are unaffected and stay exact. This is the one thing
+    /// the old shape could not say, and the reason it is a field rather than a
+    /// sentence: the frontend has to be able to mark the affected columns, not
+    /// just print a caveat under the table.
+    pub detail_truncated: bool,
     /// The window asked for, in days. `0` means "the recent slice, any age".
     pub window_days: u32,
     /// The oldest event this box holds, RFC 3339, or `None` when it holds no
@@ -278,6 +337,8 @@ impl StatsPanel {
             measured: false,
             note: Some(note.into()),
             scanned: 0,
+            detail_scanned: 0,
+            detail_truncated: false,
             window_days: 0,
             history_from: None,
             undated: 0,
@@ -342,9 +403,25 @@ fn overshoot_of(data: &serde_json::Value) -> Option<i64> {
 /// A console restarted an hour ago answers for the estate's seven days, not for
 /// its own hour, because the store outlives the process now.
 ///
-/// `scan` still bounds the lines READ in both modes: a window is a filter, not
-/// a licence to load a quarter of an estate's bus into memory.
-pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPanel {
+/// # TWO READS, AND ONLY ONE OF THEM HAS A CAP
+///
+/// The counts come from one `GROUP BY` and are exact for the whole window,
+/// however large it is. `detail_scan` bounds the SECOND read, the full rows
+/// needed for the three things a count cannot carry (which detector fired, the
+/// budget amounts, which agents an operator's block halted).
+///
+/// That split is the fix for a defect this function had until 2026-08-11, and
+/// it is worth stating plainly because the shape of it recurs. There was one
+/// read, capped, and the cap was chosen when this store was scratch. Once
+/// history became durable the cap started truncating windows silently:
+/// measured at 42 agents and 100 events a day, ninety days is 378,000 rows and
+/// the frontend asked for 20,000. The panel reported "counted from 20,000
+/// event(s) in the last 30 day(s)", which was true of what it read and wrong
+/// about what it was asked, with nothing in the response able to tell a reader
+/// which. A number that is accurate about itself and false about the question
+/// is the worst kind this console can print, because it survives every check
+/// that looks at the number.
+pub fn stats_counts(detail_scan: usize, window_days: u32, state: &AppState) -> StatsPanel {
     let Some(dir) = &state.events_dir else {
         return StatsPanel::unmeasured(
             "The console has no event store on this box, so nothing here was counted. \
@@ -364,12 +441,20 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
     };
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let read = if window_days == 0 {
-        store.recent_events(scan)
-    } else {
-        store.events_since(now_ms - i64::from(window_days) * 86_400_000, scan)
+    // `None` is "every event held, any age", which is what window_days 0 asks
+    // for and includes the undated rows a window necessarily excludes.
+    let cutoff = (window_days > 0).then(|| now_ms - i64::from(window_days) * 86_400_000);
+
+    let counts = match store.type_counts_since(cutoff) {
+        Ok(c) => c,
+        Err(e) => {
+            return StatsPanel::unmeasured(format!(
+                "The event store could not be queried ({e}), so nothing here was counted. \
+                 This is not a report that your agents were never stopped."
+            ));
+        }
     };
-    let rows = match read {
+    let rows = match store.events_of_types_since(DETAIL_TYPES, AMOUNT_FIELDS, cutoff, detail_scan) {
         Ok(r) => r,
         Err(e) => {
             return StatsPanel::unmeasured(format!(
@@ -386,11 +471,46 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
     let oldest_ms = store.ts_span().ok().flatten().map(|(oldest, _)| oldest);
     let undated = store.undated_count().unwrap_or(0);
 
-    let scanned = rows.len();
     let mut by_agent: BTreeMap<String, AgentStats> = BTreeMap::new();
     let mut halts: Vec<String> = Vec::new();
+    let mut scanned: usize = 0;
 
+    // Pass one: the counts, from the aggregate. Exact over the whole window.
+    for c in counts {
+        let entry = by_agent
+            .entry(c.agent_id.clone())
+            .or_insert_with(|| AgentStats {
+                agent_id: c.agent_id.clone(),
+                ..Default::default()
+            });
+
+        let t = c.type_.as_str();
+        let n = usize::try_from(c.count).unwrap_or(usize::MAX);
+        scanned = scanned.saturating_add(n);
+        *entry.by_type.entry(c.type_.clone()).or_insert(0) += n;
+
+        if BLOCKED_TYPES.contains(&t) {
+            entry.blocked += n;
+        }
+        if ANOMALY_TYPES.contains(&t) {
+            entry.anomalies += n;
+        }
+        if BUDGET_TYPES.contains(&t) {
+            entry.budget_events += n;
+        }
+        // The newest `ts` across this agent's types. String comparison, which
+        // is what the row fold did and what `MAX(ts)` gives back.
+        if c.last_ts > entry.last_seen {
+            entry.last_seen = c.last_ts;
+        }
+    }
+
+    // Pass two: the three things a count cannot carry. Every row here was
+    // already counted above, so nothing in this pass adds to `scanned` or to
+    // the totals; it only describes them.
+    let detail_scanned = rows.len();
     for e in rows {
+        let t = e.type_.as_str();
         let entry = by_agent
             .entry(e.agent_id.clone())
             .or_insert_with(|| AgentStats {
@@ -398,17 +518,9 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
                 ..Default::default()
             });
 
-        let t = e.type_.as_str();
-        *entry.by_type.entry(e.type_.clone()).or_insert(0) += 1;
-
-        if BLOCKED_TYPES.contains(&t) {
-            entry.blocked += 1;
-            if is_operator_stop(t, e.data.as_ref()) {
-                entry.blocked_by_operator += 1;
-            }
-        }
-        if ANOMALY_TYPES.contains(&t) {
-            entry.anomalies += 1;
+        // A subset of `blocked`, never an addition to it.
+        if BLOCKED_TYPES.contains(&t) && is_operator_stop(t, e.data.as_ref()) {
+            entry.blocked_by_operator += 1;
         }
         // The detector name, when idryx sent one. Read defensively: a finding
         // with no detector still counts as an anomaly above, it just cannot
@@ -424,12 +536,9 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
         {
             *entry.by_detector.entry(detector.to_string()).or_insert(0) += 1;
         }
-        if BUDGET_TYPES.contains(&t) {
-            entry.budget_events += 1;
-        }
-        // Deliberately outside the `BUDGET_TYPES` check: `breaker_tripped` is
-        // the gateway's enforcement event, not one of the named budget types,
-        // and it is where a live box actually records the two amounts.
+        // Matched by FIELD, not by type: `breaker_tripped` is the gateway's
+        // enforcement event rather than a named budget type, and it is where a
+        // live box actually records the two amounts. See `AMOUNT_FIELDS`.
         if let Some(over) = e.data.as_ref().and_then(overshoot_of) {
             entry.worst_overshoot_microusd =
                 Some(entry.worst_overshoot_microusd.unwrap_or(0).max(over));
@@ -439,18 +548,8 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
         // event's own `agent_id` (that is the console). Collected here and
         // applied after the loop, so one operator action lands on every agent
         // it actually stopped.
-        for halted in agents_halted_by(e.data.as_ref()) {
-            if e.type_ == CONSOLE_COMMAND {
-                halts.push(halted);
-            }
-        }
-
-        // `recent_events` is newest-first by insertion id, but `ts` is the
-        // producer's clock and the ingest pipeline drains one file at a time,
-        // so the first row seen for an agent is not reliably its latest event.
-        // Keep the maximum instead of the first.
-        if e.ts > entry.last_seen {
-            entry.last_seen = e.ts;
+        if t == CONSOLE_COMMAND {
+            halts.extend(agents_halted_by(e.data.as_ref()));
         }
     }
 
@@ -469,6 +568,12 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
         entry.blocked_by_operator += 1;
     }
 
+    // Exactly at the cap is the only signal the store can give, and it is
+    // deliberately read as truncated even when the window happened to hold that
+    // many rows to the line. Saying "possibly incomplete" about a complete
+    // answer costs a reader nothing; the reverse is the whole defect.
+    let detail_truncated = detail_scan > 0 && detail_scanned >= detail_scan;
+
     StatsPanel {
         measured: true,
         note: Some(window_note(
@@ -477,8 +582,11 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
             oldest_ms,
             undated,
             now_ms,
+            detail_truncated.then_some(detail_scanned),
         )),
         scanned,
+        detail_scanned,
+        detail_truncated,
         window_days,
         history_from: oldest_ms.map(genaryx_core::store::ms_to_rfc3339),
         undated,
@@ -493,18 +601,22 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
 /// window label that outruns the data is the specific way this panel would
 /// mislead: "last 90 days" over a store that started yesterday reads as a quiet
 /// quarter rather than as a new install.
+/// `detail_capped` carries how many full rows were read WHEN that read hit its
+/// cap, and `None` when it did not. The counts are exact either way; what a cap
+/// costs is the descriptive columns, and the sentence has to name which.
 fn window_note(
     window_days: u32,
     scanned: usize,
     oldest_ms: Option<i64>,
     undated: u64,
     now_ms: i64,
+    detail_capped: Option<usize>,
 ) -> String {
     let mut note = if window_days == 0 {
-        format!("Counted from the {scanned} most recent events on the bus, of any age.")
+        format!("Counted from all {scanned} event(s) on the bus, of any age.")
     } else {
         format!(
-            "Counted from {scanned} event(s) in the last {window_days} day(s), by each event's own timestamp."
+            "Counted from all {scanned} event(s) in the last {window_days} day(s), by each event's own timestamp."
         )
     };
 
@@ -529,6 +641,14 @@ fn window_note(
         note.push_str(&format!(
             " {undated} stored event(s) carry a timestamp this build cannot read and are in no \
              window; a number that climbs means a producer's clock format changed."
+        ));
+    }
+
+    if let Some(read) = detail_capped {
+        note.push_str(&format!(
+            " The counts above are complete. The columns that need each event's own detail \
+             (which detector fired, the budget amounts, who halted whom) were read from the \
+             {read} most recent such events and may understate a longer window."
         ));
     }
     note
@@ -1161,6 +1281,134 @@ mod tests {
             "breaker_tripped",
             Some(&serde_json::json!({ "reason": "budget_exceeded" }))
         ));
+    }
+
+    /// THE regression test for the defect this module had until 2026-08-11.
+    ///
+    /// The counts must be exact for the whole window no matter how small the
+    /// detail cap is. Under the old single capped read, `stats_counts(5, ...)`
+    /// read five rows and reported five blocks out of sixty, in a sentence that
+    /// said "counted from 5 event(s) in the last N day(s)" and could not be
+    /// told apart from an estate where five things happened.
+    #[test]
+    fn a_small_detail_cap_does_not_shrink_the_counts() {
+        let a = "agent://acme.local/sre/janitor";
+        let mut events = Vec::new();
+        for i in 0..60 {
+            events.push(event(
+                a,
+                &format!("2026-08-09T10:{:02}:00Z", i % 60),
+                "policy_deny",
+                serde_json::json!({ "seq": i }),
+            ));
+        }
+        let (state, dir) = seeded_state("cap", &events);
+
+        // Five is far below sixty, and deliberately so.
+        let p = stats_counts(5, 0, &state);
+        assert!(p.measured);
+        assert_eq!(
+            p.scanned, 60,
+            "every event in the window is counted, whatever the detail cap is"
+        );
+        assert_eq!(
+            p.agents[0].blocked, 60,
+            "the blocked column is the whole window, not the cap"
+        );
+        assert_eq!(
+            p.detail_scanned, 0,
+            "policy_deny carries nothing needing its own row, so the second read \
+             touches nothing at all"
+        );
+        assert!(!p.detail_truncated);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The other half: when the detail read IS capped, the panel says so rather
+    /// than presenting a partial attribution as the whole picture.
+    #[test]
+    fn a_capped_detail_read_says_the_descriptive_columns_are_partial() {
+        let a = "agent://acme.local/sre/janitor";
+        let mut events = Vec::new();
+        for i in 0..40 {
+            events.push(event(
+                a,
+                &format!("2026-08-09T11:{:02}:00Z", i % 60),
+                "run_killed",
+                serde_json::json!({ "org": "acme", "actor": "user://acme.local/d.hayes" }),
+            ));
+        }
+        let (state, dir) = seeded_state("cap-detail", &events);
+
+        let p = stats_counts(10, 0, &state);
+        assert_eq!(p.scanned, 40, "the count is still the whole window");
+        assert_eq!(p.agents[0].blocked, 40);
+        assert_eq!(
+            p.agents[0].blocked_by_operator, 10,
+            "attribution is only as complete as the rows read"
+        );
+        assert!(p.detail_truncated, "and the panel must admit that");
+        assert_eq!(p.detail_scanned, 10);
+        let note = p.note.expect("a capped panel explains itself");
+        assert!(
+            note.contains("counts above are complete") && note.contains("may understate"),
+            "the note must separate the exact counts from the partial detail, got: {note}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The split between "answered by a count" and "needs the whole row" is
+    /// only safe while the second list is complete. A new attribution rule
+    /// added to [`is_operator_stop`] without its type in [`DETAIL_TYPES`] would
+    /// never see a row, and would report zero operator stops for it: a wrong
+    /// answer that reads as good news, which is the failure mode this whole
+    /// module is written against.
+    #[test]
+    fn every_type_that_needs_its_data_is_read_in_full() {
+        // Every field any attribution rule reads today. A type that reacts to
+        // one of these is a type whose row must be fetched.
+        let attributed = serde_json::json!({
+            "actor": "user://acme.local/d.hayes",
+            "decided_by": "d.hayes",
+        });
+        for t in BLOCKED_TYPES {
+            if is_operator_stop(t, Some(&attributed)) {
+                assert!(
+                    DETAIL_TYPES.contains(t),
+                    "{t} is attributed from its data, so its rows must be read: add it to \
+                     DETAIL_TYPES"
+                );
+            }
+        }
+        assert!(
+            DETAIL_TYPES.contains(&IDENTITY_FINDING),
+            "the detector name lives in data and nowhere else"
+        );
+        assert!(
+            DETAIL_TYPES.contains(&CONSOLE_COMMAND),
+            "the agents a block halted live in data.members"
+        );
+    }
+
+    /// The same guard for the amounts, which are found by FIELD rather than by
+    /// type. A pair named in the query and not read by `overshoot_of` (or the
+    /// reverse) means either wasted rows or a breach reported as "not
+    /// recorded".
+    #[test]
+    fn every_amount_field_pair_is_actually_read() {
+        for (budget, spent) in AMOUNT_FIELDS {
+            let mut fields = serde_json::Map::new();
+            fields.insert((*budget).to_string(), serde_json::json!(1_000_000));
+            fields.insert((*spent).to_string(), serde_json::json!(1_500_000));
+            let data = serde_json::Value::Object(fields);
+            assert!(
+                overshoot_of(&data).is_some(),
+                "the query fetches rows carrying {budget}/{spent}, so overshoot_of must read \
+                 that pair"
+            );
+        }
     }
 
     /// An event with no amounts must leave `overshoot` absent rather than

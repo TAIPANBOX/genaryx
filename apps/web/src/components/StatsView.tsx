@@ -82,6 +82,11 @@ interface Column {
   /** Overrides the band's own tooltip where the column needs to say something
    * more specific than which window it came from. */
   title?: string;
+  /** True for a column whose value comes from opening each event's own `data`
+   * rather than from the aggregate. Those are the only ones a capped read can
+   * understate, and marking them is what keeps a partial answer from looking
+   * like a complete one: the counts beside them stay exact. */
+  fromDetail?: boolean;
 }
 
 const COLUMNS: Column[] = [
@@ -112,12 +117,19 @@ const COLUMNS: Column[] = [
     header: "By operator",
     band: "counts",
     align: "right",
+    fromDetail: true,
     title:
       "Of those, the ones a person caused: a kill naming an actor, or a hold a human denied. Everything else was the services acting on their own.",
   },
   { key: "anomalies", header: "Odd behaviour", band: "counts", align: "right" },
   { key: "budgetEvents", header: "Budget events", band: "counts", align: "right" },
-  { key: "worstOvershootMicrousd", header: "Worst breach", band: "counts", align: "right" },
+  {
+    key: "worstOvershootMicrousd",
+    header: "Worst breach",
+    band: "counts",
+    align: "right",
+    fromDetail: true,
+  },
 ];
 
 function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
@@ -191,6 +203,10 @@ export function StatsView({
   const [countsNote, setCountsNote] = useState<string | null>(null);
   const [countsMeasured, setCountsMeasured] = useState(false);
   const [scanned, setScanned] = useState(0);
+  // Set when the box could not open every event that carries its own detail.
+  // The counts stay exact; these two say which OTHER columns went partial.
+  const [detailScanned, setDetailScanned] = useState(0);
+  const [detailTruncated, setDetailTruncated] = useState(false);
   const [at, setAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -225,6 +241,8 @@ export function StatsView({
       setCountsMeasured(s.value.measured);
       setCountsNote(s.value.note);
       setScanned(s.value.scanned);
+      setDetailScanned(s.value.detail_scanned ?? 0);
+      setDetailTruncated(s.value.detail_truncated ?? false);
       setAnsweredWindow(s.value.window_days ?? 0);
       setHistoryFrom(s.value.history_from ?? null);
       setUndated(s.value.undated ?? 0);
@@ -236,6 +254,8 @@ export function StatsView({
           "and budget columns are blank. This is not a report that your agents were never stopped.",
       );
       setScanned(0);
+      setDetailScanned(0);
+      setDetailTruncated(false);
       setAnsweredWindow(0);
       setHistoryFrom(null);
       setUndated(0);
@@ -281,6 +301,11 @@ export function StatsView({
       caveats: [
         ...(historyFrom ? [`This box's event history starts at ${historyFrom}; a window longer than that is everything there is, not a quiet period.`] : []),
         ...(undated > 0 ? [`${undated} stored event(s) carry a timestamp this build cannot read and are in no window.`] : []),
+        ...(detailTruncated
+          ? [
+              `PARTIAL: blocked_by_operator and worst_breach_usd were read from the ${detailScanned.toLocaleString("en-US")} most recent events carrying their own detail, out of ${scanned.toLocaleString("en-US")} in the window, so both can only understate. The blocked, anomalies and budget_events counts are exact.`,
+            ]
+          : []),
         ...(group === "launcher"
           ? [
               "Owner here is the root of the delegation chain: who STARTED the run, as the money plane recorded it. This is NOT the same figure as the Owner grouping, which names who owns the agent.",
@@ -302,7 +327,7 @@ export function StatsView({
         "An empty worst_breach_usd means no event recorded the amounts, which is not the same as no overspend.",
       ],
     }),
-    [group, countsMeasured, scanned, answeredWindow, historyFrom, undated],
+    [group, countsMeasured, scanned, answeredWindow, historyFrom, undated, detailTruncated, detailScanned],
   );
 
   const exportRows = useMemo(
@@ -416,8 +441,8 @@ export function StatsView({
             noteRight={
               countsMeasured
                 ? answeredWindow === 0
-                  ? `${scanned.toLocaleString("en-US")} bus events, every age held`
-                  : `${scanned.toLocaleString("en-US")} bus events in the last ${answeredWindow}d`
+                  ? `${scanned.toLocaleString("en-US")} bus events, every age held${detailTruncated ? ", * partial" : ""}`
+                  : `${scanned.toLocaleString("en-US")} bus events in the last ${answeredWindow}d${detailTruncated ? ", * partial" : ""}`
                 : "counts not measured"
             }
           />
@@ -583,15 +608,21 @@ export function StatsView({
                       borderBottom: "1px solid var(--line)",
                     }}
                     title={
-                      c.title ??
-                      (c.band === "money"
-                        ? "money plane window"
-                        : c.band === "counts"
-                          ? "bus window: since this console started"
-                          : undefined)
+                      (detailTruncated && c.fromDetail
+                        ? `PARTIAL. This box read the ${detailScanned.toLocaleString("en-US")} most recent events carrying their own detail, which is fewer than the window holds, so this column can only understate. The Blocked, Odd behaviour and Budget columns beside it are exact. `
+                        : "") +
+                      (c.title ??
+                        (c.band === "money"
+                          ? "money plane window"
+                          : c.band === "counts"
+                            ? "bus window: every event this box still holds, by the event's own timestamp"
+                            : ""))
                     }
                   >
                     {c.header}
+                    {/* A column the capped read could only understate says so
+                        in the header, not only in a note under the table. */}
+                    {detailTruncated && c.fromDetail ? " *" : ""}
                     {sortKey === c.key ? (desc ? " v" : " ^") : ""}
                   </th>
                 ))}

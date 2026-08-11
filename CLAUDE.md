@@ -164,11 +164,50 @@ an absent invariant.
    **What it does not cover.** It cannot test itself. It proves each gate
    catches the faults named in it, not every fault of that kind.
 
+8. **A number this console prints is about the question, or it says which part
+   of the question it could not reach.** A count answers for its whole window,
+   or the response carries a field naming the columns that fall short. Never a
+   figure that is accurate about itself and false about what was asked.
+
+   This is invariant 4's sibling and the harder half of it. Invariant 4 is about
+   inventing rows; this is about a real number under a wrong label, which no
+   check that looks at the number can catch, because the number is correct.
+
+   It was found on 2026-08-11 by measuring, not by reading. `stats_counts` read
+   the N most recent events and tallied them, with N a cap chosen when the store
+   was scratch and held a few thousand lines. Durable history made that cap a
+   truncation nobody could see: @measured `crates/api/tests/stats_scale.rs` at
+   42 agents and 100 events a day, ninety days is 378,000 events and the
+   frontend asked for 20,000, so "how often was this agent stopped in the last
+   thirty days" was answered from about five per cent of the window, under a
+   sentence reading "counted from 20,000 event(s) in the last 30 day(s)". Every
+   word of that was true. An operator had no way to tell it from an estate where
+   20,000 things happened.
+
+   The counts now come from a SQL aggregate that reads no rows and cannot be
+   capped. What remains capped is the narrow second read of events whose own
+   `data` must be opened, and `StatsPanel::detail_truncated` says when it was
+   hit, with the affected columns marked in the header rather than only excused
+   in a note.
+   *(test: `crates/api/src/stats/mod.rs`,
+   `a_small_detail_cap_does_not_shrink_the_counts` drives the real fold through
+   a real store with the cap set far below the data and holds that the counts
+   are the whole window, and `a_capped_detail_read_says_the_descriptive_columns_are_partial`
+   holds the other half, that a capped detail read is declared rather than
+   presented as complete. Both were run against the pre-fix code first and both
+   failed there. Two further tests hold the split itself against drift:
+   `every_type_that_needs_its_data_is_read_in_full` fails if an attribution rule
+   is added without its event type being fetched, and
+   `every_amount_field_pair_is_actually_read` fails if the query and the reader
+   disagree about the budget field names. What is NOT held is the sentence's
+   scope: these four cover the Statistics panel, and nothing structural stops
+   the next capped read elsewhere in the console from doing the same thing.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
-**No invariant is now held by this file alone.** Every one of the six carries
-a gate or a test, and the three that are partial say in their own marker which
+**No invariant is now held by this file alone.** Every one of the eight carries
+a gate or a test, and the ones that are partial say in their own marker which
 half is held and which is not. That is the useful state, not a clean one: a
 marker reading "partly gated" with the unheld half spelled out is worth more
 than a green tick over a claim nobody checked.

@@ -45,9 +45,19 @@ export interface StatsPanel {
   /** False when nothing could be read. Render `note`, not the table. */
   measured: boolean;
   note: string | null;
-  /** How many bus lines were actually read, so a reader can tell a quiet
-   * estate from a short window. */
+  /** How many bus lines are in this window. EVERY one of them: the counts come
+   * from a SQL aggregate that reads no rows, so this is the size of the window
+   * and not the size of a read. It used to be the latter, capped, which meant a
+   * busy estate got its window truncated under a sentence that looked the same
+   * either way. */
   scanned: number;
+  /** How many full rows the box opened for the parts a count cannot carry:
+   * detector names, budget amounts, and who halted whom. */
+  detail_scanned: number;
+  /** True when that second read hit its cap, so those three columns describe
+   * the most recent `detail_scanned` events rather than the whole window. The
+   * counts are exact regardless. */
+  detail_truncated: boolean;
   /** The window this panel counted over, in days. `0` means "the recent slice,
    * any age", which is what a box with no durable history can offer. */
   window_days: number;

@@ -1183,9 +1183,15 @@ function mockStatsCounts(windowDays: number) {
     measured: true,
     note:
       windowDays === 0
-        ? `Counted from ${scanned} event(s), every age this box holds.`
-        : `Counted from ${scanned} event(s) in the last ${windowDays} day(s), by each event's own timestamp.`,
+        ? `Counted from all ${scanned} event(s), every age this box holds.`
+        : `Counted from all ${scanned} event(s) in the last ${windowDays} day(s), by each event's own timestamp.`,
     scanned,
+    // The preview computes every figure from the seeded year in one pass, so
+    // there is no second capped read to truncate. Reported as zero and false
+    // rather than omitted: a view that has to treat `undefined` as "probably
+    // fine" is a view that will read a real truncation the same way.
+    detail_scanned: 0,
+    detail_truncated: false,
     window_days: windowDays,
     history_from: new Date(now - YEAR_MS).toISOString(),
     undated: 0,

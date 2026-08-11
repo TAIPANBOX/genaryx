@@ -17,7 +17,7 @@ use std::path::Path;
 /// version-gated step in [`migrate`] whenever a table shape changes; the
 /// `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
 /// themselves stay safe to rerun regardless.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// Phase-0 schema (06 §2 subset): events, the per-file read-offset journal,
 /// the quarantine table for malformed/non-conforming lines, and the spend
@@ -155,6 +155,21 @@ const MIGRATION_V5: &str = "
 CREATE INDEX IF NOT EXISTS idx_events_agent_ts_ms ON events(agent_id, ts_ms);
 ";
 
+/// The index the Statistics aggregate needs.
+///
+/// `type_counts_since` groups every agent's events by type over a window, and
+/// the two indexes that already exist each miss half of it: `idx_events_type_ts`
+/// leads on `type`, and `idx_events_agent_ts_ms` has no `type` at all, so
+/// SQLite scanned the table and built a temporary b-tree for the grouping.
+///
+/// @measured `crates/api/tests/stats_scale.rs`, 2026-08-11, on 42 agents x 100
+/// events/day x 90 days (378,000 rows): 268 ms without this index, 117 ms with
+/// it, and 21 MB added to a 260 MB store. The column order is the GROUP BY's,
+/// with `ts_ms` last so the window is a range scan inside each group.
+const MIGRATION_V6: &str = "
+CREATE INDEX IF NOT EXISTS idx_events_agent_type_ts_ms ON events(agent_id, type, ts_ms);
+";
+
 /// A row read back from `events`, shaped for the shells: envelope fields plus
 /// provenance, so every byte shown can point back to its source (06 §0.8).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -174,6 +189,26 @@ pub struct StoredEvent {
     pub raw: String,
     pub file: Option<String>,
     pub off: Option<u64>,
+}
+
+/// The three columns the Statistics fold needs from an event whose `data` it
+/// must open: who it is about, what it was, and the payload itself.
+///
+/// Narrow for the same reason [`DelegationRow`] is, and it matters more here:
+/// the stats detail read pulls a double-digit percentage of the bus at once,
+/// and `raw` (the producer's whole original line) is the bulk of every row.
+/// Nothing in that fold reads it.
+///
+/// @measured `crates/api/tests/stats_scale.rs`, 2026-08-11, 52,920 rows out of
+/// 378,000: 211 ms as `StoredEvent`, 205 ms as this. So this buys MEMORY and
+/// bytes moved, NOT time. The query is scan-bound, and dropping `raw` from the
+/// projection does not change how many rows SQLite has to walk. Said plainly
+/// because the opposite was assumed here before the bench ran.
+#[derive(Debug, Clone)]
+pub struct EventDetail {
+    pub agent_id: String,
+    pub type_: String,
+    pub data: Option<serde_json::Value>,
 }
 
 /// The delegation-relevant columns of one event, as read by
@@ -206,6 +241,20 @@ pub struct SourceState {
     /// [`HEAD_FINGERPRINT_BYTES`]. `None` on a store written before this
     /// column existed, which a caller treats as "cannot tell".
     pub head_sha: Option<String>,
+}
+
+/// One agent's count of one event type over a window, with the newest `ts`
+/// string in that group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTypeCount {
+    pub agent_id: String,
+    pub type_: String,
+    pub count: u64,
+    /// `MAX(ts)`, so the producer's own timestamp string rather than a
+    /// normalized one. Compared lexicographically, which is what a caller
+    /// folding these rows by hand was already doing and is correct for the
+    /// RFC 3339 spellings on this bus.
+    pub last_ts: String,
 }
 
 /// One agent's events of one type on one UTC day.
@@ -467,6 +516,152 @@ impl Store {
         let mut out = Vec::new();
         while let Some(row) = rows.next().map_err(store_err)? {
             out.push(stored_event_from_row(row)?);
+        }
+        Ok(out)
+    }
+
+    /// Every agent's event counts by type over a window, as ONE aggregate.
+    ///
+    /// `cutoff_ms` of `None` means every event the store holds, undated rows
+    /// included; a `Some` window is on the event's own clock and undated rows
+    /// are in no window at all ([`Store::undated_count`] is how a caller says
+    /// how many those were).
+    ///
+    /// # WHY THIS EXISTS RATHER THAN COUNTING ROWS IN THE CALLER
+    ///
+    /// The Statistics panel used to read the N most recent rows and tally them
+    /// in Rust, with N a cap chosen when this store was a scratch file holding
+    /// a few thousand lines. Durable history turned that cap into a silent
+    /// truncation. Measured on 2026-08-11: 42 agents at 100 events a day is
+    /// 378,000 rows over ninety days, the frontend's cap was 20,000, so a
+    /// question about thirty days was answered from about five per cent of it.
+    /// The panel then said "counted from 20,000 events", which is true about
+    /// itself and wrong about the question, and nothing in the shape let a
+    /// reader tell "20,000 happened" from "we stopped at 20,000".
+    ///
+    /// An aggregate has no cap to hit. SQLite counts the rows and hands back
+    /// one per (agent, type), which is tens of rows where the scan was hundreds
+    /// of thousands, and the count is the whole window every time.
+    pub fn type_counts_since(&self, cutoff_ms: Option<i64>) -> Result<Vec<AgentTypeCount>> {
+        let sql = match cutoff_ms {
+            Some(_) => {
+                "SELECT agent_id, type, COUNT(*), MAX(ts) FROM events \
+                 WHERE ts_ms IS NOT NULL AND ts_ms >= ?1 GROUP BY agent_id, type"
+            }
+            // `?1` is still bound, to one query shape rather than two: the
+            // predicate is a constant true and SQLite drops it.
+            None => "SELECT agent_id, type, COUNT(*), MAX(ts) FROM events \
+                 WHERE ?1 IS NULL GROUP BY agent_id, type",
+        };
+        let mut stmt = self.conn.prepare(sql).map_err(store_err)?;
+        let mut rows = stmt.query(params![cutoff_ms]).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            let count: i64 = row.get(2).map_err(store_err)?;
+            out.push(AgentTypeCount {
+                agent_id: row.get(0).map_err(store_err)?,
+                type_: row.get(1).map_err(store_err)?,
+                count: u64::try_from(count).unwrap_or(0),
+                last_ts: row
+                    .get::<_, Option<String>>(3)
+                    .map_err(store_err)?
+                    .unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// The `data` of the events a caller cannot answer from a count alone,
+    /// newest first by insertion id, capped at `limit`.
+    ///
+    /// The companion to [`Store::type_counts_since`]. Some facts live in an
+    /// event's `data` and cannot be aggregated: which detector fired, the two
+    /// budget amounts, the agents one console block halted. Those need the row.
+    ///
+    /// Two ways to ask for them, and the second is the one that matters:
+    ///
+    /// - `types` names event types outright.
+    /// - `json_pairs` names (field, field) pairs, and matches any event whose
+    ///   `data` carries BOTH. The caller that reads budget overshoots does not
+    ///   know every type that might carry amounts, and must not: the live
+    ///   TokenFuse gateway records them on `breaker_tripped`, which is an
+    ///   enforcement event and not a budget one. A named-types-only read would
+    ///   answer "not recorded" for a real breach the moment a producer put the
+    ///   amounts on a fourth type, which is the same silent-wrong this whole
+    ///   method exists to remove.
+    ///
+    /// Field names are BOUND as parameters, never interpolated, so this stays
+    /// safe if a caller ever computes them.
+    ///
+    /// The cap remains because "the events needing a row are a small minority"
+    /// is a property of today's bus rather than a guarantee. Returning exactly
+    /// `limit` rows is how the caller learns it was truncated, so it can say so
+    /// instead of reporting the smaller number as a fact.
+    pub fn events_of_types_since(
+        &self,
+        types: &[&str],
+        json_pairs: &[(&str, &str)],
+        cutoff_ms: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<EventDetail>> {
+        if types.is_empty() && json_pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut wants: Vec<String> = Vec::new();
+
+        if !types.is_empty() {
+            let holes = types
+                .iter()
+                .map(|t| {
+                    binds.push(Box::new((*t).to_string()));
+                    format!("?{}", binds.len())
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            wants.push(format!("type IN ({holes})"));
+        }
+        for (budget, spent) in json_pairs {
+            binds.push(Box::new(format!("$.{budget}")));
+            let b = binds.len();
+            binds.push(Box::new(format!("$.{spent}")));
+            let s = binds.len();
+            // `json_valid` first: `json_extract` raises on a malformed value,
+            // and one unparseable row must not take the whole panel down.
+            wants.push(format!(
+                "(data IS NOT NULL AND json_valid(data) \
+                 AND json_extract(data, ?{b}) IS NOT NULL \
+                 AND json_extract(data, ?{s}) IS NOT NULL)"
+            ));
+        }
+
+        binds.push(Box::new(cutoff_ms));
+        let cutoff = binds.len();
+        binds.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
+        let lim = binds.len();
+
+        let sql = format!(
+            "SELECT agent_id, type, data FROM events WHERE ({}) \
+             AND (?{cutoff} IS NULL OR (ts_ms IS NOT NULL AND ts_ms >= ?{cutoff})) \
+             ORDER BY id DESC LIMIT ?{lim}",
+            wants.join(" OR ")
+        );
+
+        let mut stmt = self.conn.prepare(&sql).map_err(store_err)?;
+        let refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        let mut rows = stmt.query(refs.as_slice()).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            let data_json: Option<String> = row.get(2).map_err(store_err)?;
+            out.push(EventDetail {
+                agent_id: row.get(0).map_err(store_err)?,
+                type_: row.get(1).map_err(store_err)?,
+                data: data_json
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(store_err)?,
+            });
         }
         Ok(out)
     }
@@ -774,6 +969,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 5 {
         conn.execute_batch(MIGRATION_V5).map_err(store_err)?;
+    }
+    if current < 6 {
+        conn.execute_batch(MIGRATION_V6).map_err(store_err)?;
     }
     // Future migrations gate on `current < N` here, in order, before the final
     // `PRAGMA user_version` write below.

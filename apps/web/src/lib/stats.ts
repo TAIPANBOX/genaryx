@@ -35,13 +35,28 @@ import type { Owner, Run } from "../moneyTypes";
 
 const NO_ENVIRONMENT_ERROR: StatsError = { kind: "no_environment" };
 
-/** How many bus lines the backend reads per refresh.
+/** How many FULL event rows the backend may open per refresh.
  *
- * Wide on purpose. This is a count, not a feed: an estate whose money plane is
- * chatty would otherwise push every policy decision out of a narrow window and
- * report zero blocks, which is the failure this whole view is built to avoid.
- * The number actually read comes back in `panel.scanned` and is shown. */
-export const STATS_SCAN = 20_000;
+ * This no longer bounds the counts, and the distinction is the whole point. The
+ * blocked / odd / budget columns come from a SQL aggregate that reads no rows
+ * and is exact for the entire window however large it is. What is bounded here
+ * is the second, narrow read: the events whose own `data` has to be opened to
+ * say which detector fired, how far over budget a run went, and which agents an
+ * operator's block halted.
+ *
+ * It used to bound everything, at 20,000, and that was a silent truncation on
+ * any busy estate. @measured `genaryx/crates/api/tests/stats_scale.rs`,
+ * 2026-08-11, on 42 agents x 100 events/day x 90 days: 378,000 events in the
+ * window, of which the panel read 20,000, so a question about that window was
+ * answered from about five per cent of it under a sentence reading "counted
+ * from 20,000 event(s)".
+ *
+ * 100,000 comes from the same bench. That shape produces 52,920 events needing
+ * their own row (14% of the bus), read in about 200 ms, so the cap clears a
+ * heavy quarter with headroom rather than sitting just above today's estate. If
+ * it IS hit, `panel.detail_truncated` says so and the affected columns are
+ * marked; the counts stay exact either way. */
+export const STATS_SCAN = 100_000;
 
 function toStatsError(err: unknown): StatsError {
   if (err && typeof err === "object" && "kind" in err) {
