@@ -1,8 +1,10 @@
 //! Store: local SQLite (WAL) persistence of normalized events and materialized
 //! state, plus a tamper-evident checkpoint chain (console-local, honestly labeled).
 //!
-//! Phase-0 subset of 06 §2: `events`, `source_offsets`, `event_quarantine`, and
-//! `rollup_spend_1m` (schema only here; population is a later reducer task).
+//! Phase-0 subset of 06 §2: `events`, `source_offsets` and `event_quarantine`.
+//! A fourth table, `rollup_spend_1m`, was created here in Phase 0 "for a later
+//! reducer task" and dropped on 2026-08-11 having never had one; see
+//! [`MIGRATION_V7`].
 //! Every insert runs in one transaction on one prepared statement; malformed
 //! lines never silently vanish, they land in `event_quarantine` with a
 //! file+offset reference and a reason (06 §0.5 fail-closed, 06 §2 quarantine).
@@ -17,11 +19,17 @@ use std::path::Path;
 /// version-gated step in [`migrate`] whenever a table shape changes; the
 /// `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
 /// themselves stay safe to rerun regardless.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// Phase-0 schema (06 §2 subset): events, the per-file read-offset journal,
 /// the quarantine table for malformed/non-conforming lines, and the spend
-/// rollup table (created here, populated later by a reducer).
+/// rollup table.
+///
+/// The rollup table is left in this migration on purpose even though
+/// [`MIGRATION_V7`] drops it. This is what Phase 0 created, and a migration
+/// rewritten to match today is a migration that no longer records anything. A
+/// fresh store creates the table and drops it microseconds later, which is the
+/// correct cost of keeping history honest.
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
@@ -168,6 +176,40 @@ CREATE INDEX IF NOT EXISTS idx_events_agent_ts_ms ON events(agent_id, ts_ms);
 /// with `ts_ms` last so the window is a range scan inside each group.
 const MIGRATION_V6: &str = "
 CREATE INDEX IF NOT EXISTS idx_events_agent_type_ts_ms ON events(agent_id, type, ts_ms);
+";
+
+/// Drop the table that never had a writer.
+///
+/// `rollup_spend_1m` was created by [`MIGRATION_V1`] with the comment
+/// "populated later by a reducer task". The reducer was never written. From
+/// Phase 0 to 2026-08-11 the table sat empty, and nothing noticed, because an
+/// empty table looks exactly like a quiet one.
+///
+/// # WHY IT IS DROPPED RATHER THAN FINALLY FILLED
+///
+/// It was the answer to a question this store no longer asks. The Statistics
+/// tab needed per-agent history, and a rollup filled by a reducer was the
+/// obvious shape; the case against it was that a cache which CAN drift from the
+/// events it summarizes will, silently, because both numbers stay plausible.
+/// That case was then settled by measurement rather than by preference: on
+/// 42 agents at 100 events a day over 90 days, 378,000 rows, a per-agent
+/// profile answers in 1 to 5 ms straight off the events
+/// (`crates/api/tests/stats_scale.rs`, 2026-08-11). There is nothing for a
+/// rollup to buy.
+///
+/// # WHAT THE DROP CAN DESTROY
+///
+/// Nothing. No code in this repository has ever written a row here: the table
+/// name appears in this file and in no other, in no `INSERT` and in no
+/// `SELECT`, which was checked across every crate and the web app before this
+/// migration was written.
+///
+/// The table's real value was as evidence, and that survives it: a speculative
+/// table added "for later" stayed empty for the entire life of the project.
+/// `store_test.rs`'s `the_schema_holds_no_table_that_nothing_writes` is what
+/// keeps the lesson enforced rather than remembered.
+const MIGRATION_V7: &str = "
+DROP TABLE IF EXISTS rollup_spend_1m;
 ";
 
 /// A row read back from `events`, shaped for the shells: envelope fields plus
@@ -909,6 +951,29 @@ impl Store {
         Ok(out)
     }
 
+    /// Every table this store holds, alphabetically.
+    ///
+    /// A diagnostic, and the reason it is public is a test. `rollup_spend_1m`
+    /// sat in this schema from the first migration to 2026-08-11 with no writer
+    /// and no reader, because nothing could ask the store what it contained
+    /// without opening the file by hand. A table that only the migration knows
+    /// about is a table nobody notices is empty.
+    pub fn table_names(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' \
+                 AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )
+            .map_err(store_err)?;
+        let mut rows = stmt.query([]).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            out.push(row.get(0).map_err(store_err)?);
+        }
+        Ok(out)
+    }
+
     /// Total number of quarantined lines.
     pub fn quarantine_count(&self) -> Result<u64> {
         let n: i64 = self
@@ -1066,6 +1131,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 6 {
         conn.execute_batch(MIGRATION_V6).map_err(store_err)?;
+    }
+    if current < 7 {
+        conn.execute_batch(MIGRATION_V7).map_err(store_err)?;
     }
     // Future migrations gate on `current < N` here, in order, before the final
     // `PRAGMA user_version` write below.
