@@ -170,11 +170,14 @@ pub fn quarantine(state: &AppState) -> QuarantinePanel {
                 .to_string(),
         )
     } else {
-        let mut n = format!(
-            "{total} line(s) were refused by the envelope and are NOT on the bus. \
-             The agents they were about will look quieter than they were. \
+        // Deliberately does NOT restate `total`. The count is a field, every
+        // renderer already shows it, and a note that repeats it puts the same
+        // number on screen twice in two wordings. What prose is for here is
+        // the part the number cannot say: what it means and what to do.
+        let mut n = String::from(
+            "The agents these lines were about will look quieter than they were. \
              Fix the producer at the file and offset below; nothing here rewrites a line to \
-             make it fit."
+             make it fit.",
         );
         if shown < total {
             n.push_str(&format!(

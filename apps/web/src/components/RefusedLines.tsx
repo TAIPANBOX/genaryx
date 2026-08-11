@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchQuarantine, type QuarantinePanel } from "../lib/quarantine";
+import { useConsoleStateVersion } from "../lib/consoleState";
 
 /**
  * The strip above the Bus Explorer saying what this bus refused.
@@ -17,6 +18,10 @@ import { fetchQuarantine, type QuarantinePanel } from "../lib/quarantine";
  */
 export function RefusedLines() {
   const [panel, setPanel] = useState<QuarantinePanel | null>(null);
+  // Re-read the moment anything app-wide changes what the box would answer,
+  // instead of waiting out the slow poll below. On a real box that is a
+  // lifecycle command; in the demo it is the storyline switch.
+  const version = useConsoleStateVersion();
 
   useEffect(() => {
     let alive = true;
@@ -32,7 +37,7 @@ export function RefusedLines() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [version]);
 
   if (!panel) return null;
 

@@ -75,8 +75,13 @@ fn a_campaign_the_envelope_refuses_is_reported_rather_than_looking_quiet() {
 
     let note = panel.note.expect("a measured panel still explains itself");
     assert!(
-        note.contains("NOT on the bus") && note.contains("quieter"),
-        "the note must name the consequence, not only the count, got: {note}"
+        note.contains("quieter") && note.contains("Fix the producer"),
+        "the note must carry the consequence and the action, got: {note}"
+    );
+    assert!(
+        !note.contains("12"),
+        "and must NOT restate the count: it is a field, and repeating it puts the same \
+         number on screen twice in two wordings. Got: {note}"
     );
 
     // One producer, one fault, one row. Twelve copies of the same sentence
