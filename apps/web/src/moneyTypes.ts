@@ -62,6 +62,15 @@ export interface Overview {
  * the `killed` boolean below - see `lib/lifecycleTypes.ts`'s module doc. */
 export interface Run {
   run_id: string;
+  /** The business unit the Cloud's identity map RESOLVED for this run
+   * (`tokenfuse/docs/20-identity-map.md`): the attribution that actually
+   * charged a unit budget.
+   *
+   * `""` when nothing resolved, which is a real answer and not a gap: a box
+   * with no identity map configured returns it for every run. A caller must be
+   * able to tell that from a resolved unit, which is why it is an empty string
+   * rather than a missing field. */
+  unit: string;
   model: string;
   agent_id: string;
   spent_usd: number;

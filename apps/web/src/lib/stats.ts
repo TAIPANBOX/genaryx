@@ -183,6 +183,68 @@ interface Acc {
  * bus and has no run in the money window gets a row with zero spend, because
  * "this agent was blocked 40 times and spent nothing" is exactly the row an
  * operator needs to see. */
+/** Which unit the Cloud's identity map resolved for each agent, from the runs
+ * it actually charged.
+ *
+ * Last non-empty wins, which is the same rule the Cloud's own per-run fold
+ * applies: an agent whose binding changed mid-window has two answers on the
+ * wire, and the current one is the one worth showing. An agent whose every run
+ * resolved nothing is absent from this map rather than present with `""`, so a
+ * caller cannot mistake "no map" for a unit named empty. */
+export function unitByAgent(runs: Run[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of runs) {
+    if (r.unit) out.set(r.agent_id, r.unit);
+  }
+  return out;
+}
+
+/** Where the Business unit grouping got its answer, so the view can say.
+ *
+ * # WHY THIS IS REPORTED RATHER THAN ASSUMED
+ *
+ * Two sources, and they mean different things. `identity-map` is what the
+ * operator declared and what the Cloud CHARGED; `agent-id` is this console
+ * parsing the team segment out of `agent://org/<team>/<name>` and running it
+ * through a hard-coded table.
+ *
+ * That table mirrors the demo seeder's org chart. On any real estate it knows
+ * none of the operator's teams and falls back to "the team name is its own
+ * unit", so the grouping stops being an org chart and becomes whatever strings
+ * happen to sit in agent ids. Reporting which source answered is the difference
+ * between a rollup somebody can act on and one that merely renders.
+ *
+ * `mixed` is a real state and not an edge case: an identity map that binds some
+ * credentials and not others resolves for some agents and not others, and the
+ * view must not present half a real org chart as a whole one.
+ *
+ * # IT JUDGES ONLY THE AGENTS THAT RAN, AND THAT IS THE CORRECTION
+ *
+ * The first version counted every agent in either window, so an agent seen on
+ * the bus with no run in the money window counted as unresolved and dragged the
+ * answer to `mixed`. That is a misreading with a cost: it accuses the
+ * operator's identity map of being incomplete when the truth is that the map
+ * was never asked, because a unit is resolved per RUN and there was no run.
+ *
+ * The population is therefore the agents with runs. Bus-only agents are still
+ * bucketed by name, and the caveat says so; what they are not is evidence of a
+ * misconfigured map. */
+export type UnitSource = "identity-map" | "agent-id" | "mixed" | "none";
+
+export function unitSource(runs: Run[], counts: AgentStats[]): UnitSource {
+  const ran = new Set(runs.map((r) => r.agent_id));
+  if (ran.size === 0) {
+    // Nothing ran. If the bus saw agents, every bucket on screen is parsed from
+    // a name; if it saw none either, there is nothing to attribute at all.
+    return counts.length > 0 ? "agent-id" : "none";
+  }
+  const resolved = unitByAgent(runs);
+  let hit = 0;
+  for (const id of ran) if (resolved.has(id)) hit += 1;
+  if (hit === 0) return "agent-id";
+  return hit === ran.size ? "identity-map" : "mixed";
+}
+
 export function groupRows(
   runs: Run[],
   identities: IdryxIdentity[],
@@ -190,6 +252,7 @@ export function groupRows(
   by: GroupBy,
 ): StatsRow[] {
   const owners = ownerByAgent(identities);
+  const resolvedUnits = unitByAgent(runs);
   const spend = spendByAgent(runs);
   const byAgentSpend = new Map(spend.map((s) => [s.agent, s]));
   const byAgentCount = new Map(counts.map((c) => [c.agent_id, c]));
@@ -207,6 +270,16 @@ export function groupRows(
       if (!owner) return { key: NO_OWNER_KEY, label: NO_OWNER_KEY, unattributed: true };
       return { key: owner, label: owner, unattributed: false };
     }
+    // The unit the Cloud's identity map RESOLVED, when it resolved one. That
+    // is the attribution which actually charged a unit budget, so grouping by
+    // anything else means the console buckets by one definition while the
+    // Cloud enforces another.
+    const resolved = resolvedUnits.get(agentId);
+    if (resolved) return { key: resolved, label: resolved, unattributed: false };
+
+    // Nothing resolved. Fall back to the agent's NAME, and the caller says so:
+    // see `unitSource` and the caveat it drives. A silent fallback would be the
+    // worse half of this, because both answers look identical on screen.
     const team = byAgentSpend.get(agentId)?.team || agentTeam(agentId);
     if (!team) return { key: NO_UNIT_KEY, label: NO_UNIT_KEY, unattributed: true };
     const unit = unitForTeam(team);
