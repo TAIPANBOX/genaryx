@@ -51,6 +51,7 @@ function counts(agentId: string, over: Partial<AgentStats> = {}): AgentStats {
     budget_events: 0,
     worst_overshoot_microusd: null,
     by_type: {},
+    by_detector: {},
     last_seen: "2026-08-09T10:00:00Z",
     ...over,
   };
@@ -119,6 +120,26 @@ describe("groupRows", () => {
     expect(fc!.spentUsd).toBe(15);
     expect(rows.find((r) => r.key === "sre")).toBeDefined();
     expect(rows.find((r) => r.key === NO_UNIT_KEY)).toBeUndefined();
+  });
+
+  // Idryx ships one wire type for twenty-five detectors, so the count alone
+  // says nothing. The names have to survive the grouping to be worth anything.
+  it("sums idryx detector names across a group rather than dropping them", () => {
+    const rows = groupRows(
+      RUNS,
+      IDENTITIES,
+      [
+        counts(FRAUD_BOT, { anomalies: 2, by_detector: { impossible_travel: 1, mfa_fatigue: 1 } }),
+        counts(KYC_BOT, { anomalies: 1, by_detector: { impossible_travel: 1 } }),
+      ],
+      "owner",
+    );
+    const hayes = rows.find((r) => r.key === "d.hayes")!;
+    expect(
+      hayes.detectors.impossible_travel,
+      "the same detector on two of their agents is two",
+    ).toBe(2);
+    expect(hayes.detectors.mfa_fatigue).toBe(1);
   });
 
   it("shows an agent that only the bus knows about, with zero spend", () => {

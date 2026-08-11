@@ -112,6 +112,10 @@ export interface StatsRow {
   blockedByOperator: number;
   anomalies: number;
   budgetEvents: number;
+  /** Which idryx detectors fired across this row, by name, so "odd behaviour"
+   * can say WHAT was odd. Summed across the row's agents: two agents each
+   * tripping `impossible_travel` is two. */
+  detectors: Record<string, number>;
   /** The worst single breach in micro-USD, or `null` when no event carried the
    * amounts. Never coerced to 0: see `statsTypes.ts`. A group's value is the
    * worst of its members, not their total - summing breaches across agents
@@ -152,6 +156,7 @@ interface Acc {
   anomalies: number;
   budgetEvents: number;
   overshoot: number | null;
+  detectors: Record<string, number>;
   unattributed: boolean;
 }
 
@@ -208,6 +213,7 @@ export function groupRows(
       anomalies: 0,
       budgetEvents: 0,
       overshoot: null,
+      detectors: {},
       unattributed,
     };
     row.agents.add(agentId);
@@ -222,6 +228,9 @@ export function groupRows(
     if (c) {
       row.blocked += c.blocked;
       row.blockedByOperator += c.blocked_by_operator;
+      for (const [name, n] of Object.entries(c.by_detector ?? {})) {
+        row.detectors[name] = (row.detectors[name] ?? 0) + n;
+      }
       row.anomalies += c.anomalies;
       row.budgetEvents += c.budget_events;
       // The worst of the group, not the sum. A null stays null rather than
@@ -245,6 +254,7 @@ export function groupRows(
     anomalies: r.anomalies,
     budgetEvents: r.budgetEvents,
     worstOvershootMicrousd: r.overshoot,
+    detectors: r.detectors,
     unattributed: r.unattributed,
     countsApply: true,
   }));
@@ -275,6 +285,7 @@ export function rowsFromOwners(owners: Owner[]): StatsRow[] {
     anomalies: 0,
     budgetEvents: 0,
     worstOvershootMicrousd: null,
+    detectors: {},
     unattributed: o.owner === "unassigned",
     countsApply: false,
   }));
