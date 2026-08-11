@@ -275,6 +275,12 @@ fn default_profile_window() -> i64 {
     90
 }
 
+/// A month, matching the Cloud's own default and the period an operator asks
+/// for first.
+fn default_spend_days() -> i64 {
+    30
+}
+
 pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Response, Response> {
     match name {
         "admission_baseline" => {
@@ -725,6 +731,23 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                     v
                 });
             Ok(reply(projected))
+        }
+        // Spend over a PERIOD, which is the only shape that can answer one.
+        // A read, and classified as one in roles.rs.
+        //
+        // `null` when this Cloud has no `/v1/spend` (older than tokenfuse
+        // #199). The frontend must keep that distinct from zero: a box that
+        // cannot answer the question is not a box that answered nothing.
+        "money_spend_window" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                #[serde(default = "default_spend_days")]
+                days: i64,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::money::commands::money_spend_window(&ctx.money, a.days).await,
+            ))
         }
         // The money plane's own per-person rollup. A read, and classified as
         // one in roles.rs. Deliberately a SEPARATE command from the console's

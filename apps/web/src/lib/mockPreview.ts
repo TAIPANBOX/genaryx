@@ -1364,6 +1364,51 @@ function mockDirection(daily: number[]): "rising" | "falling" | "steady" | "unkn
   return "steady";
 }
 
+/** Spend over a PERIOD, summed per day from the same seeded year every other
+ * panel reads, mirroring `tokenfuse/crates/cloud/src/store.rs::spend_window`.
+ *
+ * # WHY IT IS A DAILY RATE AND NOT A SLICE OF THE LIFETIME TOTAL
+ *
+ * The whole reason #199 exists is that a filtered set of run totals is not a
+ * period's spend. Reproducing that mistake here would put the demo back to
+ * showing a day at $8,151 beside a week at $15,024, which is what started all
+ * of this. So each agent's spend is its own daily rate times the days counted,
+ * and the arithmetic is proportional by construction.
+ *
+ * `days_covered` is capped by the fleet's own history, so asking for a year on
+ * an agent that launched sixty days ago reports sixty. */
+function mockSpendWindow(days: number) {
+  const today = Math.floor(now / DAY);
+  let covered = 0;
+  const agents = FLEET.map((a) => {
+    const run = baseRunFor(a, { ignoreClosed: true });
+    const ageDays = Math.max(
+      1,
+      Math.round((now - Date.parse(a.segments[0]?.from ?? new Date(now).toISOString())) / DAY),
+    );
+    const inWindow = Math.min(days, ageDays);
+    covered = Math.max(covered, inWindow);
+    const perDayUsd = run.spent_usd / ageDays;
+    const perDayCalls = run.calls / ageDays;
+    return {
+      agent_id: agentId(a),
+      spent_microusd: Math.round(perDayUsd * inWindow * 1_000_000),
+      calls: Math.round(perDayCalls * inWindow),
+      blocked: 0,
+    };
+  }).filter((x) => x.spent_microusd > 0);
+  agents.sort((x, y) => y.spent_microusd - x.spent_microusd);
+  return {
+    days_requested: days,
+    days_covered: covered,
+    from_day: today - covered + 1,
+    spent_microusd: agents.reduce((t, x) => t + x.spent_microusd, 0),
+    calls: agents.reduce((t, x) => t + x.calls, 0),
+    blocked: 0,
+    agents,
+  };
+}
+
 /** What the envelope refused, per storyline.
  *
  * # WHY THIS FOLLOWS CALM / INCIDENT
@@ -3274,6 +3319,14 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
 
     case "money_overview": return r(mockOverview());
     case "money_runs": return r(mockRuns());
+    // Spend for a PERIOD, summed from the same seeded year the Statistics
+    // counts read, so the two cannot disagree. The preview stands in for a
+    // current Cloud; `null` is the older-Cloud path and the console labels it
+    // differently, so the demo must not exercise it by omission.
+    case "money_spend_window": {
+      const days = Math.max(1, Number(args?.days ?? 30));
+      return r(mockSpendWindow(days));
+    }
     case "money_incidents": return r(mockIncidents());
     case "money_savings": return r(mockSavings());
     case "money_kill_run": {

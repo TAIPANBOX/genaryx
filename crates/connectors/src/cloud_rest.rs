@@ -263,6 +263,27 @@ impl CloudClient {
         self.get_json("/v1/runs").await
     }
 
+    /// `GET /v1/spend?days=N` - spend over a PERIOD, per agent
+    /// (`http.rs::spend`, `WindowSpend` in `store.rs`).
+    ///
+    /// Returns `Ok(None)` when the Cloud does not have the endpoint, which is
+    /// any Cloud older than tokenfuse #199. That is a distinct answer from
+    /// "zero spend" and the caller must keep it distinct: showing a period of
+    /// zero for a box that simply cannot fold by period is the same wrong
+    /// answer that reads as good news.
+    pub async fn spend_window(&self, days: i64) -> Result<Option<WindowSpend>, ConnectorError> {
+        let resp = self
+            .http
+            .get(format!("{}/v1/spend?days={days}", self.base_url))
+            .bearer_auth(&self.bearer_token)
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        parse_response(resp).await.map(Some)
+    }
+
     /// `GET /v1/agents` - per-agent spend rollup, highest spend first
     /// (`http.rs::agents`, `AgentAgg` in `store.rs`).
     pub async fn agents(&self) -> Result<Vec<AgentAgg>, ConnectorError> {
@@ -538,6 +559,38 @@ pub struct Summary {
 
 /// One element of `GET /v1/runs`. Exact shape of `store.rs::RunAgg` -
 /// `last_seen_millis` on the wire (the Rust field there is `last_seen`, `#[serde(rename)]`'d;
+/// One agent's spend over a requested period (`/v1/spend`, tokenfuse #199).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AgentWindowSpend {
+    /// The empty string is the Cloud's overflow bucket, never a real agent.
+    pub agent_id: String,
+    pub spent_microusd: i64,
+    pub calls: u64,
+    pub blocked: u64,
+}
+
+/// Spend over a PERIOD, which is the only shape here that can answer one.
+///
+/// `RunAgg` folds per run over that run's whole life, so summing a filtered set
+/// of them gives the lifetime spend of recently-active runs, not the spend of a
+/// week. That distinction is not academic: it put a day at $8,151 beside a week
+/// at $15,024 on this console before #199 existed.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct WindowSpend {
+    pub days_requested: i64,
+    /// How many days the Cloud actually HELD inside the request.
+    ///
+    /// The field that stops the other half of the misreading. A box up for
+    /// three days cannot answer thirty, and a smaller total shown without this
+    /// reads as a quiet month.
+    pub days_covered: i64,
+    pub from_day: Option<i64>,
+    pub spent_microusd: i64,
+    pub calls: u64,
+    pub blocked: u64,
+    pub agents: Vec<AgentWindowSpend>,
+}
+
 /// named `last_seen_millis` here directly since only the wire name matters to a reader).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RunAgg {

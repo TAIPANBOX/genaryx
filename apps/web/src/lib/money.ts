@@ -79,6 +79,43 @@ export async function fetchMoneyStatus(): Promise<MoneyStatus> {
 
 export const fetchOverview = (): Promise<Overview> => call<Overview>("money_overview");
 export const fetchRuns = (): Promise<Run[]> => call<Run[]>("money_runs");
+
+/** One agent's spend over a period. */
+export interface AgentWindowSpend {
+  /** The empty string is the Cloud's overflow bucket, never a real agent. */
+  agent_id: string;
+  spent_microusd: number;
+  calls: number;
+  blocked: number;
+}
+
+/** Spend over a PERIOD, which is the only shape that can answer one.
+ *
+ * `Run` folds per run over that run's whole life, so summing a filtered set of
+ * runs gives the lifetime spend of recently-active runs and not the spend of a
+ * week. That is not academic: it put a day at $8,151 beside a week at $15,024
+ * on this very view before tokenfuse #199 existed. */
+export interface WindowSpend {
+  days_requested: number;
+  /** How many days the Cloud actually HELD inside the request. A box up for
+   * three days cannot answer thirty, and a smaller total shown without this
+   * reads as a quiet month. */
+  days_covered: number;
+  from_day: number | null;
+  spent_microusd: number;
+  calls: number;
+  blocked: number;
+  agents: AgentWindowSpend[];
+}
+
+/** Spend for the last `days` UTC days, or `null` when this Cloud has no
+ * `/v1/spend` at all (older than tokenfuse #199).
+ *
+ * `null` and "zero spend" are different facts. A box that cannot answer the
+ * question must never render as a box that answered nothing, which is the same
+ * rule `stats.ts`'s `measured` flag exists for. */
+export const fetchSpendWindow = (days: number): Promise<WindowSpend | null> =>
+  call<WindowSpend | null>("money_spend_window", { days });
 export const fetchIncidents = (): Promise<Incident[]> => call<Incident[]>("money_incidents");
 export const fetchSavings = (): Promise<Savings> => call<Savings>("money_savings");
 /** The money plane's per-person rollup (`GET /v1/owners`). Attributes by who
