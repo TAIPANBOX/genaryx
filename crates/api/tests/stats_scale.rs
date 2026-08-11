@@ -144,7 +144,10 @@ fn what_the_statistics_panel_costs_at_scale() {
         batch.clear();
     }
     let bytes = std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
-    println!("\nseeded {seeded} events, {:.0} MB on disk", bytes as f64 / 1e6);
+    println!(
+        "\nseeded {seeded} events, {:.0} MB on disk",
+        bytes as f64 / 1e6
+    );
 
     let cutoff = Some(now.timestamp_millis() - DAYS * 86_400_000);
 

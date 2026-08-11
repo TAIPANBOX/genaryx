@@ -550,8 +550,10 @@ impl Store {
             }
             // `?1` is still bound, to one query shape rather than two: the
             // predicate is a constant true and SQLite drops it.
-            None => "SELECT agent_id, type, COUNT(*), MAX(ts) FROM events \
-                 WHERE ?1 IS NULL GROUP BY agent_id, type",
+            None => {
+                "SELECT agent_id, type, COUNT(*), MAX(ts) FROM events \
+                 WHERE ?1 IS NULL GROUP BY agent_id, type"
+            }
         };
         let mut stmt = self.conn.prepare(sql).map_err(store_err)?;
         let mut rows = stmt.query(params![cutoff_ms]).map_err(store_err)?;
