@@ -131,6 +131,7 @@ const VIEWER_COMMANDS: &[&str] = &[
     "agent_events",
     "agent_graph",
     "agent_slice",
+    "bus_quarantine",
     "bus_status",
     "copilot_ask",
     "copilot_explain",

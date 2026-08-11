@@ -199,9 +199,29 @@ an absent invariant.
    `every_type_that_needs_its_data_is_read_in_full` fails if an attribution rule
    is added without its event type being fetched, and
    `every_amount_field_pair_is_actually_read` fails if the query and the reader
-   disagree about the budget field names. What is NOT held is the sentence's
-   scope: these four cover the Statistics panel, and nothing structural stops
-   the next capped read elsewhere in the console from doing the same thing.)*
+   disagree about the budget field names.
+
+   The second case is the QUARANTINE, and it is the same sentence one level
+   further out. A line that fails the envelope is kept, with its file, offset,
+   raw bytes and the validator's reason, on the principle that a malformed line
+   must never silently vanish. Nothing read it back until 2026-08-11:
+   `quarantine_count` had no caller and the only report anywhere was one
+   `eprintln!` at startup, to stderr, once. So the line did not vanish and the
+   operator could not tell the difference, because the console does not go
+   blank when it happens. It shows the rest of the bus, correctly, and the
+   broken producer's agents just look idle. `aws-comparable-176` is the real
+   instance: twelve events refused for an `agent_id` with no `agent://` prefix,
+   and every count about that agent was exactly right and described nothing
+   that happened.
+   `crates/api/tests/quarantine_is_visible_test.rs` drives the REAL captured
+   campaign through the REAL ingest path and holds that the console reports the
+   refusal, names the validator's own reason, and points at the file and
+   offset; that a clean bus claims the check rather than rendering blank; and
+   that a box with no store refuses to report a clean bus.
+
+   What is NOT held is the sentence's scope: these seven cover the Statistics
+   panel and the quarantine, and nothing structural stops the next capped or
+   unread thing elsewhere in the console from doing the same.)*
 
 ## Decisions that have no gate yet
 
