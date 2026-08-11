@@ -209,7 +209,6 @@ function AccessSectionBody({
   policyError,
   policies,
   onOpenAgent,
-  onNavigate,
 }: {
   identity: IdryxIdentity;
   mcpServers: IdryxIdentity[];
@@ -218,7 +217,6 @@ function AccessSectionBody({
   policyError: PolicyError | null;
   policies: PolicyRecord[] | null;
   onOpenAgent: (agentId: string) => void;
-  onNavigate: (view: ViewId) => void;
 }) {
   const policyReady = policyStatus?.state === "ready";
   const rollup = permissionRollup(identity.permissions);
@@ -336,10 +334,11 @@ function AccessSectionBody({
         )
       )}
 
-      <div className="flex items-center gap-2">
-        <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
-        <OpenPanelButton label="Open Policy panel" onClick={() => onNavigate("policy")} />
-      </div>
+      {/* No panel links here, deliberately. Access is a COMPOSITE built from
+          identity and policy data, so it owns neither panel, and putting one
+          link for each here is how this card ended up offering three ways to
+          Identity and two to Policy. Each link now lives once, at the end of
+          the section that owns it. (Yurii counted them, 2026-08-11.) */}
     </div>
   );
 }
@@ -665,7 +664,13 @@ export function Agent360({
             {slice.node === null && slice.parents.length === 0 && slice.children.length === 0 ? (
               <PlaneNote>this agent has never been seen on the delegation graph.</PlaneNote>
             ) : (
-              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+              // `items-baseline`, not the default stretch: every `Field` is
+              // baseline-aligned inside itself, so a chip beside them was
+              // centred against the ROW box and sat visibly low against the
+              // text (Yurii, 2026-08-11, "трохи нижча"). Aligning the row on
+              // the text baseline puts the chip's label on the same line as
+              // `KIND agent`, which is what it is a continuation of.
+              <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1.5">
                 <Field label="events" value={slice.node ? String(slice.node.event_count) : "0"} />
                 <Field label="last seen" value={slice.node?.last_ts ? formatTimestamp(slice.node.last_ts) : "-"} />
                 <Field label="kind" value={slice.node?.kind ?? "(chain-only)"} />
@@ -682,7 +687,7 @@ export function Agent360({
                     elsewhere, and open the popover from there. */}
                 <button
                   type="button"
-                  className="chip self-center"
+                  className="chip"
                   style={{ cursor: "pointer" }}
                   title="The agent's owned-thing card: owner, unit, budget, behaviour and lifecycle"
                   onClick={(e) =>
@@ -840,7 +845,6 @@ export function Agent360({
             policyError={policyError}
             policies={policies}
             onOpenAgent={onOpenAgent}
-            onNavigate={onNavigate}
           />
         )}
       </section>
@@ -1051,7 +1055,6 @@ export function Agent360({
               ))}
             </div>
           )}
-          <OpenPanelButton label="Open Identity panel" onClick={() => onNavigate("identity")} />
         </div>
       </section>
 
