@@ -35,6 +35,7 @@
 
 import type { UiEvent } from "../types";
 import { getScenario, onScenarioChange, type DemoScenario } from "../demo/scenario";
+import { notifyConsoleStateChanged } from "./consoleState";
 import type { EntityLifecycleState } from "./lifecycleTypes";
 import type { EgressRow } from "../egressTypes";
 
@@ -511,6 +512,12 @@ let blockedSpendFromIncidents = 0;
 
 function armProtagonistArc(scenario: DemoScenario): void {
   currentScenario = scenario;
+  // The storyline changes what several reads answer, and a panel that only
+  // refetches on its own timer would sit on the old story for up to its poll
+  // interval after the operator flipped the switch. This is the app's existing
+  // "something changed, re-read" signal, used here for the same reason the
+  // lifecycle commands use it.
+  notifyConsoleStateChanged();
   armedAt = Date.now();
   manualKillAt = null;
   killFraction = 0;
@@ -1105,6 +1112,79 @@ function yearFor(a: FleetAgent): SeededEvent[] {
   }
   seededYear.set(a.id, out);
   return out;
+}
+
+/** The one refused producer the incident storyline carries, reproduced from
+ * the real thing rather than invented.
+ *
+ * `aws-comparable-176` is a genuine 2026-07-16 finding: a benchmark campaign
+ * emitted all twelve of its events with `agent_id: "aws-comparable-agent"`, no
+ * `agent://` prefix, so the envelope refused every one. The line below is the
+ * head of the first of them, byte for byte from
+ * `genaryx/crates/core/tests/fixtures/campaign-aws-176.ndjson`, and the reason
+ * is the pattern `genaryx_core`'s conformer actually reports.
+ *
+ * The path is the only invented part, because a fixture has no place on an
+ * operator's disk, and a demo showing a real one would be showing somebody
+ * else's filesystem. */
+const DEMO_REFUSED_EXCERPT =
+  '{"schema":"taipanbox.dev/agent-event/v0.1","ts":"2026-07-12T16:55:08.211Z",' +
+  '"source":"tokenfuse","type":"breaker_tripped","severity":"critical",' +
+  '"agent_id":"aws-comparable-agent","run_id":"aws-176-blocked-001"...';
+
+/** What the envelope refused, per storyline.
+ *
+ * # WHY THIS FOLLOWS CALM / INCIDENT
+ *
+ * The preview's own feeder emits conforming lines only, and `feed.rs`'s seeding
+ * test asserts that (`assert_eq!(stats.quarantined, 0)`), so zero is the honest
+ * answer for the events this demo actually generates. Reported rather than
+ * omitted: the calm line is how a reader learns the check runs at all, and an
+ * absent strip reads as an absent check.
+ *
+ * But a demo that only ever shows the calm line teaches nobody what the panel
+ * is FOR. The refused state is the more interesting half, and it is the only
+ * place in this demo where the fault on screen is somebody else's producer
+ * rather than an agent misbehaving: an agent whose events never arrived looks
+ * idle, and every count about it is correct and describes nothing.
+ *
+ * So it rides the switch the demo already has. Calm is a healthy bus; incident
+ * is the storyline where something is wrong, and this belongs in it. A banner
+ * pinned on in both would make the demo a console that is permanently broken. */
+function mockQuarantine() {
+  if (currentScenario !== "incident") {
+    return {
+      measured: true,
+      note:
+        "Every line this bus has read conformed to the envelope. A producer that starts " +
+        "emitting a broken one will appear here, and its agents would otherwise just look quiet.",
+      total: 0,
+      reasons: [],
+    };
+  }
+  const total = 12;
+  return {
+    measured: true,
+    // Word for word what `crates/api/src/bus/mod.rs` writes, and like it, no
+    // restatement of the count: that is a field, and the strip already renders
+    // it as its heading.
+    note:
+      "The agents these lines were about will look quieter than they were. " +
+      "Fix the producer at the file and offset below; nothing here rewrites a line to make it fit.",
+    total,
+    reasons: [
+      {
+        reason:
+          "agent_id: \"aws-comparable-agent\" does not match pattern " +
+          "^agent://[a-z0-9.-]+/[a-z0-9._/-]+$",
+        count: total,
+        last_ts: new Date(now - 41 * 60 * 1000).toISOString(),
+        example_file: "~/.taipan/environments/local/events/tokenfuse.ndjson",
+        example_offset: 2431,
+        raw_excerpt: DEMO_REFUSED_EXCERPT,
+      },
+    ],
+  };
 }
 
 /** Per-agent event counts for the Statistics view, mirroring
@@ -2956,18 +3036,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       return r({ ok: true });
     }
     case "bus_status": return r({ kind: "demo", dir: "/preview" });
-    // The preview's own feeder emits conforming lines only, and the console's
-    // seeding test asserts that, so the honest preview answer is zero refused.
-    // Shown rather than omitted: the calm line is how a reader learns the check
-    // runs at all, and an absent strip would read as an absent check.
-    case "bus_quarantine": return r({
-      measured: true,
-      note:
-        "Every line this bus has read conformed to the envelope. A producer that starts " +
-        "emitting a broken one will appear here, and its agents would otherwise just look quiet.",
-      total: 0,
-      reasons: [],
-    });
+    case "bus_quarantine": return r(mockQuarantine());
 
     case "money_overview": return r(mockOverview());
     case "money_runs": return r(mockRuns());
