@@ -567,6 +567,18 @@ export function StatsView({
             </button>
           ))}
         </div>
+        {/* The window governs the BUS columns and nothing else, and saying so
+            out loud is the whole point of this label. `/v1/runs` accepts no
+            time filter, so Spend and Calls answer for the money plane's own
+            period whatever is selected here. One control above a table where
+            half the columns obey it reads as a control over the table. */}
+        <span
+          className="mono text-[10px] uppercase tracking-wider"
+          style={{ color: "var(--faint)", whiteSpace: "nowrap" }}
+          title="Spend and Calls come from the money plane, which has no window of its own to ask for. They do not change when this does."
+        >
+          bus window
+        </span>
         <div className="flex items-center gap-1">
           {WINDOWS.map((w) => (
             <button
@@ -616,6 +628,12 @@ export function StatsView({
         <Banner tone={unitFrom === "agent-id" ? "warn" : "info"}>{UNIT_SOURCE_CAVEAT[unitFrom]}</Banner>
       ) : null}
 
+      <div className="px-4 pb-1">
+        <span className="mono text-[10px]" style={{ color: "var(--faint)" }}>
+          {"\u00B0"} the money plane's own window; the selector above moves only the bus columns
+        </span>
+      </div>
+
       <div className="px-4 pb-6">
         <div className="panel overflow-x-auto" style={{ background: "var(--panel)" }}>
           <table className="w-full" style={{ borderCollapse: "collapse" }}>
@@ -646,8 +664,14 @@ export function StatsView({
                     }
                   >
                     {c.header}
-                    {/* A column the capped read could only understate says so
-                        in the header, not only in a note under the table. */}
+                    {/* Which window this column answers for, in the header
+                        rather than in a tooltip nobody hovers. The two are
+                        different periods and the selector only moves one. */}
+                    {c.band === "money" ? (
+                      <span style={{ color: "var(--faint)" }} title="The money plane's own window, which the selector above does not change.">
+                        {" \u00B0"}
+                      </span>
+                    ) : null}
                     {detailTruncated && c.fromDetail ? " *" : ""}
                     {sortKey === c.key ? (desc ? " v" : " ^") : ""}
                   </th>
