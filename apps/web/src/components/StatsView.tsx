@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchStats, groupRows, rowsFromOwners, sortRows, unitSource } from "../lib/stats";
+import {
+  fetchStats,
+  groupRows,
+  rowsFromOwners,
+  sortRows,
+  unitSource,
+  windowedSpendByAgent,
+} from "../lib/stats";
 import type { GroupBy, SortKey, StatsRow } from "../lib/stats";
 import { fetchOwners, fetchRuns, fetchSpendWindow, type WindowSpend } from "../lib/money";
+import { LIFECYCLE_BADGE } from "../lib/lifecycleTypes";
 import { fetchIdentities } from "../lib/identity";
 import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
 import { formatUsd } from "../lib/format";
@@ -131,6 +139,28 @@ const COLUMNS: Column[] = [
     fromDetail: true,
   },
 ];
+
+/** What the table's Spend and Calls columns describe, which is the same
+ * question the tile answers and must not get a different answer.
+ *
+ * With `/v1/spend` they are the selected period, per agent, from the Cloud's
+ * own per-day split. Without it they are lifetime run totals, and the line says
+ * so rather than letting the selector imply a period the numbers do not have.
+ * That pairing is the lesson of the reverted attempt, applied to the table as
+ * well as to the tile. */
+const MONEY_COLUMN_LEGEND = (
+  spend: WindowSpend | null,
+  asked: boolean,
+  windowDays: number,
+): string => {
+  if (spend) {
+    const period = windowDays > 0 ? `the last ${spend.days_covered}d` : `all ${spend.days_covered}d held`;
+    return `spend and calls for ${period}, summed from the money plane's per-day fold`;
+  }
+  return asked
+    ? "per-run LIFETIME totals: this Cloud cannot fold spend by period, so the selector does not move these two"
+    : "per-run lifetime totals, of any age";
+};
 
 /** What the Spend tile is actually showing, in one line under the number.
  *
@@ -357,8 +387,12 @@ export function StatsView({
     // would be a second number for the same question.
     if (group === "launcher") return owners ? rowsFromOwners(owners) : [];
     if (!runs && !counts) return [];
-    return groupRows(runs ?? [], identities ?? [], counts ?? [], group);
-  }, [runs, identities, counts, owners, group]);
+    // The per-agent split for the SELECTED period, so the table's money
+    // columns describe the same window the tile above them does. Two answers
+    // to one question on one screen is the defect this view has already paid
+    // for more than once.
+    return groupRows(runs ?? [], identities ?? [], counts ?? [], group, windowedSpendByAgent(spend));
+  }, [runs, identities, counts, owners, group, spend]);
 
   const sorted = useMemo(() => sortRows(rows, sortKey, desc), [rows, sortKey, desc]);
 
@@ -700,8 +734,7 @@ export function StatsView({
 
       <div className="px-4 pb-1">
         <span className="mono text-[10px]" style={{ color: "var(--faint)" }}>
-          {"\u00B0"} per-run lifetime totals, of any age. The Spend tile above follows the selector
-          (per-day fold); these two columns do not, because a run total has no period in it
+          {"\u00B0"} {MONEY_COLUMN_LEGEND(spend, spendAsked, windowDays)}
         </span>
       </div>
 
@@ -851,6 +884,38 @@ function StatsTableRow({
         ) : (
           <span className="mono text-[11.5px]">{shown}</span>
         )}
+        {/* The state beside the NAME, not in a column at the far right.
+            A dense table is scanned down its first column, and "which of these
+            did somebody have to kill" is the question this answers; twelve
+            columns away it is a lookup rather than a glance.
+            The row's spend stays exactly where it is: money spent is money
+            spent, and a killed agent's cost does not stop being real. */}
+        {row.state ? (
+          <span
+            className="mono"
+            style={{
+              marginLeft: 8,
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              padding: "1px 5px",
+              borderRadius: 4,
+              color: LIFECYCLE_BADGE[row.state].tone,
+              border: `1px solid ${LIFECYCLE_BADGE[row.state].tone}`,
+              opacity: 0.9,
+            }}
+            title={`This agent is ${LIFECYCLE_BADGE[row.state].label.toLowerCase()}. Its spend below is real and stays on the row; open it for who stopped it and when.`}
+          >
+            {LIFECYCLE_BADGE[row.state].label}
+          </span>
+        ) : row.stoppedAgents > 0 && row.countsApply ? (
+          <span
+            className="mono"
+            style={{ marginLeft: 8, fontSize: 9.5, color: "var(--amber)" }}
+            title={`${row.stoppedAgents} agent(s) in this row are killed, frozen or stopped. Their spend is included, because it was spent.`}
+          >
+            {row.stoppedAgents} stopped
+          </span>
+        ) : null}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
         {row.agentCount.toLocaleString("en-US")}
