@@ -99,6 +99,10 @@ impl OverviewDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct RunDto {
     pub run_id: String,
+    /// The unit the Cloud's identity map resolved, or `""` when it resolved
+    /// nothing (no map configured, or nothing matched). Empty and absent are
+    /// the same thing here and both mean "do not claim a unit for this run".
+    pub unit: String,
     pub model: String,
     pub agent_id: String,
     pub spent_usd: f64,
@@ -575,6 +579,7 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
                 .or_else(|| alert_budgets.get(r.run_id.as_str()).copied());
             RunDto {
                 run_id: r.run_id.clone(),
+                unit: r.unit.clone(),
                 model: r.model.clone(),
                 agent_id: r.agent_id.clone(),
                 spent_usd: micros_to_usd(r.spent_microusd),

@@ -34,6 +34,8 @@
  */
 
 import type { UiEvent } from "../types";
+import { unitForTeam } from "./views";
+import { agentTeam } from "./dashData";
 import { getScenario, onScenarioChange, type DemoScenario } from "../demo/scenario";
 import { notifyConsoleStateChanged } from "./consoleState";
 import type { EntityLifecycleState } from "./lifecycleTypes";
@@ -760,6 +762,13 @@ function baseRunFor(a: FleetAgent, opts: { ignoreClosed?: boolean } = {}) {
     run_id: runId,
     model: a.model,
     agent_id: agentId(a),
+    // The unit the "Cloud" resolved for this run. The preview stands in for a
+    // box WITH an identity map configured, which is the case worth showing:
+    // that is the attribution which charges a unit budget, and it is what the
+    // Business unit grouping must bucket by. The console's own name-parsing
+    // fallback exists for boxes without a map and says so on screen when it is
+    // used, so the preview must not exercise it by omission.
+    unit: unitForTeam(a.team),
     spent_usd: spentUsd,
     budget_usd: budget,
     calls,
@@ -793,6 +802,9 @@ function runFor(a: FleetAgent) {
     run_id: PROTAGONIST_RUN_ID,
     model: a.model,
     agent_id: agentId(a),
+    // Same resolved attribution every other run carries; a run without it
+    // would make the Business unit grouping report a half-resolved map.
+    unit: unitForTeam(a.team),
     spent_usd: spent,
     budget_usd: budget,
     calls,
@@ -827,6 +839,7 @@ function mockDriftAgentRunHistory() {
     run_id: `data-quality-checker-hist-${i + 1}`,
     model,
     agent_id: DRIFT_DEMO_AGENT_ID,
+    unit: unitForTeam(agentTeam(DRIFT_DEMO_AGENT_ID)),
     spent_usd: p.spentUsd,
     budget_usd: 3,
     calls: p.calls,

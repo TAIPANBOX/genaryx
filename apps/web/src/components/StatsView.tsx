@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchStats, groupRows, rowsFromOwners, sortRows } from "../lib/stats";
+import { fetchStats, groupRows, rowsFromOwners, sortRows, unitSource } from "../lib/stats";
 import type { GroupBy, SortKey, StatsRow } from "../lib/stats";
 import { fetchOwners, fetchRuns } from "../lib/money";
 import { fetchIdentities } from "../lib/identity";
@@ -131,6 +131,23 @@ const COLUMNS: Column[] = [
     fromDetail: true,
   },
 ];
+
+/** One sentence per source, and each says what the reader can DO about it.
+ *
+ * The `agent-id` line is the one that matters. `unitForTeam`'s table mirrors
+ * the demo seeder's org chart, so on a real estate it knows none of the
+ * operator's teams and falls back to "the team name is its own unit". Calling
+ * that a business unit without saying where it came from is the shape of claim
+ * this console exists to refuse. */
+const UNIT_SOURCE_CAVEAT: Record<string, string> = {
+  "identity-map":
+    "Unit comes from the Cloud's identity map, which is the attribution that actually charged a unit budget. An agent with no run in the money window is bucketed by the team segment of its agent id instead, since a unit is resolved per run.",
+  "agent-id":
+    "No unit was resolved for any agent, so these buckets are parsed from the team segment of the agent id, NOT from your org chart. Configure the Cloud's identity map (docs/20) to group by what actually charges a unit budget.",
+  mixed:
+    "Some agents were resolved by the Cloud's identity map and some were not; the unresolved ones are bucketed by the team segment of their agent id instead. The two are different attributions and this rollup mixes them.",
+  none: "No agents in either window, so there is nothing to attribute.",
+};
 
 function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
   return (
@@ -285,6 +302,15 @@ export function StatsView({
 
   const sorted = useMemo(() => sortRows(rows, sortKey, desc), [rows, sortKey, desc]);
 
+  // Where the Business unit grouping got its answer. Only meaningful at that
+  // grouping, and reported rather than assumed: "what the Cloud charged" and
+  // "what this console parsed out of the agent's name" are different questions
+  // that render identically.
+  const unitFrom = useMemo(
+    () => unitSource(runs ?? [], counts ?? []),
+    [runs, counts],
+  );
+
   const meta = useCallback(
     (): ExportMeta => ({
       subject: `Genaryx statistics by ${group === "launcher" ? "who ran it (delegation chain)" : group}`,
@@ -317,17 +343,13 @@ export function StatsView({
               "Owner comes from idryx. An agent idryx has no owner for is grouped under '(no owner in idryx)' rather than dropped.",
             ]
           : []),
-        ...(group === "unit"
-          ? [
-              "Unit is derived from the team segment of the agent id, not from a separate org chart.",
-            ]
-          : []),
+        ...(group === "unit" ? [UNIT_SOURCE_CAVEAT[unitFrom]] : []),
         "blocked counts every stop; blocked_by_operator is the subset a person caused. An operator freeze is enforced as an ordinary policy, so its refusals are counted as the system's.",
         "worst_breach_usd is the single worst breach, never a sum: one runaway run trips its breaker on every call.",
         "An empty worst_breach_usd means no event recorded the amounts, which is not the same as no overspend.",
       ],
     }),
-    [group, countsMeasured, scanned, answeredWindow, historyFrom, undated, detailTruncated, detailScanned],
+    [group, countsMeasured, scanned, answeredWindow, historyFrom, undated, detailTruncated, detailScanned, unitFrom],
   );
 
   const exportRows = useMemo(
@@ -589,6 +611,10 @@ export function StatsView({
           Export JSON
         </button>
       </div>
+
+      {group === "unit" && unitFrom !== "identity-map" && unitFrom !== "none" ? (
+        <Banner tone={unitFrom === "agent-id" ? "warn" : "info"}>{UNIT_SOURCE_CAVEAT[unitFrom]}</Banner>
+      ) : null}
 
       <div className="px-4 pb-6">
         <div className="panel overflow-x-auto" style={{ background: "var(--panel)" }}>

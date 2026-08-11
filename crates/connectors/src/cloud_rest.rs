@@ -544,6 +544,23 @@ pub struct RunAgg {
     pub run_id: String,
     pub model: String,
     pub agent_id: String,
+    /// The business unit the Cloud's identity map RESOLVED for this run
+    /// (`tokenfuse/docs/20-identity-map.md`), which is the attribution that
+    /// actually charged a unit budget, not a guess from the agent's name.
+    ///
+    /// This field was on the wire and undeclared here until 2026-08-11, so
+    /// serde dropped it and the console derived units by parsing the team
+    /// segment out of `agent://org/<team>/<name>` through a hard-coded table.
+    /// That table mirrors the DEMO seeder's org chart, so on a real estate it
+    /// knew none of the operator's teams and fell back to "the team name is
+    /// the unit". The console grouped by one definition while the Cloud
+    /// enforced a different one.
+    ///
+    /// `serde(default)` because a Cloud older than tokenfuse #195 omits it, and
+    /// an empty string means "nothing resolved", which is a real answer a
+    /// caller must be able to tell from a resolved one.
+    #[serde(default)]
+    pub unit: String,
     pub spent_microusd: i64,
     pub calls: u64,
     pub cache_hits: u64,

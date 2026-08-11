@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { groupRows, rowsFromOwners, sortRows, NO_CHAIN_KEY, NO_OWNER_KEY, NO_UNIT_KEY } from "./stats";
+import {
+  groupRows,
+  rowsFromOwners,
+  sortRows,
+  unitByAgent,
+  unitSource,
+  NO_CHAIN_KEY,
+  NO_OWNER_KEY,
+  NO_UNIT_KEY,
+} from "./stats";
 import { toCsv } from "./download";
 import type { AgentStats } from "../statsTypes";
 import type { IdryxIdentity } from "../identityTypes";
@@ -13,11 +22,20 @@ const FRAUD_BOT = "agent://acme.local/fraud/scorer";
 const KYC_BOT = "agent://acme.local/kyc-aml/checker";
 const ORPHAN = "agent://acme.local/sre/janitor";
 
-function run(agentId: string, spent: number, calls: number, budget: number | null = null): Run {
+function run(
+  agentId: string,
+  spent: number,
+  calls: number,
+  budget: number | null = null,
+  unit = "",
+): Run {
   return {
     run_id: `run-${agentId}-${spent}`,
     model: "test",
     agent_id: agentId,
+    // "" is the honest default here and mirrors a real box: a Cloud with no
+    // identity map configured resolves nothing for every run.
+    unit,
     spent_usd: spent,
     budget_usd: budget,
     calls,
@@ -287,5 +305,59 @@ describe("rowsFromOwners", () => {
     const viaChain = rowsFromOwners(OWNERS);
     expect(viaIdryx.some((r) => r.countsApply)).toBe(true);
     expect(viaChain.every((r) => !r.countsApply)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which unit, and from where.
+// ---------------------------------------------------------------------------
+
+/**
+ * The Business unit grouping must use the unit the Cloud's identity map
+ * RESOLVED, because that is the attribution which actually charged a unit
+ * budget. Parsing the team out of the agent id is a different question with a
+ * different answer, and until 2026-08-11 it was the only one the console asked.
+ *
+ * The disagreement is not hypothetical. The identity map binds by `key_id` as
+ * well as by prefix, so a credential bound to `treasury` charges treasury even
+ * when the agent id says `lending`. The fixture below is exactly that shape.
+ */
+describe("the unit an agent is grouped under", () => {
+  it("comes from the identity map, not from the agent's name", () => {
+    // Name says fraud (which the console's table maps to financial-crime);
+    // the Cloud charged corporate-banking.
+    const runs = [run(FRAUD_BOT, 1, 10, null, "corporate-banking")];
+    const rows = groupRows(runs, [], [], "unit");
+    expect(rows.map((r) => r.key)).toEqual(["corporate-banking"]);
+    expect(rows.map((r) => r.key)).not.toContain("financial-crime");
+  });
+
+  it("falls back to the name when nothing resolved, and the fallback is reported", () => {
+    const runs = [run(FRAUD_BOT, 1, 10)];
+    expect(groupRows(runs, [], [], "unit").map((r) => r.key)).toEqual(["financial-crime"]);
+    expect(unitSource(runs, [])).toBe("agent-id");
+  });
+
+  it("calls it mixed when the map answered for some agents and not others", () => {
+    const runs = [run(FRAUD_BOT, 1, 10, null, "corporate-banking"), run(KYC_BOT, 1, 10)];
+    expect(unitSource(runs, [])).toBe("mixed");
+    expect(unitSource([run(FRAUD_BOT, 1, 10, null, "x")], [])).toBe("identity-map");
+    expect(unitSource([], [])).toBe("none");
+  });
+
+  it("keeps an agent whose every run resolved nothing OUT of the map", () => {
+    // Absent, never present with "". A caller must not be able to read "no
+    // identity map" as a unit whose name happens to be empty.
+    const m = unitByAgent([run(FRAUD_BOT, 1, 10), run(KYC_BOT, 1, 10, null, "credit-risk")]);
+    expect(m.has(FRAUD_BOT)).toBe(false);
+    expect(m.get(KYC_BOT)).toBe("credit-risk");
+  });
+
+  it("takes the last non-empty binding when an agent was rebound mid-window", () => {
+    const m = unitByAgent([
+      run(FRAUD_BOT, 1, 10, null, "financial-crime"),
+      run(FRAUD_BOT, 2, 20, null, "credit-risk"),
+    ]);
+    expect(m.get(FRAUD_BOT)).toBe("credit-risk");
   });
 });
