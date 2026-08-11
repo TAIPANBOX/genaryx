@@ -243,6 +243,41 @@ pub struct SourceState {
     pub head_sha: Option<String>,
 }
 
+/// How much of a quarantined line to keep for the operator to recognize its
+/// producer by. Enough for the envelope's head (schema, ts, source, type,
+/// agent_id), which is where the fault almost always is, and not the payload.
+pub const QUARANTINE_EXCERPT_CHARS: usize = 220;
+
+/// One reason lines were refused, with how many and one example.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct QuarantineReason {
+    /// The conformer's own words, joined. Not this crate's paraphrase of them:
+    /// an operator fixing a producer needs the message the validator produced.
+    pub reason: String,
+    pub count: u64,
+    /// The newest refusal under this reason, RFC 3339, or `None` when the row
+    /// carried no timestamp.
+    pub last_ts: Option<String>,
+    /// Which file and byte offset one of these came from, so the producer is
+    /// findable on disk rather than guessable.
+    pub example_file: Option<String>,
+    pub example_offset: Option<u64>,
+    /// The head of one refused line, capped at [`QUARANTINE_EXCERPT_CHARS`].
+    pub raw_excerpt: Option<String>,
+}
+
+/// The head of `s`, at most `max` CHARACTERS, with an ellipsis when cut.
+///
+/// Chars rather than bytes: a cut in the middle of a multi-byte sequence would
+/// panic on a slice, and these lines carry real names.
+fn excerpt(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max).collect();
+    format!("{head}...")
+}
+
 /// One agent's count of one event type over a window, with the newest `ts`
 /// string in that group.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -815,6 +850,63 @@ impl Store {
             )
             .map_err(store_err)?;
         Ok(())
+    }
+
+    /// Quarantined lines grouped by the reason they were refused, worst first.
+    ///
+    /// # WHY A READ PATH EXISTS AT ALL
+    ///
+    /// It did not, until 2026-08-11, and that is the whole point of this
+    /// method. Lines that fail conformance have always been stored here with
+    /// their file, offset, raw bytes and reason, on the principle in this
+    /// module's own doc that a malformed line must never silently vanish. Then
+    /// nothing ever read them back. [`Store::quarantine_count`] existed and no
+    /// caller used it, and the only report anywhere was one `eprintln!` at
+    /// startup, to stderr, once.
+    ///
+    /// So the line did not vanish, and the operator could not tell the
+    /// difference. The real case that proved it: the `aws-comparable-176`
+    /// benchmark campaign emitted all twelve of its events with
+    /// `agent_id: "aws-comparable-agent"`, no `agent://` prefix, and on this
+    /// console that producer's whole run lands here and shows up as an agent
+    /// that did nothing. A panel counting zero blocks for it would be exactly
+    /// right about what is on the bus and exactly wrong about what happened.
+    ///
+    /// One EXAMPLE per reason rather than every row: the reasons repeat (a
+    /// producer with a bad id emits the same fault on every line), and what an
+    /// operator needs is which producer, which file, and how many, not twelve
+    /// copies of one sentence. `raw_excerpt` is capped at
+    /// [`QUARANTINE_EXCERPT_CHARS`] because these are whole event lines and the
+    /// point is to recognize the producer, not to read its payload here.
+    pub fn quarantine_by_reason(&self, limit: usize) -> Result<Vec<QuarantineReason>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT reason, COUNT(*), MAX(ts), \
+                 MAX(file), MAX(off), MAX(raw) \
+                 FROM event_quarantine GROUP BY reason \
+                 ORDER BY COUNT(*) DESC, MAX(ts) DESC LIMIT ?1",
+            )
+            .map_err(store_err)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = stmt.query(params![limit]).map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            let count: i64 = row.get(1).map_err(store_err)?;
+            let raw: Option<String> = row.get(5).map_err(store_err)?;
+            out.push(QuarantineReason {
+                reason: row.get(0).map_err(store_err)?,
+                count: u64::try_from(count).unwrap_or(0),
+                last_ts: row.get::<_, Option<String>>(2).map_err(store_err)?,
+                example_file: row.get(3).map_err(store_err)?,
+                example_offset: row
+                    .get::<_, Option<i64>>(4)
+                    .map_err(store_err)?
+                    .and_then(|v| u64::try_from(v).ok()),
+                raw_excerpt: raw.map(|r| excerpt(&r, QUARANTINE_EXCERPT_CHARS)),
+            });
+        }
+        Ok(out)
     }
 
     /// Total number of quarantined lines.

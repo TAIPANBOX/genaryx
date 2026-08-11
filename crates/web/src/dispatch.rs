@@ -343,6 +343,10 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             Ok(ok(genaryx_api::graph::agent_slice(a.agent_id, &ctx.bus)))
         }
         "bus_status" => Ok(ok(genaryx_api::bus::bus_status(&ctx.bus))),
+        // What the envelope REFUSED. A read, and classified as one in roles.rs.
+        // Takes no arguments: a refusal is bus-wide and has no window, because
+        // a line refused an hour ago is still not on the bus now.
+        "bus_quarantine" => Ok(ok(genaryx_api::bus::quarantine(&ctx.bus))),
         // The egress panel. A read, and classified as one in roles.rs.
         "egress_recent" => {
             #[derive(serde::Deserialize)]

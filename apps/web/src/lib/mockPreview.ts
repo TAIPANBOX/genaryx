@@ -2956,6 +2956,18 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       return r({ ok: true });
     }
     case "bus_status": return r({ kind: "demo", dir: "/preview" });
+    // The preview's own feeder emits conforming lines only, and the console's
+    // seeding test asserts that, so the honest preview answer is zero refused.
+    // Shown rather than omitted: the calm line is how a reader learns the check
+    // runs at all, and an absent strip would read as an absent check.
+    case "bus_quarantine": return r({
+      measured: true,
+      note:
+        "Every line this bus has read conformed to the envelope. A producer that starts " +
+        "emitting a broken one will appear here, and its agents would otherwise just look quiet.",
+      total: 0,
+      reasons: [],
+    });
 
     case "money_overview": return r(mockOverview());
     case "money_runs": return r(mockRuns());

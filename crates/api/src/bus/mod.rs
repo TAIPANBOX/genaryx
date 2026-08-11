@@ -77,6 +77,121 @@ pub fn recent_events(limit: usize, state: &AppState) -> Vec<crate::events::UiEve
     crate::events::mock_events(limit)
 }
 
+/// How many refused lines to describe. One row per distinct reason, and a
+/// producer with a broken envelope emits one reason on every line, so a dozen
+/// covers a badly misconfigured estate with room to spare.
+const QUARANTINE_REASONS: usize = 12;
+
+/// What the bus REFUSED, and why.
+///
+/// # THE GAP THIS CLOSES
+///
+/// Lines that fail conformance have always been kept, with their file, offset,
+/// raw bytes and the validator's own reason. Nothing ever read them back. The
+/// only report was one `eprintln!` at startup, so a producer that began
+/// emitting a broken envelope after boot was invisible for as long as the
+/// console stayed up.
+///
+/// That is worse than it sounds, because the console does not go blank when it
+/// happens. It shows the rest of the bus, correctly, and the broken producer's
+/// agents simply look quiet. `aws-comparable-176` is the real instance: twelve
+/// events, every one of them refused for `agent_id: "aws-comparable-agent"`
+/// with no `agent://` prefix, and the console's honest answer for that agent
+/// was nothing at all.
+///
+/// # WHY IT IS NOT AN ERROR STATE
+///
+/// A refused line is the bus working. The alternative is accepting whatever
+/// arrives, and then the envelope means nothing. So this reports a fault in a
+/// PRODUCER, names it, and points at the file and offset to fix it at the
+/// source. It never repairs a line: rewriting an operator's data to make it fit
+/// is the one thing this console must not do.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct QuarantinePanel {
+    /// False when the store could not be read. The frontend must show `note`
+    /// rather than rendering "nothing was refused", which is the same wrong
+    /// answer that reads as good news `crate::stats` is built against.
+    pub measured: bool,
+    pub note: Option<String>,
+    /// Every refused line this box still holds, across all reasons.
+    pub total: u64,
+    /// One row per reason, worst first, capped at [`QUARANTINE_REASONS`].
+    pub reasons: Vec<genaryx_core::store::QuarantineReason>,
+}
+
+impl QuarantinePanel {
+    fn unmeasured(note: impl Into<String>) -> Self {
+        Self {
+            measured: false,
+            note: Some(note.into()),
+            total: 0,
+            reasons: Vec::new(),
+        }
+    }
+}
+
+/// What this bus refused and why. See [`QuarantinePanel`].
+pub fn quarantine(state: &AppState) -> QuarantinePanel {
+    let Some(dir) = &state.events_dir else {
+        return QuarantinePanel::unmeasured(
+            "The console has no event store on this box, so nothing could be checked. \
+             This is not a report that every line your producers sent was accepted.",
+        );
+    };
+    let store = match genaryx_core::store::Store::open(&dir.join("console.sqlite")) {
+        Ok(s) => s,
+        Err(e) => {
+            return QuarantinePanel::unmeasured(format!(
+                "The event store could not be opened ({e}), so nothing could be checked. \
+                 This is not a report that every line your producers sent was accepted."
+            ));
+        }
+    };
+
+    let total = match store.quarantine_count() {
+        Ok(n) => n,
+        Err(e) => {
+            return QuarantinePanel::unmeasured(format!(
+                "The event store could not be queried ({e}), so nothing could be checked. \
+                 This is not a report that every line your producers sent was accepted."
+            ));
+        }
+    };
+    let reasons = store
+        .quarantine_by_reason(QUARANTINE_REASONS)
+        .unwrap_or_default();
+    let shown: u64 = reasons.iter().map(|r| r.count).sum();
+
+    let note = if total == 0 {
+        Some(
+            "Every line this bus has read conformed to the envelope. A producer that starts \
+             emitting a broken one will appear here, and its agents would otherwise just look \
+             quiet."
+                .to_string(),
+        )
+    } else {
+        let mut n = format!(
+            "{total} line(s) were refused by the envelope and are NOT on the bus. \
+             The agents they were about will look quieter than they were. \
+             Fix the producer at the file and offset below; nothing here rewrites a line to \
+             make it fit."
+        );
+        if shown < total {
+            n.push_str(&format!(
+                " Showing the {QUARANTINE_REASONS} most common reasons, covering {shown} of them."
+            ));
+        }
+        Some(n)
+    };
+
+    QuarantinePanel {
+        measured: true,
+        note,
+        total,
+        reasons,
+    }
+}
+
 /// How the Bus Explorer's stream is being fed, for the UI to say so honestly.
 pub fn bus_status(state: &AppState) -> BusMode {
     state.mode.clone()

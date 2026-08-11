@@ -10,6 +10,7 @@ import { usePopover } from "../lib/popover";
 import { unitForTeam } from "../lib/views";
 import { AgentDetailCard } from "./AgentDetailCard";
 import { PinnedEventOverlay } from "./PinnedEventOverlay";
+import { RefusedLines } from "./RefusedLines";
 import { SortBar, type SortDir } from "./SortBar";
 
 const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
@@ -169,6 +170,11 @@ export function BusExplorer() {
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <BusStatusBar count={events.length} source={source} mode={mode} />
+      {/* What the bus REFUSED, directly under what it accepted. A refused line
+          is absent from every count below it, and the agents it was about look
+          idle rather than broken, so this belongs beside the feed and not on a
+          page somebody has to know to open. */}
+      <RefusedLines />
 
       <div className="px-4 py-2 shrink-0" style={{ borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}>
         <SortBar options={BUS_SORTS} active={sort.key} dir={sort.dir} onChange={(key, dir) => setSort({ key, dir })} />
