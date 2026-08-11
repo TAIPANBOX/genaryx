@@ -3323,6 +3323,49 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     }
     case "bus_status": return r({ kind: "demo", dir: "/preview" });
     case "bus_quarantine": return r(mockQuarantine());
+    // The stop history: when, by whom, why. Folded from the SAME seeded year
+    // the counts read, so the card and the Statistics table cannot disagree
+    // about how many times an agent was stopped.
+    case "agent_stops": {
+      const id = String(args?.agent_id ?? "");
+      const a = FLEET.find((x) => agentId(x) === id);
+      if (!a) return r({ measured: true, note: "nothing on the bus for this agent.", total: 0, by_operator: 0, entries: [] });
+      const halted =
+        frozenAgents.has(a.id) || stoppedUnits.has(a.team) || stoppedUsers.has(a.owner);
+      const entries = yearFor(a)
+        .filter((e) => e.kind === "blocked")
+        .map((e) => ({
+          ts: new Date(e.atMs).toISOString(),
+          type_: e.byOperator ? "run_killed" : "policy_deny",
+          source: e.byOperator ? "tokenfuse" : "wardryx",
+          actor: e.byOperator ? `user://${ORG}/${a.owner}` : null,
+          reason: e.byOperator ? "killed break-glass" : "cost above policy threshold",
+          by_operator: e.byOperator,
+        }));
+      // A halt an operator made in THIS session, exactly as a real box journals
+      // it: the act carries the person, its later refusals do not.
+      if (halted) {
+        entries.push({
+          ts: new Date(now).toISOString(),
+          type_: "console_command",
+          source: "genaryx",
+          actor: `user://${ORG}/${a.owner}`,
+          reason: "stopped from the console",
+          by_operator: true,
+        });
+      }
+      entries.sort((x, y) => (x.ts < y.ts ? 1 : -1));
+      const byOp = entries.filter((e) => e.by_operator).length;
+      return r({
+        measured: true,
+        note:
+          `${entries.length} stop(s) on the bus for this agent, ${byOp} of them named a person.` +
+          " An operator FREEZE is enforced as an ordinary deny-all policy, so the refusals that follow it arrive as plain policy_deny and are listed on the system side: the freeze itself is here, its consequences are not attributed to it.",
+        total: entries.length,
+        by_operator: byOp,
+        entries,
+      });
+    }
     case "agent_profile":
       return r(mockAgentProfile(String(args?.agent_id ?? ""), Number(args?.window_days ?? 90)));
 

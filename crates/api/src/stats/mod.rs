@@ -394,6 +394,168 @@ fn overshoot_of(data: &serde_json::Value) -> Option<i64> {
     Some(over.round() as i64)
 }
 
+/// One time this agent was stopped, as the bus recorded it.
+#[derive(Debug, Clone, Serialize)]
+pub struct StopEntry {
+    /// The producer's own timestamp, RFC 3339, exactly as it wrote it.
+    pub ts: String,
+    /// The wire type, so an operator sees `dlp_block` rather than this build's
+    /// paraphrase of it. The vocabulary belongs to the products.
+    pub type_: String,
+    pub source: String,
+    /// Who, when the event names somebody. `None` is the ordinary case and
+    /// means the services stopped it on their own, never "we did not look".
+    pub actor: Option<String>,
+    /// The producer's own reason string where it wrote one.
+    pub reason: Option<String>,
+    /// True when a person is named. The same rule [`is_operator_stop`] applies,
+    /// plus the console's own journal lines.
+    pub by_operator: bool,
+}
+
+/// Every stop this agent has on the bus, newest first.
+#[derive(Debug, Clone, Serialize)]
+pub struct StopsPanel {
+    /// False when nothing could be read. The frontend must show `note` rather
+    /// than an empty list, which reads as "never stopped".
+    pub measured: bool,
+    pub note: Option<String>,
+    pub total: usize,
+    pub by_operator: usize,
+    pub entries: Vec<StopEntry>,
+}
+
+impl StopsPanel {
+    fn unmeasured(note: impl Into<String>) -> Self {
+        Self {
+            measured: false,
+            note: Some(note.into()),
+            total: 0,
+            by_operator: 0,
+            entries: Vec::new(),
+        }
+    }
+}
+
+/// The `data` keys producers write their reason under, in the order this reads
+/// them. Several spellings because several products, and a reader that knew one
+/// would show a blank column on live data.
+const REASON_KEYS: &[&str] = &["reason", "detail", "summary", "policy_id", "wrongdoing"];
+
+/// When, why and by whom this agent was stopped.
+///
+/// # WHY THIS IS A BACKEND FOLD AND NOT A FILTER IN THE VIEW
+///
+/// Two reasons, and the second is the one that matters.
+///
+/// The classification is already pinned here: [`BLOCKED_TYPES`] is this build's
+/// reading of SPEC 6.2 and [`is_operator_stop`] is the attribution rule. A
+/// second copy in TypeScript would drift, and it would drift silently because
+/// both copies keep returning plausible lists.
+///
+/// And a freeze is not on the agent's own feed at all. It is journaled as a
+/// `console_command` whose `agent_id` is the CONSOLE, naming this agent in
+/// `data.members`, so a view reading only `agent_events` cannot see the one
+/// stop a person definitely caused.
+///
+/// # WHAT IT STILL CANNOT SEE, AND SAYS SO
+///
+/// A freeze is enforced by writing an ordinary deny-all wardryx policy, so the
+/// refusals that follow arrive as plain `policy_deny` with an ordinary reason.
+/// Nothing on the bus marks them as the freeze's doing. They appear here on the
+/// system side, and the note says why rather than letting a reader conclude the
+/// operator only stopped the agent once.
+pub fn agent_stops(agent_id: &str, limit: usize, state: &AppState) -> StopsPanel {
+    let Some(dir) = &state.events_dir else {
+        return StopsPanel::unmeasured(
+            "The console has no event store on this box, so nothing here was read.              This is not a report that this agent was never stopped.",
+        );
+    };
+    let store = match genaryx_core::store::Store::open(&dir.join("console.sqlite")) {
+        Ok(s) => s,
+        Err(e) => {
+            return StopsPanel::unmeasured(format!(
+                "The event store could not be opened ({e}), so nothing here was read.                  This is not a report that this agent was never stopped."
+            ));
+        }
+    };
+
+    // Both halves in one read: the agent's own stops, and the console's journal
+    // lines, which name the agent they halted rather than being about it.
+    let mut types: Vec<&str> = BLOCKED_TYPES.to_vec();
+    types.push(CONSOLE_COMMAND);
+    let rows = match store.events_of_types_since(&types, &[], None, limit.max(1)) {
+        Ok(r) => r,
+        Err(e) => {
+            return StopsPanel::unmeasured(format!(
+                "The event store could not be queried ({e}), so nothing here was read.                  This is not a report that this agent was never stopped."
+            ));
+        }
+    };
+
+    let mut entries: Vec<StopEntry> = Vec::new();
+    for e in rows {
+        let t = e.type_.as_str();
+        let data = e.data.as_ref();
+        let mine = if t == CONSOLE_COMMAND {
+            agents_halted_by(data).iter().any(|a| a == agent_id)
+        } else {
+            e.agent_id == agent_id
+        };
+        if !mine {
+            continue;
+        }
+        let actor = data
+            .and_then(|d| {
+                d.get("actor")
+                    .or_else(|| d.get("decided_by"))
+                    .or_else(|| d.get("operator"))
+            })
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.trim().is_empty())
+            .map(String::from);
+        let reason = REASON_KEYS.iter().find_map(|k| {
+            data.and_then(|d| d.get(*k))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .map(String::from)
+        });
+        let by_operator = t == CONSOLE_COMMAND || is_operator_stop(t, data) || actor.is_some();
+        entries.push(StopEntry {
+            ts: e.ts.clone(),
+            type_: e.type_.clone(),
+            source: e.source.clone(),
+            actor,
+            reason,
+            by_operator,
+        });
+    }
+
+    // Newest first by the producer's own clock, the same string comparison the
+    // rest of this module uses on `ts`.
+    entries.sort_by(|a, b| b.ts.cmp(&a.ts));
+    let by_operator = entries.iter().filter(|e| e.by_operator).count();
+    let total = entries.len();
+
+    let mut note =
+        format!("{total} stop(s) on the bus for this agent, {by_operator} of them named a person.");
+    note.push_str(
+        // One physical line on purpose: the tests assert this sentence by
+        // substring, and a backslash-continued literal keeps the following
+        // line's indentation INSIDE the string, which makes an exact phrase
+        // unmatchable for a reason nobody can see on screen.
+        " An operator FREEZE is enforced as an ordinary deny-all policy, so the refusals that follow it arrive as plain policy_deny and are listed on the system side: the freeze itself is here, its consequences are not attributed to it.",
+    );
+
+    StopsPanel {
+        measured: true,
+        note: Some(note),
+        total,
+        by_operator,
+        entries,
+    }
+}
+
 /// Per-agent counts over a time window, or over the recent slice when no window
 /// is asked for.
 ///
@@ -1409,6 +1571,107 @@ mod tests {
                  that pair"
             );
         }
+    }
+
+    /// The stop list must include the one stop a person definitely caused, and
+    /// that one is not on the agent's own feed.
+    ///
+    /// A freeze is journaled as a `console_command` whose `agent_id` is the
+    /// CONSOLE, naming the frozen agent in `data.members`. A view reading
+    /// `agent_events` sees the refusals that follow and never the act itself,
+    /// so "who stopped this agent" would answer "nobody" for the clearest case
+    /// there is.
+    #[test]
+    fn a_freeze_appears_on_the_frozen_agents_own_stop_list() {
+        let frozen = "agent://acme.local/sre/janitor";
+        let (state, dir) = seeded_state(
+            "stops-freeze",
+            &[
+                event(
+                    "agent://acme.local/console/box",
+                    "2026-08-09T10:00:00Z",
+                    "console_command",
+                    serde_json::json!({
+                        "action": "console.block_agent",
+                        "target": frozen,
+                        "members": [frozen],
+                        "operator": "d.hayes",
+                    }),
+                ),
+                event(
+                    frozen,
+                    "2026-08-09T10:05:00Z",
+                    "policy_deny",
+                    serde_json::json!({ "reason": "deny-all while frozen" }),
+                ),
+            ],
+        );
+
+        let p = agent_stops(frozen, 500, &state);
+        assert!(p.measured);
+        assert_eq!(p.total, 2, "the freeze itself and the refusal after it");
+        assert_eq!(
+            p.by_operator, 1,
+            "the freeze names a person; the policy_deny it caused does not, and \
+             this counter must not guess that it did"
+        );
+
+        // Newest first.
+        assert_eq!(p.entries[0].type_, "policy_deny");
+        assert_eq!(p.entries[1].type_, "console_command");
+        assert_eq!(p.entries[1].actor.as_deref(), Some("d.hayes"));
+        assert!(p.entries[1].by_operator);
+        assert!(!p.entries[0].by_operator);
+        assert_eq!(
+            p.entries[0].reason.as_deref(),
+            Some("deny-all while frozen"),
+            "the producer's own words, not this build's paraphrase"
+        );
+
+        let note = p.note.expect("a measured panel still explains itself");
+        assert!(
+            note.contains("refusals that follow it"),
+            "the note must say the freeze's consequences are NOT attributed to it, \
+             or a reader concludes the operator stopped this once. Got: {note}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A freeze that halted somebody ELSE must not appear on this agent's list.
+    #[test]
+    fn a_unit_stop_lands_only_on_the_agents_it_named() {
+        let mine = "agent://acme.local/sre/one";
+        let theirs = "agent://acme.local/sre/two";
+        let (state, dir) = seeded_state(
+            "stops-unit",
+            &[event(
+                "agent://acme.local/console/box",
+                "2026-08-09T10:00:00Z",
+                "console_command",
+                serde_json::json!({
+                    "action": "console.block_unit",
+                    "target": "sre",
+                    "members": [theirs],
+                }),
+            )],
+        );
+
+        assert_eq!(agent_stops(mine, 500, &state).total, 0);
+        assert_eq!(agent_stops(theirs, 500, &state).total, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// With no store, the list must refuse rather than render as "never
+    /// stopped", which is the one wrong answer that reads as good news.
+    #[test]
+    fn with_no_store_the_stop_list_says_it_could_not_look() {
+        let p = agent_stops("agent://acme.local/a/b", 500, &empty_state());
+        assert!(!p.measured);
+        assert!(p.entries.is_empty());
+        let note = p.note.expect("an unmeasured panel must say why");
+        assert!(note.contains("not a report that this agent was never stopped"));
     }
 
     /// An event with no amounts must leave `overshoot` absent rather than

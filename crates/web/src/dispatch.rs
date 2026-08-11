@@ -281,6 +281,14 @@ fn default_spend_days() -> i64 {
     30
 }
 
+/// How many stop-shaped events to read before folding one agent's list out of
+/// them. Generous: these are a small slice of the bus, and a card that showed
+/// "the last few" of somebody's stops would be the wrong answer to "how many
+/// times was this stopped".
+fn default_stops_scan() -> usize {
+    20_000
+}
+
 pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Response, Response> {
     match name {
         "admission_baseline" => {
@@ -409,6 +417,28 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 &a.agent_id,
                 a.window_days,
                 chrono::Utc::now().timestamp_millis(),
+                &ctx.bus,
+            )))
+        }
+        // When, why and by whom this agent was stopped. A read, and classified
+        // as one in roles.rs.
+        //
+        // A backend fold rather than a filter in the view: the classification
+        // is pinned in `genaryx_api::stats` and a second copy in TypeScript
+        // would drift silently, and a FREEZE is journaled against the console
+        // rather than the agent, so a view reading only `agent_events` cannot
+        // see the one stop a person definitely caused.
+        "agent_stops" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                agent_id: String,
+                #[serde(default = "default_stops_scan")]
+                limit: usize,
+            }
+            let a: A = decode(args)?;
+            Ok(ok(genaryx_api::stats::agent_stops(
+                &a.agent_id,
+                a.limit,
                 &ctx.bus,
             )))
         }
