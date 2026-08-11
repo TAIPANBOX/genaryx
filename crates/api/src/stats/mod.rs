@@ -412,16 +412,15 @@ pub fn stats_counts(scan: usize, window_days: u32, state: &AppState) -> StatsPan
         // with no detector still counts as an anomaly above, it just cannot
         // describe itself, and inventing a name for it would be worse than the
         // gap.
-        if t == IDENTITY_FINDING {
-            if let Some(detector) = e
+        if t == IDENTITY_FINDING
+            && let Some(detector) = e
                 .data
                 .as_ref()
                 .and_then(|d| d.get("detector"))
                 .and_then(|v| v.as_str())
                 .filter(|v| !v.trim().is_empty())
-            {
-                *entry.by_detector.entry(detector.to_string()).or_insert(0) += 1;
-            }
+        {
+            *entry.by_detector.entry(detector.to_string()).or_insert(0) += 1;
         }
         if BUDGET_TYPES.contains(&t) {
             entry.budget_events += 1;
