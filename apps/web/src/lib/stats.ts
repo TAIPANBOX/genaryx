@@ -5,6 +5,7 @@ import { unitForTeam } from "./views";
 import type { AgentStats, StatsError, StatsPanel } from "../statsTypes";
 import type { IdryxIdentity } from "../identityTypes";
 import type { Owner, Run } from "../moneyTypes";
+import type { WindowSpend } from "./money";
 
 /**
  * The Statistics view's data layer: one fold, three keys.
@@ -137,6 +138,17 @@ export interface StatsRow {
    * would report an overspend the estate never had. */
   worstOvershootMicrousd: number | null;
 
+  /** How many agents in this row are NOT live: killed, frozen or stopped.
+   *
+   * A stopped agent keeps its row and keeps its spend, because the money it
+   * spent is money that was spent. What it must not do is look identical to a
+   * working one: "this unit costs $700 a month" reads very differently once you
+   * know half of it is from agents somebody had to kill. */
+  stoppedAgents: number;
+  /** The state itself, when this row IS one agent. `null` for a group, where
+   * `stoppedAgents` is the useful number, and for a live agent. */
+  state: import("./lifecycleTypes").EntityLifecycleState | null;
+
   /** True for the single row collecting agents this grouping could not place.
    * Rendered as itself, never hidden. */
   unattributed: boolean;
@@ -172,6 +184,8 @@ interface Acc {
   budgetEvents: number;
   overshoot: number | null;
   detectors: Record<string, number>;
+  stoppedAgents: number;
+  state: import("./lifecycleTypes").EntityLifecycleState | null;
   unattributed: boolean;
 }
 
@@ -245,20 +259,62 @@ export function unitSource(runs: Run[], counts: AgentStats[]): UnitSource {
   return hit === ran.size ? "identity-map" : "mixed";
 }
 
+/** Per-agent spend for the SELECTED period, from the Cloud's per-day fold.
+ *
+ * `/v1/spend` already returns the split, which is why it was built returning
+ * one: the KPI tile needs the total and the table needs the same number per
+ * agent, and computing the second from a different source would put two
+ * answers to one question on one screen.
+ *
+ * `null` in, `null` out: a Cloud that cannot fold by period gives no windowed
+ * split, and the caller must fall back to lifetime run totals AND say so,
+ * rather than showing a period label over lifetime numbers. */
+export function windowedSpendByAgent(
+  spend: WindowSpend | null,
+): Map<string, { spentUsd: number; calls: number }> | null {
+  if (!spend) return null;
+  const out = new Map<string, { spentUsd: number; calls: number }>();
+  for (const a of spend.agents) {
+    // The empty-string agent is the Cloud's overflow bucket, not an agent. It
+    // keeps the TOTAL right and has no row to belong to.
+    if (!a.agent_id) continue;
+    out.set(a.agent_id, { spentUsd: a.spent_microusd / 1_000_000, calls: a.calls });
+  }
+  return out;
+}
+
 export function groupRows(
   runs: Run[],
   identities: IdryxIdentity[],
   counts: AgentStats[],
   by: GroupBy,
+  /** Per-agent spend for the selected period. When present these columns
+   * describe that period; when absent they are lifetime run totals and the
+   * view says so. Never silently one wearing the other's label. */
+  windowed: Map<string, { spentUsd: number; calls: number }> | null = null,
 ): StatsRow[] {
   const owners = ownerByAgent(identities);
   const resolvedUnits = unitByAgent(runs);
+  // Worst state wins per agent: an agent with one killed run and one live one
+  // is an agent somebody killed, and rounding that down to "live" is the
+  // direction that flatters.
+  const lifecycleByAgent = new Map<string, string>();
+  for (const r of runs) {
+    const lc = r.lifecycle ?? (r.killed ? "killed" : "live");
+    const rank = (x: string) => (x === "killed" ? 3 : x === "frozen" ? 2 : x === "stopped" ? 1 : 0);
+    const prev = lifecycleByAgent.get(r.agent_id);
+    if (!prev || rank(lc) > rank(prev)) lifecycleByAgent.set(r.agent_id, lc);
+  }
   const spend = spendByAgent(runs);
   const byAgentSpend = new Map(spend.map((s) => [s.agent, s]));
   const byAgentCount = new Map(counts.map((c) => [c.agent_id, c]));
 
   // Every agent seen in EITHER window, so neither store can hide a row.
-  const allAgents = new Set<string>([...byAgentSpend.keys(), ...byAgentCount.keys()]);
+  const allAgents = new Set<string>([
+    ...byAgentSpend.keys(),
+    ...byAgentCount.keys(),
+    ...(windowed ? windowed.keys() : []),
+  ]);
 
   const keyFor = (agentId: string): { key: string; label: string; unattributed: boolean } => {
     if (by === "agent") {
@@ -302,15 +358,35 @@ export function groupRows(
       budgetEvents: 0,
       overshoot: null,
       detectors: {},
+      stoppedAgents: 0,
+      state: null,
       unattributed,
     };
     row.agents.add(agentId);
 
+    // Lifecycle, from the runs the money plane returned. An agent with no run
+    // at all leaves this untouched rather than being guessed at as live.
+    const lc = lifecycleByAgent.get(agentId);
+    if (lc && lc !== "live") {
+      row.stoppedAgents += 1;
+      if (by === "agent") row.state = lc as import("./lifecycleTypes").EntityLifecycleState;
+    }
+
     const s = byAgentSpend.get(agentId);
     if (s) {
+      row.runs += s.runs;
+    }
+    // Spend and calls for the period when the box can fold by period, and the
+    // run's lifetime totals otherwise. `runs` above stays lifetime either way:
+    // `/v1/spend` counts calls and not runs, and inventing a windowed run count
+    // from a call count would be a number nobody measured.
+    const w = windowed?.get(agentId);
+    if (w) {
+      row.spentUsd += w.spentUsd;
+      row.calls += w.calls;
+    } else if (s && !windowed) {
       row.spentUsd += s.spent;
       row.calls += s.calls;
-      row.runs += s.runs;
     }
     const c = byAgentCount.get(agentId);
     if (c) {
@@ -334,6 +410,8 @@ export function groupRows(
     key: r.key,
     label: r.label,
     agentCount: r.agents.size,
+    stoppedAgents: r.stoppedAgents,
+    state: r.state,
     spentUsd: r.spentUsd,
     calls: r.calls,
     runs: r.runs,
@@ -360,6 +438,13 @@ export function groupRows(
 export function rowsFromOwners(owners: Owner[]): StatsRow[] {
   return owners.map((o) => ({
     key: o.owner,
+    // `/v1/owners` returns totals per person with NO agent list, so this
+    // grouping cannot say which of their agents are stopped. Zero and null
+    // here mean "not knowable from this rollup", the same reason
+    // `countsApply` is false below, and the view renders a dash rather than a
+    // reassuring "0 stopped".
+    stoppedAgents: 0,
+    state: null,
     // "unassigned" is the plane's own literal for a run whose chain named
     // nobody. Rendered as the sentence it is, and pinned last like every other
     // unattributed row.

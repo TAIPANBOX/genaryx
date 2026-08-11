@@ -1382,12 +1382,21 @@ function mockSpendWindow(days: number) {
   let covered = 0;
   const agents = FLEET.map((a) => {
     const run = baseRunFor(a, { ignoreClosed: true });
-    const ageDays = Math.max(
-      1,
-      Math.round((now - Date.parse(a.segments[0]?.from ?? new Date(now).toISOString())) / DAY),
-    );
-    const inWindow = Math.min(days, ageDays);
-    covered = Math.max(covered, inWindow);
+    const bornMs = Date.parse(a.segments[0]?.from ?? new Date(now).toISOString());
+    const ageDays = Math.max(1, Math.round((now - bornMs) / DAY));
+
+    // A stopped agent STOPS ACCRUING, and getting this wrong is the whole
+    // point of the fix. Its lifetime spend is real and stays on the row; what
+    // it must not do is keep earning inside a window that starts after it was
+    // killed. An agent killed two months ago genuinely spent nothing last week,
+    // and showing otherwise would invent spend that never happened, which is
+    // worse than any labelling problem.
+    const stoppedAtMs = a.closed ? Date.parse(a.closed.ts) : null;
+    const liveUntil = stoppedAtMs ?? now;
+    const windowStart = now - days * DAY;
+    const overlapMs = Math.max(0, Math.min(liveUntil, now) - Math.max(bornMs, windowStart));
+    const inWindow = overlapMs / DAY;
+    covered = Math.max(covered, Math.min(days, Math.round((now - bornMs) / DAY)));
     const perDayUsd = run.spent_usd / ageDays;
     const perDayCalls = run.calls / ageDays;
     return {
