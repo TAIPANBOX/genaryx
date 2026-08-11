@@ -559,6 +559,24 @@ pub async fn money_overview(state: &MoneyState) -> Result<OverviewDto, MoneyErro
 /// connector read that carries `budget_micros`) overlaid with any budget
 /// this console session itself has set - see
 /// [`MoneyState::budget_overrides`].
+/// Spend over a PERIOD, per agent, or `None` when this Cloud cannot fold by
+/// period at all (anything older than tokenfuse #199).
+///
+/// `None` and "zero spend" are different facts and the caller must render them
+/// differently. A box that cannot answer the question must not be shown as a
+/// box that answered zero.
+pub async fn money_spend_window(
+    state: &MoneyState,
+    days: i64,
+) -> Result<Option<genaryx_connectors::WindowSpend>, MoneyError> {
+    let client = ready_client(&state).await?;
+    client
+        .client
+        .spend_window(days)
+        .await
+        .map_err(MoneyError::from)
+}
+
 pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
     let client = ready_client(&state).await?;
     let (runs, alerts) =

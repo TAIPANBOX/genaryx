@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchStats, groupRows, rowsFromOwners, sortRows, unitSource } from "../lib/stats";
 import type { GroupBy, SortKey, StatsRow } from "../lib/stats";
-import { fetchOwners, fetchRuns } from "../lib/money";
+import { fetchOwners, fetchRuns, fetchSpendWindow, type WindowSpend } from "../lib/money";
 import { fetchIdentities } from "../lib/identity";
 import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
 import { formatUsd } from "../lib/format";
@@ -132,47 +132,55 @@ const COLUMNS: Column[] = [
   },
 ];
 
-/** Why the window selector does not touch Spend and Calls, and why that is a
- * decision rather than a gap.
+/** What the Spend tile is actually showing, in one line under the number.
  *
- * # IT WAS WIRED UP, AND THE RESULT WAS NONSENSE
+ * # THE HISTORY THIS ENCODES, BECAUSE THE FUNCTION IS ONLY SENSIBLE WITH IT
  *
- * tokenfuse #197 taught `/v1/runs` to accept a window and #198 made it declare
- * the one it applied, so on 2026-08-11 the console was wired to follow the
- * selector. The demo then showed: 24h $8,151, 7d $15,024, 30d $31,856.
+ * tokenfuse #197 taught `/v1/runs` a window and the console was wired to it.
+ * The demo then showed 24h $8,151, 7d $15,024, 30d $31,856. Yurii read that in
+ * seconds and said it could not be right: a day at $8,151 is $57,000 a week.
  *
- * Yurii read that in seconds and said it could not be right, and he was
- * right. As spend per period it is absurd: a day at $8,151 is $57,000 a week,
- * not $15,000.
- *
- * The quantity was not spend per period. `/v1/runs?since_millis=` selects runs
- * last SEEN in the window, and each surviving run reports its LIFETIME total,
- * because that store folds per run and not per time bucket. So the figure was
- * "the whole-life spend of the runs that happened to be active recently",
- * which is a coherent quantity and one nobody reads off a column called SPEND
- * under a window selector.
- *
- * # THE LESSON, BECAUSE THIS WAS DOCUMENTED AND STILL SHIPPED
- *
- * That limit was written on the store method, on the query struct, in the
- * connector, in the legend, and asserted in a Cloud test. All of it was true
- * and none of it helped: the first person to look at the screen misread the
- * number, because the shape of the screen told him to.
+ * The quantity was never spend per period. That filter selects runs last SEEN
+ * in the window and each brings its LIFETIME total, because the Cloud folded
+ * per run and not per time bucket. The limit was documented on the store
+ * method, the query struct, the connector, the legend, and asserted in a test.
+ * All true, and none of it helped: the first reader misread the number because
+ * the shape of the screen told him to.
  *
  * **A quantity guaranteed to be misread must not be wired to the control that
- * invites the misreading.** Documenting the trap is not the same as removing
- * it.
+ * invites the misreading.** So it was reverted, and tokenfuse #199 built the
+ * fold that was actually missing: per-day buckets, so a week really is a week.
  *
- * # WHAT WOULD ACTUALLY FIX IT
+ * # THREE ANSWERS, AND THE MIDDLE ONE IS WHY THIS IS A FUNCTION
  *
- * A per-period spend fold in the Cloud. It does not exist: `Store::series` is
- * a burn-rate signal capped at the last 100,000 samples (about six days at
- * this fleet's volume, and hours at a real one), and `unit_months` is
- * month-to-date per unit. Real windowed spend is a new shape, and when it
- * exists this column can follow the selector honestly.
+ * With `/v1/spend`, the number is the period's spend and the line still says
+ * how many days the Cloud actually HELD, because a box up for three days
+ * cannot answer thirty and a smaller total reads as a quiet month.
  *
- * Until then the money columns say what they are, which is every run the plane
- * holds. */
+ * Without it, the number falls back to lifetime totals and the line says so.
+ * It must never carry the selected window in that case, which is the whole
+ * lesson above in one rule.
+ *
+ * "Did not answer" stays separate from both: a plane that failed is not a
+ * plane that reported nothing. */
+const SPEND_TILE_SUB = (
+  spend: WindowSpend | null,
+  asked: boolean,
+  haveRuns: boolean,
+  windowDays: number,
+): string => {
+  if (spend) {
+    if (windowDays <= 0) return `${spend.days_covered}d held, summed per day`;
+    return spend.days_covered < spend.days_requested
+      ? `last ${spend.days_covered}d: this box holds ${spend.days_covered} of the ${spend.days_requested} asked for`
+      : `last ${spend.days_covered}d, summed per day`;
+  }
+  if (!haveRuns) return "money plane did not answer";
+  return asked
+    ? "lifetime totals: this Cloud cannot fold spend by period"
+    : "lifetime totals, of any age";
+};
+
 /** One sentence per source, and each says what the reader can DO about it.
  *
  * The `agent-id` line is the one that matters. `unitForTeam`'s table mirrors
@@ -265,6 +273,11 @@ export function StatsView({
   // The counts stay exact; these two say which OTHER columns went partial.
   const [detailScanned, setDetailScanned] = useState(0);
   const [detailTruncated, setDetailTruncated] = useState(false);
+  // Spend for the SELECTED period, from the Cloud's per-day fold. `null` means
+  // this box's Cloud has no such fold at all, which is not the same as zero and
+  // must not render as zero.
+  const [spend, setSpend] = useState<WindowSpend | null>(null);
+  const [spendAsked, setSpendAsked] = useState(false);
   const [at, setAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -282,8 +295,12 @@ export function StatsView({
 
   const load = useCallback(async () => {
     // Settled, not `all`: one plane being down must not blank the other two.
-    const [r, i, s, o] = await Promise.allSettled([
+    const [r, sp, i, s, o] = await Promise.allSettled([
       fetchRuns(),
+      // Spend for the SELECTED period. Separate from `fetchRuns` on purpose:
+      // runs are lifetime totals and this is a per-day fold, and conflating
+      // the two is the defect this view already shipped once.
+      fetchSpendWindow(windowDays > 0 ? windowDays : 400),
       fetchIdentities(),
       fetchStats(undefined, windowDays),
       // A box whose money plane predates tokenfuse #192 has no `/v1/owners`,
@@ -292,6 +309,8 @@ export function StatsView({
       fetchOwners(),
     ]);
     setRuns(r.status === "fulfilled" ? r.value : null);
+    setSpend(sp.status === "fulfilled" ? sp.value : null);
+    setSpendAsked(sp.status === "fulfilled");
     setOwners(o.status === "fulfilled" ? o.value : null);
     setIdentities(i.status === "fulfilled" ? i.value : null);
     if (s.status === "fulfilled") {
@@ -514,8 +533,18 @@ export function StatsView({
           <>
             <KpiTile
               label="Spend"
-              value={runs ? formatUsd(totalSpend) : "-"}
-              sub={runs ? "money plane window" : "money plane did not answer"}
+              // The PERIOD's spend when the Cloud can fold by period, the
+              // lifetime total otherwise, and never a period label over a
+              // lifetime number. See SPEND_TILE_SUB for why that pairing is
+              // the one rule this tile has.
+              value={
+                spend
+                  ? formatUsd(spend.spent_microusd / 1_000_000)
+                  : runs
+                    ? formatUsd(totalSpend)
+                    : "-"
+              }
+              sub={SPEND_TILE_SUB(spend, spendAsked, runs !== null, windowDays)}
             />
             <KpiTile
               label="Blocked"
@@ -671,8 +700,8 @@ export function StatsView({
 
       <div className="px-4 pb-1">
         <span className="mono text-[10px]" style={{ color: "var(--faint)" }}>
-          {"\u00B0"} every run the money plane holds, of any age. The selector above moves only the bus
-          columns, deliberately, because a windowed run total is not windowed spend
+          {"\u00B0"} per-run lifetime totals, of any age. The Spend tile above follows the selector
+          (per-day fold); these two columns do not, because a run total has no period in it
         </span>
       </div>
 
