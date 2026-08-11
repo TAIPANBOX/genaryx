@@ -628,25 +628,6 @@ export function Agent360({
           </span>
         </div>
         <div className="flex-1" />
-        {/* The way BACK. `AgentDetailCard` has had an "open full" into this
-            panel since it was written, and nothing went the other way: an
-            operator who followed a link in here and then wanted the owned-thing
-            view (owner, unit, budget, behaviour envelope, lifecycle history,
-            the transfer and reassign actions) had to close this, find the agent
-            again somewhere else, and open the popover from there. */}
-        <button
-          type="button"
-          className="icon-btn"
-          style={{ width: "auto", padding: "0 8px", fontSize: 10.5 }}
-          title="The agent's owned-thing card: owner, unit, budget, behaviour and lifecycle"
-          onClick={(e) =>
-            open(<AgentDetailCard agentId={agentId} onOpenFull={onOpenAgent} />, {
-              anchor: e.currentTarget.getBoundingClientRect(),
-            })
-          }
-        >
-          Agent card &rsaquo;
-        </button>
         <FreezeToggleButton frozen={frozen} onToggle={() => blockAgent(agentId, !frozen).then(() => {})} />
         <KillRunButton
           run={liveRun}
@@ -688,6 +669,30 @@ export function Agent360({
                 <Field label="events" value={slice.node ? String(slice.node.event_count) : "0"} />
                 <Field label="last seen" value={slice.node?.last_ts ? formatTimestamp(slice.node.last_ts) : "-"} />
                 <Field label="kind" value={slice.node?.kind ?? "(chain-only)"} />
+                {/* The way BACK, and it sits HERE rather than up in the header
+                    (Yurii, 2026-08-10) because it belongs to this line: the
+                    header is the panel's own controls (watch, freeze, kill,
+                    close), and this is one more thing to open about the agent,
+                    the same shape and the same affordance as the delegation
+                    chips right below it.
+                    `AgentDetailCard` has had an "open full" into this panel
+                    since it was written and nothing went the other way, so an
+                    operator who arrived by a link and then wanted the
+                    owned-thing view had to close this, find the agent
+                    elsewhere, and open the popover from there. */}
+                <button
+                  type="button"
+                  className="chip self-center"
+                  style={{ cursor: "pointer" }}
+                  title="The agent's owned-thing card: owner, unit, budget, behaviour and lifecycle"
+                  onClick={(e) =>
+                    open(<AgentDetailCard agentId={agentId} onOpenFull={onOpenAgent} />, {
+                      anchor: e.currentTarget.getBoundingClientRect(),
+                    })
+                  }
+                >
+                  Agent card &rsaquo;
+                </button>
               </div>
             )}
             {slice.parents.length > 0 && (

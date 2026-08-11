@@ -45,6 +45,22 @@ const DAY = 86_400_000;
 const now = Date.now();
 const ago = (ms: number) => new Date(now - ms).toISOString();
 
+/** How long this estate has been running, which every dated fixture below is
+ * measured against.
+ *
+ * The fleet used to be 8 to 20 days old. Every history in the console was
+ * therefore a fortnight long: ownership never changed hands twice, a quality
+ * baseline from "end of month" was three weeks old, and the Statistics windows
+ * had nothing to distinguish. It read as a product someone installed last
+ * Tuesday, which is the opposite of what this console is for.
+ *
+ * Now: two months at the youngest, fourteen at the oldest. That spread matters
+ * more than the absolute number. A fleet where every agent is the same age has
+ * no transfers worth showing, no agents that predate a policy, and nothing for
+ * a year window to select over. */
+const AGENT_AGE_FLOOR_MS = 60 * DAY;
+const AGENT_AGE_SPREAD_MS = 370 * DAY;
+
 // ---------------------------------------------------------------------------
 // Fleet shape.
 // ---------------------------------------------------------------------------
@@ -223,7 +239,7 @@ const RUNAWAY_NAME = "rca-copilot";
 const DRIFT_DEMO_AGENT_ID = `agent://${ORG}/data/data-quality-checker`;
 
 function genHistory(a: { team: string; name: string; owner: string }): LifecycleEntry[] {
-  const born = 8 * DAY + Math.floor(pseudo(a.name + "born") * 12 * DAY);
+  const born = AGENT_AGE_FLOOR_MS + Math.floor(pseudo(a.name + "born") * AGENT_AGE_SPREAD_MS);
   const h: LifecycleEntry[] = [
     { ts: ago(born), kind: "launched", detail: `launched for ${a.team} work`, actor: a.owner },
     { ts: ago(born), kind: "owned", detail: `owned by ${a.team} / ${a.owner}`, actor: "system" },
@@ -234,11 +250,51 @@ function genHistory(a: { team: string; name: string; owner: string }): Lifecycle
   return h;
 }
 
+/** Which of a unit's people owns its i-th agent.
+ *
+ * This was `u.users[i % u.users.length]`, a strict round-robin, and the result
+ * was that every person in the company ran exactly the same number of agents.
+ * On the Owner grouping that produced a column of identical 2s, which reads as
+ * a placeholder rather than as an estate (Yurii, 2026-08-10: "щоб не було всіх
+ * по два").
+ *
+ * Real teams are not flat. Someone owns the four agents that matter and
+ * somebody else owns one they inherited, because the work is not the same size.
+ *
+ * Two passes, so the spread never costs anyone their place in the list:
+ *
+ *  1. The first `users.length` agents go round-robin, so every person owns at
+ *     least one and nobody vanishes from the Owner grouping.
+ *  2. Everything after that is picked by a deterministic WEIGHT per person, so
+ *     the surplus piles up unevenly. Weights come from `pseudo`, so the fleet
+ *     is identical on every reload and a screenshot never shifts under you.
+ */
+function ownerFor(u: { team: string; users: string[] }, i: number): string {
+  if (i < u.users.length) return u.users[i];
+
+  // DEALT from a weighted bag, not drawn from one.
+  //
+  // The first cut drew independently against the weights on every surplus
+  // agent, and the heaviest person in each unit took almost all of it: sixteen
+  // people ended up with exactly one agent and four with five to eight. That is
+  // a different wrong shape from the flat 2s it replaced, not a fix.
+  //
+  // A bag holding each person `weight` times, dealt in order, spreads the
+  // surplus in PROPORTION to the weights instead of concentrating it. Someone
+  // ends up with four and someone with one, which is the ask.
+  const bag: string[] = [];
+  for (const h of u.users) {
+    const weight = 1 + Math.floor(pseudo(`${u.team}:${h}:load`) * 3);
+    for (let n = 0; n < weight; n++) bag.push(h);
+  }
+  return bag[(i - u.users.length) % bag.length];
+}
+
 function buildFleet(): FleetAgent[] {
   const out: FleetAgent[] = [];
   for (const u of UNITS) {
     u.kinds.forEach((k, i) => {
-      const owner = u.users[i % u.users.length];
+      const owner = ownerFor(u, i);
       const isRunaway = u.team === RUNAWAY_TEAM && k.suffix === RUNAWAY_NAME;
       const calls = isRunaway ? 1240 : 150 + Math.floor(pseudo(k.suffix + "c") * 2300);
       const per = PER_CALL_USD[k.model] ?? 0.01;
@@ -249,7 +305,7 @@ function buildFleet(): FleetAgent[] {
 
       // Attribution: a few agents already carry a prior owner (or a prior unit),
       // so the spend split by ownership period is visible out of the box.
-      const bornMs = 8 * DAY + Math.floor(pseudo(k.suffix + "born") * 12 * DAY);
+      const bornMs = AGENT_AGE_FLOOR_MS + Math.floor(pseudo(k.suffix + "born") * AGENT_AGE_SPREAD_MS);
       const launchTs = ago(bornMs);
       const history = genHistory({ team: u.team, name: k.suffix, owner });
       let segments: AttributionSegment[];
@@ -1831,9 +1887,9 @@ function mockQualityScores(runId: string) {
 }
 function mockQualityBaselines() {
   return [
-    { id: "base-eom", eval_run_id: "eval-1000", mean_score: 0.92, created_at: ago(20 * DAY), label: "end-of-month gate" },
-    { id: "base-release", eval_run_id: "eval-1002", mean_score: 0.88, created_at: ago(9 * DAY), label: "pre-release" },
-    { id: "base-haiku", eval_run_id: "eval-1004", mean_score: 0.85, created_at: ago(4 * DAY), label: "haiku cost-tier check" },
+    { id: "base-eom", eval_run_id: "eval-1000", mean_score: 0.92, created_at: ago(28 * DAY), label: "end-of-month gate" },
+    { id: "base-release", eval_run_id: "eval-1002", mean_score: 0.88, created_at: ago(96 * DAY), label: "pre-release" },
+    { id: "base-haiku", eval_run_id: "eval-1004", mean_score: 0.85, created_at: ago(284 * DAY), label: "haiku cost-tier check" },
   ];
 }
 
