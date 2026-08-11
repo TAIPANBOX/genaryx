@@ -40,6 +40,7 @@ import { getScenario, onScenarioChange, type DemoScenario } from "../demo/scenar
 import { notifyConsoleStateChanged } from "./consoleState";
 import type { EntityLifecycleState } from "./lifecycleTypes";
 import type { EgressRow } from "../egressTypes";
+import { shortAgentLabel } from "./graph";
 
 export const MOCK = import.meta.env.VITE_GENARYX_MOCK === "1";
 
@@ -220,6 +221,38 @@ function pseudo(s: string): number {
   return (h >>> 0) / 4294967296;
 }
 
+/** How many model calls a working agent makes in a day, floor and spread.
+ *
+ * # WHY THESE NUMBERS AND NOT THE OLD ONES
+ *
+ * Until 2026-08-11 an agent's whole life was `150 + pseudo * 2300` calls,
+ * spread over an age of 60 to 430 days. That is about **five calls a day**, and
+ * the fleet's entire spend came to roughly $600. Yurii read the demo and said
+ * the money looked far too small for that many agents over a year, and the
+ * arithmetic agrees with him: 42 agents at 5 calls a day is not a governed
+ * estate, it is 42 agents that do nothing.
+ *
+ * The per-call PRICES were never the problem. `PER_CALL_USD` is close to real
+ * list pricing (a Sonnet call at a couple of thousand input tokens and a few
+ * hundred output really is about a cent). Only the volume was wrong.
+ *
+ * 120 to 800 calls a day is a working agent: a support bot answering tickets, a
+ * reconciliation batch running hourly. Over the same age spread that puts the
+ * fleet near $50,000 for the period, which is the order a bank running 42
+ * governed agents would actually see, and which makes the numbers the whole
+ * product is about worth governing. */
+// Declared ABOVE `buildFleet`, which reads it: it used to sit below, and the
+// module threw `Cannot access before initialization` at load the moment the
+// fleet's history text started interpolating it. `tsc` does not catch that;
+// only opening the page does.
+/** The live run's own per-run ceiling - distinct from `PROTAGONIST.budgetUsd`
+ * (the frozen $1.25 fixture from the DIFFERENT, already-closed incident on
+ * `FleetAgent.closed`), so this arc reads as a fresh run, not a replay. */
+const PROTAGONIST_RUN_BUDGET_USD = 18;
+
+const CALLS_PER_AGENT_DAY_FLOOR = 120;
+const CALLS_PER_AGENT_DAY_SPREAD = 680;
+
 const PER_CALL_USD: Record<string, number> = {
   "claude-haiku-4-5": 0.0032,
   "claude-sonnet-4-5": 0.011,
@@ -299,16 +332,20 @@ function buildFleet(): FleetAgent[] {
     u.kinds.forEach((k, i) => {
       const owner = ownerFor(u, i);
       const isRunaway = u.team === RUNAWAY_TEAM && k.suffix === RUNAWAY_NAME;
-      const calls = isRunaway ? 1240 : 150 + Math.floor(pseudo(k.suffix + "c") * 2300);
+      // Age first: an agent's totals are a rate times how long it has been
+      // running, which is why a young agent showing a small number is a young
+      // agent and not a quiet one.
+      const bornMs = AGENT_AGE_FLOOR_MS + Math.floor(pseudo(k.suffix + "born") * AGENT_AGE_SPREAD_MS);
+      const ageDays = Math.max(1, Math.round(bornMs / DAY));
+      const perDay =
+        CALLS_PER_AGENT_DAY_FLOOR + Math.floor(pseudo(k.suffix + "c") * CALLS_PER_AGENT_DAY_SPREAD);
       const per = PER_CALL_USD[k.model] ?? 0.01;
-      const spentUsd = isRunaway
-        ? 41.6
-        : Number((calls * per * (0.55 + pseudo(k.suffix + "s") * 1.05)).toFixed(2));
+      const calls = perDay * ageDays;
+      const spentUsd = Number((calls * per * (0.55 + pseudo(k.suffix + "s") * 1.05)).toFixed(2));
       const budgetUsd = isRunaway ? 1.25 : Number((0.5 + pseudo(k.suffix + "b") * 3).toFixed(2));
 
       // Attribution: a few agents already carry a prior owner (or a prior unit),
       // so the spend split by ownership period is visible out of the box.
-      const bornMs = AGENT_AGE_FLOOR_MS + Math.floor(pseudo(k.suffix + "born") * AGENT_AGE_SPREAD_MS);
       const launchTs = ago(bornMs);
       const history = genHistory({ team: u.team, name: k.suffix, owner });
       let segments: AttributionSegment[];
@@ -352,7 +389,7 @@ function buildFleet(): FleetAgent[] {
       };
       if (isRunaway) {
         const ts = ago(18 * 60_000);
-        agent.history.push({ ts: ago(4 * DAY), kind: "budget_set", detail: "per-run ceiling set to $1.25", actor: owner });
+        agent.history.push({ ts: ago(4 * DAY), kind: "budget_set", detail: `per-run ceiling set to $${PROTAGONIST_RUN_BUDGET_USD.toFixed(2)}`, actor: owner });
         agent.history.push({ ts, kind: "closed", detail: "killed after runaway retries on an oversized incident context", actor: "sre-oncall" });
         agent.closed = {
           by: "sre-oncall",
@@ -410,10 +447,6 @@ export const userId = (u: string) => `user://${ORG}/${u}`;
 const PROTAGONIST: FleetAgent = FLEET.find((a) => a.team === RUNAWAY_TEAM && a.name === RUNAWAY_NAME) ?? FLEET[0];
 const PROTAGONIST_ID = agentId(PROTAGONIST);
 const PROTAGONIST_RUN_ID = `${PROTAGONIST.name}-live`;
-/** The live run's own per-run ceiling - distinct from `PROTAGONIST.budgetUsd`
- * (the frozen $1.25 fixture from the DIFFERENT, already-closed incident on
- * `FleetAgent.closed`), so this arc reads as a fresh run, not a replay. */
-const PROTAGONIST_RUN_BUDGET_USD = 18;
 
 const CLIMB_START_FRACTION = 0.6;
 const CLIMB_MS = 16_000; // fraction 0.6 -> 1.0
@@ -871,12 +904,53 @@ function mockOverview() {
   };
 }
 
+/** The headline figures, computed once from the world every tab reads.
+ *
+ * # WHY THIS EXISTS
+ *
+ * The Copilot's answers carried twenty-three hard-coded dollar amounts:
+ * "$495 governed spend this window", "blocked $38.90", "top spend $77.46".
+ * Frozen prose beside live panels, and the moment the fleet's volume changed
+ * they all became wrong at once while still reading perfectly.
+ *
+ * That is worse than a stale number in a table, because prose is what a reader
+ * trusts. Two panels disagreeing looks like a bug; a sentence disagreeing with
+ * a panel looks like the sentence knows something.
+ *
+ * So the figures are computed here and interpolated, and the demo cannot drift
+ * against itself again the next time a constant moves. */
+const W = () => worldFigures();
+
+function worldFigures() {
+  const runs = FLEET.map((a) => baseRunFor(a, { ignoreClosed: true }));
+  const spend = runs.reduce((t, r) => t + r.spent_usd, 0);
+  const calls = runs.reduce((t, r) => t + r.calls, 0);
+  const top = [...runs].sort((a, b) => b.spent_usd - a.spent_usd)[0];
+  const sav = mockSavings();
+  return {
+    agents: FLEET.length,
+    spendUsd: Math.round(spend),
+    calls,
+    topName: top ? shortAgentLabel(top.agent_id) : "unknown",
+    topSpendUsd: top ? top.spent_usd.toFixed(2) : "0.00",
+    blockedUsd: sav.blocked_spend_usd.toFixed(2),
+    cacheUsd: sav.cache_saved_usd.toFixed(2),
+    routerUsd: sav.router_saved_usd.toFixed(2),
+    budgetBreaks: sav.budget_breaks,
+    runawaySpendUsd: PROTAGONIST.spentUsd.toFixed(2),
+    runawayCeilingUsd: PROTAGONIST_RUN_BUDGET_USD.toFixed(2),
+  };
+}
+
 function mockSavings() {
   if (currentScenario === "incident") reconcileProtagonist();
   const elapsedMin = Math.min(240, Math.max(0, Date.now() - now) / 60_000);
-  const cacheSaved = Number((0.15 + elapsedMin * 0.05).toFixed(2));
-  const routerSaved = Number((0.1 + elapsedMin * 0.025).toFixed(2));
-  const blocked = Number((38.9 + blockedSpendFromIncidents).toFixed(2));
+  const cacheSaved = Number((410 + elapsedMin * 0.05).toFixed(2));
+  const routerSaved = Number((225 + elapsedMin * 0.025).toFixed(2));
+  // Scaled with the fleet on 2026-08-11. $38.90 was set when the whole estate
+  // spent $600; against fifty thousand it reads as a rounding error rather than
+  // as the breaker doing its job.
+  const blocked = Number((3120 + blockedSpendFromIncidents).toFixed(2));
   const budgetBreaks = 61 + budgetBreaksFromIncidents;
   return {
     blocked_spend_usd: blocked,
@@ -2550,13 +2624,13 @@ function mockCopilotAnswer(question: string) {
   if (/optimi[sz]e|optimization|savings breakdown|cost per (tool call|action)|reduce (my |the )?(cost|spend)/.test(q)) {
     return {
       text:
-        "From the local TokenFuse trace: budget protection blocked $38.90 of runaway spend across 3 budget breaks, the semantic cache served $4.10 for free, and the model router saved $2.25 by downgrading eligible calls. By model, claude-opus-4-5 runs about $0.62 per tool call across 640 calls, versus $0.004 for claude-haiku - opus is spending a lot for comparatively little tool-calling work. By agent, finops/unit-economics-analyst accounts for most of that opus cost. I can't turn on more caching or re-route models myself (the console has no such control, and cache/router tuning is gateway config I cannot touch) - but I can propose tightening that agent's budget so the pattern is bounded.",
+        `From the local TokenFuse trace: budget protection blocked $${W().blockedUsd} of runaway spend across ${W().budgetBreaks} budget breaks, the semantic cache served $${W().cacheUsd} for free, and the model router saved $${W().routerUsd} by downgrading eligible calls. By model, claude-opus-4-5 runs about $${(PER_CALL_USD["claude-opus-4-5"] * 26).toFixed(2)} per tool call, versus $${PER_CALL_USD["claude-haiku-4-5"].toFixed(4)} for claude-haiku - opus is spending a lot for comparatively little tool-calling work. By agent, finops/unit-economics-analyst accounts for most of that opus cost. I can't turn on more caching or re-route models myself (the console has no such control, and cache/router tuning is gateway config I cannot touch) - but I can propose tightening that agent's budget so the pattern is bounded.`,
       tool_trace: [
-        { name: "savings_breakdown", ok: true, result_preview: "blocked $38.90, cache $4.10, router $2.25, 3 budget breaks" },
-        { name: "cost_per_action", ok: true, result_preview: "claude-opus-4-5 $0.62/tool-call (640 calls); claude-haiku $0.004/tool-call" },
+        { name: "savings_breakdown", ok: true, result_preview: `blocked $${W().blockedUsd}, cache $${W().cacheUsd}, router $${W().routerUsd}, ${W().budgetBreaks} budget breaks` },
+        { name: "cost_per_action", ok: true, result_preview: `claude-opus-4-5 $${(PER_CALL_USD["claude-opus-4-5"] * 26).toFixed(2)}/tool-call; claude-haiku $${PER_CALL_USD["claude-haiku-4-5"].toFixed(4)}/tool-call` },
       ],
       proposals: [
-        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: 60 }, rationale: "Opus cost per tool call here is far above the fleet average and this agent has no cap today; $60/day bounds it without blocking its weekly unit-cost run.", confidence: 0.68, evidence_refs: ["cost_per_action:claude-opus-4-5"], policy_context: ["finops-spend-cap"] },
+        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: "Opus cost per tool call here is far above the fleet average and this agent has no cap today; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.", confidence: 0.68, evidence_refs: ["cost_per_action:claude-opus-4-5"], policy_context: ["finops-spend-cap"] },
       ],
       usage: { prompt_tokens: 850 + question.length * 3, completion_tokens: 175 },
     };
@@ -2564,13 +2638,13 @@ function mockCopilotAnswer(question: string) {
   if (/runaway|expensive|cost|most|spend/.test(q)) {
     return {
       text:
-        "The caught runaway is sre/rca-copilot: it looped on an oversized incident trace, burned past its $1.25 per-run ceiling 26 times across shards, and tripped budget_exhausted and fanout_explosion. It was already killed break-glass by sre-oncall; its all-time spend is $41.60. The top LEGITIMATE spender is finops/unit-economics-analyst at $77.46 (Opus, modelling unit cost), inside its budget at 79% utilisation.",
+        `The caught runaway is sre/rca-copilot: it looped on an oversized incident trace, burned past its $${W().runawayCeilingUsd} per-run ceiling 26 times across shards, and tripped budget_exhausted and fanout_explosion. It was already killed break-glass by sre-oncall; its all-time spend is $${W().runawaySpendUsd}. The top LEGITIMATE spender is ${W().topName} at $${W().topSpendUsd}, inside its budget.`,
       tool_trace: [
         { name: "money_incidents", ok: true, result_preview: "7 open; worst fanout_explosion x12 on rca-copilot" },
-        { name: "list_runs", ok: true, result_preview: "42 runs, 1 killed, top spend $77.46" },
+        { name: "list_runs", ok: true, result_preview: `${W().agents} runs, 1 killed, top spend $${W().topSpendUsd}` },
       ],
       proposals: [
-        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: 60 }, rationale: "The top legitimate spender has no central cap; $60/day bounds it without blocking its weekly unit-cost run.", confidence: 0.72, evidence_refs: ["unit-economics-analyst-live"], policy_context: ["finops-spend-cap"] },
+        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: "The top legitimate spender has no central cap; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.", confidence: 0.72, evidence_refs: ["unit-economics-analyst-live"], policy_context: ["finops-spend-cap"] },
       ],
       usage: { prompt_tokens: 900 + question.length * 3, completion_tokens: 190 },
     };
@@ -2595,8 +2669,8 @@ function mockCopilotAnswer(question: string) {
   }
   return {
     text:
-      "Across meridian.io I see 42 agents in four units (SRE, Platform, FinOps, Data Platform), $495 governed spend this window, $38.90 prevented by the budget breaker, and 7 open incidents. Ask me about the runaway, spend by unit, or the pending approvals.",
-    tool_trace: [{ name: "money_overview", ok: true, result_preview: "spent $495, saved $38.90, 7 incidents" }],
+      `Across meridian.io I see ${W().agents} agents in four units (SRE, Platform, FinOps, Data Platform), $${W().spendUsd.toLocaleString("en-US")} governed spend this window, $${W().blockedUsd} prevented by the budget breaker, and 7 open incidents. Ask me about the runaway, spend by unit, or the pending approvals.`,
+    tool_trace: [{ name: "money_overview", ok: true, result_preview: `spent $${W().spendUsd.toLocaleString("en-US")}, saved $${W().blockedUsd}, 7 incidents` }],
     proposals: [],
     usage: { prompt_tokens: 640 + question.length * 3, completion_tokens: 130 },
   };
@@ -2619,7 +2693,7 @@ function mockCopilotExplainAnswer(incidentId: string) {
   const ra = PROTAGONIST;
   return {
     text:
-      `Incident \`${incidentId}\` traces to sre/rca-copilot: an oversized incident trace caused retries past its $1.25 ` +
+      `Incident \`${incidentId}\` traces to sre/rca-copilot: an oversized incident trace caused retries past its $${W().runawayCeilingUsd} ` +
       "per-run ceiling 26 times across shards, tripping budget_exhausted then fanout_explosion. Root-cause chain: " +
       "oversized trace -> repeated over-budget retries -> fanout across shards. It was already killed break-glass by " +
       "sre-oncall; the only governing Wardryx policy on this agent (rca-max-steps) caps steps, not spend, which is why " +
