@@ -2630,7 +2630,7 @@ function mockCopilotAnswer(question: string) {
         { name: "cost_per_action", ok: true, result_preview: `claude-opus-4-5 $${(PER_CALL_USD["claude-opus-4-5"] * 26).toFixed(2)}/tool-call; claude-haiku $${PER_CALL_USD["claude-haiku-4-5"].toFixed(4)}/tool-call` },
       ],
       proposals: [
-        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: "Opus cost per tool call here is far above the fleet average and this agent has no cap today; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.", confidence: 0.68, evidence_refs: ["cost_per_action:claude-opus-4-5"], policy_context: ["finops-spend-cap"] },
+        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: `Opus cost per tool call here is far above the fleet average and this agent has no cap today; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.`, confidence: 0.68, evidence_refs: ["cost_per_action:claude-opus-4-5"], policy_context: ["finops-spend-cap"] },
       ],
       usage: { prompt_tokens: 850 + question.length * 3, completion_tokens: 175 },
     };
@@ -2644,7 +2644,7 @@ function mockCopilotAnswer(question: string) {
         { name: "list_runs", ok: true, result_preview: `${W().agents} runs, 1 killed, top spend $${W().topSpendUsd}` },
       ],
       proposals: [
-        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: "The top legitimate spender has no central cap; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.", confidence: 0.72, evidence_refs: ["unit-economics-analyst-live"], policy_context: ["finops-spend-cap"] },
+        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: `The top legitimate spender has no central cap; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.`, confidence: 0.72, evidence_refs: ["unit-economics-analyst-live"], policy_context: ["finops-spend-cap"] },
       ],
       usage: { prompt_tokens: 900 + question.length * 3, completion_tokens: 190 },
     };
