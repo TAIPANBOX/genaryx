@@ -26,6 +26,7 @@ import type { MoneyError, Run } from "../moneyTypes";
 import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
 import type { UiEvent } from "../types";
 import { DelegationGraphView } from "./DelegationGraphView";
+import { AgentRhythm } from "./AgentRhythm";
 import { Sparkline } from "./dash";
 import { SeverityBadge } from "./SeverityBadge";
 import { SourceChip } from "./SourceChip";
@@ -724,6 +725,16 @@ export function Agent360({
             <OpenPanelButton label="Open full graph" onClick={() => onNavigate("graph")} />
           </div>
         )}
+      </section>
+
+      {/* ---- Rhythm ----
+           Directly above Events, and that order is the point: the section
+           below is what happened, this one is whether that is normal for THIS
+           agent. Every other number on the card is a total, and a total cannot
+           tell twenty-six stops in an hour from twenty-six across a month. */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Rhythm" />
+        <AgentRhythm agentId={agentId} />
       </section>
 
       {/* ---- Events ---- */}

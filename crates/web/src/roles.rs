@@ -129,6 +129,7 @@ const VIEWER_COMMANDS: &[&str] = &[
     "admission_check",
     "admission_status",
     "agent_events",
+    "agent_profile",
     "agent_graph",
     "agent_slice",
     "bus_quarantine",

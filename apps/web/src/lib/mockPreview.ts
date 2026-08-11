@@ -1132,6 +1132,147 @@ const DEMO_REFUSED_EXCERPT =
   '"source":"tokenfuse","type":"breaker_tripped","severity":"critical",' +
   '"agent_id":"aws-comparable-agent","run_id":"aws-176-blocked-001"...';
 
+/** One agent's profile, computed from the SAME seeded year every other panel
+ * reads, mirroring `crates/api/src/stats/profile.rs` step for step.
+ *
+ * Recomputed rather than invented, and that is the whole point of putting it
+ * here: a preview whose Rhythm section disagreed with its own Statistics tab
+ * would be teaching a reader that the two numbers can disagree, which is the
+ * defect this console has already paid for once (a unit reading 12 agents on
+ * one screen and 16 on another).
+ *
+ * Every rule the Rust applies is applied here for the same reason it exists
+ * there, and each is one line away from being silently wrong:
+ *   - days are zero-filled from the agent's FIRST event, so the median is over
+ *     every day and not over its busy ones;
+ *   - the day judged is the last COMPLETE one, never today;
+ *   - the baseline EXCLUDES that day, so a big day cannot lift the bar it is
+ *     measured against;
+ *   - a median of zero yields `times_median: null`, not a division. */
+function mockAgentProfile(id: string, windowDays: number) {
+  const a = FLEET.find((x) => agentId(x) === id);
+  const empty = {
+    agent_id: id,
+    confidence: "no_data" as const,
+    days_held: 0,
+    total: 0,
+    median_day: 0,
+    latest_full_day: 0,
+    times_median: null,
+    busiest_day_share: 0,
+    direction: "unknown" as const,
+    top_type: null,
+    top_type_share: 0,
+    daily: [] as number[],
+  };
+  if (!a) return empty;
+
+  const events = yearFor(a);
+  if (events.length === 0) return empty;
+
+  const today = Math.floor(now / DAY);
+  const windowStart = today - Math.max(1, windowDays) + 1;
+  const firstDay = Math.floor(Math.min(...events.map((e) => e.atMs)) / DAY);
+  const startDay = Math.max(firstDay, windowStart);
+  const daysHeld = Math.max(0, today - startDay + 1);
+
+  const perDay = new Array<number>(daysHeld).fill(0);
+  const perType = new Map<string, number>();
+  let total = 0;
+
+  // The ROUTINE traffic, and leaving it out was a bug in the first version of
+  // this function.
+  //
+  // `yearFor` seeds only the interesting events: blocks, odd behaviour, budget.
+  // A real box counts every event the agent produced, because
+  // `daily_type_counts` groups the whole `events` table by day. Profiling only
+  // the enforcement events gives a median of zero for essentially every agent
+  // (most days nobody is blocked), so the card said "most days are empty, so a
+  // multiple would say nothing" for the entire fleet: true of the mock and
+  // false of the product it is demonstrating.
+  //
+  // So the baseline is the agent's own call volume, the same `calls` the Money
+  // section of this very card shows, spread across the window with a
+  // deterministic per-day jitter. Tying it to a number already on screen is the
+  // point: two panels describing one agent must not disagree.
+  const perDayMean = Math.max(0, Math.round(a.calls / Math.max(1, daysHeld)));
+  for (let d = 0; d < daysHeld; d++) {
+    if (perDayMean === 0) continue;
+    // 0.5x to 1.5x the mean, stable per (agent, day) so the sparkline does not
+    // reshuffle on every render.
+    const jitter = 0.5 + pseudo(`${id}:day:${startDay + d}`);
+    const n = Math.round(perDayMean * jitter);
+    perDay[d] += n;
+    total += n;
+    perType.set("tool_call", (perType.get("tool_call") ?? 0) + n);
+  }
+
+  for (const e of events) {
+    const day = Math.floor(e.atMs / DAY);
+    if (day < startDay || day > today) continue;
+    perDay[day - startDay] += 1;
+    // The same type vocabulary `mockStatsCounts` derives, so `mostly` on the
+    // card and `by_type` in the table name the same thing.
+    const type =
+      e.kind === "blocked"
+        ? "policy_deny"
+        : e.kind === "budget"
+          ? "budget_threshold"
+          : e.detector
+            ? "identity_finding"
+            : "sustained_loop";
+    perType.set(type, (perType.get(type) ?? 0) + 1);
+    total += 1;
+  }
+
+  const latestFullDay = perDay.length >= 2 ? perDay[perDay.length - 2] : 0;
+  const baseline = perDay.length >= 2 ? perDay.slice(0, perDay.length - 2) : [];
+  const medianDay = median(baseline);
+  const confidence = daysHeld < 14 ? ("too_new" as const) : ("normal" as const);
+  const timesMedian =
+    confidence === "normal" && medianDay > 0
+      ? Math.round((latestFullDay / medianDay) * 100) / 100
+      : null;
+  const peak = perDay.length ? Math.max(...perDay) : 0;
+  const top = [...perType.entries()].sort((x, y) => y[1] - x[1])[0];
+
+  return {
+    agent_id: id,
+    confidence,
+    days_held: daysHeld,
+    total,
+    median_day: medianDay,
+    latest_full_day: latestFullDay,
+    times_median: timesMedian,
+    busiest_day_share: total > 0 ? Math.round((peak / total) * 100) / 100 : 0,
+    direction: mockDirection(perDay),
+    top_type: top ? top[0] : null,
+    top_type_share: top && total > 0 ? Math.round((top[1] / total) * 100) / 100 : 0,
+    daily: perDay,
+  };
+}
+
+/** True median: the average of the middle two on an even count, not the lower
+ * of them, matching `profile.rs`. Rounding its own baseline down would report
+ * every even-length history as slightly more unusual than it is. */
+function median(xs: number[]): number {
+  if (xs.length === 0) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/** The last 7 days against the 7 before them, as `profile.rs` does it. */
+function mockDirection(daily: number[]): "rising" | "falling" | "steady" | "unknown" {
+  if (daily.length < 14) return "unknown";
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  const recent = sum(daily.slice(-7));
+  const before = sum(daily.slice(-14, -7));
+  if (recent > before * 1.5 && recent > before) return "rising";
+  if (before > recent * 1.5 && before > recent) return "falling";
+  return "steady";
+}
+
 /** What the envelope refused, per storyline.
  *
  * # WHY THIS FOLLOWS CALM / INCIDENT
@@ -3037,6 +3178,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     }
     case "bus_status": return r({ kind: "demo", dir: "/preview" });
     case "bus_quarantine": return r(mockQuarantine());
+    case "agent_profile":
+      return r(mockAgentProfile(String(args?.agent_id ?? ""), Number(args?.window_days ?? 90)));
 
     case "money_overview": return r(mockOverview());
     case "money_runs": return r(mockRuns());
