@@ -42,12 +42,19 @@
 //!
 //! There is no rollup table. A rollup is a cache, and a cache that can disagree
 //! with the events will, quietly, because both numbers stay plausible. This
-//! store already carries `rollup_spend_1m`, added "for later" in the first
+//! store used to carry `rollup_spend_1m`, added "for later" in the first
 //! migration and never populated by anything, which is what a speculative
-//! rollup is worth. Recomputing from `events` keeps one source of truth; the
-//! index `idx_events_agent_ts_ms` is what makes that cheap.
+//! rollup is worth; it was dropped on 2026-08-11 by migration v7. Recomputing
+//! from `events` keeps one source of truth, and the index
+//! `idx_events_agent_ts_ms` is what makes that cheap.
 //!
-//! Revisit on a MEASURED query time from a real box, not on a feeling.
+//! **That was written as a decision to revisit on a MEASURED query time rather
+//! than on a feeling, and the measurement has since been taken.** On 42 agents
+//! at 100 events a day over 90 days, 378,000 rows, one profile answers in
+//! 4.6 ms, against 1.1 ms at a hundredth of the data
+//! (`crates/api/tests/stats_scale.rs`, 2026-08-11). A hundredfold in rows costs
+//! roughly four times in latency, on an index doing its job. The decision
+//! stands, and it now stands on a number.
 
 use serde::Serialize;
 use std::collections::BTreeMap;

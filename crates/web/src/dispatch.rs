@@ -266,6 +266,15 @@ fn block_action(kind: &str, blocked: bool) -> &'static str {
 // allocation and a deref at every call site to satisfy a lint about a type we
 // do not control.
 #[allow(clippy::result_large_err)]
+/// The window the Agent card's profile asks for when the caller does not say.
+///
+/// A quarter. Long enough that a monthly rhythm has been seen three times, and
+/// the same span the retention default keeps (`GENARYX_HISTORY_DAYS`), so the
+/// card never asks for history the box has already dropped.
+fn default_profile_window() -> i64 {
+    90
+}
+
 pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Response, Response> {
     match name {
         "admission_baseline" => {
@@ -373,6 +382,27 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             Ok(ok(genaryx_api::stats::stats_counts(
                 a.scan,
                 a.window_days,
+                &ctx.bus,
+            )))
+        }
+        // ONE agent's rhythm, and how its latest complete day sits in it. A
+        // read, and classified as one in roles.rs.
+        //
+        // `window_days` is the caller's, defaulted rather than required, so an
+        // older frontend gets the quarter the card was designed around instead
+        // of an error.
+        "agent_profile" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                agent_id: String,
+                #[serde(default = "default_profile_window")]
+                window_days: i64,
+            }
+            let a: A = decode(args)?;
+            Ok(ok(genaryx_api::stats::profile::agent_profile(
+                &a.agent_id,
+                a.window_days,
+                chrono::Utc::now().timestamp_millis(),
                 &ctx.bus,
             )))
         }
