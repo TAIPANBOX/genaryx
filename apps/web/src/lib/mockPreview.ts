@@ -807,7 +807,11 @@ function baseRunFor(a: FleetAgent, opts: { ignoreClosed?: boolean } = {}) {
     calls,
     cache_hits: Math.round(calls * 0.12),
     steps: Math.min(calls, 40),
-    last_seen: ago(Math.random() * 60_000),
+    // When this run was last active, spread across the agent's life rather
+    // than pinned to "a moment ago". `pseudo` rather than `Math.random` so a
+    // reload does not reshuffle which agents are stale, and cubed so the fleet
+    // is mostly warm with a real tail, which is what an estate looks like.
+    last_seen: ago(Math.round(pseudo(a.name + "seen") ** 3 * 45 * DAY)),
     killed: lifecycle !== "live",
     lifecycle,
   };

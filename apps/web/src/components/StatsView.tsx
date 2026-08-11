@@ -132,6 +132,47 @@ const COLUMNS: Column[] = [
   },
 ];
 
+/** Why the window selector does not touch Spend and Calls, and why that is a
+ * decision rather than a gap.
+ *
+ * # IT WAS WIRED UP, AND THE RESULT WAS NONSENSE
+ *
+ * tokenfuse #197 taught `/v1/runs` to accept a window and #198 made it declare
+ * the one it applied, so on 2026-08-11 the console was wired to follow the
+ * selector. The demo then showed: 24h $8,151, 7d $15,024, 30d $31,856.
+ *
+ * Yurii read that in seconds and said it could not be right, and he was
+ * right. As spend per period it is absurd: a day at $8,151 is $57,000 a week,
+ * not $15,000.
+ *
+ * The quantity was not spend per period. `/v1/runs?since_millis=` selects runs
+ * last SEEN in the window, and each surviving run reports its LIFETIME total,
+ * because that store folds per run and not per time bucket. So the figure was
+ * "the whole-life spend of the runs that happened to be active recently",
+ * which is a coherent quantity and one nobody reads off a column called SPEND
+ * under a window selector.
+ *
+ * # THE LESSON, BECAUSE THIS WAS DOCUMENTED AND STILL SHIPPED
+ *
+ * That limit was written on the store method, on the query struct, in the
+ * connector, in the legend, and asserted in a Cloud test. All of it was true
+ * and none of it helped: the first person to look at the screen misread the
+ * number, because the shape of the screen told him to.
+ *
+ * **A quantity guaranteed to be misread must not be wired to the control that
+ * invites the misreading.** Documenting the trap is not the same as removing
+ * it.
+ *
+ * # WHAT WOULD ACTUALLY FIX IT
+ *
+ * A per-period spend fold in the Cloud. It does not exist: `Store::series` is
+ * a burn-rate signal capped at the last 100,000 samples (about six days at
+ * this fleet's volume, and hours at a real one), and `unit_months` is
+ * month-to-date per unit. Real windowed spend is a new shape, and when it
+ * exists this column can follow the selector honestly.
+ *
+ * Until then the money columns say what they are, which is every run the plane
+ * holds. */
 /** One sentence per source, and each says what the reader can DO about it.
  *
  * The `agent-id` line is the one that matters. `unitForTeam`'s table mirrors
@@ -630,7 +671,8 @@ export function StatsView({
 
       <div className="px-4 pb-1">
         <span className="mono text-[10px]" style={{ color: "var(--faint)" }}>
-          {"\u00B0"} the money plane's own window; the selector above moves only the bus columns
+          {"\u00B0"} every run the money plane holds, of any age. The selector above moves only the bus
+          columns, deliberately, because a windowed run total is not windowed spend
         </span>
       </div>
 
