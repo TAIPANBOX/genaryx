@@ -324,6 +324,13 @@ export function StatsView({
           countsMeasured && r.countsApply && r.worstOvershootMicrousd !== null
             ? usd4(r.worstOvershootMicrousd / 1_000_000)
             : null,
+        idryx_detectors:
+          countsMeasured && r.countsApply
+            ? Object.entries(r.detectors)
+                .sort((a, b) => b[1] - a[1])
+                .map(([name, n]) => `${name}:${n}`)
+                .join(" ")
+            : null,
         unattributed: r.unattributed,
       })),
     [sorted, runs, countsMeasured, group],
@@ -342,6 +349,7 @@ export function StatsView({
         { key: "odd_behaviour" as const, header: "odd_behaviour" },
         { key: "budget_events" as const, header: "budget_events" },
         { key: "worst_breach_usd" as const, header: "worst_breach_usd" },
+        { key: "idryx_detectors" as const, header: "idryx_detectors" },
         { key: "unattributed" as const, header: "unattributed" },
       ],
     [],
@@ -653,6 +661,18 @@ function StatsTableRow({
   // of this did.
   const count = (v: number) => (hasCounts && row.countsApply ? v.toLocaleString("en-US") : "-");
   const shown = group === "unit" && !row.unattributed ? prettyUnit(row.label) : row.label;
+  // WHAT was odd, not just how much. Idryx sends one wire type carrying
+  // twenty-five detector names, so the count on its own describes nothing:
+  // "9 findings" and "impossible_travel twice, over_privileged_nhi seven
+  // times" are the same number and different information. Busiest first, so a
+  // long list still opens with the thing worth reading.
+  const detectorSummary = (() => {
+    const named = Object.entries(row.detectors).sort((a, b) => b[1] - a[1]);
+    if (named.length === 0) return null;
+    return (
+      "idryx detectors: " + named.map(([name, n]) => (n > 1 ? `${name} x${n}` : name)).join(", ")
+    );
+  })();
   return (
     <tr style={{ borderTop: "1px solid var(--line)" }}>
       <td className="px-3 py-2" style={{ color: row.unattributed ? "var(--faint)" : "var(--fg)" }}>
@@ -698,7 +718,18 @@ function StatsTableRow({
       >
         {count(row.blockedByOperator)}
       </td>
-      <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>
+      <td
+        className="mono text-[11px] px-3 py-2 text-right"
+        style={{
+          color: "var(--dim)",
+          // Underlined only when there is something to read, so the cue means
+          // "hover me" rather than decorating every zero on the screen.
+          textDecoration: detectorSummary ? "underline dotted" : undefined,
+          textUnderlineOffset: 3,
+          cursor: detectorSummary ? "help" : undefined,
+        }}
+        title={detectorSummary ?? undefined}
+      >
         {count(row.anomalies)}
       </td>
       <td className="mono text-[11px] px-3 py-2 text-right" style={{ color: "var(--dim)" }}>

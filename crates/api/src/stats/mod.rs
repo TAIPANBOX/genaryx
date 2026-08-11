@@ -1004,6 +1004,82 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Idryx ships one wire type carrying twenty-five detector names, so the
+    /// count alone describes nothing. This is the test that the name survives
+    /// to the operator.
+    #[test]
+    fn an_identity_finding_counts_as_odd_and_keeps_the_detector_that_fired() {
+        let a = "agent://acme.local/data/pii-scanner";
+        let (state, dir) = seeded_state(
+            "idryx",
+            &[
+                event(
+                    a,
+                    "2026-08-10T10:00:00Z",
+                    "identity_finding",
+                    serde_json::json!({ "detector": "impossible_travel" }),
+                ),
+                event(
+                    a,
+                    "2026-08-10T10:01:00Z",
+                    "identity_finding",
+                    serde_json::json!({ "detector": "over_privileged_nhi" }),
+                ),
+                event(
+                    a,
+                    "2026-08-10T10:02:00Z",
+                    "identity_finding",
+                    serde_json::json!({ "detector": "over_privileged_nhi" }),
+                ),
+                // A finding with no detector still counts as odd. It just
+                // cannot describe itself, and naming it would be worse than
+                // the gap.
+                event(
+                    a,
+                    "2026-08-10T10:03:00Z",
+                    "identity_finding",
+                    serde_json::json!({}),
+                ),
+            ],
+        );
+
+        let p = stats_counts(500, 0, &state);
+        let row = &p.agents[0];
+        assert_eq!(row.anomalies, 4, "every finding is odd behaviour");
+        assert_eq!(
+            row.by_detector.get("over_privileged_nhi"),
+            Some(&2),
+            "the same detector firing twice is two, not one"
+        );
+        assert_eq!(row.by_detector.get("impossible_travel"), Some(&1));
+        assert_eq!(
+            row.by_detector.len(),
+            2,
+            "the nameless finding adds no bucket rather than an empty one"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The seven names idryx RESERVED and never emitted stay uncounted, and the
+    /// reason changed on 2026-08-10 without the conclusion changing: idryx now
+    /// emits, but as `identity_finding`, so those names are still not wire
+    /// types and a column for one would still read zero forever.
+    #[test]
+    fn the_reserved_names_are_still_not_wire_types() {
+        for reserved in [
+            "behavior_anomaly",
+            "impossible_travel",
+            "attestation_missing",
+        ] {
+            assert!(
+                !ANOMALY_TYPES.contains(&reserved),
+                "{reserved} travels in data.detector, never as a type"
+            );
+        }
+        assert!(ANOMALY_TYPES.contains(&"identity_finding"));
+    }
+
     /// A kill by a person and a kill by the plane are the same event type and
     /// differ only by one field. Getting this backwards would credit the
     /// services with an operator's decisions, or blame an operator for the

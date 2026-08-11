@@ -33,6 +33,11 @@ export interface AgentStats {
   /** Every event type seen for this agent under its own raw name, including
    * types this build does not recognize. */
   by_type: Record<string, number>;
+  /** Which idryx detectors fired, by name. Idryx ships ONE wire type carrying
+   * twenty-five detector names, so `by_type` would say `identity_finding: 9`
+   * and describe nothing. Empty when idryx has found nothing about this agent,
+   * and on a box whose idryx does not emit. */
+  by_detector: Record<string, number>;
   last_seen: string;
 }
 

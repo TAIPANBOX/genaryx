@@ -991,7 +991,25 @@ interface SeededEvent {
   atMs: number;
   kind: "blocked" | "anomaly" | "budget";
   byOperator: boolean;
+  /** Set when this odd-behaviour event is an idryx `identity_finding`; the
+   * detector name is what makes it describable. Null for the money plane's own
+   * runaway shapes, which are already named by their type. */
+  detector: string | null;
 }
+
+/** Real detector names from idryx's own catalogue, so the preview teaches the
+ * vocabulary an operator will actually meet rather than a plausible-looking
+ * invention. */
+const IDRYX_DETECTORS = [
+  "over_privileged_nhi",
+  "impossible_travel",
+  "behavior_anomaly",
+  "attestation_missing",
+  "new_device",
+  "shadow_mcp",
+  "excessive_agency",
+  "beaconing",
+];
 
 /** One agent's year, built once and reused across renders and windows. */
 const seededYear = new Map<string, SeededEvent[]>();
@@ -1012,12 +1030,21 @@ function yearFor(a: FleetAgent): SeededEvent[] {
     const daysAgo = Math.pow(p, 1.7) * 365;
     const roll = pseudo(`${id}:kind:${i}`);
     const kind: SeededEvent["kind"] = roll < 0.62 ? "blocked" : roll < 0.88 ? "anomaly" : "budget";
+    // Roughly half the odd behaviour is an idryx finding, which is the shape a
+    // real estate has: the money plane sees runaways, the identity plane sees
+    // permissions and devices, and they are not the same events. Names are
+    // idryx's own detectors, not invented ones.
+    const detector =
+      kind === "anomaly" && pseudo(`${id}:det:${i}`) < 0.5
+        ? IDRYX_DETECTORS[Math.floor(pseudo(`${id}:detn:${i}`) * IDRYX_DETECTORS.length)]
+        : null;
     out.push({
       atMs: now - daysAgo * DAY,
       kind,
       // A small slice of stops were a person's call, the same shape the real
       // counter reports from `console.block_*` and an actor-named kill.
       byOperator: kind === "blocked" && pseudo(`${id}:op:${i}`) < 0.08,
+      detector,
     });
   }
   seededYear.set(a.id, out);
@@ -1051,9 +1078,15 @@ function mockStatsCounts(windowDays: number) {
       frozenAgents.has(a.id) || stoppedUnits.has(a.team) || stoppedUsers.has(a.owner) ? 1 : 0;
     if (haltedNow) scanned += 1;
 
+    const by_detector: Record<string, number> = {};
+    for (const e of inWindow) {
+      if (e.detector) by_detector[e.detector] = (by_detector[e.detector] ?? 0) + 1;
+    }
     const by_type: Record<string, number> = {};
     if (blocked) by_type["policy_deny"] = blocked;
-    if (anomalies) by_type["sustained_loop"] = anomalies;
+    const findings = Object.values(by_detector).reduce((a, b) => a + b, 0);
+    if (anomalies - findings > 0) by_type["sustained_loop"] = anomalies - findings;
+    if (findings) by_type["identity_finding"] = findings;
     if (budget) by_type["budget_threshold"] = budget;
 
     const last = inWindow.reduce((m, e) => Math.max(m, e.atMs), 0);
@@ -1067,6 +1100,7 @@ function mockStatsCounts(windowDays: number) {
       // common case on a real box too.
       worst_overshoot_microusd: budget ? Math.round(pseudo(`${id}:over`) * 400_000) : null,
       by_type,
+      by_detector,
       last_seen: new Date(last || now).toISOString(),
     };
   });
