@@ -379,3 +379,55 @@ fn the_offset_journal_remembers_the_inode() {
             .is_none()
     );
 }
+
+/// Every table this store creates has a writer.
+///
+/// # THE ONE THAT DID NOT, AND WHAT IT COST
+///
+/// `rollup_spend_1m` was created by the very first migration with the comment
+/// "populated later by a reducer task". No reducer was ever written. It sat
+/// there empty from Phase 0 until 2026-08-11, and nothing noticed, because an
+/// empty table is indistinguishable from a quiet one and nothing ever looked.
+///
+/// It was not harmless. When the Statistics tab needed per-agent history, the
+/// obvious move was a rollup table filled by a reducer, and the argument
+/// against it was hard to make from first principles. This table WAS the
+/// argument: a cache that can drift from the events will drift, and the
+/// evidence that a speculative one never gets built was sitting in the schema.
+/// The decision to go without one was then confirmed by measurement rather than
+/// by taste (`crates/api/tests/stats_scale.rs`: a per-agent profile stays
+/// between 1 and 5 ms across a hundredfold increase in rows).
+///
+/// This test is the marker that keeps it gone. Adding a table here is fine;
+/// adding one with nothing that writes to it is what this refuses.
+#[test]
+fn the_schema_holds_no_table_that_nothing_writes() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+    let tables = store.table_names().expect("table_names");
+
+    assert!(
+        !tables.contains(&"rollup_spend_1m".to_string()),
+        "rollup_spend_1m had no writer for the whole life of this project and was \
+         dropped on 2026-08-11; re-adding it needs a reducer in the same commit. \
+         Tables now: {tables:?}"
+    );
+
+    // The four that remain, each named so that adding a fifth is a deliberate
+    // act rather than a diff nobody reads.
+    for expected in [
+        "events",
+        "source_offsets",
+        "event_quarantine",
+        "commands_journal",
+    ] {
+        assert!(
+            tables.contains(&expected.to_string()),
+            "{expected} must exist; tables: {tables:?}"
+        );
+    }
+    assert_eq!(
+        tables.len(),
+        4,
+        "a new table needs a writer and a line in this test, got {tables:?}"
+    );
+}
