@@ -27,6 +27,7 @@ import type { Approval, PolicyError, PolicyRecord, PolicyStatus } from "../polic
 import type { UiEvent } from "../types";
 import { DelegationGraphView } from "./DelegationGraphView";
 import { AgentRhythm } from "./AgentRhythm";
+import { AgentStops } from "./AgentStops";
 import { Sparkline } from "./dash";
 import { SeverityBadge } from "./SeverityBadge";
 import { SourceChip } from "./SourceChip";
@@ -735,6 +736,16 @@ export function Agent360({
       <section className="flex flex-col gap-2">
         <SectionHeader title="Rhythm" />
         <AgentRhythm agentId={agentId} />
+      </section>
+
+      {/* ---- Stops ----
+           Above Events and below Rhythm, and the order is the argument: the
+           rhythm says whether this agent is behaving normally, this says who
+           had to intervene when it was not, and Events below is the raw feed
+           both are folded from. */}
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Stops" />
+        <AgentStops agentId={agentId} />
       </section>
 
       {/* ---- Events ---- */}

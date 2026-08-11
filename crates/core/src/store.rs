@@ -248,8 +248,13 @@ pub struct StoredEvent {
 /// because the opposite was assumed here before the bench ran.
 #[derive(Debug, Clone)]
 pub struct EventDetail {
+    /// The producer's own timestamp, unchanged. Added 2026-08-11 with the
+    /// per-agent stop list, which is a LIST and so needs a when; the thing
+    /// worth leaving out of this row was always `raw`, not two short strings.
+    pub ts: String,
     pub agent_id: String,
     pub type_: String,
+    pub source: String,
     pub data: Option<serde_json::Value>,
 }
 
@@ -721,7 +726,7 @@ impl Store {
         let lim = binds.len();
 
         let sql = format!(
-            "SELECT agent_id, type, data FROM events WHERE ({}) \
+            "SELECT ts, agent_id, type, source, data FROM events WHERE ({}) \
              AND (?{cutoff} IS NULL OR (ts_ms IS NOT NULL AND ts_ms >= ?{cutoff})) \
              ORDER BY id DESC LIMIT ?{lim}",
             wants.join(" OR ")
@@ -732,10 +737,12 @@ impl Store {
         let mut rows = stmt.query(refs.as_slice()).map_err(store_err)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().map_err(store_err)? {
-            let data_json: Option<String> = row.get(2).map_err(store_err)?;
+            let data_json: Option<String> = row.get(4).map_err(store_err)?;
             out.push(EventDetail {
-                agent_id: row.get(0).map_err(store_err)?,
-                type_: row.get(1).map_err(store_err)?,
+                ts: row.get(0).map_err(store_err)?,
+                agent_id: row.get(1).map_err(store_err)?,
+                type_: row.get(2).map_err(store_err)?,
+                source: row.get(3).map_err(store_err)?,
                 data: data_json
                     .map(|s| serde_json::from_str(&s))
                     .transpose()
