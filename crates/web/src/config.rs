@@ -79,14 +79,7 @@ impl Config {
     /// silently lock an operator out of their own kill switch, and the console
     /// says at startup which way it read.
     pub fn require_passkey_from_env() -> bool {
-        matches!(
-            std::env::var("GENARYX_WEB_REQUIRE_PASSKEY")
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase()
-                .as_str(),
-            "1" | "true" | "yes" | "on"
-        )
+        parse_require_passkey(&std::env::var("GENARYX_WEB_REQUIRE_PASSKEY").unwrap_or_default())
     }
 
     /// Say which way [`Config::require_passkey`] was read, both ways.
@@ -137,8 +130,151 @@ impl Config {
     }
 }
 
+/// The words that turn the strict mode on, split out of
+/// [`Config::require_passkey_from_env`] so the decision has a seam a test can
+/// reach. Reading the variable is I/O and setting one is process-global; which
+/// words count is the part worth pinning, and it is the part that decides
+/// whether an operator can be locked out of their own kill switch by a typo.
+fn parse_require_passkey(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 fn home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    fn config_bound_to(ip: IpAddr) -> Config {
+        Config {
+            bind: SocketAddr::new(ip, 7420),
+            state_dir: PathBuf::from("/tmp/genaryx-web"),
+            ui_dir: None,
+            secure_cookies: false,
+            require_passkey: false,
+        }
+    }
+
+    #[test]
+    fn the_strict_passkey_mode_turns_on_for_the_words_an_operator_would_type() {
+        for on in ["1", "true", "yes", "on", "TRUE", "Yes", " ON ", "\ttrue\n"] {
+            assert!(
+                parse_require_passkey(on),
+                "{on:?} should turn the strict mode on; an operator who typed it and \
+                 got the permissive mode has an invariant they believe is enforced"
+            );
+        }
+    }
+
+    #[test]
+    fn anything_else_leaves_the_strict_mode_off_including_a_typo() {
+        // The direction is deliberate. Strict mode REFUSES a sensitive command
+        // from a caller with no enrolled passkey, so a typo that turned it ON
+        // would lock an operator out of their own kill switch with no
+        // explanation. Off is the safe reading of a value nobody meant.
+        for off in [
+            "", " ", "0", "false", "no", "off", "y", "enable", "enabled", "ON!", "truthy", "2",
+        ] {
+            assert!(
+                !parse_require_passkey(off),
+                "{off:?} must leave the strict mode off: a value nobody meant must not \
+                 refuse the commands an operator needs in an incident"
+            );
+        }
+    }
+
+    #[test]
+    fn both_state_files_sit_inside_the_state_directory_and_are_not_the_same_file() {
+        // They hold the Argon2id credential record and the enrolled
+        // authenticator keys. A path escaping the state directory would put
+        // them somewhere an operator does not know to protect or back up.
+        let c = config_bound_to(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        for p in [c.operator_file(), c.passkeys_file()] {
+            assert!(
+                p.starts_with(&c.state_dir),
+                "{} must live under {}",
+                p.display(),
+                c.state_dir.display()
+            );
+        }
+        assert_ne!(
+            c.operator_file(),
+            c.passkeys_file(),
+            "the credential record and the passkey store must be different files"
+        );
+    }
+
+    #[test]
+    fn the_default_state_directory_sits_beside_the_descriptors_the_planes_read() {
+        // Beside ~/.taipan so an operator backing up one backs up both, which
+        // is the whole reason it is not somewhere of its own.
+        let d = Config::default_state_dir();
+        let s = d.to_string_lossy();
+        assert!(
+            s.contains(".taipan"),
+            "the default state dir must sit beside the plane descriptors, got {s}"
+        );
+        assert!(
+            s.ends_with("genaryx-web"),
+            "and must be this console's own directory within it, got {s}"
+        );
+    }
+
+    #[test]
+    fn a_wildcard_bind_is_recognised_as_reaching_beyond_this_machine() {
+        // warn_if_exposed only logs, so what a test can hold is the
+        // classification it branches on: the difference between "reachable
+        // over the operator's tunnel" and "reachable from the internet".
+        for wildcard in [
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+        ] {
+            let c = config_bound_to(wildcard);
+            assert!(
+                c.bind.ip().is_unspecified(),
+                "{wildcard} is a wildcard bind"
+            );
+            assert!(
+                !c.bind.ip().is_loopback(),
+                "{wildcard} must not take the quiet loopback branch"
+            );
+            c.warn_if_exposed();
+        }
+
+        for loopback in [
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ] {
+            let c = config_bound_to(loopback);
+            assert!(
+                c.bind.ip().is_loopback(),
+                "{loopback} must read as loopback"
+            );
+            c.warn_if_exposed();
+        }
+
+        // The expected deployment: the tunnel's own address, which is neither.
+        let tunnel = config_bound_to(IpAddr::V4(Ipv4Addr::new(10, 9, 0, 1)));
+        assert!(!tunnel.bind.ip().is_loopback());
+        assert!(!tunnel.bind.ip().is_unspecified());
+        tunnel.warn_if_exposed();
+    }
+
+    #[test]
+    fn announcing_the_passkey_policy_works_either_way_round() {
+        // It is what tells whoever is on call which box they are on. Both
+        // branches are legitimate and neither should be a surprise.
+        let mut c = config_bound_to(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        c.announce_passkey_policy();
+        c.require_passkey = true;
+        c.announce_passkey_policy();
+    }
 }
