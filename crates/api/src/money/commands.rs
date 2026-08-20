@@ -773,4 +773,93 @@ mod tests {
     fn a_real_reason_passes() {
         assert!(require_break_glass_reason("runaway spend, operator override").is_ok());
     }
+
+    // The pure helpers every DTO in this module is built from. They were at 0%
+    // while carrying the numbers and the words an operator reads on the
+    // Overview and Money views.
+
+    #[test]
+    fn microdollars_become_the_dollars_an_operator_reads() {
+        // The Cloud stores microdollars and the UI shows dollars. A divisor
+        // wrong by a factor of a thousand is not a rendering bug: it is a
+        // spend figure an operator decides on, and nothing about the screen
+        // says which unit it is in.
+        assert_eq!(micros_to_usd(1_000_000), 1.0);
+        assert_eq!(micros_to_usd(12_500_000), 12.5);
+        assert_eq!(micros_to_usd(0), 0.0);
+        assert_eq!(
+            micros_to_usd(-2_000_000),
+            -2.0,
+            "a credit must stay negative"
+        );
+
+        // Sub-cent amounts survive rather than truncating to zero. A run that
+        // has spent something must not read as a run that has spent nothing.
+        assert!(
+            micros_to_usd(1) > 0.0,
+            "one microdollar must not round away to nothing"
+        );
+        assert!((micros_to_usd(4_999) - 0.004_999).abs() < 1e-9);
+    }
+
+    #[test]
+    fn every_severity_has_its_own_word_and_no_two_share_one() {
+        // The severity string is what the incident list sorts and filters on.
+        // Two severities printing the same word makes a critical incident
+        // indistinguishable from a low one in the only place a human looks.
+        let all = [
+            Severity::Info,
+            Severity::Low,
+            Severity::Medium,
+            Severity::High,
+            Severity::Critical,
+        ];
+        let mut seen: Vec<&'static str> = Vec::new();
+        for s in all {
+            let w = severity_str(s);
+            assert!(!w.is_empty(), "{s:?} prints nothing");
+            assert!(
+                !seen.contains(&w),
+                "{s:?} prints {w:?}, which another severity already uses"
+            );
+            seen.push(w);
+        }
+        assert_eq!(seen.len(), 5, "a severity was added without a word");
+    }
+
+    #[test]
+    fn a_timestamp_becomes_iso_and_an_impossible_one_is_shown_rather_than_hidden() {
+        let iso = millis_to_iso(1_753_000_000_000);
+        assert!(
+            iso.starts_with("20"),
+            "expected an ISO timestamp, got {iso}"
+        );
+        assert!(iso.ends_with('Z'), "expected UTC, got {iso}");
+
+        // A value no calendar can represent falls back to the raw number
+        // rather than to an empty string or a fabricated date. An operator
+        // seeing a bare integer knows the data is wrong; one seeing 1970 does
+        // not.
+        let broken = millis_to_iso(i64::MAX);
+        assert_eq!(broken, i64::MAX.to_string());
+    }
+
+    #[test]
+    fn a_failure_that_never_reached_a_server_reports_zero_rather_than_a_made_up_500() {
+        // The doc on CommandRecord::http_status says an honest 0 beats a
+        // fabricated 500, and this is where that is decided. A journal row
+        // claiming 500 for a request that never left the machine sends whoever
+        // reads it to look at the Cloud.
+        assert_eq!(status_of(&ConnectorError::NoDeviceSigner), 0);
+
+        // And the ones that did reach a verdict carry it.
+        assert_eq!(status_of(&ConnectorError::SignatureRejected), 403);
+        assert_eq!(
+            status_of(&ConnectorError::Api {
+                status: 409,
+                body: "conflict".into()
+            }),
+            409
+        );
+    }
 }
