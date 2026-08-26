@@ -21,6 +21,7 @@ import {
   busPlaneView,
   isIncidentEvent,
   INCIDENT_BANDS,
+  TAB_BANDS,
 } from "./incidents";
 import type { UiEvent } from "../types";
 
@@ -268,5 +269,67 @@ describe("the anomalies tab's filters", () => {
     ]);
     const before = rows.map((r) => r.title);
     expect(filterIncidents(rows, { severities: ["high", "critical"] }).map((r) => r.title)).toEqual(before);
+  });
+});
+
+describe("what the tab may see that the card may not", () => {
+  it("a_medium_bus_event_is_not_an_incident_on_the_overview_card", () => {
+    // The card's rule, unchanged. Ten rows answering "is anything on fire"
+    // must not fill with things that are not on fire.
+    expect(agg([ev({ severity: "medium", type: "taint_shadow" })])).toHaveLength(0);
+  });
+
+  it("the_tab_can_ask_for_medium_and_gets_it", () => {
+    // The gap this closes, and it is about work that shipped the same day:
+    // `taint_shadow` is the entire output of a firewall shadow week and it is
+    // `medium` on purpose, because paging at `taint_block`'s band during the
+    // week an operator was told to watch quietly is how they learn to mute
+    // the sender. Fixed at `medium`, it could not reach the console AT ALL,
+    // so the one surface Yurii actually looks at would have shown nothing
+    // from a subsystem built to be looked at.
+    const rows = aggregateIncidents(
+      {
+        moneyIncidents: [],
+        identityAlerts: [],
+        busEvents: [
+          ev({ id: 1, severity: "medium", source: "tokenfuse", type: "taint_shadow" }),
+          ev({ id: 2, severity: "high", source: "tokenfuse", type: "taint_block" }),
+        ],
+        postureFindings: [],
+      },
+      { bands: TAB_BANDS },
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].severity).toBe("high");
+    expect(rows[1].severity).toBe("medium");
+  });
+
+  it("widening_the_bands_does_not_let_in_the_per_action_audit_rows", () => {
+    // The tab widens by ONE band, not to everything. `tool_call` and
+    // `taint_raised` are `low` by design at the producer: one row per action.
+    // A tab that admitted them would be a bus explorer, which this console
+    // already has under its own name.
+    const rows = aggregateIncidents(
+      {
+        moneyIncidents: [],
+        identityAlerts: [],
+        busEvents: [
+          ev({ id: 1, severity: "low", type: "tool_call" }),
+          ev({ id: 2, severity: "low", type: "taint_raised" }),
+          ev({ id: 3, severity: "info", type: "policy_allow" }),
+        ],
+        postureFindings: [],
+      },
+      { bands: TAB_BANDS },
+    );
+    expect(rows).toHaveLength(0);
+    expect(TAB_BANDS.has("low")).toBe(false);
+  });
+
+  it("the_default_is_still_the_cards_bands_so_no_caller_changes_by_accident", () => {
+    // Every existing caller passes no options. If the default widened, the
+    // Overview card would silently gain rows nobody asked it for.
+    expect([...INCIDENT_BANDS].sort()).toEqual(["critical", "high"]);
+    expect([...TAB_BANDS].sort()).toEqual(["critical", "high", "medium"]);
   });
 });

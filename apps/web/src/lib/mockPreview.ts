@@ -2804,6 +2804,27 @@ function makeEvent(): UiEvent {
     off: eventSeq,
   };
 
+  // The agent firewall, shipped 2026-08-26. The protagonist reads the web and
+  // then asks to run a shell, which is the textbook injection chain: the run
+  // becomes untrusted at one turn and tries a high-privilege action at the
+  // next. Both events are emitted, not only the verdict, because the verdict
+  // alone reads "context was [web]" and never says where the web came from.
+  //
+  // Placed BEFORE the `tripped` branch, which returns unconditionally: sitting
+  // after it, this could only fire during `climbing`, which is sixteen seconds
+  // of a demo somebody watches for minutes, so in practice it never fired at
+  // all. Found by opening the panel and waiting, which is the only way that
+  // kind of miss is ever found.
+  if (a.id === PROTAGONIST_ID && state && !state.killed) {
+    const fw = Math.random();
+    if (fw < 0.1) {
+      return { ...base, source: "tokenfuse", type: "taint_raised", severity: "low", run_id: PROTAGONIST_RUN_ID, data: { stage: "request_history", added: ["web"], from_tools: ["web_search"], carrying: ["web"], unit: a.team }, raw: "" };
+    }
+    if (fw < 0.24) {
+      return { ...base, source: "tokenfuse", type: "taint_shadow", severity: "medium", run_id: PROTAGONIST_RUN_ID, data: { stage: "model_tool_call", mode: "shadow", rule: "no-exec-after-untrusted", labels: ["web"], requested: ["exec"], denied: ["exec"], tools: ["run_shell"], unit: a.team }, raw: "" };
+    }
+  }
+
   if (a.id === PROTAGONIST_ID && state && state.phase === "tripped" && !state.killed) {
     const roll = Math.random();
     const budgetUsd = manualRunBudgets.get(PROTAGONIST_RUN_ID) ?? PROTAGONIST_RUN_BUDGET_USD;

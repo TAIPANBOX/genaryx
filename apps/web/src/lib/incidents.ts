@@ -204,8 +204,34 @@ export function isQualityDriftEvent(e: UiEvent): boolean {
  * file does not have to be told. */
 export const INCIDENT_BANDS: ReadonlySet<string> = new Set(["critical", "high"]);
 
-export function isIncidentEvent(e: UiEvent): boolean {
-  return e.severity !== null && INCIDENT_BANDS.has(e.severity);
+/** What the Anomalies TAB admits: the card's two bands, plus `medium`.
+ *
+ * The two surfaces differ here on purpose, and the purpose has a name. The
+ * card answers "is anything on fire" in ten rows, so a band below the fire
+ * costs it the rows that are. The tab answers "show me all of it", which is
+ * the question `@yurii` asked it for on 2026-08-26: "було б подивитись все,
+ * як воно є".
+ *
+ * The case that forced it, the same day: tokenfuse's `taint_shadow` is the
+ * ENTIRE output of a firewall shadow week, and it is fixed at `medium` for a
+ * good reason at the producer, because paging at `taint_block`'s band during
+ * the week an operator was told to watch quietly is how they learn to mute
+ * the sender. Fixed there, it could not reach this console at all: a
+ * subsystem built to be looked at, invisible on the surface people look at.
+ * `budget_threshold` and `breaker_tripped` were in the same position and
+ * nobody had noticed, because neither is new.
+ *
+ * It widens by ONE band and stops. `low` is where the estate puts its
+ * per-action audit rows by design (`tool_call`, `taint_raised`), and a tab
+ * that admitted those would be a bus explorer, which this console already has
+ * under its own name and its own tab. */
+export const TAB_BANDS: ReadonlySet<string> = new Set(["critical", "high", "medium"]);
+
+export function isIncidentEvent(
+  e: UiEvent,
+  bands: ReadonlySet<string> = INCIDENT_BANDS,
+): boolean {
+  return e.severity !== null && bands.has(e.severity);
 }
 
 /** The producer's own source string, for the chip. Falls back to the union
@@ -257,10 +283,13 @@ function dataString(data: unknown, key: string): string | null {
  * into a typed field, and an event whose `data` is absent still renders with
  * its subject and its time.
  */
-function fromBus(events: readonly UiEvent[]): UnifiedIncident[] {
+function fromBus(
+  events: readonly UiEvent[],
+  bands: ReadonlySet<string> = INCIDENT_BANDS,
+): UnifiedIncident[] {
   const groups = new Map<string, { first: UiEvent; newest: UiEvent; count: number }>();
   for (const e of events) {
-    if (!isIncidentEvent(e) || isQualityDriftEvent(e)) continue;
+    if (!isIncidentEvent(e, bands) || isQualityDriftEvent(e)) continue;
     const key = busGroupKey(e);
     const g = groups.get(key);
     if (!g) {
@@ -431,12 +460,20 @@ export interface BusCoverage {
   incidentRows: number;
 }
 
-export function busCoverage(events: readonly UiEvent[], limit: number): BusCoverage {
+export function busCoverage(
+  events: readonly UiEvent[],
+  limit: number,
+  // The SAME bands the caller aggregated with. A footer that counted a
+  // different set than the rows above it would be a number an operator
+  // checks the panel against and finds wrong, which costs the whole footer
+  // its credibility including the part about truncation.
+  bands: ReadonlySet<string> = INCIDENT_BANDS,
+): BusCoverage {
   const planes = new Set<string>();
   let incidentRows = 0;
   for (const e of events) {
     if (e.source) planes.add(e.source);
-    if (isIncidentEvent(e)) incidentRows += 1;
+    if (isIncidentEvent(e, bands)) incidentRows += 1;
   }
   return {
     read: events.length,
@@ -457,12 +494,19 @@ export function busCoverage(events: readonly UiEvent[], limit: number): BusCover
  * occurrences desc, then timestamp desc. Pure and total: never throws,
  * never mutates its input, always returns every row (callers slice to a
  * top-N themselves, e.g. the Incident Center card's top 10). */
-export function aggregateIncidents(input: AggregateIncidentsInput): UnifiedIncident[] {
+export function aggregateIncidents(
+  input: AggregateIncidentsInput,
+  opts: { bands?: ReadonlySet<string> } = {},
+): UnifiedIncident[] {
+  // Defaulting to the card's bands and not the tab's: every existing caller
+  // passes nothing, and a default that widened would give the Overview card
+  // rows nobody asked it for.
+  const bands = opts.bands ?? INCIDENT_BANDS;
   const rows: UnifiedIncident[] = [
     ...fromMoney(input.moneyIncidents),
     ...fromIdentity(input.identityAlerts),
     ...fromQualityDrift(input.busEvents),
-    ...fromBus(input.busEvents),
+    ...fromBus(input.busEvents, bands),
     ...fromPosture(input.postureFindings),
   ];
   return rows.sort(

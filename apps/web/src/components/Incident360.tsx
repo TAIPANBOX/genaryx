@@ -86,6 +86,7 @@ export function Incident360({
   const subject = incidentSubject(row);
   const chain = incidentDelegation(row);
   const data = incidentData(row);
+  const firewall = firewallFrom(data);
   const runId = incidentRunId(row);
 
   const [run, setRun] = useState<Run | null>(null);
@@ -310,6 +311,38 @@ export function Incident360({
             </span>
           ) : null}
         </Q>
+
+        {firewall ? (
+          <Q
+            label="What the filter decided"
+            note={
+              firewall.mode === "shadow"
+                ? "the agent firewall matched a deny rule and DID NOT enforce it, " +
+                  "because it is running in shadow. The answer carrying this tool " +
+                  "call reached the client, and the client ran the tool."
+                : "the agent firewall refused this action outright."
+            }
+          >
+            <span className="flex flex-col gap-1">
+              <span>
+                <b>{firewall.rule}</b>
+                {firewall.mode === "shadow" ? " · would have refused" : " · refused"}
+                {firewall.denied ? ` ${firewall.denied}` : ""}
+              </span>
+              {firewall.tools ? (
+                <span style={{ color: "var(--faint)" }}>
+                  the agent asked to use <b>{firewall.tools}</b>
+                </span>
+              ) : null}
+              {firewall.labels ? (
+                <span style={{ color: "var(--faint)" }}>
+                  the run was carrying <b>{firewall.labels}</b>
+                  {firewall.stage ? ` · judged at ${firewall.stage.replace(/_/g, " ")}` : ""}
+                </span>
+              ) : null}
+            </span>
+          </Q>
+        ) : null}
 
         <Q label="Was it stopped">{stoppedAnswer(run, record, data, runAsked, recordAsked)}</Q>
 
@@ -538,6 +571,43 @@ function moneyFrom(
 /** The members a producer uses to say "this was refused, and here is why".
  * Read best-effort and never turned into a claim of this console's own: it
  * reports what the producer wrote. */
+/** The agent-firewall members, when this incident is one of its verdicts.
+ *
+ * `null` for every other kind of incident, so the section simply is not there
+ * rather than rendering a row of "not recorded" for facts that were never
+ * about this event. The producer fixes the shape (tokenfuse
+ * `crates/core/src/agent_event.rs::taint_verdict_data`), and `taint_block` and
+ * `taint_shadow` carry the same one, so the card reads both with one path and
+ * only `mode` changes what it says.
+ *
+ * Keyed on the members rather than on the type string: a consumer that
+ * switched on `taint_shadow` would go blind the day a third verdict type
+ * shipped carrying the same fields, which is exactly what happened to this
+ * console's bus read one type earlier. */
+function firewallFrom(data: Record<string, unknown> | null): {
+  rule: string;
+  mode: string;
+  denied: string;
+  tools: string;
+  labels: string;
+  stage: string;
+} | null {
+  if (!data) return null;
+  const rule = typeof data.rule === "string" ? data.rule : "";
+  const mode = typeof data.mode === "string" ? data.mode : "";
+  if (!rule || !mode) return null;
+  const list = (k: string) =>
+    Array.isArray(data[k]) ? (data[k] as unknown[]).filter((v) => typeof v === "string").join(", ") : "";
+  return {
+    rule,
+    mode,
+    denied: list("denied"),
+    tools: list("tools"),
+    labels: list("labels"),
+    stage: typeof data.stage === "string" ? data.stage : "",
+  };
+}
+
 function refusalFrom(data: Record<string, unknown> | null): string | null {
   if (!data) return null;
   for (const key of ["decision", "effect", "verdict", "reason"]) {

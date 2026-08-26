@@ -17,6 +17,7 @@ import {
   planesPresent,
   INCIDENT_SOURCE_LABEL,
   INCIDENT_SOURCE_VIEW,
+  TAB_BANDS,
 } from "../lib/incidents";
 import type { Incident, MoneyError } from "../moneyTypes";
 import type { IdryxAlert } from "../identityTypes";
@@ -132,8 +133,15 @@ export function AnomaliesView({
     };
   }, []);
 
+  // `TAB_BANDS`, not the card's: this tab exists to show everything, and the
+  // band below the card's floor is where a shadowing firewall and an
+  // approaching budget live. See `TAB_BANDS` for why it stops at `medium`.
   const all = useMemo(
-    () => aggregateIncidents({ moneyIncidents, identityAlerts, busEvents, postureFindings }),
+    () =>
+      aggregateIncidents(
+        { moneyIncidents, identityAlerts, busEvents, postureFindings },
+        { bands: TAB_BANDS },
+      ),
     [moneyIncidents, identityAlerts, busEvents, postureFindings],
   );
   const available = useMemo(() => planesPresent(all), [all]);
@@ -141,7 +149,10 @@ export function AnomaliesView({
     () => filterIncidents(all, { planes, severities, query }),
     [all, planes, severities, query],
   );
-  const coverage = useMemo(() => busCoverage(busEvents, BUS_FETCH_LIMIT), [busEvents]);
+  const coverage = useMemo(
+    () => busCoverage(busEvents, BUS_FETCH_LIMIT, TAB_BANDS),
+    [busEvents],
+  );
 
   const toggle = (list: string[], set: (v: string[]) => void, value: string) =>
     set(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
