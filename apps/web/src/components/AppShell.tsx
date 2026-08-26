@@ -20,6 +20,7 @@ import { IdentityView } from "./IdentityView";
 import { MemoryView } from "./MemoryView";
 import { MoneyView } from "./MoneyView";
 import { OnboardView } from "./OnboardView";
+import { AnomaliesView } from "./AnomaliesView";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
@@ -456,6 +457,9 @@ export function AppShell() {
         )}
         {view === "overview" && (
           <OverviewView onOpenAgent={onOpenAgent} onSelectView={onSelectView} onExplainIncident={onExplainIncident} />
+        )}
+        {view === "anomalies" && (
+          <AnomaliesView onOpenAgent={onOpenAgent} onSelectView={onSelectView} />
         )}
         {view === "money" && (
           <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} onExplainIncident={onExplainIncident} />
