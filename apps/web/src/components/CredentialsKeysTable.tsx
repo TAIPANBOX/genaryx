@@ -65,6 +65,29 @@ function CreatedCell({ created, nowMs }: { created: string | null; nowMs: number
 }
 
 /**
+ * What the "last seen" and "calls" columns actually cover, as a line on the
+ * page rather than a `title=` tooltip.
+ *
+ * Both columns merge `since_startup` with `history`, and `history` is empty on
+ * every key when the gateway keeps no stored call history
+ * (`GatewayKeysReport.history_available`). In that state a key that was in
+ * heavy use until the last restart shows 0 calls and no last-seen, and
+ * {@link deriveKeyStatus} therefore derives "never used" for it. That is the
+ * most dangerous label in this table to be wrong about, and until now the only
+ * disclosure of it was a tooltip on the two cells. A tooltip does not survive a
+ * screenshot, and this table gets screenshotted into access reviews.
+ */
+function WindowNote({ report }: { report: GatewayKeysReport }) {
+  return (
+    <div className="px-5 pb-2 text-[11px]" style={{ color: report.history_available ? "var(--faint)" : "var(--sev-medium)" }}>
+      {report.history_available
+        ? "last seen and calls merge the gateway's stored call history with the current gateway process. A key with no stored history of its own counts only the current process."
+        : "This gateway keeps no stored call history, so last seen and calls cover only the time since the gateway process started. A key that was in heavy use before the last restart reads here as never used."}
+    </div>
+  );
+}
+
+/**
  * The Credentials card's key table (I15 "key lifecycle health"): one row per
  * `GatewayKeysReport.keys` entry, sorted worst-first by
  * {@link keyStatusRank}, status derived by {@link deriveKeyStatus}. Mirrors
@@ -88,6 +111,7 @@ export function CredentialsKeysTable({
 
   return (
     <div style={{ overflowX: "auto" }}>
+      <WindowNote report={report} />
       <div
         className="grid gap-3 px-5 py-2"
         style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
