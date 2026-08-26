@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mailLinkFrom, mailLinkNotice, parseMailLink } from "./mailLink";
+import {
+  buildMailLink,
+  mailLinkFrom,
+  mailLinkNotice,
+  parseMailLink,
+  type MailLinkKind,
+} from "./mailLink";
 
 describe("parseMailLink", () => {
   it("resolves the link the notifier actually builds", () => {
@@ -161,5 +167,41 @@ describe("mailLinkFrom", () => {
     expect(link?.kind).toBe("owner");
     expect(link?.id).toBe("team-finance@acme.example");
     expect(link?.view).toBe("identity");
+  });
+});
+
+// A link nobody can BUILD is a link only a notifier can send. The console shows
+// the operator an incident and, until now, had no way to hand them the address
+// of the thing they are looking at.
+describe("buildMailLink", () => {
+  it("round-trips through the parser for every kind the parser accepts", () => {
+    const cases: [MailLinkKind, string][] = [
+      ["incident", "budget_threshold:run-42"],
+      ["agent", "agent://acme.example/support/tier1-bot"],
+      ["owner", "alice@acme.example"],
+    ];
+    for (const [kind, id] of cases) {
+      const path = buildMailLink(kind, id);
+      const back = parseMailLink(path);
+      expect(back, `${kind} did not survive the round trip: ${path}`).not.toBeNull();
+      expect(back?.kind).toBe(kind);
+      expect(back?.id).toBe(id);
+    }
+  });
+
+  it("escapes what a path would otherwise eat", () => {
+    // An agent id carries slashes, and a raw one would make the parser read a
+    // different subject than the one asked for. The round trip is the check
+    // that matters and it is asserted above; this pins the reason.
+    const path = buildMailLink("agent", "agent://acme.example/a/b");
+    expect(path).not.toContain("/a/b");
+    expect(parseMailLink(path)?.id).toBe("agent://acme.example/a/b");
+  });
+
+  it("offers the fragment form a static host can serve", () => {
+    const path = buildMailLink("incident", "budget_threshold:run-42");
+    expect(mailLinkFrom({ pathname: "/", hash: `#${path}` })?.id).toBe(
+      "budget_threshold:run-42",
+    );
   });
 });

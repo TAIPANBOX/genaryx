@@ -175,6 +175,30 @@ export function mailLinkFrom(loc: { pathname: string; hash: string }): MailLink 
   return parseMailLink(hash);
 }
 
+/**
+ * The address of a thing this console is showing, so an operator can hand it to
+ * somebody instead of describing where to click.
+ *
+ * The exact inverse of [`parseMailLink`], and a round-trip test through that
+ * function is what holds the two together. Written as a builder rather than as
+ * a template string at the call site because there are two escaping rules here
+ * that a caller would get wrong: an agent id carries slashes, which a raw path
+ * would read as further segments, and `encodeURIComponent` leaves `/` alone, so
+ * it is escaped explicitly.
+ *
+ * Returns a PATH, not a URL. The origin is the console the reader already has
+ * open, and a builder that guessed at one would put this deployment's hostname
+ * into a link meant for somebody on a different network. The caller decides
+ * whether to prepend `location.origin` or to hand over the fragment form.
+ */
+export function buildMailLink(kind: MailLinkKind, id: string): string {
+  const prefix =
+    kind === "incident" ? MAIL_LINK_PREFIX : kind === "agent" ? AGENT_LINK_PREFIX : OWNER_LINK_PREFIX;
+  // `encodeURIComponent` escapes almost everything a path would eat and leaves
+  // `/` alone, which is exactly the character an `agent://` id is full of.
+  return prefix + encodeURIComponent(id).replace(/%2F/gi, "%2F");
+}
+
 export function parseMailLink(pathname: string): MailLink | null {
   let kind: MailLinkKind;
   let prefix: string;
