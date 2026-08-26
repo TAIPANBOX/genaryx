@@ -19,6 +19,23 @@ const FIELD_STYLE = {
 } as const;
 
 /**
+ * Which `taipan up` environment the gateway was resolved from.
+ *
+ * "Runs real gateway calls and burns real budget" is written under the button.
+ * WHICH environment those calls land in came down the wire the whole time, in
+ * `status.source` (`drills::env::EnvSource`, the descriptor's own name), and
+ * nothing showed it: the only thing on screen to tell two environments apart
+ * was a loopback URL that is identical in both.
+ *
+ * A status with no source says so rather than falling back to a plausible
+ * name. There is no default environment to name.
+ */
+export function environmentLabel(status: Extract<DrillsStatus, { state: "ready" }>): string {
+  const name = status.source?.name;
+  return name ? `env ${name}` : "env not recorded";
+}
+
+/**
  * Shared "not ready yet" rendering for the Drills view - mirrors
  * `CryptoView.tsx`'s local `CryptoEmptyState`: still resolving, or no drills
  * plane (no `mockryx` binary and/or no `taipan up` gateway - see
@@ -116,6 +133,8 @@ export function DrillsView() {
         </span>
         <span className="chip" style={cssVar("dot", "var(--faint)")}>
           <span className="dot" aria-hidden="true" />
+          {environmentLabel(status)}
+          {" · "}
           {status.gateway_url}
           {status.has_api_key ? " · bearer resolved" : " · no bearer resolved"}
         </span>

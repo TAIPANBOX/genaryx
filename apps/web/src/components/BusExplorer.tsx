@@ -10,7 +10,7 @@ import { usePopover } from "../lib/popover";
 import { unitForTeam } from "../lib/views";
 import { AgentDetailCard } from "./AgentDetailCard";
 import { PinnedEventOverlay } from "./PinnedEventOverlay";
-import { RefusedLines } from "./RefusedLines";
+import { RefusedLines, Strip } from "./RefusedLines";
 import { SortBar, type SortDir } from "./SortBar";
 
 const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
@@ -69,6 +69,71 @@ const LIVE_EVENT = "bus:event";
 const COLUMNS = "84px 108px 190px 1fr 108px 24px";
 
 /**
+ * What the feed says when `recent_events` did not answer.
+ *
+ * `RecentEventsResult.error` exists, in its own words, "so a panel can say
+ * what happened instead of rendering an unexplained empty list", and this
+ * panel dropped it. The status bar's chip said "no answer from the box" while
+ * the list underneath said "no events yet", which is a claim about the bus.
+ * One of those two sentences was false and the reader had no way to tell
+ * which.
+ *
+ * Rendered whatever the list holds, not only when it is empty. Rows CAN
+ * arrive after a failed first read: the live subscription is a separate path
+ * and it prepends. The list then looks like the bus and is only what has
+ * happened since.
+ */
+export function FeedReadFailure({
+  source,
+  error,
+  count,
+}: {
+  source: EventsSource;
+  error?: string;
+  count: number;
+}) {
+  if (source !== "error") return null;
+  return (
+    <Strip tone="warn">
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>recent_events did not answer, so no history was read</div>
+      <div style={{ opacity: 0.85 }}>
+        {error ? `The box said: ${error}` : "The box gave no reason, which is itself worth knowing."}
+      </div>
+      {count > 0 && (
+        <div style={{ marginTop: 4, opacity: 0.85 }}>
+          The {count.toLocaleString("en-US")} row(s) below arrived on the live feed after that failure. They are
+          what has happened since, not what this bus holds.
+        </div>
+      )}
+    </Strip>
+  );
+}
+
+/**
+ * The empty list, which is two different facts wearing one sentence.
+ *
+ * An empty bus is information and "no events yet" is the right answer for it.
+ * A bus nobody could read is not empty, and saying it is, is CLAUDE.md
+ * invariant 4 one field down: a placeholder standing in for a measurement
+ * nobody took.
+ */
+export function FeedEmptyState({ source }: { source: EventsSource }) {
+  if (source === "error") {
+    return (
+      <div className="px-4 py-6 mono flex flex-col gap-1" style={{ fontSize: 12, color: "var(--faint)" }}>
+        <span style={{ color: "var(--fg)" }}>nothing was read.</span>
+        <span>This is not a report that the bus is empty. The strip above carries what the box answered.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+      no events yet.
+    </div>
+  );
+}
+
+/**
  * The Bus Explorer: a dense, virtualized live-event list. Rows are windowed
  * with `@tanstack/react-virtual` (only what is on screen, plus overscan,
  * ever mounts) so the list stays smooth however many events the bus has
@@ -80,6 +145,11 @@ const COLUMNS = "84px 108px 190px 1fr 108px 24px";
 export function BusExplorer() {
   const [events, setEvents] = useState<UiEvent[]>([]);
   const [source, setSource] = useState<EventsSource>("mock");
+  // Why the read failed, kept rather than dropped. `fetchRecentEvents` has
+  // carried this since the fixture fallback was removed and the panel took
+  // `events` and `source` only, which is how "the bus is empty" and "nobody
+  // could read the bus" ended up rendering the same six words.
+  const [readError, setReadError] = useState<string | undefined>(undefined);
   const [mode, setMode] = useState<BusMode | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
@@ -95,6 +165,7 @@ export function BusExplorer() {
       if (cancelled) return;
       setEvents(res.events);
       setSource(res.source);
+      setReadError(res.error);
       setLoading(false);
     });
     return () => {
@@ -175,6 +246,9 @@ export function BusExplorer() {
           idle rather than broken, so this belongs beside the feed and not on a
           page somebody has to know to open. */}
       <RefusedLines />
+      {/* What the box said when it did not answer. Above the list, because
+          the list is the thing being explained. */}
+      <FeedReadFailure source={source} error={readError} count={events.length} />
 
       <div className="px-4 py-2 shrink-0" style={{ borderBottom: "1px solid var(--line-2)", background: "var(--panel-2)" }}>
         <SortBar options={BUS_SORTS} active={sort.key} dir={sort.dir} onChange={(key, dir) => setSort({ key, dir })} />
@@ -205,9 +279,7 @@ export function BusExplorer() {
             loading events...
           </div>
         ) : events.length === 0 ? (
-          <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
-            no events yet.
-          </div>
+          <FeedEmptyState source={source} />
         ) : (
           <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
             {virtualizer.getVirtualItems().map((virtualRow) => {

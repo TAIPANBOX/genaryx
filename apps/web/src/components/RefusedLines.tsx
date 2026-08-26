@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { fetchQuarantine, type QuarantinePanel } from "../lib/quarantine";
+import { fetchQuarantine, type QuarantinePanel, type QuarantineReason } from "../lib/quarantine";
 import { useConsoleStateVersion } from "../lib/consoleState";
+import { formatTimestamp } from "../lib/format";
 
 /**
  * The strip above the Bus Explorer saying what this bus refused.
@@ -68,32 +69,54 @@ export function RefusedLines() {
       <div style={{ opacity: 0.85, marginBottom: 6 }}>{panel.note}</div>
       <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none" }}>
         {panel.reasons.map((r) => (
-          <li key={r.reason} style={{ marginTop: 6 }}>
-            <span style={{ fontWeight: 600 }}>{r.count.toLocaleString("en-US")}x</span> {r.reason}
-            {r.example_file ? (
-              <div style={{ opacity: 0.7 }}>
-                {r.example_file}
-                {r.example_offset !== null ? ` @ ${r.example_offset}` : ""}
-              </div>
-            ) : null}
-            {/* The head of one refused line. Enough to recognize which
-                producer, which is what somebody needs to go and fix it. */}
-            {r.raw_excerpt ? (
-              <div
-                style={{
-                  opacity: 0.6,
-                  overflowX: "auto",
-                  whiteSpace: "nowrap",
-                  maxWidth: "100%",
-                }}
-              >
-                {r.raw_excerpt}
-              </div>
-            ) : null}
-          </li>
+          <ReasonItem key={r.reason} reason={r} />
         ))}
       </ul>
     </Strip>
+  );
+}
+
+/**
+ * One refusal reason, with the two things an operator needs in order to act on
+ * it: where a refused line is on disk, and WHEN this last happened.
+ *
+ * The time is the half that was missing. A count on its own cannot tell a
+ * producer that is still broken from one that was fixed an hour ago and left
+ * its scar in the store, and both look identical for as long as the store
+ * holds the lines. `last_ts` came down the wire the whole time
+ * (`crates/core/src/store.rs`, an `Option<String>`) and nothing rendered it.
+ *
+ * A null `last_ts` says so rather than rendering nothing: an absent line in a
+ * list like this reads as recent to anybody scanning it.
+ */
+export function ReasonItem({ reason: r }: { reason: QuarantineReason }) {
+  return (
+    <li style={{ marginTop: 6 }}>
+      <span style={{ fontWeight: 600 }}>{r.count.toLocaleString("en-US")}x</span> {r.reason}
+      <div style={{ opacity: 0.7 }}>
+        {r.last_ts ? `last seen ${formatTimestamp(r.last_ts)}` : "last seen: not recorded"}
+      </div>
+      {r.example_file ? (
+        <div style={{ opacity: 0.7 }}>
+          {r.example_file}
+          {r.example_offset !== null ? ` @ ${r.example_offset}` : ""}
+        </div>
+      ) : null}
+      {/* The head of one refused line. Enough to recognize which
+          producer, which is what somebody needs to go and fix it. */}
+      {r.raw_excerpt ? (
+        <div
+          style={{
+            opacity: 0.6,
+            overflowX: "auto",
+            whiteSpace: "nowrap",
+            maxWidth: "100%",
+          }}
+        >
+          {r.raw_excerpt}
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -102,7 +125,7 @@ export function RefusedLines() {
 /// two different ways is how a reader learns to skip one. The amber rule down
 /// the left is the only addition, and it is what separates this from the calm
 /// line at a glance rather than by reading it.
-function Strip({ tone, children }: { tone: "warn" | "calm"; children: React.ReactNode }) {
+export function Strip({ tone, children }: { tone: "warn" | "calm"; children: React.ReactNode }) {
   const warn = tone === "warn";
   return (
     <div
