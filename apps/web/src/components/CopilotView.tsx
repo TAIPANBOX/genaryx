@@ -24,7 +24,7 @@ import type { MoneyError } from "../moneyTypes";
 import type { Decision, PolicyError } from "../policyTypes";
 import { ConfirmButton } from "./ConfirmButton";
 import { usePopover, PopoverHeader } from "../lib/popover";
-import { FelyxConnectCard } from "./FelyxConnectCard";
+import { FelyxConnectCard, felyxConnectSupport } from "./FelyxConnectCard";
 
 const FIELD_STYLE = {
   background: "var(--panel)",
@@ -237,7 +237,64 @@ function ConnectButton({ label, onConnect }: { label: string; onConnect: () => v
   );
 }
 
+/** What the residency banner states, from the status the box already served.
+ *
+ * Split out from the banner so it can be driven without a DOM, because the
+ * interesting cases here are the ABSENT ones. `CopilotStatusDto`
+ * (`crates/api/src/copilot/commands.rs`) carries `provider`, `model`,
+ * `endpoint` and `local` as four `Option`s that are `Some` together when a
+ * provider descriptor exists; the banner rendered two of them on the local
+ * branch and one on the remote branch, and dropped `endpoint` on both. Which
+ * machine the prompts actually reach is the one fact this banner exists to
+ * state, and it was the one field never printed. */
+export interface ResidencyFacts {
+  /** `status.local === true`, restated so a `null` local reads as remote here
+   * exactly as it does for the banner's colour. */
+  local: boolean;
+  headline: string;
+  /** The endpoint, or the words saying it was not recorded, never a blank and
+   * never a plausible default. */
+  endpoint: string;
+  /** False when the box sent no endpoint, so the caller can tone the line as
+   * an absence rather than as a value. */
+  endpointRecorded: boolean;
+}
+
+/**
+ * Read the banner's facts off a status.
+ *
+ * An absent endpoint is SAID, not skipped. A blank where an address belongs
+ * reads as "there is no endpoint", which is a claim nobody measured, and
+ * filling it from the provider table would put a real-looking address under a
+ * field the box never sent. The mock preview's own `copilot_status` omits the
+ * key entirely rather than sending null, so the absent case is the one most
+ * readers will ever see, and it must not render as the string "undefined"
+ * either.
+ */
+export function residencyFacts(status: CopilotStatus): ResidencyFacts {
+  const local = status.local === true;
+  const provider = status.provider ?? "unknown provider";
+  const model = status.model ?? "unknown model";
+  const endpoint =
+    typeof status.endpoint === "string" && status.endpoint.trim().length > 0 ? status.endpoint.trim() : null;
+  return {
+    local,
+    headline: local
+      ? `Local: ${model} via ${provider} on this machine`
+      : `Remote: ${model} via ${provider} (BYO key)`,
+    endpoint: endpoint ?? "endpoint not recorded",
+    endpointRecorded: endpoint !== null,
+  };
+}
+
 function ResidencyBanner({ status, onConnect }: { status: CopilotStatus | null; onConnect: () => void }) {
+  // Whether to offer the connect form at all. `FelyxConnectCard` is
+  // preview-only (see its module doc: `copilot_connect` has no handler in
+  // `crates/web/src/dispatch.rs`), so on a real box the button is withheld and
+  // the refusal's own detail is shown in its place, which is the thing an
+  // operator can actually act on.
+  const support = felyxConnectSupport();
+
   if (!status) {
     return (
       <div className="d-card px-4 py-3 mono" style={{ fontSize: 12, color: "var(--faint)" }}>
@@ -248,22 +305,29 @@ function ResidencyBanner({ status, onConnect }: { status: CopilotStatus | null; 
 
   if (!status.enabled) {
     return (
-      <div className="d-card px-4 py-3 flex items-center gap-2.5">
+      <div className="d-card px-4 py-3 flex items-start gap-2.5">
         <span
           aria-hidden="true"
-          style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--faint)", flex: "0 0 auto" }}
+          style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--faint)", flex: "0 0 auto", marginTop: 5 }}
         />
-        <span className="text-[12.5px]" style={{ color: "var(--dim)" }}>
-          No provider configured{status.disabled_reason ? ` - ${status.disabled_reason}` : ""}
-        </span>
+        <div className="flex flex-col" style={{ minWidth: 0 }}>
+          <span className="text-[12.5px]" style={{ color: "var(--dim)" }}>
+            No provider configured{status.disabled_reason ? ` - ${status.disabled_reason}` : ""}
+          </span>
+          {!support.supported && (
+            <span className="text-[11.5px]" style={{ color: "var(--faint)", marginTop: 5, lineHeight: 1.55 }}>
+              {support.detail}
+            </span>
+          )}
+        </div>
         <div className="flex-1" />
-        <ConnectButton label="Connect Felyx" onConnect={onConnect} />
+        {support.supported && <ConnectButton label="Connect Felyx" onConnect={onConnect} />}
       </div>
     );
   }
 
-  const local = status.local === true;
-  const tone = local ? "var(--mint)" : "var(--amber)";
+  const facts = residencyFacts(status);
+  const tone = facts.local ? "var(--mint)" : "var(--amber)";
   return (
     <div
       className="d-card px-4 py-3 flex items-center gap-2.5"
@@ -280,13 +344,30 @@ function ResidencyBanner({ status, onConnect }: { status: CopilotStatus | null; 
           flex: "0 0 auto",
         }}
       />
-      <span className="mono text-[12.5px]" style={{ color: tone }}>
-        {local
-          ? `Local: ${status.model ?? "unknown model"} via ${status.provider ?? "unknown provider"} on this machine`
-          : `Remote: ${status.provider ?? "unknown provider"} (BYO key)`}
-      </span>
+      <div className="flex flex-col" style={{ minWidth: 0 }}>
+        <span className="mono text-[12.5px]" style={{ color: tone }}>
+          {facts.headline}
+        </span>
+        <span
+          className="mono text-[11px] truncate"
+          style={{ color: facts.endpointRecorded ? "var(--dim)" : "var(--faint)", marginTop: 2 }}
+          title={facts.endpoint}
+        >
+          {facts.endpoint}
+        </span>
+      </div>
       <div className="flex-1" />
-      <ConnectButton label="Change" onConnect={onConnect} />
+      {support.supported ? (
+        <ConnectButton label="Change" onConnect={onConnect} />
+      ) : (
+        // A control that simply vanishes is its own small dishonesty: the
+        // operator cannot tell a console that is broken from a setting that
+        // lives somewhere else. One line in the button's place says which,
+        // and the disabled banner above carries the full instructions.
+        <span className="text-[11px]" style={{ color: "var(--faint)", flex: "0 0 auto" }}>
+          {support.short}
+        </span>
+      )}
     </div>
   );
 }
