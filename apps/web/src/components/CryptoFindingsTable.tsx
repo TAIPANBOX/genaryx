@@ -5,13 +5,28 @@ import { SeverityBadge } from "./SeverityBadge";
 const COLUMNS = "140px 120px 90px 70px 1fr 190px";
 
 /**
- * Quantum-vulnerable findings (docs/PHASE4.md W1 position 2): the 2028
- * discovery milestone's finding list - algorithm, asset type, severity,
- * occurrence count, locations, and the externally-facing/long-lived/planned
- * flags. `findings === null` means "no scan has run yet" (distinct from an
- * empty array, which means "scanned, found nothing").
+ * Quantum-vulnerable findings (docs/PHASE4.md W1 position 2): the selected
+ * NCSC milestone's finding list - algorithm, asset type, severity, occurrence
+ * count, locations, and the externally-facing/long-lived/planned flags.
+ * `findings === null` means "no scan has run yet" (distinct from an empty
+ * array, which means "scanned, and this milestone carried no list").
+ *
+ * `emptyNote` is what an empty list MEANS for the milestone on screen, decided
+ * in `lib/cryptoExport.ts` where a test can reach it. This component used to
+ * answer every empty list with "no quantum-vulnerable findings in the last
+ * scan", and for 2031 in qryx's own report - 1 system in scope, no list
+ * carried - that sentence was false. `missing` is the same distinction in the
+ * one thing prose cannot carry, which is the colour.
  */
-export function CryptoFindingsTable({ findings }: { findings: NcscFinding[] | null }) {
+export function CryptoFindingsTable({
+  findings,
+  emptyNote = null,
+  missing = false,
+}: {
+  findings: NcscFinding[] | null;
+  emptyNote?: string | null;
+  missing?: boolean;
+}) {
   if (findings === null) {
     return (
       <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
@@ -21,8 +36,11 @@ export function CryptoFindingsTable({ findings }: { findings: NcscFinding[] | nu
   }
   if (findings.length === 0) {
     return (
-      <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
-        no quantum-vulnerable findings in the last scan.
+      <div
+        className="px-5 py-6 mono"
+        style={{ color: missing ? "var(--sev-medium)" : "var(--faint)", fontSize: 12, lineHeight: 1.6, maxWidth: 720 }}
+      >
+        {emptyNote ?? "no quantum-vulnerable findings in the last scan."}
       </div>
     );
   }

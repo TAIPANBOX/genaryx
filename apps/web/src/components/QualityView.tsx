@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { describeQualityError, fetchBaselines, fetchRunScores, fetchRunSummaries } from "../lib/quality";
+import {
+  BASELINE_EXPORT_COLUMNS,
+  baselineExportMeta,
+  baselineExportRows,
+  QUALITY_RUN_EXPORT_COLUMNS,
+  qualityRunExportMeta,
+  qualityRunExportRows,
+} from "../lib/cryptoExport";
+import { ExportBar } from "../lib/cryptoExportBar";
+import { downloadCsv, downloadJson } from "../lib/download";
 import { useQualityStatus } from "../lib/useQualityStatus";
 import { formatHm } from "../lib/format";
 import type { QualityError, QualityStatus, VerdryxBaseline, VerdryxRunSummary, VerdryxScore } from "../qualityTypes";
@@ -150,6 +160,12 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
     return <QualityEmptyState status={status} />;
   }
 
+  // What a saved file names as its origin. The verdryx.db path is not here:
+  // it is the export's own window line, which is where "which store answered
+  // this" belongs.
+  const environment = window.location.host || "unknown";
+  const takenAt = () => new Date().toISOString();
+
   const selectedSummary = runs?.find((r) => r.run.id === selectedRunId) ?? null;
   const latestRun = runs && runs.length > 0 ? runs[0] : null;
   const hhmm = asOfMs !== null ? formatHm(asOfMs) : undefined;
@@ -209,7 +225,36 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
         />
       )}
 
-      <Section title="Eval Runs" right={<FreshBadge variant="window" detail="history" />}>
+      <Section
+        title="Eval Runs"
+        right={
+          <span className="inline-flex items-center gap-2">
+            <ExportBar
+              label="the eval-run history"
+              disabledHint="no eval runs loaded yet"
+              disabled={runs === null || runs.length === 0}
+              onCsv={() =>
+                runs &&
+                downloadCsv(
+                  "genaryx-eval-runs.csv",
+                  QUALITY_RUN_EXPORT_COLUMNS,
+                  qualityRunExportRows(runs),
+                  qualityRunExportMeta(runs, status.db_path, takenAt(), environment),
+                )
+              }
+              onJson={() =>
+                runs &&
+                downloadJson(
+                  "genaryx-eval-runs.json",
+                  qualityRunExportRows(runs),
+                  qualityRunExportMeta(runs, status.db_path, takenAt(), environment),
+                )
+              }
+            />
+            <FreshBadge variant="window" detail="history" />
+          </span>
+        }
+      >
         {runs === null ? <Loading /> : <QualityRunsList runs={runs} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />}
       </Section>
 
@@ -217,7 +262,36 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
         <QualityRunDetail summary={selectedSummary} scores={scores} error={scoresError} />
       </Section>
 
-      <Section title="Baselines" right={<FreshBadge variant="window" detail="history" />}>
+      <Section
+        title="Baselines"
+        right={
+          <span className="inline-flex items-center gap-2">
+            <ExportBar
+              label="the saved baselines"
+              disabledHint="no baselines loaded yet"
+              disabled={baselines === null || baselines.length === 0}
+              onCsv={() =>
+                baselines &&
+                downloadCsv(
+                  "genaryx-quality-baselines.csv",
+                  BASELINE_EXPORT_COLUMNS,
+                  baselineExportRows(baselines, runs),
+                  baselineExportMeta(baselines, runs, status.db_path, takenAt(), environment),
+                )
+              }
+              onJson={() =>
+                baselines &&
+                downloadJson(
+                  "genaryx-quality-baselines.json",
+                  baselineExportRows(baselines, runs),
+                  baselineExportMeta(baselines, runs, status.db_path, takenAt(), environment),
+                )
+              }
+            />
+            <FreshBadge variant="window" detail="history" />
+          </span>
+        }
+      >
         {baselines === null ? <Loading /> : <QualityBaselines baselines={baselines} runs={runs} />}
       </Section>
 

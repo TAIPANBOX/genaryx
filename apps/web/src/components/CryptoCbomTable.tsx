@@ -1,37 +1,6 @@
 import type { CryptoError } from "../cryptoTypes";
 import { describeCryptoError } from "../lib/crypto";
-
-/** A tolerant, partial view of one CycloneDX 1.6 `components[]` entry
- * (`--format cbom`'s crypto extension) - every field optional since this
- * console renders the CBOM, it does not validate it against the full
- * external schema. */
-interface CbomComponentLike {
-  name?: string;
-  type?: string;
-  version?: string;
-  cryptoProperties?: {
-    assetType?: string;
-    algorithmProperties?: {
-      primitive?: string;
-      parameterSetIdentifier?: string;
-    };
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Best-effort extraction of `value.components[]`, tolerant of anything that
- * does not match the expected CycloneDX shape (never throws, never assumes -
- * an unexpected top-level shape just yields an empty list, rendered as "no
- * components found" rather than a crash). */
-function asComponents(value: unknown): CbomComponentLike[] {
-  if (!isRecord(value)) return [];
-  const components = value.components;
-  if (!Array.isArray(components)) return [];
-  return components.filter(isRecord) as CbomComponentLike[];
-}
+import { cbomComponents } from "../lib/cryptoExport";
 
 const COLUMNS = "1fr 130px 110px 1fr 200px";
 
@@ -73,7 +42,7 @@ export function CryptoCbomTable({
     );
   }
 
-  const components = asComponents(value);
+  const components = cbomComponents(value);
   if (components.length === 0) {
     return (
       <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>

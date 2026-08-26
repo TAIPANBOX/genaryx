@@ -1,7 +1,142 @@
 import { useCallback, useState } from "react";
 import { describeCryptoError, scanEvidence, verifyEvidence } from "../lib/crypto";
+import {
+  EVIDENCE_ASSET_EXPORT_COLUMNS,
+  evidenceAssetExportMeta,
+  evidenceAssetExportRows,
+  evidenceAssets,
+  evidenceAssetsNote,
+  evidenceProvenance,
+  evidenceSeverityNote,
+  evidenceSeverityRows,
+  evidenceUnaccounted,
+} from "../lib/cryptoExport";
+import { ExportBar } from "../lib/cryptoExportBar";
+import { downloadCsv, downloadJson } from "../lib/download";
 import type { CryptoError, EvidenceReport, VerifyOutcome } from "../cryptoTypes";
+import { SeverityBadge } from "./SeverityBadge";
 import { StatTile } from "./StatTile";
+
+const ASSET_COLUMNS = "150px 110px 120px 90px 70px 1fr";
+
+/** A one-line note the operator should read rather than skim past: a missing
+ * list, a count that does not reconcile, a breakdown the report did not
+ * carry. Toned as a caution because every one of them means the panel is
+ * showing less than the question asked for. */
+function HonestNote({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[11.5px]" style={{ color: "var(--sev-medium)", lineHeight: 1.6, maxWidth: 760 }}>
+      {children}
+    </span>
+  );
+}
+
+/** Where the bundle came from: which build of qryx made it, what it graded
+ * against, when, and over which root. An attestation that does not say who
+ * signed off and when is a screenshot. */
+function EvidenceProvenance({ report }: { report: EvidenceReport }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      {evidenceProvenance(report).map((l) => (
+        <span key={l.label} className="mono text-[11px] min-w-0" style={{ color: "var(--faint)" }}>
+          {l.label}{" "}
+          <span className="truncate" style={{ color: l.missing ? "var(--sev-medium)" : "var(--dim)" }} title={l.value}>
+            {l.value}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** `summary.bySeverity`, which reached no component. It is the triage order
+ * for the non-compliant assets: without it, "29 non-compliant" says nothing
+ * about whether tomorrow is soon enough. */
+function SeverityBreakdown({ report }: { report: EvidenceReport }) {
+  const rows = evidenceSeverityRows(report);
+  const note = evidenceSeverityNote(report);
+  if (rows.length === 0) {
+    return note !== null ? <HonestNote>{note}</HonestNote> : null;
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[11px]" style={{ color: "var(--faint)" }}>
+        by severity
+      </span>
+      {rows.map((r) => (
+        <span key={r.severity} className="inline-flex items-center gap-1.5">
+          <SeverityBadge severity={r.severity} />
+          <span className="mono tabular text-[12px]" style={{ color: "var(--fg)" }}>
+            {r.count.toLocaleString("en-US")}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The per-asset CNSA rows. The summary says how many assets are
+ * non-compliant; these say which ones, by when qryx wants them migrated, and
+ * what it says to do about each. They cross the backend as raw JSON, so every
+ * cell is read tolerantly and an absent one is left blank rather than filled
+ * with a dash that reads like a value.
+ */
+function EvidenceAssetsTable({ report }: { report: EvidenceReport }) {
+  const assets = evidenceAssets(report);
+  if (assets.length === 0) {
+    const note = evidenceAssetsNote(report);
+    return note !== null ? <HonestNote>{note}</HonestNote> : null;
+  }
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <div
+        className="grid gap-3 py-2"
+        style={{ gridTemplateColumns: ASSET_COLUMNS, borderBottom: "1px solid var(--line)" }}
+      >
+        {["algorithm", "type", "cnsa status", "deadline", "count", "action"].map((label) => (
+          <span
+            key={label}
+            className="mono"
+            style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--faint)" }}
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+      {assets.map((a, idx) => (
+        <div
+          key={`${a.algorithm ?? "asset"}-${idx}`}
+          className="grid items-center gap-3 py-2 bus-row"
+          style={{ gridTemplateColumns: ASSET_COLUMNS }}
+        >
+          <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={a.algorithm}>
+            {a.algorithm ?? ""}
+          </span>
+          <span className="mono truncate text-[11.5px]" style={{ color: "var(--dim)" }}>
+            {a.type ?? ""}
+          </span>
+          <span className="mono truncate text-[11.5px]" style={{ color: "var(--dim)" }}>
+            {a.status ?? ""}
+          </span>
+          <span className="mono truncate text-[11.5px]" style={{ color: "var(--dim)" }}>
+            {a.deadline ?? ""}
+          </span>
+          <span className="mono tabular text-[12px]" style={{ color: "var(--dim)" }}>
+            {typeof a.occurrences === "number" ? a.occurrences : ""}
+          </span>
+          <span
+            className="truncate text-[11.5px]"
+            style={{ color: "var(--faint)" }}
+            title={[a.action, (a.locations ?? []).join(", ")].filter((x) => x).join(" | ")}
+          >
+            {a.action ?? ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** Genaryx v2 design spec section 7 parity fix #5: the Evidence
  * section has a `repository` / `agent stack` scope toggle (`CryptoModel.swift`'s
@@ -70,7 +205,7 @@ function PathInput({
  * `crypto::commands`'s module doc for why `crypto_verify_evidence` cannot
  * safely operate on `scan_evidence`'s in-memory result.
  */
-export function CryptoEvidence({ defaultPath }: { defaultPath: string }) {
+export function CryptoEvidence({ defaultPath, environment }: { defaultPath: string; environment: string }) {
   const [buildPath, setBuildPath] = useState(defaultPath);
   const [report, setReport] = useState<EvidenceReport | null>(null);
   const [buildError, setBuildError] = useState<CryptoError | null>(null);
@@ -96,6 +231,9 @@ export function CryptoEvidence({ defaultPath }: { defaultPath: string }) {
       setBuilding(false);
     }
   }, [buildPath]);
+
+  const assetRows = report !== null ? evidenceAssetExportRows(report) : [];
+  const unaccounted = report !== null ? evidenceUnaccounted(report) : null;
 
   const onVerify = useCallback(async () => {
     if (verifyPath.trim().length === 0) return;
@@ -139,22 +277,75 @@ export function CryptoEvidence({ defaultPath }: { defaultPath: string }) {
         )}
 
         {report && (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             <span className="text-[11px]" style={{ color: "var(--faint)" }}>
               as of build{builtAtMs !== null ? ` · ${new Date(builtAtMs).toLocaleTimeString()}` : ""}
             </span>
+            <EvidenceProvenance report={report} />
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(4, minmax(0,1fr))" }}>
-              <StatTile label="Score" value={`${report.summary.scorePct}%`} />
-              <StatTile label="Compliant" value={String(report.summary.compliant)} />
-              <StatTile label="Non-compliant" value={String(report.summary.nonCompliant)} />
-              <StatTile label="Issues" value={String(report.summary.issues)} />
+              {/* `total` is the score's denominator and it never reached the
+                  screen: 77% of 127 assets and 77% of 12 are the same number
+                  about very different estates. */}
+              <StatTile
+                label="Score"
+                value={`${report.summary.scorePct}%`}
+                sub={`of ${report.summary.total.toLocaleString("en-US")} graded`}
+              />
+              <StatTile label="Compliant" value={report.summary.compliant.toLocaleString("en-US")} />
+              <StatTile label="Non-compliant" value={report.summary.nonCompliant.toLocaleString("en-US")} />
+              <StatTile label="Issues" value={report.summary.issues.toLocaleString("en-US")} />
             </div>
+            {unaccounted !== null && <HonestNote>{unaccounted}</HonestNote>}
+            <SeverityBreakdown report={report} />
+
+            <div className="flex items-center justify-between gap-2 pt-1" style={{ borderTop: "1px solid var(--line)" }}>
+              <span className="mono pt-2" style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--faint)" }}>
+                graded assets
+              </span>
+              <span className="pt-2">
+                <ExportBar
+                  label="the graded assets in this bundle"
+                  disabledHint="this bundle carried no per-asset rows"
+                  disabled={assetRows.length === 0}
+                  onCsv={() =>
+                    downloadCsv(
+                      "genaryx-evidence-assets.csv",
+                      EVIDENCE_ASSET_EXPORT_COLUMNS,
+                      assetRows,
+                      evidenceAssetExportMeta(report, new Date().toISOString(), environment),
+                    )
+                  }
+                  onJson={() =>
+                    downloadJson(
+                      "genaryx-evidence-assets.json",
+                      assetRows,
+                      evidenceAssetExportMeta(report, new Date().toISOString(), environment),
+                    )
+                  }
+                />
+              </span>
+            </div>
+            <EvidenceAssetsTable report={report} />
+
             <span className="mono text-[11px] truncate" style={{ color: "var(--dim)" }} title={report.digest}>
               digest {report.digest}
             </span>
-            <span className="mono text-[11px]" style={{ color: "var(--dim)" }}>
-              signature {report.signature ? report.signature.alg : "none (unsigned - W1 always builds unsigned bundles)"}
-            </span>
+            {report.signature ? (
+              // The alg alone does not answer the question a signature is
+              // asked. "Signed with ml-dsa-65" is not actionable; "signed
+              // with THIS key" is, because the operator can tell whether it
+              // is one they recognise. The signature `value` itself stays
+              // out: nobody checks base64 by eye, and the check it exists
+              // for is the Verify form below.
+              <span className="mono text-[11px] truncate" style={{ color: "var(--dim)" }} title={report.signature.publicKey}>
+                signature {report.signature.alg} · public key {report.signature.publicKey}
+              </span>
+            ) : (
+              <span className="mono text-[11px]" style={{ color: "var(--dim)" }}>
+                signature none - this console asks qryx for an unsigned bundle, so this is its own request rather than
+                something qryx could not do
+              </span>
+            )}
           </div>
         )}
       </div>

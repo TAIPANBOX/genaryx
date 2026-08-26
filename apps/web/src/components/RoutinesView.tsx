@@ -12,6 +12,13 @@ import {
   sortRoutinesWorstFirst,
   toUiStatus,
 } from "../lib/routines";
+import {
+  ROUTINE_HISTORY_EXPORT_COLUMNS,
+  routineHistoryExportMeta,
+  routineHistoryExportRows,
+} from "../lib/cryptoExport";
+import { ExportBar } from "../lib/cryptoExportBar";
+import { downloadCsv, downloadJson } from "../lib/download";
 import type { RoutineSummaryDto, RoutinesHistoryDto, RoutinesStatusDto } from "../routinesTypes";
 import { FreshBadge } from "./FreshBadge";
 import { Hero, HeroBand, KpiTile, Section } from "./dash";
@@ -323,6 +330,7 @@ export function RoutinesView() {
   }, [selectedRoutine]);
 
   const hhmm = asOfMs !== null ? formatHm(asOfMs) : undefined;
+  const environment = window.location.host || "unknown";
 
   if (status === null) {
     return statusError ? (
@@ -436,7 +444,39 @@ export function RoutinesView() {
 
       <Section
         title={selectedRoutine ? `History · ${selectedRoutine}` : "History"}
-        right={<FreshBadge variant="snapshot" detail={hhmm} />}
+        right={
+          <span className="inline-flex items-center gap-2">
+            {/* One routine's history, and the file says so: the server's
+                200-record default and any unparseable line go into its
+                caveats, so a file that stops at 200 runs cannot be read as
+                the whole history. */}
+            <ExportBar
+              label={`the recorded runs of ${selectedRoutine ?? "this routine"}`}
+              disabledHint="select a routine with recorded runs"
+              disabled={selectedRoutine === null || history === null || history.records.length === 0}
+              onCsv={() =>
+                selectedRoutine &&
+                history &&
+                downloadCsv(
+                  `genaryx-routine-history-${selectedRoutine}.csv`,
+                  ROUTINE_HISTORY_EXPORT_COLUMNS,
+                  routineHistoryExportRows(history.records),
+                  routineHistoryExportMeta(selectedRoutine, history, new Date().toISOString(), environment),
+                )
+              }
+              onJson={() =>
+                selectedRoutine &&
+                history &&
+                downloadJson(
+                  `genaryx-routine-history-${selectedRoutine}.json`,
+                  routineHistoryExportRows(history.records),
+                  routineHistoryExportMeta(selectedRoutine, history, new Date().toISOString(), environment),
+                )
+              }
+            />
+            <FreshBadge variant="snapshot" detail={hhmm} />
+          </span>
+        }
       >
         {historyError && (
           <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
