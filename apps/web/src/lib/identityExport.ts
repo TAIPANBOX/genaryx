@@ -22,9 +22,9 @@
  * inventing rows, and this is the same instinct one field down.
  */
 import type { ExportMeta } from "./download";
-import type { IdryxIdentity, IdryxRecommendation, IdryxRemediation, IdryxAlert } from "../identityTypes";
+import type { IdentityStatus, IdryxIdentity, IdryxRecommendation, IdryxRemediation, IdryxAlert } from "../identityTypes";
 import type { AccessRow } from "./access";
-import type { GatewayKeyEntry, GatewayKeysReport } from "./credentials";
+import type { CredentialsStatus, GatewayKeyEntry, GatewayKeysReport } from "./credentials";
 import { deriveKeyStatus, keyStatusRank, maxLastSeenMillis, totalCalls } from "./credentials";
 
 /** One column of an export, in the shape `lib/download.ts::toCsv` takes. */
@@ -78,6 +78,44 @@ export interface SnapshotMetaInput {
 
 const SNAPSHOT_CAVEAT =
   "idryx serve loads its snapshot once at startup and never reloads on its own. This file is that snapshot, not a live read at the moment it was saved.";
+
+/** Which box a file came from, as far as this console can actually tell.
+ *
+ * `window.location.host` alone is close to useless in a saved artifact: this
+ * console is usually served from localhost, so every file from every operator
+ * would carry the same word. The plane's own URL and the `taipan up` env name
+ * are the part a reader cannot recover later, so they lead. The host stays,
+ * because two consoles can point at one plane. */
+function environmentLine(planeLine: string, host: string): string {
+  return `${planeLine}, console at ${host !== "" ? host : "an unknown host"}`;
+}
+
+/** The environment line for anything read out of idryx (identities, alerts,
+ * remediations, the access matrix's identity half). */
+export function idryxEnvironment(status: IdentityStatus | null, host: string): string {
+  if (status === null || status.state === "bootstrapping") {
+    return environmentLine("identity plane not resolved yet", host);
+  }
+  if (status.state === "no_environment") {
+    return environmentLine("no idryx plane in this environment", host);
+  }
+  const plane = `taipan env "${status.source.name}", idryx at ${status.idryx_url}`;
+  return environmentLine(status.state === "unreachable" ? `${plane} (unreachable)` : plane, host);
+}
+
+/** The environment line for the gateway's key report. A separate descriptor
+ * service from idryx (`useCredentialsStatus`), so a separate line: an
+ * environment can have one up and the other down. */
+export function gatewayEnvironment(status: CredentialsStatus | null, host: string): string {
+  if (status === null || status.state === "bootstrapping") {
+    return environmentLine("gateway not resolved yet", host);
+  }
+  if (status.state === "no_environment") {
+    return environmentLine("no gateway in this environment", host);
+  }
+  const plane = `taipan env "${status.source.name}", gateway at ${status.gateway_url}`;
+  return environmentLine(status.state === "unreachable" ? `${plane} (unreachable)` : plane, host);
+}
 
 const SPLIT_WINDOW_CAVEAT =
   "The alerts here came from a detect pass and the identities did not: the identities are still the older REST snapshot. Anything joining the two is joining two different reads.";
@@ -466,6 +504,82 @@ export const KEY_COLUMNS: ExportColumn<KeyExportRow>[] = [
   { key: "first_seen_history", header: "first_seen_history" },
 ];
 
+/**
+ * What the merged `last seen` and `calls` columns actually cover.
+ *
+ * ONE sentence, rendered on the page by `CredentialsKeysTable` and written
+ * into the file by {@link keyExportMeta}. That is the point of it living here:
+ * a screenshot of the table and a CSV saved from the same table must not be
+ * able to disagree about what their two most-read numbers mean, and until this
+ * existed the only disclosure on screen was a `title=` tooltip, which survives
+ * neither.
+ *
+ * The `history_available` half is measured, not assumed: tokenfuse's
+ * `crates/gateway/src/keysreport.rs` writes a ZEROED history block for every
+ * key whenever it has a trace directory to fold, so a 0 there is a read that
+ * found nothing, and a MISSING block only happens when the gateway has no
+ * store at all.
+ */
+export function keyWindowSentence(report: GatewayKeysReport): string {
+  return report.history_available
+    ? "last seen and calls merge the gateway's stored call history with the current gateway process. A 0 in the history columns is a read that found no rows for that key, not a missing measurement."
+    : "This gateway keeps no stored call history, so last seen and calls cover only the time since the gateway process started. A key that was in heavy use before the last restart reads here as never used.";
+}
+
+/**
+ * What `strict_mode` was, and what it does to the rest of the table.
+ *
+ * Shown beside the key table and written into the file, from this one source.
+ * It matters here because it silently changes what a DERIVED column means:
+ * tokenfuse counts an identity mismatch from the `warn` and `enforce` paths
+ * and deliberately not from `off` (`crates/gateway/src/keystats.rs`:
+ * "Not called from the off path"), so under `off` the `mismatching` status
+ * cannot fire on anything this gateway process saw, however wrong the traffic
+ * was. A clean-looking column and an unchecked one render identically.
+ *
+ * An unrecognised value is passed through and named as unrecognised. This
+ * console does not own the vocabulary and must not invent a meaning for a
+ * mode a newer gateway added.
+ */
+export function strictModeSentence(report: GatewayKeysReport): string {
+  switch (report.strict_mode) {
+    case "off":
+      return 'Strict mode was "off": the gateway resolved each key\'s binding for attribution but ran no check against it, and a mismatch is not counted at all while it stays off. A mismatching row in this file can therefore only come from stored history recorded when strict mode was something else.';
+    case "warn":
+      return 'Strict mode was "warn": a call whose key resolved to a binding the identity map did not expect was still served, with a would-block header on the response, and the mismatch was counted.';
+    case "enforce":
+      return 'Strict mode was "enforce": a call whose key resolved to a binding the identity map did not expect was refused with a 403 and never reached the provider, and the mismatch was counted.';
+    default:
+      return `Strict mode was "${report.strict_mode}", a value this console does not recognise. It is the gateway's identity-map enforcement mode, passed through here exactly as sent.`;
+  }
+}
+
+/** The merged `calls` number split back into the two windows it came from, as
+ * a line the table prints under the number. Never a `0` for a window the
+ * gateway did not report: an absent history block is said to be absent. */
+export function callsBreakdown(entry: GatewayKeyEntry, report: GatewayKeysReport): string {
+  const since = `${entry.since_startup.calls.toLocaleString("en-US")} since gateway start`;
+  if (entry.history !== null) {
+    return `${since} + ${entry.history.calls.toLocaleString("en-US")} stored`;
+  }
+  return report.history_available
+    ? `${since}, no stored history block for this key`
+    : `${since}, no stored history on this gateway`;
+}
+
+/** Which of the two windows the `last seen` cell is actually showing, or
+ * `null` when neither window recorded a call. The table prints it under the
+ * age, because "3d ago" from a stored trace and "3d ago" from this process are
+ * different claims about a key. */
+export function lastSeenSource(entry: GatewayKeyEntry): "since gateway start" | "stored history" | null {
+  const startup = entry.since_startup.last_seen_millis;
+  const history = entry.history?.last_seen_millis ?? null;
+  if (startup === null && history === null) return null;
+  if (history === null) return "since gateway start";
+  if (startup === null) return "stored history";
+  return history > startup ? "stored history" : "since gateway start";
+}
+
 function keyRow(entry: GatewayKeyEntry, status: string): KeyExportRow {
   return {
     key_id: entry.key_id,
@@ -516,30 +630,34 @@ export function keyExportMeta(input: {
 }): ExportMeta {
   const { report, nowMillis } = input;
   const attempts = report.unauthorized_since_startup.attempts;
+  const blockless = report.keys.filter((k) => k.history === null).length;
   return {
     subject: "Genaryx gateway client keys",
     environment: input.environment,
     takenAt: input.takenAt,
     windows: [
       `keys: the gateway's GET /v1/keys, as this console last polled it, at most 30 seconds before ${input.takenAt}`,
-      report.history_available
-        ? "calls and last_seen: the gateway's stored call history merged with the current gateway process"
-        : "calls and last_seen: the current gateway process only, since it started. This gateway keeps no stored call history.",
+      keyWindowSentence(report),
     ],
     caveats: [
       `status is derived by this console from the other columns in this file (lib/credentials.ts deriveKeyStatus), not sent by the gateway. Its "stale" value means last seen more than 7 days before ${new Date(nowMillis).toISOString()}, the clock this file was taken against.`,
-      `strict_mode was "${report.strict_mode}" when this was taken: the gateway's identity-map enforcement mode.`,
+      strictModeSentence(report),
       ...(report.identity_map_configured
         ? []
         : [
-            "This environment has no identity map configured, so bound is false and unit and agents are empty for every key in this file. That emptiness is the map being absent, not a finding about the key, and the unbound status can never fire here.",
+            "This environment has no identity map configured, so bound is false and unit, agents and created are empty for every key in this file. The gateway takes all three from the map's binding and from nowhere else, so that emptiness is the map being absent rather than a finding about the key, and the unbound status can never fire here.",
           ]),
       ...(report.history_available
         ? [
-            "A key whose history columns are empty has no stored history of its own: it was either onboarded after the retention window or not called before this gateway process started. The gateway's report does not say which.",
+            ...(blockless > 0
+              ? [
+                  `${blockless} key(s) carry no history block at all although this gateway reports stored history as available. Their history columns are empty rather than 0, because the gateway did not say.`,
+                ]
+              : []),
           ]
         : [
-            "calls and last_seen cover only the time since the gateway process started, so a key that was in heavy use before the last restart reads here as never used. The empty history columns are the store being absent, not a count of zero.",
+            "The empty history columns are the store being absent, not a count of zero.",
+            "A key that is in neither TOKENFUSE_CLIENT_KEYS nor the identity map reaches this report only through stored history, so with none, a fully decommissioned key has no row at all here rather than a row with empty columns. An access review cannot see what is missing.",
           ]),
       ...(attempts > 0
         ? [
