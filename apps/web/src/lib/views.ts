@@ -1,6 +1,7 @@
 /** The top-level views the app shell switches between. */
 export type ViewId =
   | "overview"
+  | "anomalies"
   | "stats"
   | "money"
   | "policy"
@@ -33,6 +34,12 @@ export const NAV_SECTIONS: readonly {
     label: "Operate",
     items: [
       { id: "overview", label: "Overview" },
+      // Beside Overview because it answers the same question at a different
+      // depth. Overview's Incident Center is a ten-row summary and a capped
+      // card is where an operator stops rather than where they start; this is
+      // the whole stream, filterable, with every row opening the record behind
+      // it. `@yurii` 2026-08-26 asked for it as its own tab for exactly that.
+      { id: "anomalies", label: "Anomalies" },
       // Next to Overview on purpose. Overview answers "is anything on fire",
       // Statistics answers "who, and how much", and both are the daily
       // governance surface rather than an investigation.

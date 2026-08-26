@@ -25,7 +25,15 @@ import { MetricDetailCard, type MetricRow } from "./MetricDetailCard";
 import type { IdryxAlert } from "../identityTypes";
 import { fetchAlerts } from "../lib/identity";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
-import { aggregateIncidents, INCIDENT_SOURCE_LABEL, INCIDENT_SOURCE_VIEW, isQualityDriftEvent } from "../lib/incidents";
+import {
+  aggregateIncidents,
+  busCoverage,
+  busPlaneLabel,
+  busPlaneView,
+  INCIDENT_SOURCE_LABEL,
+  INCIDENT_SOURCE_VIEW,
+  type UnifiedIncident,
+} from "../lib/incidents";
 import { usePostureData } from "../lib/usePostureData";
 import { fetchRecentEvents } from "../lib/recentEvents";
 import { hasBackend, subscribeBackend } from "../lib/transport";
@@ -47,6 +55,7 @@ export function OverviewView({
   onOpenAgent,
   onSelectView,
   onExplainIncident,
+  onOpenIncident,
 }: {
   onOpenAgent: (agentId: string) => void;
   /** Source-chip click on an Incident Center row - switches to that source's
@@ -58,6 +67,10 @@ export function OverviewView({
    * money-sourced Incident Center row (see `lib/incidents.ts`'s
    * `explainable` doc comment for why). */
   onExplainIncident: (incidentId: string) => void;
+  /** Hand an incident row up to the shell, which owns the overlay layer.
+   * Same reason the Anomalies view does: Incident 360 opens Agent 360 beside
+   * itself, so it cannot live inside a tab's own popover stack. */
+  onOpenIncident: (row: UnifiedIncident) => void;
 }) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
@@ -123,14 +136,18 @@ export function OverviewView({
     };
   }, [identityStatus?.state]);
 
-  // Quality drift: same source `QualityDriftStream.tsx` reads (the live bus,
-  // filtered to `source === "verdryx" && type === "quality_drift"`), fetched
-  // independently here rather than reaching into that component's state.
-  const [qualityDriftEvents, setQualityDriftEvents] = useState<UiEvent[]>([]);
+  // The shared bus, WHOLE. It was filtered to `quality_drift` right here until
+  // 2026-08-26, which is why every other plane's incidents never reached the
+  // card below: five hundred events were fetched on every refresh and all but
+  // one type were dropped one line after arriving. `lib/incidents.ts` now owns
+  // the rule, where it is written down and tested, and it routes on the
+  // severity band rather than on a list of types so a producer shipping a
+  // `high` event reaches this panel without anybody editing this file.
+  const [busEvents, setBusEvents] = useState<UiEvent[]>([]);
   useEffect(() => {
     let cancelled = false;
     void fetchRecentEvents(BUS_FETCH_LIMIT).then((res) => {
-      if (!cancelled) setQualityDriftEvents(res.events.filter(isQualityDriftEvent));
+      if (!cancelled) setBusEvents(res.events);
     });
     return () => {
       cancelled = true;
@@ -141,8 +158,11 @@ export function OverviewView({
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     subscribeBackend<UiEvent>("bus:event", (payload) => {
-      if (!isQualityDriftEvent(payload)) return;
-      setQualityDriftEvents((prev) => [payload, ...prev].slice(0, BUS_FETCH_LIMIT));
+      // No filter here either. A live event is kept whatever its band, because
+      // `busCoverage` counts what was READ to say how much of the window this
+      // card can speak for, and a stream pre-filtered to the interesting rows
+      // would make that count describe the interesting rows instead.
+      setBusEvents((prev) => [payload, ...prev].slice(0, BUS_FETCH_LIMIT));
     })
       .then((fn) => {
         if (cancelled) {
@@ -174,11 +194,15 @@ export function OverviewView({
       aggregateIncidents({
         moneyIncidents: incidents,
         identityAlerts,
-        qualityDriftEvents,
+        busEvents,
         postureFindings,
       }).slice(0, INCIDENT_CENTER_ROWS),
-    [incidents, identityAlerts, qualityDriftEvents, postureFindings],
+    [incidents, identityAlerts, busEvents, postureFindings],
   );
+
+  // What the bus read could and could not account for, so a quiet card and a
+  // blind one are distinguishable. Invariant 8's shape applied to a panel.
+  const coverage = useMemo(() => busCoverage(busEvents, BUS_FETCH_LIMIT), [busEvents]);
 
   const handleAckIncident = useCallback(
     async (id: string) => {
@@ -277,13 +301,34 @@ export function OverviewView({
 
   // I2 Incident Center: the top `unifiedIncidents` rows, rendered through
   // the same `Feed` primitive every other incidents list in this app uses.
+  //
   // The source chip is its OWN nested clickable button (mirrors
   // `Agent360.tsx`'s `AgentChip` - a bare `.chip` button, no dot, just
-  // `cursor: pointer`), not the row's `onClick`: only money rows have a
-  // natural "open agent" drill target, but every row's chip must navigate,
-  // so the chip owns its own click and stops it from bubbling rather than
-  // the row itself carrying one conditionally.
-  const incidentCenterFeed: FeedItem[] = unifiedIncidents.map((row) => ({
+  // `cursor: pointer`), and it navigates to the owning PANEL.
+  //
+  // The ROW opens the incident itself, which is a different question and was
+  // not answerable here until 2026-08-26. `@yurii`, on finding it: "я не можу
+  // натиснути на сам інцидент і зайти подивитись, в чому справа. Тільки коли
+  // є з боку якийсь explain". He was exactly right, and the reason was a
+  // reasonable-sounding one written down in this comment: only money rows had
+  // an obvious drill target, so the row carried no click at all rather than
+  // carrying one conditionally. The effect was that the panel telling an
+  // operator something is wrong was the one panel they could not open, and
+  // three of its four sources had no way in beyond a tab switch that loses
+  // which row they were looking at.
+  //
+  // Every row now opens something, and each source opens the most specific
+  // thing this console holds about it. `Feed` has carried `onClick` for
+  // exactly this since it was written; nothing new was needed but the wiring.
+  const incidentCenterFeed: FeedItem[] = unifiedIncidents.map((row) => {
+    // A bus row's chip names the PRODUCER rather than the word "bus", and
+    // navigates to whichever panel owns that plane, or to the Bus Explorer
+    // when none does. A chip reading "via the bus" would tell an operator
+    // where the row travelled instead of who raised it.
+    const chipLabel = row.source === "bus" ? busPlaneLabel(row.raw) : INCIDENT_SOURCE_LABEL[row.source];
+    const chipView = row.source === "bus" ? busPlaneView(row.raw) : INCIDENT_SOURCE_VIEW[row.source];
+    return {
+      onClick: () => onOpenIncident(row),
     key: row.id,
     color: sevColor(row.severity),
     title: (
@@ -292,13 +337,13 @@ export function OverviewView({
           type="button"
           className="chip"
           style={{ cursor: "pointer" }}
-          title={`Open the ${INCIDENT_SOURCE_VIEW[row.source]} tab`}
+          title={`Open the ${chipView} tab`}
           onClick={(e) => {
             e.stopPropagation();
-            onSelectView(INCIDENT_SOURCE_VIEW[row.source]);
+            onSelectView(chipView);
           }}
         >
-          {INCIDENT_SOURCE_LABEL[row.source]}
+          {chipLabel}
         </button>
         <span className="truncate">{row.title}</span>
       </span>
@@ -335,7 +380,8 @@ export function OverviewView({
           )}
         </span>
       ) : undefined,
-  }));
+    };
+  });
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
@@ -495,7 +541,33 @@ export function OverviewView({
                     />
                   }
                 >
-                  <Feed items={incidentCenterFeed} empty="no incidents across money, identity, quality, or posture" />
+                  <Feed
+                    items={incidentCenterFeed}
+                    empty="no incidents from money, identity, posture, or any plane on the bus"
+                  />
+                  {/* What the bus read could and could not account for. A quiet
+                      card and a blind one look identical without this, and the
+                      card was blind to six of ten planes until 2026-08-26.
+                      Named planes rather than a count of them: "4 planes" is a
+                      number an operator cannot check, and the names are what
+                      let them notice the one they expected to see missing.
+
+                      "on the bus" and not "heard from", which is what this said
+                      until the panel was opened and read: idryx rows above it
+                      arrive through the identity API rather than the bus, so a
+                      line claiming to name every plane that spoke would have
+                      been wrong about the ones directly under it. This sentence
+                      is about the BUS read and says so. */}
+                  <div
+                    className="mono"
+                    style={{ fontSize: 10, color: "var(--faint)", marginTop: 6 }}
+                  >
+                    {coverage.read === 0
+                      ? "no events read off the bus, so no plane is accounted for here"
+                      : `${coverage.incidentRows} of ${coverage.read} bus event(s) are incidents` +
+                        `${coverage.truncated ? `, capped at ${coverage.limit}` : ""}` +
+                        ` · on the bus: ${coverage.planes.join(", ")}`}
+                  </div>
                 </Section>
               </>
             }
