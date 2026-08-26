@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { scanCbom, scanNcsc } from "../lib/crypto";
+import { milestoneViews } from "../lib/cryptoExport";
 import { useCryptoStatus } from "../lib/useCryptoStatus";
 import { formatHm } from "../lib/format";
 import type { CryptoError, CryptoStatus, NcscReport } from "../cryptoTypes";
@@ -106,6 +107,10 @@ export function CryptoView() {
   }
 
   const hhmm = scannedAtMs !== null ? formatHm(scannedAtMs) : undefined;
+  // The milestones the findings table can show, and their finding lists.
+  // `null` (never an empty array) still means "no scan has run yet".
+  const milestones = ncsc !== null ? milestoneViews(ncsc) : null;
+  const shownMilestone = milestones?.[0] ?? null;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
@@ -182,7 +187,7 @@ export function CryptoView() {
       </Section>
 
       <Section title="Quantum-Vulnerable Findings" right={<FreshBadge variant="onDemand" detail={hhmm} />}>
-        <CryptoFindingsTable findings={ncsc?.discovery2028.quantumVulnerableFindings ?? null} />
+        <CryptoFindingsTable findings={shownMilestone?.findings ?? null} />
       </Section>
 
       <Section title="CBOM Inventory" right={<FreshBadge variant="onDemand" detail={hhmm} />}>
