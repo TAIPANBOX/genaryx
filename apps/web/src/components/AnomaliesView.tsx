@@ -13,6 +13,7 @@ import {
   busPlaneView,
   filterIncidents,
   incidentPlane,
+  incidentSubject,
   type UnifiedIncident,
   planesPresent,
   INCIDENT_SOURCE_LABEL,
@@ -25,6 +26,8 @@ import type { UiEvent } from "../types";
 import type { ViewId } from "../lib/views";
 import { sevColor } from "../lib/dashData";
 import { Feed, Section, type FeedItem } from "./dash";
+import { downloadCsv, downloadJson } from "../lib/download";
+import { ANOMALY_COLUMNS, anomalyListMeta, type AnomalyRow } from "../lib/incidentExport";
 
 /** The same window the Overview card reads. Kept identical on purpose: two
  * surfaces over one question that disagreed about how far back they looked
@@ -154,6 +157,38 @@ export function AnomaliesView({
     [busEvents],
   );
 
+  const saveList = (fmt: "csv" | "json") => {
+    const takenAt = new Date().toISOString();
+    const out: AnomalyRow[] = rows.map((r) => ({
+      severity: r.severity,
+      plane: incidentPlane(r),
+      title: r.title,
+      detail: r.detail,
+      agent: incidentSubject(r),
+      ts: r.ts ?? null,
+      occurrences: r.occurrences ?? null,
+      id: r.id,
+    }));
+    const meta = anomalyListMeta({
+      shown: rows.length,
+      total: all.length,
+      planes,
+      severities,
+      query,
+      environment:
+        (typeof import.meta.env?.VITE_GENARYX_ENV === "string" &&
+          import.meta.env.VITE_GENARYX_ENV.trim()) ||
+        window.location.host ||
+        "unknown",
+      takenAt,
+      busRead: coverage.read,
+      busTruncated: coverage.truncated,
+    });
+    const name = `genaryx-anomalies-${takenAt.slice(0, 10)}.${fmt}`;
+    if (fmt === "csv") downloadCsv(name, ANOMALY_COLUMNS, out, meta);
+    else downloadJson(name, out, meta);
+  };
+
   const toggle = (list: string[], set: (v: string[]) => void, value: string) =>
     set(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
 
@@ -191,8 +226,33 @@ export function AnomaliesView({
       <Section
         title="Anomalies"
         right={
-          <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>
-            {rows.length} of {all.length} shown
+          <span className="flex items-center gap-2">
+            <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>
+              {rows.length} of {all.length} shown
+            </span>
+            {/* What is on screen, saved. The provenance block records the
+                filters, because a critical-only subset mailed onward otherwise
+                reads as an estate with two anomalies in it. */}
+            <button
+              type="button"
+              className="chip"
+              style={{ cursor: "pointer" }}
+              disabled={rows.length === 0}
+              onClick={() => saveList("csv")}
+              title="Save the anomalies shown, as CSV"
+            >
+              csv
+            </button>
+            <button
+              type="button"
+              className="chip"
+              style={{ cursor: "pointer" }}
+              disabled={rows.length === 0}
+              onClick={() => saveList("json")}
+              title="Save the anomalies shown, as JSON"
+            >
+              json
+            </button>
           </span>
         }
       >

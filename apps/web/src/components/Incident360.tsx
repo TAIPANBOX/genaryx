@@ -9,6 +9,14 @@ import { fetchRecentEvents } from "../lib/recentEvents";
 import { formatUsd } from "../lib/format";
 import { shortAgentLabel } from "../lib/graph";
 import { sevColor } from "../lib/dashData";
+import { downloadJson } from "../lib/download";
+import { buildMailLink } from "../lib/mailLink";
+import {
+  incidentExport,
+  incidentExportMeta,
+  incidentExportName,
+  incidentLinkTarget,
+} from "../lib/incidentExport";
 import {
   incidentData,
   incidentDelegation,
@@ -218,6 +226,15 @@ export function Incident360({
             )}
           </div>
         </div>
+        <IncidentActions
+          row={row}
+          subject={subject}
+          chain={chain}
+          run={run}
+          record={record}
+          timeline={timeline}
+          busRead={busEvents === null ? null : busEvents.length}
+        />
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
           ×
         </button>
@@ -615,4 +632,110 @@ function refusalFrom(data: Record<string, unknown> | null): string | null {
     if (typeof v === "string" && v) return `${key}: ${v}`;
   }
   return null;
+}
+
+/**
+ * Taking this anomaly out of the console: as a file, or as an address.
+ *
+ * Two controls because the user asked two different questions of it. "Save
+ * these data" wants a document; "send it to somebody" wants a link, because a
+ * file mailed to a colleague is a snapshot they cannot drill into and this
+ * console already has an address scheme for exactly that (`lib/mailLink.ts`,
+ * built for heraldyx's notification mail, and until now only ever PARSED).
+ *
+ * The link is the fragment form. A path link needs a console that owns its
+ * routes, and the deployment most likely to be linked FROM is the static one,
+ * where a file server answers 404 to `/i/...` and the click dies before any
+ * of this code runs. The fragment works in both.
+ */
+function IncidentActions({
+  row,
+  subject,
+  chain,
+  run,
+  record,
+  timeline,
+  busRead,
+}: {
+  row: UnifiedIncident;
+  subject: string | null;
+  chain: readonly string[];
+  run: unknown | null;
+  record: unknown | null;
+  /** The events the card SHOWED: this run's own, oldest first. Not the whole
+   * fetch. A file carrying five hundred unrelated events is not the picture the
+   * operator was looking at, and this module's own doc comment says the file
+   * must be that picture. Found by pressing the button and reading what came
+   * out, which is the only way that class of mistake shows up. */
+  timeline: unknown[] | null;
+  /** How many events the console had read in total, for the provenance block:
+   * "this run's, out of what the console held" is a different statement from
+   * "this run's". */
+  busRead: number | null;
+}) {
+  const [copied, setCopied] = useState<"link" | null>(null);
+
+  const save = () => {
+    const takenAt = new Date().toISOString();
+    const picture = { row, subject, chain, run, record, busEvents: timeline, busRead };
+    downloadJson(
+      incidentExportName(row, takenAt, subject),
+      [incidentExport(picture)],
+      incidentExportMeta({ ...picture, environment: environmentLabel(), takenAt }),
+    );
+  };
+
+  const target = incidentLinkTarget(row);
+
+  const copyLink = () => {
+    if (target === null) return;
+    const path = buildMailLink("incident", target);
+    // `origin` and not the whole href: the reader opens this console, not this
+    // console's current panel.
+    const url = `${window.location.origin}/#${path}`;
+    void navigator.clipboard?.writeText(url).then(
+      () => {
+        setCopied("link");
+        window.setTimeout(() => setCopied(null), 1600);
+      },
+      () => undefined,
+    );
+  };
+
+  return (
+    <div className="flex items-center gap-1" style={{ marginTop: 2 }}>
+      <button
+        type="button"
+        className="chip"
+        style={{ cursor: "pointer" }}
+        onClick={save}
+        title="Save this anomaly, with the run, the agent record and the events the card read"
+      >
+        save
+      </button>
+      {/* Absent, not disabled, when this anomaly has no address: a posture
+          finding is a computed state and a greyed control invites a click that
+          can never work. See `incidentLinkTarget`. */}
+      {target !== null && (
+        <button
+          type="button"
+          className="chip"
+          style={{ cursor: "pointer" }}
+          onClick={copyLink}
+          title="Copy a link that opens this console at the panel this anomaly is on"
+        >
+          {copied === "link" ? "copied" : "copy link"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Which console produced a file. `VITE_GENARYX_ENV` when a deployment sets
+ * one, otherwise the host, which is the most specific thing the page knows
+ * about itself and is better in a provenance block than "unknown". */
+function environmentLabel(): string {
+  const declared = import.meta.env?.VITE_GENARYX_ENV;
+  if (typeof declared === "string" && declared.trim() !== "") return declared.trim();
+  return window.location.host || "unknown";
 }

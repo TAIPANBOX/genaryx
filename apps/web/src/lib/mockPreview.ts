@@ -2830,7 +2830,7 @@ function makeEvent(): UiEvent {
     const budgetUsd = manualRunBudgets.get(PROTAGONIST_RUN_ID) ?? PROTAGONIST_RUN_BUDGET_USD;
     const spentUsd = Number((state.fraction * PROTAGONIST_RUN_BUDGET_USD).toFixed(4));
     if (roll < 0.45) {
-      return { ...base, source: "tokenfuse", type: "budget_exceeded", severity: "critical", run_id: PROTAGONIST_RUN_ID, data: { reason: "budget_exceeded", budget_usd: budgetUsd, spent_usd: spentUsd, detail: "per-run budget exceeded", policy_id: "default" }, raw: "" };
+      return { ...base, source: "tokenfuse", type: "budget_exhausted", severity: "critical", run_id: PROTAGONIST_RUN_ID, data: { reason: "budget_exceeded", budget_usd: budgetUsd, spent_usd: spentUsd, detail: "per-run budget exceeded", policy_id: "default" }, raw: "" };
     }
     if (roll < 0.8) {
       return { ...base, source: "tokenfuse", type: "breaker_tripped", severity: "critical", run_id: PROTAGONIST_RUN_ID, data: { reason: "budget_exceeded", budget_usd: budgetUsd, spent_usd: spentUsd, detail: "circuit breaker tripped after repeated retries", policy_id: "default" }, raw: "" };
