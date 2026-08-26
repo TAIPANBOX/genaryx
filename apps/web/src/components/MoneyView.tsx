@@ -12,6 +12,13 @@ import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { useSession } from "../lib/useSession";
 import { formatUsd } from "../lib/format";
 import { sevColor, sevRank } from "../lib/dashData";
+import { downloadCsv, downloadJson } from "../lib/download";
+import {
+  governedSavingsCaption,
+  RUNS_EXPORT_COLUMNS,
+  runsExportMeta,
+  runsExportRows,
+} from "../lib/moneyExport";
 import type { Incident, MoneyError, MutationOutcome, Run, Savings } from "../moneyTypes";
 import { MoneyEmptyState } from "./MoneyEmptyState";
 import { RunsBoard } from "./RunsBoard";
@@ -43,6 +50,28 @@ function cmpRun(a: Run, b: Run, key: string): number {
 
 const REFRESH_INTERVAL_MS = 20_000;
 const RUNS_SHOWN = 18;
+
+/**
+ * The savings breakdown, and how often a budget actually broke.
+ *
+ * Its own component so the caption can be rendered and asserted without the
+ * whole Money tab and its four reads: `budget_breaks` arrives on every refresh
+ * and used to render only on Overview, so the Money tab said less about
+ * savings than the summary card above it did.
+ */
+export function GovernedSavingsSection({ savings }: { savings: Savings }) {
+  const saved = savings.total_saved_usd;
+  const items: CompItem[] = [
+    { key: "blocked", label: "Runaway blocked", value: savings.blocked_spend_usd, total: saved, tone: "ember", valueText: formatUsd(savings.blocked_spend_usd) },
+    { key: "cache", label: "Semantic cache", value: savings.cache_saved_usd, total: saved, tone: "mint", valueText: formatUsd(savings.cache_saved_usd) },
+    { key: "router", label: "Model router", value: savings.router_saved_usd, total: saved, tone: "iris", valueText: formatUsd(savings.router_saved_usd) },
+  ];
+  return (
+    <Section title="Governed savings" right={governedSavingsCaption(savings)}>
+      <Composition items={items} />
+    </Section>
+  );
+}
 
 export function MoneyView({
   onOpenAgent,
@@ -172,18 +201,19 @@ export function MoneyView({
   // deliberately NOT recomputed here: they are the same numbers Overview's
   // own KPI band already shows (docs task 2026-07-24, "slim the duplicated
   // headers") - re-printing them above the Runs table would just repeat
-  // Overview's header a second time. `saved` survives below because the
-  // retained Governed savings breakdown still needs it as the composition
-  // total; nothing else from the old band is kept.
-  const saved = savings?.total_saved_usd ?? 0;
+  // Overview's header a second time. The savings composition keeps its own
+  // total inside `GovernedSavingsSection`; nothing else from the old band is
+  // kept.
 
-  const compItems: CompItem[] = savings
-    ? [
-        { key: "blocked", label: "Runaway blocked", value: savings.blocked_spend_usd, total: saved, tone: "ember", valueText: formatUsd(savings.blocked_spend_usd) },
-        { key: "cache", label: "Semantic cache", value: savings.cache_saved_usd, total: saved, tone: "mint", valueText: formatUsd(savings.cache_saved_usd) },
-        { key: "router", label: "Model router", value: savings.router_saved_usd, total: saved, tone: "iris", valueText: formatUsd(savings.router_saved_usd) },
-      ]
-    : [];
+  // Not a hook: this sits below an early return, and the value must be taken
+  // at the moment the operator clicks rather than at the last render.
+  const exportMeta = () =>
+    runsExportMeta({
+      shown: topRuns.length,
+      total: allRuns.length,
+      environment: window.location.host || "unknown",
+      takenAt: new Date().toISOString(),
+    });
 
   const incidentFeed: FeedItem[] = topIncidents.map((inc) => ({
     key: inc.id,
@@ -251,8 +281,32 @@ export function MoneyView({
               title="Runs"
               right={`top ${Math.min(RUNS_SHOWN, allRuns.length)} of ${allRuns.length} · full stream in Bus`}
             >
-              <div style={{ paddingBottom: 8 }}>
+              <div className="flex items-center gap-2" style={{ paddingBottom: 8 }}>
                 <SortBar options={RUN_SORTS} active={sort.key} dir={sort.dir} onChange={(key, dir) => setSort({ key, dir })} />
+                <span className="flex-1" />
+                {/* Exports the WHOLE list the money plane returned, never the
+                    sorted top slice on screen, and the meta block says which
+                    of the two the reader is holding. It also carries the
+                    fields the table cannot fit (last_seen) and the ones it
+                    now shows only in passing (unit, model, cache hits). */}
+                <button
+                  type="button"
+                  className="mono text-[11.5px] px-3 py-1 rounded"
+                  style={{ background: "var(--panel-2)", color: "var(--dim)", border: "1px solid var(--line)" }}
+                  title={`Every one of the ${allRuns.length} run(s) this console received, not the ${topRuns.length} shown`}
+                  onClick={() => downloadCsv("genaryx-money-runs.csv", RUNS_EXPORT_COLUMNS, runsExportRows(allRuns), exportMeta())}
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  className="mono text-[11.5px] px-3 py-1 rounded"
+                  style={{ background: "var(--panel-2)", color: "var(--dim)", border: "1px solid var(--line)" }}
+                  title={`Every one of the ${allRuns.length} run(s) this console received, not the ${topRuns.length} shown`}
+                  onClick={() => downloadJson("genaryx-money-runs.json", runsExportRows(allRuns), exportMeta())}
+                >
+                  Export JSON
+                </button>
               </div>
               <RunsBoard
                 runs={topRuns}
@@ -265,11 +319,7 @@ export function MoneyView({
           }
           rail={
             <>
-              {savings && (
-                <Section title="Governed savings" right="prevented + recovered">
-                  <Composition items={compItems} />
-                </Section>
-              )}
+              {savings && <GovernedSavingsSection savings={savings} />}
               <Section title="Incidents" right="worst first">
                 <Feed items={incidentFeed} empty="no incidents" />
               </Section>

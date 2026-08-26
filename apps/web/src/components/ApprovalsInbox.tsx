@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { formatTimestamp, formatUsd } from "../lib/format";
 import { agentIdFromMuteKey, muteKey } from "../lib/notifications";
+import {
+  approvalModelLabel,
+  approvalOrgLabel,
+  approvalPolicyVersionLabel,
+  NOT_RECORDED,
+} from "../lib/policyExport";
 import type { Approval, Decision, DecideOutcome } from "../policyTypes";
 import { ConfirmButton } from "./ConfirmButton";
 
@@ -51,13 +57,23 @@ export interface GrantedToken {
   outcome: DecideOutcome;
 }
 
+/** One labelled field of a held approval.
+ *
+ * A value of [`NOT_RECORDED`] is dimmed further and never styled like a
+ * figure: the operator deciding this hold has to be able to see at a glance
+ * which of these the plane actually told us. */
 function Field({ label, value, title }: { label: string; value: string; title?: string }) {
+  const absent = value === NOT_RECORDED;
   return (
     <div className="flex items-baseline gap-2 min-w-0">
       <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
         {label}
       </span>
-      <span className="mono tabular truncate text-[11.5px]" style={{ color: "var(--dim)" }} title={title ?? value}>
+      <span
+        className={`truncate text-[11.5px]${absent ? "" : " mono tabular"}`}
+        style={{ color: absent ? "var(--faint)" : "var(--dim)", fontStyle: absent ? "italic" : undefined }}
+        title={title ?? value}
+      >
         {value}
       </span>
     </div>
@@ -187,10 +203,44 @@ function PendingRow({
         </span>
       </div>
 
+      {/* `model` and `org` reach this row on every hold and rendered nowhere
+          until now, which is how a field ends up on the wire "for display
+          only" (wardryx.rs) and never displayed. The model is what the
+          operator is being asked to spend money on; the org is stamped from
+          the authenticated principal that triggered the hold, so it is the
+          one field here the requester could not have chosen. Both are shown
+          as an explicit absence rather than a dash, because a dash beside
+          fourteen other dashes reads as a layout, not as an answer. */}
       <div className="flex flex-wrap gap-x-5 gap-y-1.5">
         <Field label="run" value={approval.run_id} />
         <Field label="tools" value={approval.tool_names.length > 0 ? approval.tool_names.join(", ") : "-"} />
-        <Field label="policy_version" value={approval.policy_version ?? "-"} />
+        <Field
+          label="model"
+          value={approvalModelLabel(approval)}
+          title={
+            approval.model
+              ? `Model the held action declared: ${approval.model}. Carried for display; the policy engine does not branch on it.`
+              : "This hold carried no model in its context."
+          }
+        />
+        <Field
+          label="org"
+          value={approvalOrgLabel(approval)}
+          title={
+            approval.org
+              ? `Stamped from the authenticated principal that triggered the hold, not from the request body.`
+              : "This hold carried no org in its context."
+          }
+        />
+        <Field
+          label="policy_version"
+          value={approvalPolicyVersionLabel(approval)}
+          title={
+            approval.policy_version
+              ? `The policy set generation that decided this hold.`
+              : "This hold carried no policy version in its context."
+          }
+        />
         {chain && chain.length > 0 && <Field label="on_behalf_of" value={chain.join(" -> ")} />}
       </div>
 
@@ -247,8 +297,11 @@ function HistoryRow({
         >
           {approval.agent_id}
         </button>
+        {/* The model rides on a decided hold exactly as it does on a pending
+            one, and the trail is the half somebody reads back later. */}
         <span className="mono truncate text-[11px]" style={{ color: "var(--faint)" }}>
-          {approval.decided_by ?? "unknown"} &middot; {approval.decided_at ? formatTimestamp(approval.decided_at) : "-"}
+          {approval.decided_by ?? "unknown"} &middot; {approval.decided_at ? formatTimestamp(approval.decided_at) : "-"}{" "}
+          &middot; {approvalModelLabel(approval)}
         </span>
       </div>
       <span className="mono tabular text-[11.5px]" style={{ color: "var(--dim)" }}>

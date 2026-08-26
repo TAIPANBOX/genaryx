@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
+import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
 import { decideApproval, describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
+import {
+  APPROVALS_EXPORT_COLUMNS,
+  approvalsExportMeta,
+  approvalsExportRows,
+  POLICIES_EXPORT_COLUMNS,
+  policiesExportMeta,
+  policiesExportRows,
+} from "../lib/policyExport";
 import { usePolicyStatus } from "../lib/usePolicyStatus";
 import { useSession } from "../lib/useSession";
 import type { Approval, Decision, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
@@ -22,6 +31,56 @@ function isToday(iso: string): boolean {
   const d = new Date(iso);
   const now = new Date();
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
+
+/**
+ * The two save buttons that sit in a Section's header.
+ *
+ * A component rather than four copies of the same pair, and it takes the meta
+ * as a thunk on purpose: `takenAt` has to be the moment of the click, not the
+ * moment of the last render, or a file taken at 16:40 claims to be the state
+ * of the world at 16:12.
+ */
+function ExportButtons<T>({
+  basename,
+  columns,
+  rows,
+  meta,
+  title,
+}: {
+  basename: string;
+  columns: { key: keyof T & string; header: string }[];
+  rows: () => T[];
+  meta: () => ExportMeta;
+  title: string;
+}) {
+  const style = {
+    background: "var(--panel-2)",
+    color: "var(--dim)",
+    border: "1px solid var(--line)",
+  } as const;
+  return (
+    <span className="flex items-center gap-2">
+      <button
+        type="button"
+        className="mono text-[11.5px] px-3 py-1 rounded"
+        style={style}
+        title={title}
+        onClick={() => downloadCsv(`${basename}.csv`, columns, rows(), meta())}
+      >
+        Export CSV
+      </button>
+      <button
+        type="button"
+        className="mono text-[11.5px] px-3 py-1 rounded"
+        style={style}
+        title={title}
+        onClick={() => downloadJson(`${basename}.json`, rows(), meta())}
+      >
+        Export JSON
+      </button>
+    </span>
+  );
 }
 
 function Loading() {
@@ -225,7 +284,30 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
         <DecisionStream onOpenAgent={onOpenAgent} />
       </Section>
 
-      <Section title="Approvals Inbox" right={<FreshBadge variant="auto" detail="20s" />}>
+      <Section
+        title="Approvals Inbox"
+        right={
+          <span className="flex items-center gap-3">
+            {approvals !== null && approvals.length > 0 && (
+              <ExportButtons
+                basename="genaryx-approval-trail"
+                columns={APPROVALS_EXPORT_COLUMNS}
+                rows={() => approvalsExportRows(approvals)}
+                title={`The whole trail: ${approvals.length} approval(s), pending and decided, with the model and org the inbox shows and the reason the plane gave`}
+                meta={() =>
+                  approvalsExportMeta({
+                    total: approvals.length,
+                    pending: pendingCount,
+                    environment: window.location.host || "unknown",
+                    takenAt: new Date().toISOString(),
+                  })
+                }
+              />
+            )}
+            <FreshBadge variant="auto" detail="20s" />
+          </span>
+        }
+      >
         {approvals === null ? (
           <Loading />
         ) : (
@@ -242,7 +324,30 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
         )}
       </Section>
 
-      <Section title="Policies" right={<FreshBadge variant="auto" detail="20s" />}>
+      <Section
+        title="Policies"
+        right={
+          <span className="flex items-center gap-3">
+            {policies !== null && policies.length > 0 && (
+              <ExportButtons
+                basename="genaryx-policy-inventory"
+                columns={POLICIES_EXPORT_COLUMNS}
+                rows={() => policiesExportRows(policies)}
+                title="The policy STORE only. Rules loaded from a wardryx -policy file are enforced and are not in this list, and the file says so."
+                meta={() =>
+                  policiesExportMeta({
+                    total: policies.length,
+                    policyVersion: latestPolicyVersion,
+                    environment: window.location.host || "unknown",
+                    takenAt: new Date().toISOString(),
+                  })
+                }
+              />
+            )}
+            <FreshBadge variant="auto" detail="20s" />
+          </span>
+        }
+      >
         {policies === null ? <Loading /> : <PolicyList policies={policies} policyVersion={latestPolicyVersion} />}
       </Section>
     </div>
