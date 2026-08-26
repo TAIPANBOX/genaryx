@@ -160,23 +160,56 @@ pub struct UnitOptionDto {
     pub budget_usd_month: Option<f64>,
 }
 
+/// One `filesystem` scope as READ BACK off a provisioned passport file.
+///
+/// Deliberately not `FsScopeDto`, the write side's shape, even though the two
+/// describe the same field: there `path` and `mode` are required `String`s,
+/// because `onboard_generate` validates the form before it will write
+/// anything. Here the bytes already exist on disk, written by whoever wrote
+/// them, so every field is `Option` and the reader states what the file
+/// declares rather than asserting what it must contain. A passport is a file
+/// an operator may edit by hand.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeclaredFsScopeDto {
+    pub path: Option<String>,
+    pub mode: Option<String>,
+}
+
+/// One `models` entry as READ BACK off a provisioned passport file
+/// (agent-passport SPEC.md section 4.5). Same read-side-versus-write-side
+/// split as `DeclaredFsScopeDto` above, and for the same reason: even
+/// `provider`, which the write side requires, is optional here, because a
+/// file on disk can carry an entry that declares nothing at all.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeclaredModelDto {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub endpoint: Option<String>,
+}
+
 /// One already-provisioned passport found in the passports dir.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProvisionedDto {
     pub agent_id: String,
     pub owner: String,
     pub file: String,
-    /// Count of the passport's declared `filesystem` scopes
-    /// (`PassportPeek::filesystem.len()`). Only the count is surfaced here -
-    /// the individual paths/modes stay on the passport file itself, the
-    /// "Provisioned passports" table shows a folder count, not the folders.
+    /// Count of the passport's declared `filesystem` scopes, always
+    /// `filesystem.len()` below. Kept alongside the list rather than replaced
+    /// by it: the table's quiet "folders" column reads this, and a console
+    /// pointed at an older api gets the count and no list, which is a
+    /// different statement from "this passport declares nothing".
     pub filesystem_count: usize,
-    /// Count of the passport's declared `models` entries
-    /// (`PassportPeek::models.len()`). Only the count is surfaced here - the
-    /// individual provider/model/endpoint values stay on the passport file
-    /// itself; the "Provisioned passports" table shows a models count, not
-    /// the models (mirrors `filesystem_count`'s exact same shape).
+    /// The scopes themselves, in file order. Until 2026-08-26 only
+    /// `filesystem_count` crossed this wire, while `onboard_status` had
+    /// already deserialized every entry to take that length and then dropped
+    /// them.
+    pub filesystem: Vec<DeclaredFsScopeDto>,
+    /// Count of the passport's declared `models` entries, always
+    /// `models.len()` below. Mirrors `filesystem_count` exactly.
     pub models_count: usize,
+    /// The declarations themselves, in file order. Same history as
+    /// `filesystem`: parsed, counted, discarded.
+    pub models: Vec<DeclaredModelDto>,
     /// Whether any `keys[].agents` pattern in the loaded map matches this id.
     pub in_map: bool,
 }
@@ -620,19 +653,31 @@ struct PassportDoc<'a> {
     created_at: String,
 }
 
-/// The minimal, tolerant read side of one `filesystem` entry. Parsed so a
-/// passport carrying the field peeks cleanly rather than being skipped, but
-/// `path`/`mode` are still not individually consumed: the "Provisioned
-/// passports" table surfaces a per-passport COUNT
-/// (`ProvisionedDto::filesystem_count`, via `PassportPeek::filesystem.len()`
-/// below), not the individual folders, so only the containing `Vec`'s length
-/// is ever read - these two fields are not. `#[allow(dead_code)]` documents
-/// that on purpose rather than leaving a future maintainer to wonder why an
-/// unread field survived clippy (compare `MapKey`'s doc comment above, which
-/// omits fields for the exact same dead_code reason this one instead keeps
-/// and annotates).
+/// Blank is not a declaration, and neither is absent. A passport is a file an
+/// operator may write by hand, so a field arrives empty as easily as missing,
+/// and `serde(default)` has already collapsed the missing case to `""` by the
+/// time this runs. Both become `None`, which is the same statement the WRITE
+/// side already makes: `validate_model_decls` treats a blank trimmed `model`
+/// or `endpoint` as absent, and the form's `lib/modelDecls.ts` omits a blank
+/// field rather than sending `""`. An empty string would reach the table as a
+/// cell that reads like a rendering fault instead of like a fact about the
+/// file.
+fn declared(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// The minimal, tolerant read side of one `filesystem` entry. Tolerant in the
+/// deserialize (every field defaults, so a passport carrying a partial entry
+/// peeks cleanly rather than being skipped) and honest on the way out
+/// (`declared` above turns blank into "not declared"). Converted into
+/// `DeclaredFsScopeDto` for the wire rather than serialized directly, so the
+/// tolerance lives in one place and the DTO can say `Option`.
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct FsScopePeek {
     #[serde(default)]
     path: String,
@@ -640,15 +685,18 @@ struct FsScopePeek {
     mode: String,
 }
 
-/// The minimal, tolerant read side of one `models` entry. Parsed so a
-/// passport carrying the field peeks cleanly rather than being skipped, but
-/// `provider`/`model`/`endpoint` are not individually consumed: the
-/// "Provisioned passports" table surfaces a per-passport COUNT
-/// (`ProvisionedDto::models_count`, via `PassportPeek::models.len()` below),
-/// not the individual declarations - mirrors `FsScopePeek`'s exact same
-/// dead-code-on-purpose shape (see its own doc comment).
+impl FsScopePeek {
+    fn into_dto(self) -> DeclaredFsScopeDto {
+        DeclaredFsScopeDto {
+            path: declared(&self.path),
+            mode: declared(&self.mode),
+        }
+    }
+}
+
+/// The minimal, tolerant read side of one `models` entry - mirrors
+/// `FsScopePeek`'s exact same shape and reasoning (see its doc comment).
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct ModelPeek {
     #[serde(default)]
     provider: String,
@@ -656,6 +704,16 @@ struct ModelPeek {
     model: String,
     #[serde(default)]
     endpoint: String,
+}
+
+impl ModelPeek {
+    fn into_dto(self) -> DeclaredModelDto {
+        DeclaredModelDto {
+            provider: declared(&self.provider),
+            model: declared(&self.model),
+            endpoint: declared(&self.endpoint),
+        }
+    }
 }
 
 /// The minimal, tolerant read side for listing what is provisioned.
@@ -667,14 +725,12 @@ struct PassportPeek {
     id: String,
     #[serde(default)]
     owner: String,
-    /// Read via `.len()` into `ProvisionedDto::filesystem_count` below - see
-    /// `FsScopePeek`'s own doc comment for why ITS fields stay unread even
-    /// though this one is no longer dead code.
+    /// Converted entry by entry into `ProvisionedDto::filesystem` below, with
+    /// the count taken from the converted list so the two cannot disagree.
     #[serde(default)]
     filesystem: Vec<FsScopePeek>,
-    /// Read via `.len()` into `ProvisionedDto::models_count` below - see
-    /// `ModelPeek`'s own doc comment for why ITS fields stay unread even
-    /// though this one is no longer dead code.
+    /// Converted entry by entry into `ProvisionedDto::models` below, same
+    /// shape as `filesystem` above.
     #[serde(default)]
     models: Vec<ModelPeek>,
 }
@@ -771,14 +827,21 @@ pub async fn onboard_status(
                     }),
                     Ok(p) => {
                         let in_map = map.as_ref().is_some_and(|m| id_bound_in_map(m, &p.id));
-                        let filesystem_count = p.filesystem.len();
-                        let models_count = p.models.len();
+                        let filesystem: Vec<DeclaredFsScopeDto> = p
+                            .filesystem
+                            .into_iter()
+                            .map(FsScopePeek::into_dto)
+                            .collect();
+                        let models: Vec<DeclaredModelDto> =
+                            p.models.into_iter().map(ModelPeek::into_dto).collect();
                         passports.push(ProvisionedDto {
                             agent_id: p.id,
                             owner: p.owner,
                             file: display,
-                            filesystem_count,
-                            models_count,
+                            filesystem_count: filesystem.len(),
+                            filesystem,
+                            models_count: models.len(),
+                            models,
                             in_map,
                         });
                     }
@@ -1736,7 +1799,10 @@ mod tests {
         .unwrap();
         let wire = serde_json::to_value(&status.passports[0]).unwrap();
 
-        assert_eq!(wire["models"][0]["provider"], serde_json::json!("anthropic"));
+        assert_eq!(
+            wire["models"][0]["provider"],
+            serde_json::json!("anthropic")
+        );
         assert_eq!(
             wire["models"][0]["model"],
             serde_json::json!("claude-sonnet-4-5")
@@ -1757,7 +1823,10 @@ mod tests {
             serde_json::json!("/data/reports")
         );
         assert_eq!(wire["filesystem"][0]["mode"], serde_json::json!("read"));
-        assert_eq!(wire["filesystem"][1]["path"], serde_json::json!("/data/out"));
+        assert_eq!(
+            wire["filesystem"][1]["path"],
+            serde_json::json!("/data/out")
+        );
         assert_eq!(wire["filesystem"][1]["mode"], serde_json::json!("write"));
 
         // The counts stay alongside the lists: the table reads them for its
@@ -1792,7 +1861,10 @@ mod tests {
         .unwrap();
         let wire = serde_json::to_value(&status.passports[0]).unwrap();
 
-        assert_eq!(wire["models"][0]["provider"], serde_json::json!("anthropic"));
+        assert_eq!(
+            wire["models"][0]["provider"],
+            serde_json::json!("anthropic")
+        );
         assert_eq!(wire["models"][0]["model"], serde_json::Value::Null);
         assert_eq!(wire["models"][0]["endpoint"], serde_json::Value::Null);
         // An entirely empty entry still counts as an entry: the passport

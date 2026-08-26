@@ -22,6 +22,61 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 /**
+ * A field whose value is a LIST on the wire, rendered as a list: one element
+ * per item, each with its own `title`. Never `items.join(", ")`, which turns
+ * two ids into one token an operator cannot tell from a single id containing
+ * a comma.
+ *
+ * `empty` is the other half, and the reason this is not just {@link Field}
+ * with a joined string. An empty list is a statement (this episode summarizes
+ * nothing) and gets a sentence saying so. A `-` would read as a value, and
+ * rendering `[]` directly renders nothing at all, which is what the card did
+ * until 2026-08-26.
+ */
+function ListField({
+  label,
+  items,
+  empty,
+}: {
+  label: string;
+  items: readonly string[];
+  empty: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[11px] shrink-0" style={{ color: "var(--faint)" }}>
+        {label}
+      </span>
+      {items.length === 0 ? (
+        <span className="mono tabular truncate text-[12px]" style={{ color: "var(--faint)" }}>
+          {empty}
+        </span>
+      ) : (
+        <span className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 min-w-0">
+          {items.map((item, idx) => (
+            <span
+              key={`${item}-${idx}`}
+              className="mono tabular truncate text-[12px]"
+              // Bordered so two items cannot read as one token, which is the
+              // whole reason this is a list and not a joined string.
+              style={{
+                color: "var(--fg)",
+                border: "1px solid var(--line-2)",
+                borderRadius: 3,
+                padding: "0 4px",
+              }}
+              title={item}
+            >
+              {item}
+            </span>
+          ))}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
  * The provenance record itself, as fields: the badge + id header and one of
  * the two `kind` branches. Split out of {@link MemoryProvenance} below (which
  * owns the fetch, the error/loading states and the `forget` ceremony) so the
@@ -78,7 +133,11 @@ export function ProvenanceFields({ provenance }: { provenance: EngramProvenance 
             label="importance score"
             value={provenance.importance_score !== null ? provenance.importance_score.toFixed(3) : "n/a"}
           />
-          <Field label="summary of" value={provenance.summary_of ?? "-"} />
+          <ListField
+            label="summary of"
+            items={provenance.summary_of}
+            empty="summarizes nothing"
+          />
           <Field label="agent" value={provenance.agent_id ?? "-"} />
           <Field label="access count" value={String(provenance.access_count)} />
           <Field label="last accessed" value={provenance.last_accessed ?? "never"} />

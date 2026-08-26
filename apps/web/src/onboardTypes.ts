@@ -19,21 +19,57 @@ export interface UnitOption {
   budget_usd_month: number | null;
 }
 
+/** Mirrors `onboard::commands::DeclaredFsScopeDto` - one `filesystem` scope
+ * as READ BACK off a provisioned passport file.
+ *
+ * Not {@link FsScope}, the write side's shape, though both describe the same
+ * field: there `path` and `mode` are required, because `onboard_generate`
+ * validates the form before it will write anything. Here the bytes already
+ * exist on disk, so either can be `null`, meaning the file declares no value
+ * for it (blank and absent both arrive as `null`, per the backend's own
+ * `declared()`). `mode` is a plain `string`, not {@link FsScopeMode}: a
+ * hand-edited passport may carry any word there, and the read side reports
+ * what it found rather than refusing to render it. */
+export interface DeclaredFsScope {
+  path: string | null;
+  mode: string | null;
+}
+
+/** Mirrors `onboard::commands::DeclaredModelDto` - one `models` entry as READ
+ * BACK off a provisioned passport file (agent-passport SPEC.md section 4.5).
+ * Same read-side/write-side split as {@link DeclaredFsScope} against
+ * {@link ModelDecl}: even `provider`, which the write side requires, is
+ * nullable here, because a file on disk can carry an entry declaring nothing
+ * at all. */
+export interface DeclaredModel {
+  provider: string | null;
+  model: string | null;
+  endpoint: string | null;
+}
+
 /** Mirrors `onboard::commands::ProvisionedDto` - one already-provisioned
  * passport found in the passports dir. `in_map` is whether any `keys[].agents`
  * pattern in the loaded map matches this passport's id (literal or
  * trailing-`*` prefix) - "seen live traffic yet" is deliberately not here
- * (needs the Cloud; a named follow-up). `filesystem_count` is the number of
- * scopes the passport's own `filesystem` array declares (0 when it has none,
- * or predates that field) - the individual paths/modes are not mirrored
- * here, only the count. `models_count` is the same shape for the passport's
- * own `models` array (agent-passport SPEC.md section 4.5). */
+ * (needs the Cloud; a named follow-up).
+ *
+ * `filesystem` and `models` are the declarations the passport file itself
+ * carries, in file order, and each is OPTIONAL here while its `_count`
+ * partner is not. That asymmetry is the point. A source that sends the count
+ * and no list (an older genaryx-api, or `lib/mockPreview.ts`) is making a
+ * different statement from a passport that declares nothing, and the two must
+ * not render alike: the first is "not reported", the second is a fact about
+ * the agent. `ProvisionedPassports.tsx` keeps them apart. */
 export interface Provisioned {
   agent_id: string;
   owner: string;
   file: string;
+  /** Always `filesystem.length` when the source sends the list at all. */
   filesystem_count: number;
+  filesystem?: DeclaredFsScope[];
+  /** Always `models.length` when the source sends the list at all. */
   models_count: number;
+  models?: DeclaredModel[];
   in_map: boolean;
 }
 
