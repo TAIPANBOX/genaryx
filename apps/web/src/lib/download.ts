@@ -11,9 +11,29 @@
  * those as ordinary rows, which is exactly what should happen. A silently
  * bare table is the failure mode this module exists to prevent.
  *
- * This is the console's first download of any kind (nothing else in
- * `apps/web/src` calls `createObjectURL`), so it is written as a shared helper
- * from the start rather than as one view's private code.
+ * # WHY THIS ONE IS SHARED AND THE OTHER THREE ARE NOT
+ *
+ * This is not the console's only download, and it is the newest of four.
+ * `lib/evidence.ts` saves a signed evidence pack, `lib/remote.ts` an issued
+ * operator WireGuard config, and `demo/wgDemoConfig.ts` the demo's copy of
+ * one, each through the same Blob and `<a download>` shape as
+ * [`triggerDownload`] below. This module is the only one that saves a TABLE,
+ * and the only one carrying the provenance block above, and those two facts
+ * are the same fact: a signed zip and a `.conf` are single artefacts that name
+ * themselves and carry their own signature or their own peer, while a table of
+ * numbers says nothing at all about where it came from. So the other three are
+ * deliberately left alone rather than folded in here, and a view saving a
+ * TABLE goes through this helper rather than growing a fifth private copy.
+ *
+ * The sentence this replaced said the reverse: that no other module in
+ * `apps/web/src` reached for `createObjectURL` at all. Three did, and all
+ * three calls were already in the tree on the day this file was written
+ * (`git log -S 'URL.createObjectURL('`: evidence.ts 2026-07-23, remote.ts and
+ * wgDemoConfig.ts 2026-07-25, this file 2026-08-10). Same shape as the faults
+ * CLAUDE.md's invariant 7 collects: the claim was true of the intent, and
+ * nothing ever ran it against the tree. `download.test.ts` runs it now, which
+ * is why the retraction above describes the old sentence instead of quoting
+ * it.
  */
 
 /** Provenance for one export. Every field is something a reader of the file,

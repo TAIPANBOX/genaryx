@@ -91,6 +91,22 @@ describe("felyxConnectSupport", () => {
     noBackend();
     expect(felyxConnectSupport().supported).toBe(false);
   });
+
+  // Withholding the button is not free. `ResidencyBanner`'s configured state
+  // has room for a headline and an endpoint, not for the paragraph above, and
+  // a Change control that simply disappears leaves the operator unable to tell
+  // a broken console from a setting kept elsewhere. So every refusal carries a
+  // line short enough to stand where the button stood.
+  it("carries a line short enough to stand where the withheld button stood", () => {
+    for (const build of [realBox, noBackend]) {
+      build();
+      const support = felyxConnectSupport();
+      if (support.supported) throw new Error("expected a refusal");
+      expect(support.short.trim().length).toBeGreaterThan(0);
+      expect(support.short.length).toBeLessThanOrEqual(48);
+      expect(support.short).not.toMatch(/\byet\b/);
+    }
+  });
 });
 
 describe("planConnect", () => {
