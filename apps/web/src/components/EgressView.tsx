@@ -197,6 +197,50 @@ export function egressExportMeta(panel: EgressPanel, limit: number): ExportMeta 
   };
 }
 
+/**
+ * What every number on this screen is actually about.
+ *
+ * `egress_recent` accumulates its totals inside the same loop that fills
+ * `rows`, and its `if out.len() >= limit { break; }` sits AFTER the push
+ * (`crates/api/src/egress/mod.rs`). So fetched + blocked is not merely close
+ * to `rows.length`, it IS `rows.length`, and neither can exceed the cap. The
+ * hero renders that figure under "what agents reached", which is a question
+ * about the box, and an operator quoting it as this box's refusal count is
+ * reading a real number under the wrong label. CLAUDE.md invariant 8 is that
+ * exact failure, and it says the remedy: the figure is about the question, or
+ * it names the part of the question it could not reach.
+ *
+ * `panel.note` is the backend naming its own slice, and it was on the wire
+ * the whole time. The panel carried it as a hover `title` on the freshness
+ * badge, which qualifies nothing anybody reads.
+ *
+ * The cap line appears only when the cap was REACHED. Below it, the totals
+ * do cover the whole slice the backend described, and a standing warning
+ * about a limit nobody hit is how a reader learns to skip the line that
+ * matters.
+ */
+export function EgressScope({ panel, limit }: { panel: EgressPanel; limit: number }) {
+  const capped = panel.rows.length >= limit;
+  return (
+    <div
+      className="mono text-[11px] px-4 py-2"
+      style={{ color: "var(--faint)", borderTop: "1px solid var(--line)", lineHeight: 1.7 }}
+    >
+      <div>
+        Every figure above counts these {panel.rows.length.toLocaleString("en-US")} line(s), and nothing
+        else: the backend tallies as it lists, so the totals and the table are the same lines.
+      </div>
+      <div>{panel.note ?? "The backend did not say which slice of the bus it read."}</div>
+      {capped && (
+        <div style={{ color: "var(--warn)" }}>
+          The read stopped at {limit.toLocaleString("en-US")} line(s), so egress older than the oldest row
+          below was never counted and is in none of these figures.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExportButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -306,6 +350,10 @@ export function EgressView() {
           </>
         }
       />
+
+      {/* Directly under the figures it qualifies, not in a footnote and not in
+          a hover title, which is where `panel.note` was. */}
+      <EgressScope panel={panel} limit={ROW_LIMIT} />
 
       {panel.totals.navigation_only > 0 && (
         <Section title="What “navigation only” means here">

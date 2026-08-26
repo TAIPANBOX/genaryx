@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { EGRESS_EXPORT_COLUMNS, EgressRowView, egressExportMeta } from "./EgressView";
+import { EGRESS_EXPORT_COLUMNS, EgressRowView, EgressScope, egressExportMeta } from "./EgressView";
 import { toCsv } from "../lib/download";
 import type { EgressPanel, EgressRow } from "../egressTypes";
 
@@ -117,5 +117,54 @@ describe("the egress export", () => {
   it("says the origin is all there is, so nobody looks for the path in this file", () => {
     const meta = egressExportMeta(panel([row()]), 200);
     expect(meta.caveats?.join(" ")).toMatch(/path and query/i);
+  });
+});
+
+/**
+ * The numbers above the table are the aggregate of exactly the rows in it.
+ *
+ * `egress_recent` accumulates its totals inside the same loop that fills
+ * `rows`, and `if out.len() >= limit { break; }` sits AFTER the push
+ * (`crates/api/src/egress/mod.rs`), so fetched + blocked is always precisely
+ * `rows.length` and can never exceed the cap. The hero renders that figure
+ * under the words "what agents reached", which is a question about the box.
+ *
+ * `panel.note` is the backend saying which slice it read, and the panel put
+ * it in a hover `title` on the freshness badge, where it qualifies nothing
+ * anybody reads. That is CLAUDE.md invariant 8 on screen: every figure here
+ * is accurate about itself and silent about what was asked.
+ */
+describe("EgressScope", () => {
+  const render = (p: EgressPanel, limit: number) =>
+    renderToStaticMarkup(createElement(EgressScope, { panel: p, limit }));
+
+  it("says in the backend's own words which slice the numbers came from", () => {
+    expect(render(panel([row()]), 200)).toContain("4000 most recent events");
+  });
+
+  it("ties the totals to the rows, so neither is read as the estate", () => {
+    expect(render(panel([row(), row()]), 200)).toMatch(/these 2 line\(s\)/i);
+  });
+
+  // At the cap the sentence stops being about how the backend works and
+  // becomes a fact about what is missing from this screen. Matched on
+  // "never counted" rather than on the word "older": the backend's own note
+  // ends "An older fetch than that is in the Bus Explorer, not here", so a
+  // test looking for "older" would be reading the backend's sentence and
+  // calling it mine.
+  it("says older egress was never counted, only once the cap was actually hit", () => {
+    expect(render(panel([row(), row()]), 200)).not.toMatch(/never counted/i);
+    const at = render(panel([row(), row()]), 2);
+    expect(at).toMatch(/never counted/i);
+    expect(at).toMatch(/stopped at 2 line/i);
+  });
+
+  // A backend that said nothing about its window is a backend that said
+  // nothing. Naming a window it did not name would be the invention.
+  it("does not invent a window the backend did not describe", () => {
+    const out = render(panel([row()], { note: null }), 200);
+    expect(out).toMatch(/did not say/i);
+    expect(out).not.toContain("null");
+    expect(out).not.toContain("undefined");
   });
 });
