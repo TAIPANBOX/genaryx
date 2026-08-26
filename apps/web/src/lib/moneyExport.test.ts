@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { RunsBoard } from "../components/RunsBoard";
+import { BOARD_MIN_WIDTH_PX, RUN_COL_MIN_PX, RUNS_BOARD_TRACKS, RunsBoard } from "../components/RunsBoard";
 import { GovernedSavingsSection } from "../components/MoneyView";
 import {
   cacheHitsLabel,
@@ -110,6 +110,62 @@ describe("the runs board renders the run fields that reach it", () => {
 
   it("says so when the run carried no model", () => {
     expect(board([{ ...RUN, model: "" }])).toContain(NOT_RECORDED);
+  });
+});
+
+/**
+ * The board is a CSS grid whose first track used to be `minmax(0, 1.5fr)`,
+ * which is a track allowed to reach zero. @measured in the running mock demo
+ * on 2026-08-26, in the default 1440px layout with both rails open, the runs
+ * card is 760px wide and the fixed tracks plus gaps plus padding came to
+ * exactly 720px: the run id and the agent name were laid out 0px wide and
+ * nothing at all was drawn there. At origin/main's column widths the same
+ * measurement gave 8px, so the collapse predates this branch and widening the
+ * numeric column by 8px is what took it the rest of the way.
+ *
+ * Nothing here can measure layout: `renderToStaticMarkup` has no layout
+ * engine. What these hold is the arithmetic that a browser then applies, and
+ * the fault they catch is the one that actually happened, a track widened
+ * without the board's own minimum being widened with it.
+ */
+describe("the run column cannot be laid out to nothing", () => {
+  it("gives the run track a pixel floor rather than letting it reach zero", () => {
+    const html = board([RUN]);
+    expect(html).toContain(`minmax(${RUN_COL_MIN_PX}px, 1.5fr)`);
+    expect(html).not.toContain("minmax(0,");
+    expect(RUN_COL_MIN_PX).toBeGreaterThanOrEqual(180);
+  });
+
+  it("derives the board's minimum width from the tracks, so a wider column cannot drift out of step", () => {
+    // `.d-th`/`.d-tr` in index.css: 14px column gap, 20px of padding a side.
+    const derived =
+      RUNS_BOARD_TRACKS.reduce((n, t) => n + t.minPx, 0) + 14 * (RUNS_BOARD_TRACKS.length - 1) + 20 * 2;
+    expect(BOARD_MIN_WIDTH_PX).toBe(derived);
+  });
+
+  it("scrolls the board sideways instead of squeezing a column out of existence", () => {
+    const html = board([RUN]);
+    expect(html).toContain("overflow-x:auto");
+    expect(html).toContain(`min-width:${BOARD_MIN_WIDTH_PX}px`);
+  });
+
+  it("keeps its own width off the page layout, so the floor cannot push the rail away", () => {
+    // The floor raises this board's min-content width to the whole 980, and
+    // `.d-main` sizes its main column from that. @measured on 2026-08-26 the
+    // grid became `982px 360px` in a 946px container and the Governed savings
+    // caption ended at x=1595 of a 1440px window. With containment the same
+    // grid measured `570px 360px` and the caption ended at x=1183. Dropping
+    // this line puts the rail back off the screen, and no other assertion in
+    // this file would notice.
+    expect(board([RUN])).toContain("contain:inline-size");
+  });
+
+  it("still draws the run id and the agent when the board is that narrow", () => {
+    // The markup carries them either way; this is the assertion that would
+    // have stayed green through the whole defect, and it is here to say so.
+    const html = board([RUN]);
+    expect(html).toContain("run-0217");
+    expect(html).toContain("cashflow-forecaster");
   });
 });
 
