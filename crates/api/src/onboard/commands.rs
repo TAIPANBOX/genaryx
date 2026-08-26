@@ -1711,6 +1711,101 @@ mod tests {
         assert_eq!(status.passports[0].models_count, 2);
     }
 
+    #[test]
+    fn status_surfaces_the_declarations_it_already_parsed() {
+        // The peek deserializes every `filesystem` scope and every `models`
+        // entry off disk. Until this test, only the two LENGTHS reached the
+        // DTO: a console that had already read `anthropic` and
+        // `claude-sonnet-4-5` off the file showed "2 models" and dropped both
+        // names. Asserted against the SERIALIZED DTO rather than the struct,
+        // because what a panel can render is what crosses the wire.
+        let dir = scratch("status-declarations");
+        let passports = dir.join("passports");
+        std::fs::create_dir_all(&passports).unwrap();
+        std::fs::write(
+            passports.join("recon.json"),
+            format!(
+                r#"{{"schema":"{PASSPORT_SCHEMA}","id":"agent://bank.example/treasury/recon-batch","owner":"olena","filesystem":[{{"path":"/data/reports","mode":"read"}},{{"path":"/data/out","mode":"write"}}],"models":[{{"provider":"anthropic","model":"claude-sonnet-4-5","endpoint":"api.anthropic.com"}},{{"provider":"openai"}}]}}"#
+            ),
+        )
+        .unwrap();
+        let status = run(onboard_status(OnboardStatusRequest {
+            map_path: None,
+            passports_dir: Some(passports.display().to_string()),
+        }))
+        .unwrap();
+        let wire = serde_json::to_value(&status.passports[0]).unwrap();
+
+        assert_eq!(wire["models"][0]["provider"], serde_json::json!("anthropic"));
+        assert_eq!(
+            wire["models"][0]["model"],
+            serde_json::json!("claude-sonnet-4-5")
+        );
+        assert_eq!(
+            wire["models"][0]["endpoint"],
+            serde_json::json!("api.anthropic.com")
+        );
+        // A provider-only entry is legal (SPEC.md section 4.5). It says which
+        // fields the passport does NOT declare, rather than carrying an empty
+        // string a panel would print as a blank cell.
+        assert_eq!(wire["models"][1]["provider"], serde_json::json!("openai"));
+        assert_eq!(wire["models"][1]["model"], serde_json::Value::Null);
+        assert_eq!(wire["models"][1]["endpoint"], serde_json::Value::Null);
+
+        assert_eq!(
+            wire["filesystem"][0]["path"],
+            serde_json::json!("/data/reports")
+        );
+        assert_eq!(wire["filesystem"][0]["mode"], serde_json::json!("read"));
+        assert_eq!(wire["filesystem"][1]["path"], serde_json::json!("/data/out"));
+        assert_eq!(wire["filesystem"][1]["mode"], serde_json::json!("write"));
+
+        // The counts stay alongside the lists: the table reads them for its
+        // two quiet columns, and a source that sends only the counts (the mock
+        // preview, or a console pointed at an older api) is a state the panel
+        // has to be able to tell apart from "declares nothing".
+        assert_eq!(wire["filesystem_count"], serde_json::json!(2));
+        assert_eq!(wire["models_count"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn a_blank_or_absent_declared_field_is_not_a_declaration() {
+        // A passport is a file an operator may write by hand, so a field can
+        // arrive blank as easily as absent, and neither is a declaration. Both
+        // collapse to `null` - the same statement the write side makes when it
+        // drops a blank field entirely (`lib/modelDecls.ts`'s `toModelDecls`).
+        // An empty string would reach the table as a cell that looks broken.
+        let dir = scratch("status-blank-declarations");
+        let passports = dir.join("passports");
+        std::fs::create_dir_all(&passports).unwrap();
+        std::fs::write(
+            passports.join("recon.json"),
+            format!(
+                r#"{{"schema":"{PASSPORT_SCHEMA}","id":"agent://bank.example/treasury/recon-batch","owner":"olena","filesystem":[{{"path":"  ","mode":"read"}}],"models":[{{"provider":"anthropic","model":"   ","endpoint":""}},{{}}]}}"#
+            ),
+        )
+        .unwrap();
+        let status = run(onboard_status(OnboardStatusRequest {
+            map_path: None,
+            passports_dir: Some(passports.display().to_string()),
+        }))
+        .unwrap();
+        let wire = serde_json::to_value(&status.passports[0]).unwrap();
+
+        assert_eq!(wire["models"][0]["provider"], serde_json::json!("anthropic"));
+        assert_eq!(wire["models"][0]["model"], serde_json::Value::Null);
+        assert_eq!(wire["models"][0]["endpoint"], serde_json::Value::Null);
+        // An entirely empty entry still counts as an entry: the passport
+        // declares a row that declares nothing, and dropping it here would
+        // make the count disagree with the list.
+        assert_eq!(wire["models"][1]["provider"], serde_json::Value::Null);
+        assert_eq!(wire["models_count"], serde_json::json!(2));
+
+        assert_eq!(wire["filesystem"][0]["path"], serde_json::Value::Null);
+        assert_eq!(wire["filesystem"][0]["mode"], serde_json::json!("read"));
+        assert_eq!(wire["filesystem_count"], serde_json::json!(1));
+    }
+
     // -- status --------------------------------------------------------------
 
     #[test]
