@@ -41,6 +41,26 @@ function cmpRun(a: Run, b: Run, key: string): number {
   return a.spent_usd - b.spent_usd; // spend (default)
 }
 
+/**
+ * The savings breakdown, as the Money tab renders it today.
+ *
+ * Extracted so it can be rendered and asserted without the whole Money tab
+ * and its four reads. Nothing else about it changes here.
+ */
+export function GovernedSavingsSection({ savings }: { savings: Savings }) {
+  const saved = savings.total_saved_usd;
+  const items: CompItem[] = [
+    { key: "blocked", label: "Runaway blocked", value: savings.blocked_spend_usd, total: saved, tone: "ember", valueText: formatUsd(savings.blocked_spend_usd) },
+    { key: "cache", label: "Semantic cache", value: savings.cache_saved_usd, total: saved, tone: "mint", valueText: formatUsd(savings.cache_saved_usd) },
+    { key: "router", label: "Model router", value: savings.router_saved_usd, total: saved, tone: "iris", valueText: formatUsd(savings.router_saved_usd) },
+  ];
+  return (
+    <Section title="Governed savings" right="prevented + recovered">
+      <Composition items={items} />
+    </Section>
+  );
+}
+
 const REFRESH_INTERVAL_MS = 20_000;
 const RUNS_SHOWN = 18;
 
