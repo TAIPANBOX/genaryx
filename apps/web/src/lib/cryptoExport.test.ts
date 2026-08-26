@@ -21,9 +21,15 @@ import {
   cbomComponents,
   cbomExportMeta,
   cbomExportRows,
+  EVIDENCE_ASSET_EXPORT_COLUMNS,
+  evidenceAssetExportMeta,
+  evidenceAssetExportRows,
+  evidenceAssets,
+  evidenceAssetsNote,
   evidenceProvenance,
   evidenceSeverityNote,
   evidenceSeverityRows,
+  evidenceUnaccounted,
   FINDING_EXPORT_COLUMNS,
   findingExportMeta,
   findingExportRows,
@@ -108,6 +114,23 @@ function evidenceReport(over: Partial<EvidenceReport> = {}): EvidenceReport {
     assets: [{ algorithm: "RSA-2048", compliant: false }],
     digest: "sha256:abcdef",
     signature: { alg: "ml-dsa-65", value: "BASE64SIG", publicKey: "BASE64SPKI" },
+    ...over,
+  };
+}
+
+/** One `assets[]` row, the shape qryx's `cnsaAssetJSON` emits
+ * (`internal/report/cnsa.go:255-264`) and the shape the connector's
+ * `evidence_report_typed_digest_and_optional_signature` keeps as raw JSON. */
+function asset(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    algorithm: "RSA-2048",
+    type: "certificate",
+    status: "non-compliant",
+    deadline: "2027",
+    action: "Migrate to ML-KEM (key encapsulation) or ML-DSA (signatures) per CNSA 2.0 3.1.",
+    occurrences: 3,
+    locations: ["vault/pki:12", "legacy-lb/tls:4"],
+    tags: { owner: "platform" },
     ...over,
   };
 }
@@ -200,6 +223,17 @@ describe("milestoneViews", () => {
     const f = milestoneViews(report).find((m) => m.key === "fullMigration2035");
     expect(f?.emptyNote).toBeTruthy();
     expect(f?.emptyNote?.toLowerCase()).not.toContain("no finding list");
+  });
+
+  it("separates a MISSING list from an empty one, so the panel can tone them apart", () => {
+    // Both render an empty table. Only one of them is a warning, and a
+    // component cannot tell which from the note's prose.
+    const views = milestoneViews(
+      ncscReport({ fullMigration2035: { verdict: "on-track", count: 0, findings: [] } }),
+    );
+    expect(views.find((m) => m.key === "highestPriority2031")?.missingList).toBe(true);
+    expect(views.find((m) => m.key === "fullMigration2035")?.missingList).toBe(false);
+    expect(views.find((m) => m.key === "discovery2028")?.missingList).toBe(false);
   });
 
   it("leaves emptyNote null when there is a list to show", () => {
@@ -622,5 +656,168 @@ describe("every export's provenance block", () => {
     expect(csv).toContain(`# subject: ${meta.subject}`);
     expect(csv).toContain(`# taken_at: ${TAKEN_AT}`);
     expect(csv).toContain("# caveat: ");
+  });
+});
+
+// ============================================================================
+// 8. The per-asset CNSA rows, which reached no component at all
+// ============================================================================
+
+describe("evidenceAssets", () => {
+  it("reads the rows the bundle carried, rather than dropping them", () => {
+    const report = evidenceReport({ assets: [asset(), asset({ algorithm: "Ed25519" })] });
+    expect(evidenceAssets(report).map((a) => a.algorithm)).toEqual(["RSA-2048", "Ed25519"]);
+  });
+
+  it("keeps the order the bundle carried, because qryx already sorted it", () => {
+    const report = evidenceReport({
+      assets: [asset({ deadline: "immediate" }), asset({ deadline: "2035" }), asset({ deadline: "2027" })],
+    });
+    expect(evidenceAssets(report).map((a) => a.deadline)).toEqual(["immediate", "2035", "2027"]);
+  });
+
+  it("skips an entry that is not an object rather than throwing on it", () => {
+    const report = evidenceReport({ assets: [asset(), "not an asset", null, 7] });
+    expect(evidenceAssets(report)).toHaveLength(1);
+  });
+
+  it("yields nothing when the bundle carried no rows", () => {
+    expect(evidenceAssets(evidenceReport({ assets: [] }))).toEqual([]);
+  });
+});
+
+describe("evidenceAssetsNote", () => {
+  it("says a missing list is missing when the bundle graded assets anyway", () => {
+    const note = evidenceAssetsNote(evidenceReport({ assets: [] }));
+    expect(note).toContain("10 asset");
+    expect(note).toContain("missing list");
+  });
+
+  it("says plainly that nothing was graded when the total is genuinely zero", () => {
+    const report = evidenceReport({
+      assets: [],
+      summary: { compliant: 0, nonCompliant: 0, issues: 0, total: 0, scorePct: 0, bySeverity: {} },
+    });
+    expect(evidenceAssetsNote(report)).toContain("graded no assets");
+  });
+
+  it("is silent when there are rows to render", () => {
+    expect(evidenceAssetsNote(evidenceReport({ assets: [asset()] }))).toBeNull();
+  });
+});
+
+describe("evidenceUnaccounted", () => {
+  it("names the assets that are in the total and in none of the three counts", () => {
+    // qryx's fourth bucket is `notAssessed`, and it is in the score's
+    // denominator. The console's wire type does not carry it, so the only
+    // honest thing left is the difference, reported as a difference.
+    const report = evidenceReport({
+      summary: { compliant: 6, nonCompliant: 2, issues: 1, total: 10, scorePct: 60, bySeverity: {} },
+    });
+    const note = evidenceUnaccounted(report);
+    expect(note).toContain("1 of the 10");
+    expect(note).toContain("not assessed");
+  });
+
+  it("is silent when the three counts already add up to the total", () => {
+    const report = evidenceReport({
+      summary: { compliant: 6, nonCompliant: 3, issues: 1, total: 10, scorePct: 60, bySeverity: {} },
+    });
+    expect(evidenceUnaccounted(report)).toBeNull();
+  });
+
+  it("says the counts disagree rather than rendering a negative remainder", () => {
+    const report = evidenceReport({
+      summary: { compliant: 98, nonCompliant: 29, issues: 12, total: 127, scorePct: 77, bySeverity: {} },
+    });
+    const note = evidenceUnaccounted(report);
+    expect(note).toContain("do not reconcile");
+    expect(note).not.toContain("-12");
+  });
+});
+
+describe("evidenceAssetExportRows", () => {
+  const rows = evidenceAssetExportRows(evidenceReport({ assets: [asset()] }));
+
+  it("carries the fields the console reads off a CNSA asset row", () => {
+    expect(rows[0]).toEqual({
+      algorithm: "RSA-2048",
+      type: "certificate",
+      status: "non-compliant",
+      deadline: "2027",
+      action: "Migrate to ML-KEM (key encapsulation) or ML-DSA (signatures) per CNSA 2.0 3.1.",
+      occurrences: 3,
+      locations: "vault/pki:12; legacy-lb/tls:4",
+      tags: "owner=platform",
+    });
+  });
+
+  it("leaves a missing occurrence count unrecorded, never 0", () => {
+    const bare = evidenceAssetExportRows(evidenceReport({ assets: [{ algorithm: "X" }] }));
+    expect(bare[0].occurrences).toBeNull();
+    expect(bare[0].locations).toBeNull();
+    expect(bare[0].tags).toBeNull();
+  });
+
+  it("writes those unrecorded fields as EMPTY csv cells, never a 0 or a dash", () => {
+    const bare = evidenceAssetExportRows(evidenceReport({ assets: [{ algorithm: "X" }] }));
+    const csv = toCsv(
+      EVIDENCE_ASSET_EXPORT_COLUMNS,
+      bare,
+      evidenceAssetExportMeta(evidenceReport({ assets: [{ algorithm: "X" }] }), TAKEN_AT, ENV),
+    );
+    // [0] is the header row; [1] is the only data row. `toCsv` ends with a
+    // newline, so the naive split leaves a trailing empty string too.
+    const dataRow = csv.split("\n").filter((l) => l.length > 0 && !l.startsWith("#"))[1] ?? "";
+    expect(dataRow).toBe("X,,,,,,,");
+  });
+
+  it("has a column for every field it fills", () => {
+    expect(EVIDENCE_ASSET_EXPORT_COLUMNS.map((c) => c.key).sort()).toEqual(Object.keys(rows[0]).sort());
+  });
+});
+
+describe("evidenceAssetExportMeta", () => {
+  it("names the digest, so the file can be tied back to the bundle", () => {
+    const meta = evidenceAssetExportMeta(evidenceReport({ assets: [asset()] }), TAKEN_AT, ENV);
+    expect(meta.windows.join("\n")).toContain("sha256:abcdef");
+  });
+
+  it("says the file is not covered by the bundle's signature", () => {
+    const meta = evidenceAssetExportMeta(evidenceReport({ assets: [asset()] }), TAKEN_AT, ENV);
+    expect(caveatsOf(meta)).toContain("NOT covered by that signature");
+    expect(caveatsOf(meta)).toContain("ml-dsa-65");
+  });
+
+  it("says an unsigned bundle is unsigned because this console asked for that", () => {
+    const meta = evidenceAssetExportMeta(evidenceReport({ assets: [asset()], signature: null }), TAKEN_AT, ENV);
+    expect(caveatsOf(meta)).toContain("this console's own request");
+  });
+
+  it("cries PARTIAL when the bundle graded assets and carried no rows for them", () => {
+    const meta = evidenceAssetExportMeta(evidenceReport({ assets: [] }), TAKEN_AT, ENV);
+    expect(caveatsOf(meta)).toContain("PARTIAL");
+    expect(caveatsOf(meta)).toContain("missing list");
+  });
+
+  it("does not cry partial when every graded asset has a row", () => {
+    const report = evidenceReport({
+      assets: [asset(), asset()],
+      summary: { compliant: 0, nonCompliant: 2, issues: 0, total: 2, scorePct: 0, bySeverity: { high: 2 } },
+    });
+    expect(caveatsOf(evidenceAssetExportMeta(report, TAKEN_AT, ENV))).not.toContain("PARTIAL");
+  });
+
+  it("carries the unaccounted assets into the file's own caveats", () => {
+    const report = evidenceReport({
+      assets: [asset()],
+      summary: { compliant: 6, nonCompliant: 2, issues: 1, total: 10, scorePct: 60, bySeverity: {} },
+    });
+    expect(caveatsOf(evidenceAssetExportMeta(report, TAKEN_AT, ENV))).toContain("not assessed");
+  });
+
+  it("says the rows are in the bundle's own order", () => {
+    const meta = evidenceAssetExportMeta(evidenceReport({ assets: [asset()] }), TAKEN_AT, ENV);
+    expect(caveatsOf(meta)).toContain("does not re-sort");
   });
 });
