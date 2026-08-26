@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { SeverityBadge } from "./SeverityBadge";
+import { UserCard } from "./UserCard";
+import { UnitCard } from "./UnitCard";
+import { usePopover } from "../lib/popover";
 import { fetchRuns } from "../lib/money";
 import { fetchAgentRecord, type AgentRecord } from "../lib/agentRecord";
 import { fetchRecentEvents } from "../lib/recentEvents";
@@ -79,6 +82,7 @@ export function Incident360({
   onOpenAgent: (agentId: string) => void;
   onNavigate?: (view: ViewId) => void;
 }) {
+  const { open } = usePopover();
   const subject = incidentSubject(row);
   const chain = incidentDelegation(row);
   const data = incidentData(row);
@@ -155,6 +159,26 @@ export function Incident360({
 
   const thisEventId = row.source === "bus" || row.source === "verdryx" ? row.raw.id : null;
 
+  /** What THIS event says it cost, as opposed to what the run cost.
+   *
+   * `@yurii` asked for the split: "на якій події вона була зупинена, і саме ця
+   * подія скільки забрала коштів". tokenfuse writes `spent_usd` and
+   * `budget_usd` onto a refusal, so the answer is on the event itself and the
+   * run total is a different number about a longer window. Showing only the
+   * run total answered "what did this agent cost today" to somebody asking
+   * "what did THIS cost". */
+  const eventMoney = useMemo(() => moneyFrom(data), [data]);
+
+  /** The first refusal in the run, which is the point the agent got no
+   * further than, and not necessarily the row somebody clicked. */
+  const firstRefusal = useMemo(() => {
+    for (const e of timeline ?? []) {
+      const d = e.data && typeof e.data === "object" ? (e.data as Record<string, unknown>) : null;
+      if (refusalFrom(d)) return { event: e, money: moneyFrom(d) };
+    }
+    return null;
+  }, [timeline]);
+
   return (
     <div
       className="flex flex-col min-h-0"
@@ -217,16 +241,40 @@ export function Incident360({
 
         <Q label="Who answers for it">
           {!recordAsked ? undefined : record ? (
-            <span>
-              {record.owner || "no owner recorded"}
-              {record.team ? ` · ${record.team}` : ""}
+            <span className="flex items-center gap-1.5 flex-wrap">
+              {/* Both open their own card rather than reading as text. An
+                  operator who has just been told who answers for an agent
+                  wants that person's other agents and their spend, and the
+                  console already holds both; a plain string made them go and
+                  look for it by hand. */}
+              {record.owner ? (
+                <button
+                  type="button"
+                  className="chip"
+                  style={{ cursor: "pointer" }}
+                  title="Open this owner"
+                  onClick={() => open(<UserCard handle={record.owner} onOpenFullAgent={onOpenAgent} />)}
+                >
+                  {record.owner}
+                </button>
+              ) : (
+                <span className="chip">no owner recorded</span>
+              )}
+              {record.team ? (
+                <button
+                  type="button"
+                  className="chip"
+                  style={{ cursor: "pointer" }}
+                  title="Open this unit"
+                  onClick={() => open(<UnitCard team={record.team} onOpenFullAgent={onOpenAgent} />)}
+                >
+                  {record.team}
+                </button>
+              ) : null}
               {record.allowed?.length ? (
-                <>
-                  <br />
-                  <span className="mono" style={{ fontSize: 10.5, color: "var(--faint)" }}>
-                    allowed: {record.allowed.join(", ")}
-                  </span>
-                </>
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--faint)" }}>
+                  allowed: {record.allowed.join(", ")}
+                </span>
               ) : null}
             </span>
           ) : null}
@@ -265,13 +313,56 @@ export function Incident360({
 
         <Q label="Was it stopped">{stoppedAnswer(run, record, data, runAsked, recordAsked)}</Q>
 
-        <Q label="What it cost">
+        <Q
+          label="What this event cost"
+          note={
+            "the amounts the producer recorded ON THIS EVENT, which is what the " +
+            "run had spent at the moment it was refused. Not the run's total: " +
+            "see the section below."
+          }
+        >
+          {eventMoney ? (
+            <span>
+              {eventMoney.spent !== null ? `${formatUsd(eventMoney.spent)} spent by this point` : ""}
+              {eventMoney.budget !== null ? ` of ${formatUsd(eventMoney.budget)}` : ""}
+              {eventMoney.overBy !== null ? ` · over by ${formatUsd(eventMoney.overBy)}` : ""}
+              {eventMoney.reason ? ` · ${eventMoney.reason}` : ""}
+            </span>
+          ) : null}
+        </Q>
+
+        <Q label="What the whole run cost">
           {!runAsked ? undefined : run ? (
             <span>
               {formatUsd(run.spent_usd)} spent
               {run.budget_usd !== null ? ` of ${formatUsd(run.budget_usd)}` : " (no budget set)"}
-              {` · ${run.calls} call(s) · ${run.steps} step(s) · ${run.model}`}
-              {run.unit ? ` · unit ${run.unit}` : ""}
+              {` · ${run.calls} call(s) · ${run.steps} step(s)`}
+              <br />
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--faint)" }}>
+                model {run.model}
+                {run.unit ? ` · unit ${run.unit}` : " · no unit resolved"}
+              </span>
+            </span>
+          ) : null}
+        </Q>
+
+        <Q
+          label="Where it was stopped"
+          note={
+            "the first refusal in this run, which is the event the agent got no " +
+            "further than. It is not always the one above: a run can be refused " +
+            "long before the incident somebody opened."
+          }
+        >
+          {timeline === null ? undefined : firstRefusal ? (
+            <span>
+              <span className="chip">{firstRefusal.event.source}</span>{" "}
+              {firstRefusal.event.type.replace(/_/g, " ")} at{" "}
+              <span className="mono">{firstRefusal.event.ts.slice(11, 19)}</span>
+              {firstRefusal.money?.spent !== null && firstRefusal.money !== null
+                ? ` · ${formatUsd(firstRefusal.money.spent as number)} spent by then`
+                : ""}
+              {firstRefusal.event.id === thisEventId ? " · this is the one you opened" : ""}
             </span>
           ) : null}
         </Q>
@@ -417,6 +508,31 @@ function stoppedAnswer(
     return "nothing stopped it: this event is not a refusal, the run was not killed, and the agent is not blocked";
   }
   return null;
+}
+
+
+/** The money a producer recorded on one event, where it recorded any.
+ *
+ * `budget_usd` and `spent_usd` are what tokenfuse writes onto a refusal
+ * (`crates/gateway/src/proxy.rs`, the breaker emit). Read best-effort and only
+ * as numbers: a producer that writes a string there is reporting something
+ * this console does not understand, and rendering it as money would be the
+ * console asserting a figure it did not read. */
+function moneyFrom(
+  data: Record<string, unknown> | null,
+): { spent: number | null; budget: number | null; overBy: number | null; reason: string | null } | null {
+  if (!data) return null;
+  const num = (k: string) => (typeof data[k] === "number" ? (data[k] as number) : null);
+  const spent = num("spent_usd");
+  const budget = num("budget_usd");
+  if (spent === null && budget === null) return null;
+  const reason = typeof data.reason === "string" ? (data.reason as string) : null;
+  return {
+    spent,
+    budget,
+    overBy: spent !== null && budget !== null && spent > budget ? spent - budget : null,
+    reason,
+  };
 }
 
 /** The members a producer uses to say "this was refused, and here is why".
