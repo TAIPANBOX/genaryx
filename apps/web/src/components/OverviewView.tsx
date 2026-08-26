@@ -34,8 +34,6 @@ import {
   INCIDENT_SOURCE_VIEW,
   type UnifiedIncident,
 } from "../lib/incidents";
-import { EventDetailCard } from "./EventDetailCard";
-import { IncidentTextCard } from "./IncidentTextCard";
 import { usePostureData } from "../lib/usePostureData";
 import { fetchRecentEvents } from "../lib/recentEvents";
 import { hasBackend, subscribeBackend } from "../lib/transport";
@@ -57,6 +55,7 @@ export function OverviewView({
   onOpenAgent,
   onSelectView,
   onExplainIncident,
+  onOpenIncident,
 }: {
   onOpenAgent: (agentId: string) => void;
   /** Source-chip click on an Incident Center row - switches to that source's
@@ -68,10 +67,14 @@ export function OverviewView({
    * money-sourced Incident Center row (see `lib/incidents.ts`'s
    * `explainable` doc comment for why). */
   onExplainIncident: (incidentId: string) => void;
+  /** Hand an incident row up to the shell, which owns the overlay layer.
+   * Same reason the Anomalies view does: Incident 360 opens Agent 360 beside
+   * itself, so it cannot live inside a tab's own popover stack. */
+  onOpenIncident: (row: UnifiedIncident) => void;
 }) {
   const status = useMoneyStatus();
   const ready = status?.state === "ready";
-  const { open, close } = usePopover();
+  const { open } = usePopover();
 
   const [overview, setOverview] = useState<Overview | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -242,55 +245,6 @@ export function OverviewView({
   const openAgent = (agentId: string, rect: DOMRect) =>
     open(<AgentDetailCard agentId={agentId} onOpenFull={onOpenAgent} />, { anchor: rect });
 
-  /** Open one incident row beside itself.
-   *
-   * Each source opens the most specific record this console actually holds:
-   *
-   *   bus, verdryx  the raw envelope, through `EventDetailCard`, which already
-   *                 renders a `UiEvent` with its severity, its producer, its
-   *                 time and its whole `data` object. That is the answer to
-   *                 "what happened" for anything that came off the bus, and it
-   *                 needed no new component.
-   *   money         the agent the incident is about. A money incident carries
-   *                 a run and an agent, and the agent card is the one that
-   *                 leads somewhere: `AgentDetailCard` is what every other
-   *                 drill in this view opens, and its own "open full" goes to
-   *                 Agent 360. An incident with neither falls back to the
-   *                 metric card, which is honest about holding only the
-   *                 aggregate.
-   *   idryx         the identity the detector fired about, which is the
-   *                 subject of an identity alert in the same way an agent is
-   *                 the subject of a money incident.
-   *   posture       a posture finding is a computed state rather than a record
-   *                 with a subject, so it opens its own text: the title, why
-   *                 it matters, and nothing invented beyond what the finding
-   *                 carries. Better than a row that does not open at all, and
-   *                 it stops short of implying a detail page exists.
-   */
-  const openIncident = (row: UnifiedIncident, rect: DOMRect) => {
-    if (row.source === "bus" || row.source === "verdryx") {
-      // `close(id)` and not `close()`: the second closes every open window,
-      // and an operator who opened an agent card and then an event beside it
-      // would lose both from one dismiss.
-      const id = open(<EventDetailCard event={row.raw} onClose={() => close(id)} onOpenAgent={openAgent} />, {
-        anchor: rect,
-      });
-      return;
-    }
-    if (row.source === "money") {
-      const agentId = row.raw.agent_id;
-      if (agentId) {
-        openAgent(agentId, rect);
-        return;
-      }
-    }
-    if (row.source === "idryx" && row.raw.identity) {
-      openAgent(row.raw.identity, rect);
-      return;
-    }
-    open(<IncidentTextCard row={row} onClose={close} />, { anchor: rect });
-  };
-
   const agentBars: BarItem[] = agents.slice(0, 20).map((a) => {
     const state = blockedByAgent.get(a.agent);
     return {
@@ -374,7 +328,7 @@ export function OverviewView({
     const chipLabel = row.source === "bus" ? busPlaneLabel(row.raw) : INCIDENT_SOURCE_LABEL[row.source];
     const chipView = row.source === "bus" ? busPlaneView(row.raw) : INCIDENT_SOURCE_VIEW[row.source];
     return {
-      onClick: (rect: DOMRect) => openIncident(row, rect),
+      onClick: () => onOpenIncident(row),
     key: row.id,
     color: sevColor(row.severity),
     title: (

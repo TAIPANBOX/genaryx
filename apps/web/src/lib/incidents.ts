@@ -521,3 +521,56 @@ export function filterIncidents(
 export function planesPresent(rows: readonly UnifiedIncident[]): string[] {
   return [...new Set(rows.map(incidentPlane))].sort();
 }
+
+/** The agent an incident is about, or "" when it is about no single one.
+ *
+ * A fleet-wide signal genuinely has no subject, and "" says so. A placeholder
+ * would put a name on something that did not do the thing, which is the rule
+ * the whole estate keeps: SPEC 6.1 forbids inventing an `agent_id` at the
+ * producer, and a consumer inventing one downstream is the same error one
+ * plane later. */
+export function incidentSubject(row: UnifiedIncident): string {
+  switch (row.source) {
+    case "bus":
+    case "verdryx":
+      return row.raw.agent_id ?? "";
+    case "money":
+      return row.raw.agent_id ?? "";
+    case "idryx":
+      return row.raw.identity ?? "";
+    default:
+      return "";
+  }
+}
+
+/** Who asked for the work, root first.
+ *
+ * Only the envelope carries this: `on_behalf_of` is a delegation chain whose
+ * root is a `user://` when a person started the run, which is the one place
+ * this console can answer "who set this off" rather than "which agent did it".
+ * Money incidents, identity alerts and posture findings carry no chain, and an
+ * empty array is the honest answer for them rather than a guess from the
+ * agent's owner: the owner is who ANSWERS for an agent, not who asked it to do
+ * this particular thing, and conflating the two would name the wrong person in
+ * the one card built to name the right one. */
+export function incidentDelegation(row: UnifiedIncident): readonly string[] {
+  if (row.source === "bus" || row.source === "verdryx") return row.raw.on_behalf_of ?? [];
+  return [];
+}
+
+/** The producer's own `data`, as a plain object, or null.
+ *
+ * Never parsed into typed fields. This console reports what a producer wrote;
+ * reading a free-form member into a claim is the thing trailryx's mapper
+ * refuses to do one plane over, for the same reason. */
+export function incidentData(row: UnifiedIncident): Record<string, unknown> | null {
+  const raw = row.source === "bus" || row.source === "verdryx" ? row.raw.data : null;
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+}
+
+/** The run an incident belongs to, where it has one. */
+export function incidentRunId(row: UnifiedIncident): string | null {
+  if (row.source === "bus" || row.source === "verdryx") return row.raw.run_id;
+  if (row.source === "money") return row.raw.run_id;
+  return null;
+}

@@ -21,6 +21,8 @@ import { MemoryView } from "./MemoryView";
 import { MoneyView } from "./MoneyView";
 import { OnboardView } from "./OnboardView";
 import { AnomaliesView } from "./AnomaliesView";
+import { Incident360 } from "./Incident360";
+import type { UnifiedIncident } from "../lib/incidents";
 import { OverviewView } from "./OverviewView";
 import { PolicyView } from "./PolicyView";
 import { PostureView } from "./PostureView";
@@ -411,6 +413,12 @@ export function AppShell() {
   // most-recent card here, via a plain slice with no state mutation.
   const visibleAgentIds = isNarrowForCompare ? focusedAgentIds.slice(-1) : focusedAgentIds;
 
+  // The incident currently open in the overlay layer. One at a time, unlike
+  // agents: comparing two agents side by side is a real operator gesture and
+  // comparing two incidents is not, and each incident card already opens the
+  // agents it names beside itself.
+  const [focusedIncident, setFocusedIncident] = useState<UnifiedIncident | null>(null);
+
   // Watch dock (Yurii, 2026-07-24): a pinned unit's row opens the SAME
   // `UnitCard` every other unit link in the app opens (`AgentDetailCard`'s
   // own "business unit" field, `Agent360.tsx`'s eventual equivalent), via
@@ -456,10 +464,15 @@ export function AppShell() {
           </div>
         )}
         {view === "overview" && (
-          <OverviewView onOpenAgent={onOpenAgent} onSelectView={onSelectView} onExplainIncident={onExplainIncident} />
+          <OverviewView
+            onOpenAgent={onOpenAgent}
+            onSelectView={onSelectView}
+            onExplainIncident={onExplainIncident}
+            onOpenIncident={setFocusedIncident}
+          />
         )}
         {view === "anomalies" && (
-          <AnomaliesView onOpenAgent={onOpenAgent} onSelectView={onSelectView} />
+          <AnomaliesView onSelectView={onSelectView} onOpenIncident={setFocusedIncident} />
         )}
         {view === "money" && (
           <MoneyView onOpenAgent={onOpenAgent} onOpenReplay={onOpenReplay} onExplainIncident={onExplainIncident} />
@@ -502,6 +515,28 @@ export function AppShell() {
 
       <WatchDock onOpenAgent={onOpenAgent} onOpenUnit={onOpenUnit} />
 
+      {focusedIncident && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Same overlay chrome as Agent 360's below, and deliberately its own
+              layer rather than a third card in that row: an incident opens
+              agents, so the two must be able to sit beside each other. */}
+          <button
+            type="button"
+            aria-label="Close Incident 360"
+            className="absolute inset-0"
+            style={{ background: "color-mix(in srgb, var(--ink) 55%, transparent)", cursor: "default" }}
+            onClick={() => setFocusedIncident(null)}
+          />
+          <div className="relative h-full flex items-stretch" style={{ padding: 12 }}>
+            <Incident360
+              row={focusedIncident}
+              onClose={() => setFocusedIncident(null)}
+              onOpenAgent={onOpenAgent}
+              onNavigate={onSelectView}
+            />
+          </div>
+        </div>
+      )}
       {visibleAgentIds.length > 0 && (
         <div className="fixed inset-0 z-50 flex justify-end">
           {/* Plain overlay chrome, not itself a dialog - each `Agent360`

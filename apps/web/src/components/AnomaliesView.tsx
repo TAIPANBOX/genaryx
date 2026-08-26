@@ -6,7 +6,6 @@ import { hasBackend, subscribeBackend } from "../lib/transport";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { useIdentityStatus } from "../lib/useIdentityStatus";
 import { usePostureData } from "../lib/usePostureData";
-import { useIncidentDrill } from "../lib/useIncidentDrill";
 import {
   aggregateIncidents,
   busCoverage,
@@ -14,6 +13,7 @@ import {
   busPlaneView,
   filterIncidents,
   incidentPlane,
+  type UnifiedIncident,
   planesPresent,
   INCIDENT_SOURCE_LABEL,
   INCIDENT_SOURCE_VIEW,
@@ -50,11 +50,14 @@ const SEVERITY_CHIPS = ["critical", "high", "medium", "low", "info"] as const;
  * would be a second answer to one question.
  */
 export function AnomaliesView({
-  onOpenAgent,
   onSelectView,
+  onOpenIncident,
 }: {
-  onOpenAgent: (agentId: string) => void;
   onSelectView: (view: ViewId) => void;
+  /** Hand the row up to the shell, which owns the overlay layer. The view
+   * does not open the card itself: Incident 360 opens Agent 360 beside it,
+   * and a card opened from inside a tab cannot outlive a tab switch. */
+  onOpenIncident: (row: UnifiedIncident) => void;
 }) {
   const moneyStatus = useMoneyStatus();
   const ready = moneyStatus?.state === "ready";
@@ -65,7 +68,6 @@ export function AnomaliesView({
     () => [...posture.stackFindings, ...posture.identityFindings, ...posture.connectionFindings],
     [posture.stackFindings, posture.identityFindings, posture.connectionFindings],
   );
-  const { openIncident } = useIncidentDrill(onOpenAgent);
 
   const [moneyIncidents, setMoneyIncidents] = useState<Incident[]>([]);
   const [moneyError, setMoneyError] = useState<MoneyError | null>(null);
@@ -150,7 +152,7 @@ export function AnomaliesView({
     return {
       key: row.id,
       color: sevColor(row.severity),
-      onClick: (rect: DOMRect) => openIncident(row, rect),
+      onClick: () => onOpenIncident(row),
       title: (
         <span className="flex items-center gap-2">
           <button
