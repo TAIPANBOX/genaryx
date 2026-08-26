@@ -117,7 +117,20 @@ export type EngramProvenance =
       salience: number | null;
       emotional_valence: number | null;
       importance_score: number | null;
-      summary_of: string | null;
+      /** The episode ids this episode summarizes. A LIST on the wire, always
+       * present (`Vec<String>` with `#[serde(default)]`, and
+       * `Episode.summary_of: list[str]` upstream), never a scalar. This was
+       * `string | null` here until 2026-08-26, which is the same mistake the
+       * backend was already burned by: `crates/connectors/src/engram.rs`
+       * carries a comment recording that typing it as a single string made
+       * every episodic `why` fail to deserialize, caught live against real
+       * `engram-mcp`. The console-side copy of the error was quieter and
+       * lasted longer, because TypeScript does not check the wire: `[]` is
+       * not nullish, so `summary_of ?? "-"` never once fired, and a
+       * two-episode list rendered as the run-together token `ep-1,ep-2`.
+       * An empty list means this episode summarizes nothing, which is a fact
+       * about the episode, not a missing value. */
+      summary_of: string[];
       agent_id: string | null;
       access_count: number;
       last_accessed: string | null;
