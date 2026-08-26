@@ -25,6 +25,91 @@ import { AccessMatrixTable } from "./AccessMatrixTable";
 import { describePolicyError, fetchPolicies } from "../lib/policy";
 import { usePolicyStatus } from "../lib/usePolicyStatus";
 import type { PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
+import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
+import {
+  ACCESS_COLUMNS,
+  ALERT_COLUMNS,
+  IDENTITY_COLUMNS,
+  KEY_COLUMNS,
+  REMEDIATION_COLUMNS,
+  accessExportMeta,
+  accessExportRows,
+  alertExportMeta,
+  alertExportRows,
+  gatewayEnvironment,
+  identityExportMeta,
+  identityExportRows,
+  idryxEnvironment,
+  keyExportMeta,
+  keyExportRows,
+  remediationExportMeta,
+  remediationExportRows,
+  type ExportColumn,
+  type SnapshotMetaInput,
+} from "../lib/identityExport";
+
+/** The browser this console is being read in. Only ever half of an export's
+ * `environment`: the other half, the plane's own URL, is the part a reader of
+ * the file days later cannot recover. */
+function consoleHost(): string {
+  return window.location.host;
+}
+
+function isoOrNull(ms: number | null): string | null {
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
+/**
+ * CSV/JSON for one table, in the shape `StatsView.tsx` already established.
+ *
+ * `meta` is a thunk rather than a value: it is evaluated at CLICK time so that
+ * `takenAt` is when the file was actually saved, not when this component last
+ * rendered. Disabled on an empty table, because a provenance block over zero
+ * rows is a document that says nothing while looking like a record.
+ */
+function ExportButtons<T>({
+  name,
+  columns,
+  rows,
+  meta,
+}: {
+  name: string;
+  columns: ExportColumn<T>[];
+  rows: T[] | null;
+  meta: () => ExportMeta;
+}) {
+  const ready = rows !== null && rows.length > 0;
+  const style = {
+    background: "var(--panel-2)",
+    color: "var(--dim)",
+    border: "1px solid var(--line)",
+    opacity: ready ? 1 : 0.4,
+  };
+  return (
+    <span className="flex items-center gap-1">
+      <button
+        type="button"
+        className="mono text-[11px] px-2 py-1 rounded"
+        style={style}
+        disabled={!ready}
+        title={ready ? `Save this table as ${name}.csv, with its provenance block` : "nothing to export yet"}
+        onClick={() => rows && downloadCsv(`${name}.csv`, columns, rows, meta())}
+      >
+        CSV
+      </button>
+      <button
+        type="button"
+        className="mono text-[11px] px-2 py-1 rounded"
+        style={style}
+        disabled={!ready}
+        title={ready ? `Save this table as ${name}.json, with its provenance block` : "nothing to export yet"}
+        onClick={() => rows && downloadJson(`${name}.json`, rows, meta())}
+      >
+        JSON
+      </button>
+    </span>
+  );
+}
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info", "none"] as const;
 
@@ -128,6 +213,24 @@ function CredentialsSection({
       title="Credentials"
       right={
         <div className="flex items-center gap-2">
+          {/* Rendered only with a report in hand, so the meta thunk never has
+              to invent one: an export of a gateway this console never reached
+              would carry a provenance block over nothing. */}
+          {report !== null && (
+            <ExportButtons
+              name="genaryx-gateway-keys"
+              columns={KEY_COLUMNS}
+              rows={keyExportRows(report, nowMs)}
+              meta={() =>
+                keyExportMeta({
+                  environment: gatewayEnvironment(status, consoleHost()),
+                  takenAt: new Date().toISOString(),
+                  report,
+                  nowMillis: nowMs,
+                })
+              }
+            />
+          )}
           {report && !report.identity_map_configured && (
             <span
               className="chip"
@@ -215,6 +318,7 @@ function AccessMatrixSection({
   policiesError,
   policies,
   hhmm,
+  when,
   onOpenAgent,
 }: {
   identityReady: boolean;
@@ -225,6 +329,9 @@ function AccessMatrixSection({
   policiesError: PolicyError | null;
   policies: PolicyRecord[] | null;
   hhmm: string | undefined;
+  /** When each of the two idryx reads happened, for the export's provenance
+   * block. Not `hhmm`: an "11:58" in a file read next month names no day. */
+  when: { snapshotAt: string | null; rescanAt: string | null };
   onOpenAgent: (agentId: string) => void;
 }) {
   const policyReady = policyStatus?.state === "ready";
@@ -249,6 +356,20 @@ function AccessMatrixSection({
       title="Access matrix"
       right={
         <div className="flex items-center gap-2">
+          <ExportButtons
+            name="genaryx-access-matrix"
+            columns={ACCESS_COLUMNS}
+            rows={rows === null ? null : accessExportRows(rows)}
+            meta={() =>
+              accessExportMeta({
+                environment: idryxEnvironment(identityStatus, consoleHost()),
+                takenAt: new Date().toISOString(),
+                ...when,
+                policyNote,
+                rows: rows ?? [],
+              })
+            }
+          />
           {policyNote && (
             <span className="chip" style={cssVar("dot", "var(--faint)")} title={policyNote}>
               <span className="dot" aria-hidden="true" />
@@ -278,6 +399,105 @@ function AccessMatrixSection({
         <AccessMatrixTable rows={rows} onOpenAgent={onOpenAgent} />
       )}
     </Section>
+  );
+}
+
+/**
+ * `GET /api/remediations`, all four fields of it.
+ *
+ * `code` and `created_at` were on the wire and rendered nowhere. `created_at`
+ * is the one an operator acts on: a right-size suggestion computed months ago
+ * describes an identity as it was then, and a list with no dates on it reads
+ * as if every row were current.
+ *
+ * `code` is deliberately NOT labelled. Nothing in this console, the connector
+ * or the wire types says what idryx puts there, so the row shows it verbatim
+ * behind a plain "code" toggle and the legend says the console does not
+ * interpret it. Calling it a fix, a command or a patch would be this console
+ * asserting something it has never read.
+ */
+function RemediationsTable({ remediations }: { remediations: IdryxRecommendation[] }) {
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const columns = "1fr 110px 170px 1fr 70px";
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="px-5 text-[11px]" style={{ color: "var(--faint)" }}>
+        created is the date idryx attached to the suggestion, empty where it sent none. code is whatever idryx
+        returns beside the explanation, shown exactly as sent: this console does not interpret it and makes no claim
+        about what it is for.
+      </span>
+      <div style={{ overflowX: "auto" }}>
+        <div
+          className="grid gap-3 px-5 py-2"
+          style={{ gridTemplateColumns: columns, borderBottom: "1px solid var(--line)" }}
+        >
+          {["identity", "kind", "created", "explanation", "code"].map((label) => (
+            <span
+              key={label}
+              className="mono"
+              style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--faint)" }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+        {remediations.map((r, idx) => (
+          <div key={`${r.identity}-${r.kind}-${idx}`}>
+            <div className="grid items-center gap-3 px-5 py-2.5 bus-row" style={{ gridTemplateColumns: columns }}>
+              <span className="mono truncate text-[11.5px]" title={r.identity} style={{ color: "var(--fg)" }}>
+                {r.identity}
+              </span>
+              <span
+                className="badge"
+                style={cssVar("tone", r.kind === "rotation" ? "var(--sev-medium)" : "var(--sev-info)")}
+              >
+                {r.kind}
+              </span>
+              <span className="mono truncate text-[11px]" title={r.created_at || undefined} style={{ color: "var(--dim)" }}>
+                {r.created_at !== "" ? r.created_at : <span style={{ color: "var(--faint)" }}>-</span>}
+              </span>
+              <span className="truncate text-[11.5px]" title={r.explanation} style={{ color: "var(--dim)" }}>
+                {r.explanation}
+              </span>
+              {r.code !== "" ? (
+                <button
+                  type="button"
+                  className="mono text-[11px] px-2 py-0.5 rounded"
+                  aria-expanded={openIdx === idx}
+                  style={{
+                    background: "var(--panel-2)",
+                    color: "var(--dim)",
+                    border: "1px solid var(--line)",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setOpenIdx(openIdx === idx ? null : idx)}
+                >
+                  {openIdx === idx ? "hide" : "show"}
+                </button>
+              ) : (
+                <span style={{ color: "var(--faint)" }}>-</span>
+              )}
+            </div>
+            {openIdx === idx && r.code !== "" && (
+              <pre
+                className="mono text-[11px] mx-5 mb-2 px-3 py-2"
+                style={{
+                  color: "var(--fg)",
+                  background: "var(--panel-2)",
+                  border: "1px solid var(--line)",
+                  borderRadius: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {r.code}
+              </pre>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -323,7 +543,14 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
   const [alerts, setAlerts] = useState<IdryxAlert[] | null>(null);
   const [remediations, setRemediations] = useState<IdryxRecommendation[] | null>(null);
   const [error, setError] = useState<IdentityError | null>(null);
+  // Two timestamps, not one, and they answer different questions. `asOfMs` is
+  // when the REST snapshot was last read; `rescanAtMs` is when a `detect` pass
+  // last REPLACED the alert list and is null until one has. A saved file has
+  // to be able to say that its alerts and its identities came from different
+  // reads, and a single "as of" cannot say it. Refresh clears the rescan,
+  // because it puts the snapshot's own alerts back.
   const [asOfMs, setAsOfMs] = useState<number | null>(null);
+  const [rescanAtMs, setRescanAtMs] = useState<number | null>(null);
   const [rescanning, setRescanning] = useState(false);
 
   const load = useCallback(async () => {
@@ -334,6 +561,7 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
       setAlerts(a);
       setRemediations(r);
       setAsOfMs(Date.now());
+      setRescanAtMs(null);
       setError(null);
     } catch (err) {
       setError(err as IdentityError);
@@ -351,7 +579,7 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
     try {
       const fresh = await rescan();
       setAlerts(fresh);
-      setAsOfMs(Date.now());
+      setRescanAtMs(Date.now());
       setError(null);
     } catch (err) {
       setError(err as IdentityError);
@@ -430,7 +658,17 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
     };
   }, [policyReady]);
 
-  const hhmm = asOfMs !== null ? formatHm(asOfMs) : undefined;
+  // The badge shows the later of the two reads, which is what "as of" means on
+  // screen. The exports get both separately.
+  const latestMs =
+    asOfMs === null ? rescanAtMs : rescanAtMs === null ? asOfMs : Math.max(asOfMs, rescanAtMs);
+  const hhmm = latestMs !== null ? formatHm(latestMs) : undefined;
+  const when = { snapshotAt: isoOrNull(asOfMs), rescanAt: isoOrNull(rescanAtMs) };
+  const snapshotMeta = (): SnapshotMetaInput => ({
+    environment: idryxEnvironment(status, consoleHost()),
+    takenAt: new Date().toISOString(),
+    ...when,
+  });
 
   const credentialsSection = (
     <CredentialsSection
@@ -451,6 +689,7 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
       policiesError={policiesError}
       policies={policies}
       hhmm={hhmm}
+      when={when}
       onOpenAgent={onOpenAgent}
     />
   );
@@ -556,15 +795,54 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
         />
       )}
 
-      <Section title="Identities" right={<FreshBadge variant="snapshot" detail={hhmm} />}>
+      <Section
+        title="Identities"
+        right={
+          <div className="flex items-center gap-2">
+            <ExportButtons
+              name="genaryx-identities"
+              columns={IDENTITY_COLUMNS}
+              rows={identities === null ? null : identityExportRows(identities)}
+              meta={() => identityExportMeta({ ...snapshotMeta(), identities: identities ?? [] })}
+            />
+            <FreshBadge variant="snapshot" detail={hhmm} />
+          </div>
+        }
+      >
         {identities === null ? <Loading /> : <IdentityList identities={identities} onOpenAgent={onOpenAgent} />}
       </Section>
 
-      <Section title="Alerts" right={<FreshBadge variant="snapshot" detail={hhmm} />}>
+      <Section
+        title="Alerts"
+        right={
+          <div className="flex items-center gap-2">
+            <ExportButtons
+              name="genaryx-identity-alerts"
+              columns={ALERT_COLUMNS}
+              rows={alerts === null ? null : alertExportRows(alerts)}
+              meta={() => alertExportMeta(snapshotMeta())}
+            />
+            <FreshBadge variant="snapshot" detail={hhmm} />
+          </div>
+        }
+      >
         {alerts === null ? <Loading /> : <IdentityAlerts alerts={alerts} onOpenAgent={onOpenAgent} />}
       </Section>
 
-      <Section title="Remediations" right={<FreshBadge variant="snapshot" detail={hhmm} />}>
+      <Section
+        title="Remediations"
+        right={
+          <div className="flex items-center gap-2">
+            <ExportButtons
+              name="genaryx-identity-remediations"
+              columns={REMEDIATION_COLUMNS}
+              rows={remediations === null ? null : remediationExportRows(remediations)}
+              meta={() => remediationExportMeta(snapshotMeta())}
+            />
+            <FreshBadge variant="snapshot" detail={hhmm} />
+          </div>
+        }
+      >
         {remediations === null ? (
           <Loading />
         ) : remediations.length === 0 ? (
@@ -572,28 +850,7 @@ export function IdentityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =
             no remediations in this snapshot.
           </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            {remediations.map((r, idx) => (
-              <div
-                key={`${r.identity}-${r.kind}-${idx}`}
-                className="grid items-center gap-3 px-5 py-2.5 bus-row"
-                style={{ gridTemplateColumns: "1fr 110px 1fr" }}
-              >
-                <span className="mono truncate text-[11.5px]" title={r.identity} style={{ color: "var(--fg)" }}>
-                  {r.identity}
-                </span>
-                <span
-                  className="badge"
-                  style={cssVar("tone", r.kind === "rotation" ? "var(--sev-medium)" : "var(--sev-info)")}
-                >
-                  {r.kind}
-                </span>
-                <span className="truncate text-[11.5px]" title={r.explanation} style={{ color: "var(--dim)" }}>
-                  {r.explanation}
-                </span>
-              </div>
-            ))}
-          </div>
+          <RemediationsTable remediations={remediations} />
         )}
       </Section>
 
