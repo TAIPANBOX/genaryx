@@ -1,0 +1,141 @@
+{
+  "$comment": [
+    "What this repository contributes to a running stack, and what a check may",
+    "believe about it. `checked` is proved against this repository by",
+    "crates/web/tests/manifest.rs in this repository's own CI; `declared` is a",
+    "statement nobody can verify and carries its own `why`.",
+    "",
+    "RUST PUTS ITS UNIT TESTS INSIDE THE SOURCE FILE, AND THAT CHANGES THE READER.",
+    "Go's siblings skip `*_test.go` and are done. Here a `#[cfg(test)] mod tests`",
+    "sits at the bottom of the same file, so the reader cuts each file at the",
+    "first module-level `#[cfg(test)]` and takes only what precedes it. Eight",
+    "GENARYX_ names exist only after that line, and declaring one would put a test",
+    "fixture into this estate's idea of how to configure a console.",
+    "",
+    "The two Rust manifests written before this one were checked for the same",
+    "mistake: TOKENFUSE_ALLOW_STUB and TRAILRYX_DEMO_STORE both sit in product",
+    "code, so both are right. That was measured rather than assumed.",
+    "",
+    "GENARYX_COPILOT_KEY IS THE INTERESTING ONE, AND IT IS NOT DECLARED.",
+    "stack-k8s sets it, so it looks like a variable this repository reads. It is",
+    "not. The code reads GENARYX_COPILOT_API_KEY_REF, whose VALUE is a reference",
+    "such as `env:GENARYX_COPILOT_KEY`, and then reads whatever variable that",
+    "reference names. So the deployment chooses the name and this repository never",
+    "sees it. `GENARYX_COPILOT_KEY` appears here only inside a test that parses",
+    "the reference form.",
+    "",
+    "THE UI IS A DIRECTORY IT IS GIVEN, NOT SOMETHING IT CARRIES. `--ui` is",
+    "optional and omitting it serves the API alone. What fills that directory is",
+    "`apps/web`, a TypeScript build in this same repository and a toolchain this",
+    "manifest's check knows nothing about, which is why the UI is declared rather",
+    "than checked."
+  ],
+  "schema": "taipanbox.dev/components/v1",
+  "repo": "TAIPANBOX/genaryx",
+  "components": [
+    {
+      "name": "console",
+      "class": "service",
+      "checked": {
+        "binary": "genaryx-web",
+        "crate": "genaryx-web",
+        "workspace": ".",
+        "subcommands": [
+          "serve",
+          "doctor"
+        ],
+        "listen_default": "127.0.0.1:7420",
+        "health_path": "/healthz",
+        "env": {
+          "GENARYX_COPILOT_ALLOW_REMOTE": {
+            "required": false
+          },
+          "GENARYX_COPILOT_API_KEY_REF": {
+            "required": false
+          },
+          "GENARYX_COPILOT_BASE_URL": {
+            "required": false
+          },
+          "GENARYX_COPILOT_MODEL": {
+            "required": false
+          },
+          "GENARYX_COPILOT_PROVIDER": {
+            "required": false
+          },
+          "GENARYX_HISTORY_DAYS": {
+            "required": false
+          },
+          "GENARYX_ORG_DOMAIN": {
+            "required": false
+          },
+          "GENARYX_SCAN_TARGET": {
+            "required": false
+          },
+          "GENARYX_WEB_OIDC_ADMIN_ROLE": {
+            "required": false
+          },
+          "GENARYX_WEB_OIDC_APPROVER_ROLE": {
+            "required": false
+          },
+          "GENARYX_WEB_OIDC_AUDIENCE": {
+            "required": false
+          },
+          "GENARYX_WEB_OIDC_ISSUER": {
+            "required": false
+          },
+          "GENARYX_WEB_OIDC_JWKS": {
+            "required": false
+          },
+          "GENARYX_WEB_OIDC_ROLES_CLAIM": {
+            "required": false
+          },
+          "GENARYX_WEB_OIDC_SUB_CLAIM": {
+            "required": false
+          },
+          "GENARYX_WEB_ORIGIN": {
+            "required": false
+          },
+          "GENARYX_WEB_REQUIRE_PASSKEY": {
+            "required": false
+          },
+          "GENARYX_WEB_RP_ID": {
+            "required": false
+          },
+          "GENARYX_WG_ENDPOINT_HOST": {
+            "required": false
+          },
+          "GENARYX_WG_IFACE": {
+            "required": false
+          },
+          "GENARYX_WG_UAPI_CERT": {
+            "required": false
+          },
+          "GENARYX_WG_UAPI_SOCKET": {
+            "required": false
+          },
+          "GENARYX_WG_UAPI_TOKEN": {
+            "required": false
+          }
+        }
+      },
+      "declared": {
+        "the_component_name_is_not_the_binary_name": {
+          "value": "genaryx-web",
+          "why": "estate.json calls it `console` and every deployment installs it under that name; the binary is `genaryx-web`. Recorded rather than renamed."
+        },
+        "the_secret_is_read_by_reference": {
+          "value": "GENARYX_COPILOT_API_KEY_REF=env:<NAME>",
+          "why": "The copilot's key is not read from a variable this repository names. It reads the REFERENCE and then the variable the reference points at, so the name is the deployment's choice. stack-k8s picks GENARYX_COPILOT_KEY. Nothing here can check a name it never sees."
+        },
+        "the_ui_is_a_directory_it_is_given": {
+          "value": "--ui <dir>",
+          "why": "Optional: omitted, it serves the API alone. The directory is built from apps/web, a TypeScript toolchain in this same repository that this check knows nothing about."
+        },
+        "doctor_is_the_other_half": {
+          "value": "genaryx-web doctor",
+          "why": "The same binary, run by a person to check a box rather than to serve it. No launcher schedules it, so it is a subcommand here and not a component of its own."
+        }
+      }
+    }
+  ]
+}
