@@ -97,13 +97,13 @@ New scripts to add next to the existing ones in `scripts/`: `gx_quality.py`, `gx
 ## 6. Rollout targets (everything that carries these numbers or images)
 
 - **Article 10 (Enterprise)**, both languages, three formats each:
-  - `~/Development/Вихідники статей/10-Enterprise/{UA,EN}/Enterprise-{ua,en}.md`
-  - `~/Development/Статті для Тані/10-Enterprise/Enterprise-{ua,en}.html` + re-rendered `.pdf`
+  - `~/Development/Article sources/10-Enterprise/{UA,EN}/Enterprise-{ua,en}.md`
+  - `~/Development/Articles for Tania/10-Enterprise/Enterprise-{ua,en}.html` + re-rendered `.pdf`
 - **Explainer for Tania** (its Genaryx section quotes $4,314 / $2,993 / $2,370):
-  `~/Development/Пояснення для Тані/TAIPANBOX-пояснення-для-Тані.html` + re-rendered `.pdf`
-- **Screenshot folders (4), each with its `_Порядок і підписи.txt` index**:
-  `Статті для Тані/01-General/Скріншоти`, `Статті для Тані/10-Enterprise/Скріншоти`,
-  `Брифи для Тані/Скріншоти`, `Пояснення для Тані/Скріншоти`
+  `~/Development/Explainers for Tania/TAIPANBOX-explainer-for-Tania.html` + re-rendered `.pdf`
+- **Screenshot folders (4), each with its `_Order and captions.txt` index**:
+  `Articles for Tania/01-General/Screenshots`, `Articles for Tania/10-Enterprise/Screenshots`,
+  `Briefs for Tania/Screenshots`, `Explainers for Tania/Screenshots`
 - **Public site**: `~/Development/it-rat/assets/shots/enterprise/*.webp`, the `gx-*` set the Genaryx
   page renders. Deploy is a push to `it-rat/it-rat.github.io`, **only on Yurii's explicit go**.
 - **Campaign archive**: `~/Development/genaryx/live-campaign/` - new `shots/<date>/`,

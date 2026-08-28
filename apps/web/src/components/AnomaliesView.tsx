@@ -326,10 +326,3 @@ export function AnomaliesView({
     </div>
   );
 }
-
-/** Exported for the tab's own count badge, so the nav can say how many rows
- * are waiting without this view being mounted. Kept beside the view rather
- * than in `lib/` because it is about presentation, not aggregation. */
-export function anomalyPlaneOf(row: Parameters<typeof incidentPlane>[0]): string {
-  return incidentPlane(row);
-}
