@@ -552,7 +552,20 @@ export function filterIncidents(
   return rows.filter((row) => {
     if (planes.size > 0 && !planes.has(incidentPlane(row))) return false;
     if (severities.size > 0 && !severities.has(row.severity)) return false;
-    if (q && !`${row.title} ${row.detail}`.toLowerCase().includes(q)) return false;
+    // The SUBJECT as well as the rendered text, and the subject is a field
+    // rather than prose. A money incident renders `run_id ?? agent_id`, so the
+    // moment a run id exists its agent appears nowhere in the title or the
+    // detail, and this filter could not find a row whose agent the tab's own
+    // CSV export names in a column (`incidentSubject`, AnomaliesView's
+    // `anomalyListMeta`). Two surfaces over one question, disagreeing.
+    //
+    // Added to the haystack rather than made a separate control: the input is
+    // one box labelled "filter by agent or text", and splitting it would be a
+    // change to what an operator is asked for rather than to what the box can
+    // find.
+    if (q && !`${row.title} ${row.detail} ${incidentSubject(row)}`.toLowerCase().includes(q)) {
+      return false;
+    }
     return true;
   });
 }

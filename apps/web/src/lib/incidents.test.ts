@@ -16,6 +16,7 @@ import {
   busCoverage,
   filterIncidents,
   incidentPlane,
+  incidentSubject,
   planesPresent,
   busPlaneLabel,
   busPlaneView,
@@ -24,6 +25,7 @@ import {
   TAB_BANDS,
 } from "./incidents";
 import type { UiEvent } from "../types";
+import type { Incident } from "../moneyTypes";
 
 function ev(over: Partial<UiEvent> = {}): UiEvent {
   return {
@@ -45,6 +47,15 @@ function agg(events: readonly UiEvent[]) {
     moneyIncidents: [],
     identityAlerts: [],
     busEvents: events,
+    postureFindings: [],
+  });
+}
+
+function money(incidents: readonly Incident[]) {
+  return aggregateIncidents({
+    moneyIncidents: incidents,
+    identityAlerts: [],
+    busEvents: [],
     postureFindings: [],
   });
 }
@@ -331,5 +342,45 @@ describe("what the tab may see that the card may not", () => {
     // Overview card would silently gain rows nobody asked it for.
     expect([...INCIDENT_BANDS].sort()).toEqual(["critical", "high"]);
     expect([...TAB_BANDS].sort()).toEqual(["critical", "high", "medium"]);
+  });
+});
+
+describe("filtering by an agent finds it in the field, not only in the prose", () => {
+  /** THE DEFECT. `filterIncidents` matched a substring of the rendered title
+   * and detail, and a money incident renders `run_id ?? agent_id`, so the
+   * moment a run id exists the agent is nowhere in the text. The CSV export
+   * on the same tab reads `incidentSubject`, which is the field, so the two
+   * surfaces over one question disagreed: the export named an agent the
+   * filter could not find. */
+  const withRunId: Incident = {
+    id: "inc-1",
+    run_id: "run-8842",
+    agent_id: "agent://acme.example/support/tier1-bot",
+    kind: "budget_exhausted",
+    severity: "high",
+    first_seen: "2026-08-28T10:00:00Z",
+    last_seen: "2026-08-28T10:00:00Z",
+    occurrences: 3,
+    acknowledged: false,
+  };
+
+  it("finds a money incident by its agent when a run id owns the detail line", () => {
+    const rows = money([withRunId]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).not.toContain("tier1-bot");
+    expect(incidentSubject(rows[0])).toContain("tier1-bot");
+
+    const found = filterIncidents(rows, { query: "tier1-bot" });
+    expect(found).toHaveLength(1);
+  });
+
+  it("still finds it by the text, so the free search did not become a field search", () => {
+    const rows = money([withRunId]);
+    expect(filterIncidents(rows, { query: "run-8842" })).toHaveLength(1);
+  });
+
+  it("does not match an agent that is not this row's", () => {
+    const rows = money([withRunId]);
+    expect(filterIncidents(rows, { query: "somebody-else" })).toHaveLength(0);
   });
 });
