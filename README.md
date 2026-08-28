@@ -109,8 +109,19 @@ flowchart TB
   opening its SQLite store `SQLITE_OPEN_READ_ONLY`, because Verdryx prints human
   text on every subcommand and its store is the only machine-readable surface it
   has; and **TokenFuse Cloud** over REST and a live SSE stream.
-- **Produces**: nothing on the bus. It is a surface, not a plane that emits.
-  What it writes are signed commands: the kill, an approval decision, a policy
+- **Produces**: `console_command`, and nothing else. The console is itself an
+  agent of the stack, so a privileged action of the operator's own lands on the
+  same bus the Bus Explorer displays instead of being a UI-only side effect: one
+  fixed-shape event, `source: "console"` on schema v0.2, registered in the
+  agent-passport spec (SPEC 6.2) and appended to the console's own hash-chained
+  NDJSON. What journals is what changes governance state: a kill, a budget
+  change, an incident acknowledgement, an approval decision, a lifecycle block on
+  an agent, a unit or a user, an evidence build, and a WireGuard peer issued or
+  revoked. Actions whose effect lands outside that (a drill firing crafted
+  traffic, an admission baseline) and the read-only planes (Identity, Quality,
+  Memory) write nothing, each saying so in its own module. About the planes it
+  reads it emits nothing at all: it is a surface, not a plane that emits. What it
+  writes outward are signed commands: the kill, an approval decision, a policy
   put or delete.
 - **Talks to**: everything above, and the rule that shapes all of it is that
   **the console never writes another service's store.** It mutates planes only
