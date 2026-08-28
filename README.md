@@ -135,24 +135,27 @@ Run the whole open stack locally with one command via [**stack-up**](https://git
 
 ## What it looks like
 
-Four of the nineteen tabs, on the frozen e01 campaign data described below.
+Four of the twenty tabs, from the demo build (`npm run build:demo`) on simulated
+data, which is what anybody can click at [it-rat.com/demo](https://it-rat.com/demo/).
+The frozen e01 campaign further down is the run against a live plane on a real
+box; these frames are not it, and say so here rather than in a footnote.
 
 <table>
 <tr>
 <td width="50%"><img src="assets/console-overview.png" alt="Genaryx Overview tab: fleet AI spend with governed savings, active runs, open incidents, spend by agent, and a live incident centre"></td>
-<td width="50%"><img src="assets/console-money.png" alt="Genaryx Money tab: every run with spend against budget, killed and over-cap states, replay and kill actions, and the governed-savings breakdown"></td>
+<td width="50%"><img src="assets/console-money.png" alt="Genaryx Money tab: every run with spend against its cap, killed and over-cap states, replay, cap and kill actions, and the governed-savings breakdown"></td>
 </tr>
 <tr>
 <td><sub><b>Overview</b> - the whole fleet in one screen: what it costs, what governance recovered, what is still open.</sub></td>
-<td><sub><b>Money</b> - per-run spend against budget, with the runs the breaker already killed.</sub></td>
+<td><sub><b>Money</b> - per-run spend against its cap, with Replay, Cap and Kill on the row.</sub></td>
 </tr>
 <tr>
 <td><img src="assets/console-policy.png" alt="Genaryx Policy tab: Wardryx decisions with allow, deny and hold outcomes and the approvals queue"></td>
-<td><img src="assets/console-graph.png" alt="Genaryx Graph tab: the identity graph built by Idryx, 62 agents and 13 users across 82 links, laid out by event volume"></td>
+<td><img src="assets/console-graph.png" alt="Genaryx Graph tab: the identity graph built by Idryx, 42 agents and 20 users across 61 links, laid out by event volume"></td>
 </tr>
 <tr>
 <td><sub><b>Policy</b> - the Wardryx decision stream and the approvals a hold is waiting on.</sub></td>
-<td><sub><b>Graph</b> - the Idryx identity graph: 62 agents, 13 users, 82 links, sized by event volume.</sub></td>
+<td><sub><b>Graph</b> - the Idryx identity graph: 42 agents, 20 users, 61 links, sized by event volume.</sub></td>
 </tr>
 </table>
 
