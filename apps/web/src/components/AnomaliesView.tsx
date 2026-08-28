@@ -224,7 +224,7 @@ export function AnomaliesView({
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <Section
-        title="Anomalies"
+        title="Incidents"
         right={
           <span className="flex items-center gap-2">
             <span className="mono" style={{ fontSize: 10, color: "var(--faint)" }}>
@@ -239,7 +239,7 @@ export function AnomaliesView({
               style={{ cursor: "pointer" }}
               disabled={rows.length === 0}
               onClick={() => saveList("csv")}
-              title="Save the anomalies shown, as CSV"
+              title="Save the incidents shown, as CSV"
             >
               csv
             </button>
@@ -249,7 +249,7 @@ export function AnomaliesView({
               style={{ cursor: "pointer" }}
               disabled={rows.length === 0}
               onClick={() => saveList("json")}
-              title="Save the anomalies shown, as JSON"
+              title="Save the incidents shown, as JSON"
             >
               json
             </button>

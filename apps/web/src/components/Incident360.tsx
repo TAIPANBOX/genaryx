@@ -709,7 +709,7 @@ function IncidentActions({
         className="chip"
         style={{ cursor: "pointer" }}
         onClick={save}
-        title="Save this anomaly, with the run, the agent record and the events the card read"
+        title="Save this incident, with the run, the agent record and the events the card read"
       >
         save
       </button>
@@ -722,7 +722,7 @@ function IncidentActions({
           className="chip"
           style={{ cursor: "pointer" }}
           onClick={copyLink}
-          title="Copy a link that opens this console at the panel this anomaly is on"
+          title="Copy a link that opens this console at the panel this incident is on"
         >
           {copied === "link" ? "copied" : "copy link"}
         </button>
