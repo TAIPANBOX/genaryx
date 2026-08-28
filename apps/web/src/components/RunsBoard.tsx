@@ -103,7 +103,7 @@ export function RunsBoard({
       <div style={{ minWidth: BOARD_MIN_WIDTH_PX }}>
       <div className="d-th" style={{ gridTemplateColumns: COLS }}>
         <span>run · agent · model</span>
-        <span>spent / budget</span>
+        <span>spent / cap</span>
         <span className="r">
           calls · steps
           <br />

@@ -41,7 +41,7 @@ export function BudgetEditor({
           setEditing(true);
         }}
       >
-        Budget
+        Cap
       </button>
     );
   }
@@ -89,7 +89,7 @@ export function BudgetEditor({
       </button>
       <BreakGlassDialog
         open={confirming}
-        title="Set budget"
+        title="Set the cap"
         detail={`run ${runId} -> ${formatUsd(parsed)}`}
         confirmLabel={`Confirm ${formatUsd(parsed)}`}
         tone="var(--sev-medium)"

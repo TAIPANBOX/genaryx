@@ -39,7 +39,17 @@ export const NAV_SECTIONS: readonly {
       // card is where an operator stops rather than where they start; this is
       // the whole stream, filterable, with every row opening the record behind
       // it. `@yurii` 2026-08-26 asked for it as its own tab for exactly that.
-      { id: "anomalies", label: "Anomalies" },
+      //
+      // Labelled Incidents, not Anomalies, though the id keeps the older word
+      // (`stats`/`Statistics` is the same shape). Two reasons, and the second
+      // is the load-bearing one. This tab's own model is `UnifiedIncident`,
+      // built from money incidents, idryx alerts and bus rows, so Incidents is
+      // what it has always held. And costcrew, a guest producer on the same
+      // bus, uses Anomalies for something genuinely different: a deviation in
+      // a daily cost series that an analyst triages next week, not something
+      // burning now. One word across two products would have taught a reader
+      // that they are the same screen.
+      { id: "anomalies", label: "Incidents" },
       // Next to Overview on purpose. Overview answers "is anything on fire",
       // Statistics answers "who, and how much", and both are the daily
       // governance surface rather than an investigation.

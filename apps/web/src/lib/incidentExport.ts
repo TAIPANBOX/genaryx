@@ -202,7 +202,7 @@ export function anomalyListMeta(p: {
   const caveats: string[] = [];
   if (p.shown < p.total) {
     caveats.push(
-      `filtered: ${p.shown} of ${p.total} anomalies this console held are in this file`,
+      `filtered: ${p.shown} of ${p.total} incidents this console held are in this file`,
     );
   }
   if (p.busTruncated) {
@@ -212,11 +212,11 @@ export function anomalyListMeta(p: {
   }
 
   return {
-    subject: `anomalies: ${p.shown} of ${p.total}`,
+    subject: `incidents: ${p.shown} of ${p.total}`,
     environment: p.environment,
     takenAt: p.takenAt,
     windows: [
-      `anomalies: as the console held them at ${p.takenAt}`,
+      `incidents: as the console held them at ${p.takenAt}`,
       `bus: ${p.busRead} event(s) in this console's memory, since it started`,
       ...(filters.length > 0
         ? [`filters: ${filters.join("; ")}`]
