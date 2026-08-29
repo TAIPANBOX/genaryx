@@ -133,6 +133,15 @@ The full stack is TokenFuse (spend), Wardryx (policy), Engram (memory), Idryx (a
 
 Run the whole open stack locally with one command via [**stack-up**](https://github.com/TAIPANBOX/stack-up); the stack's home on the web is [**it-rat.com**](https://it-rat.com).
 
+<div align="center">
+
+<img src="docs/console.png" alt="genaryx console: it reads each plane the way that plane exposes itself, writes only signed commands confirmed by a passkey, emits its own console_command onto the shared bus, and groups twenty tabs by how an operator works" width="960">
+
+<sub>How the console is put together, next to the four tabs below.</sub>
+
+</div>
+
+
 ## What it looks like
 
 Four of the twenty tabs, from the demo build (`npm run build:demo`) on simulated
