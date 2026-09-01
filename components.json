@@ -123,6 +123,18 @@
           "value": "genaryx-web",
           "why": "estate.json calls it `console` and every deployment installs it under that name; the binary is `genaryx-web`. Recorded rather than renamed."
         },
+        "a_foreign_prefixed_read_this_suite_cannot_prove": {
+          "value": "WARDRYX_URL",
+          "why": "Read by crates/api/src/policy/env.rs as source 2 of two, the fallback for a Wardryx reached without a `taipan up` descriptor, which is the path both stack-k8s and stack-single actually take. It is DECLARED rather than checked because this repository's own env test scans product source for one literal prefix, GENARYX_, and asserts both directions strictly: a foreign name in `checked.env` would be a name 'no product source reads'. Changing that scan was tried on 2026-09-01 and reverted twice, because resolving reads precisely surfaces PATH, HOME, USER and KUBERNETES_SERVICE_HOST, which are the operating system's and not this component's configuration, and misses three GENARYX_WEB_OIDC_ names the textual scan does find. Deciding what a components manifest owes about an OS variable is a design question, not a fix. estate-gates C16 is what has an opinion about this name from outside."
+        },
+        "a_foreign_prefixed_read_this_suite_cannot_prove_2": {
+          "value": "WARDRYX_ADMIN_KEY",
+          "why": "Read by crates/api/src/policy/env.rs beside WARDRYX_URL, and it is the field that GATES the fallback: with it unset the fallback stays off. Declared rather than checked for the same structural reason as WARDRYX_URL above."
+        },
+        "a_foreign_prefixed_read_this_suite_cannot_prove_3": {
+          "value": "TOKENFUSE_CLOUD_ADMIN_KEY",
+          "why": "Read by crates/api/src/money/env.rs, the money plane's mirror of the policy plane's pair. stack-single's compose carries the incident that named it: TOKENFUSE_CLOUD_KEY is what the GATEWAY reads, and using that spelling here made every install come up with an Overview saying 'No environment found' while a healthy Cloud sat one container away. Declared rather than checked for the same structural reason."
+        },
         "the_secret_is_read_by_reference": {
           "value": "GENARYX_COPILOT_API_KEY_REF=env:<NAME>",
           "why": "The copilot's key is not read from a variable this repository names. It reads the REFERENCE and then the variable the reference points at, so the name is the deployment's choice. stack-k8s picks GENARYX_COPILOT_KEY. Nothing here can check a name it never sees."
