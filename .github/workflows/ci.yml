@@ -8,6 +8,9 @@ on:
   # Manual full run.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -58,6 +61,25 @@ jobs:
       # that starts writing into the checkout.
       - name: the gates above can still fail
         run: ./scripts/gates-have-teeth.sh
+
+  security:
+    name: security (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      # Measured 2026-09-06: two allowed warnings, rustls-pemfile (unmaintained)
+      # and chacha20 (yanked), neither of which cargo-audit treats as a
+      # failing vulnerability, so no --ignore is needed for this to be green.
+      # If a future advisory adds a real vulnerability here, this step is the
+      # one meant to catch it and go red.
+      - name: cargo audit
+        run: cargo audit
 
   # The browser console. `cargo --workspace` cannot see a TypeScript frontend,
   # so it gets its own job: install, typecheck, unit tests, production build.

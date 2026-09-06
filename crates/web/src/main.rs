@@ -22,7 +22,7 @@ mod oidc;
 mod roles;
 mod webauthn;
 
-use axum::extract::{Path, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
@@ -307,7 +307,12 @@ fn app(ctx: Arc<Ctx>) -> Router {
         app = app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)));
     }
 
-    app.with_state(ctx)
+    // 1 MiB, well under axum's own built-in 2 MiB default for Bytes-based
+    // extractors (Json among them): this router's largest legitimate body is
+    // a WebAuthn attestation, and a lower explicit cap here is the one that
+    // actually reflects what this console expects to receive, rather than a
+    // number chosen for something else.
+    app.layer(DefaultBodyLimit::max(1 << 20)).with_state(ctx)
 }
 
 /// Bridges the shared bus feeder onto this process's broadcast channel.
@@ -1428,6 +1433,30 @@ mod tests {
             post_command(&ctx, "no_such_command", Some(&sid_a)).await,
             StatusCode::FORBIDDEN
         );
+    }
+
+    // -- request body size cap ------------------------------------------
+
+    /// axum's own built-in default (no layer needed) refuses `Bytes`-based
+    /// extractors, `Json` among them, a body over exactly 2 MiB
+    /// (2_097_152 bytes: `axum_core::ext_traits::request::DEFAULT_LIMIT`).
+    /// This test sends a body of exactly that many bytes, which the
+    /// built-in default does NOT refuse (it is a ceiling, not a floor under
+    /// it), so it only turns 413 once this router sets its own, lower cap.
+    /// The router's largest legitimate body is a WebAuthn attestation, well
+    /// under 1 MiB.
+    #[tokio::test]
+    async fn a_two_mib_login_body_is_refused_by_the_routers_own_cap() {
+        let ctx = test_ctx();
+        let oversized = vec![b'x'; 2 * 1024 * 1024];
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(oversized))
+            .unwrap();
+        let resp = app(Arc::clone(&ctx)).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     // -- the per-action WebAuthn gate (docs/CONSOLE-IDP.md, B3/2) ------------
