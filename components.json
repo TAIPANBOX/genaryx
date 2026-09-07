@@ -135,6 +135,10 @@
           "value": "TOKENFUSE_CLOUD_ADMIN_KEY",
           "why": "Read by crates/api/src/money/env.rs, the money plane's mirror of the policy plane's pair. stack-single's compose carries the incident that named it: TOKENFUSE_CLOUD_KEY is what the GATEWAY reads, and using that spelling here made every install come up with an Overview saying 'No environment found' while a healthy Cloud sat one container away. Declared rather than checked for the same structural reason."
         },
+        "a_foreign_prefixed_read_this_suite_cannot_prove_4": {
+          "value": "TOKENFUSE_GATEWAY_ADMIN_KEY",
+          "why": "Read by crates/api/src/admission/env.rs and crates/api/src/credentials/env.rs, both trimmed with blank treated as unset. tokenfuse main gates GET /v1/keys and four sibling routes behind TOKENFUSE_ADMIN_KEYS once the gateway is bound off loopback; this is the console's own key for that gate, presented as an Authorization: Bearer header by genaryx_connectors::gateway::GatewayClient. Unlike TOKENFUSE_CLOUD_ADMIN_KEY and WARDRYX_ADMIN_KEY it is not a fallback: the gateway URL always comes from the taipan up descriptor, and this variable is the ONLY source for the key regardless of whether the URL resolved from a descriptor. Declared rather than checked for the same structural reason as the two entries above."
+        },
         "the_secret_is_read_by_reference": {
           "value": "GENARYX_COPILOT_API_KEY_REF=env:<NAME>",
           "why": "The copilot's key is not read from a variable this repository names. It reads the REFERENCE and then the variable the reference points at, so the name is the deployment's choice. stack-k8s picks GENARYX_COPILOT_KEY. Nothing here can check a name it never sees."

@@ -14,7 +14,7 @@
 //! `crate::drills::state` folds mockryx+gateway together into one `Ready`.
 
 use super::env::{self, EnvSource, ResolvedEnv};
-use genaryx_connectors::GatewayClient;
+use genaryx_connectors::{GatewayClient, GatewayError};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -109,11 +109,35 @@ pub async fn bootstrap() -> AdmissionInner {
 /// key-lifecycle report once (see this module's doc comment for why there is
 /// no separate `/healthz` to probe instead). The fetched report itself is
 /// discarded here - only reachability matters at bootstrap time;
-/// `super::commands::admission_check` always re-fetches fresh.
+/// `super::commands::admission_check` always re-fetches fresh. The resolved
+/// admin key (env-only, see `env`'s module doc) rides along on the client so
+/// a gateway gated by `TOKENFUSE_ADMIN_KEYS` sees it on this same probe
+/// request.
 async fn connect(resolved: &ResolvedEnv) -> Result<GatewayClient, String> {
-    let client = GatewayClient::new(resolved.gateway_url.clone()).map_err(|e| e.to_string())?;
-    client.get_keys().await.map_err(|e| e.to_string())?;
+    let client = GatewayClient::new(resolved.gateway_url.clone())
+        .map_err(describe)?
+        .with_admin_key(resolved.admin_key.clone());
+    client.get_keys().await.map_err(describe)?;
     Ok(client)
+}
+
+/// Turn a probe failure into text the operator can act on, rather than
+/// leaving every failure mode looking like "the network is down" - PLAN-
+/// GATEWAY-ADMIN-KEY-2026-09-07.md item 3, mirrors
+/// `credentials::state::describe` exactly (see this module's doc comment for
+/// why the duplication).
+fn describe(e: GatewayError) -> String {
+    match e {
+        GatewayError::Unauthorized => "the gateway refused the console's key: check \
+             TOKENFUSE_GATEWAY_ADMIN_KEY against the gateway's TOKENFUSE_ADMIN_KEYS"
+            .to_string(),
+        GatewayError::AdminKeysRequired => {
+            "the gateway requires TOKENFUSE_ADMIN_KEYS on a non-loopback bind and the console \
+             holds no key (TOKENFUSE_GATEWAY_ADMIN_KEY is unset)"
+                .to_string()
+        }
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -145,5 +169,113 @@ mod tests {
             | AdmissionInner::Unreachable { .. }
             | AdmissionInner::Ready(_) => {}
         }
+    }
+
+    // ---- admin key probe reasons (T2, PLAN-GATEWAY-ADMIN-KEY-2026-09-07.md)
+    //
+    // Mirrors `credentials::state`'s identical tests (see this module's doc
+    // comment for why the duplication).
+
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+
+    fn spawn_mock_gateway(status_line: &'static str, body: &'static str) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        let port = listener.local_addr().expect("local_addr").port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept one connection");
+            let mut buf = [0u8; 4096];
+            let mut request = Vec::new();
+            loop {
+                let n = stream.read(&mut buf).expect("read the request");
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+                if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let response = format!(
+                "{status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_401_names_the_key_not_the_network() {
+        let port = spawn_mock_gateway("HTTP/1.1 401 Unauthorized", r#"{"error":"unauthorized"}"#);
+        let resolved = ResolvedEnv {
+            source: EnvSource::Taipan {
+                name: "test".to_string(),
+            },
+            gateway_url: format!("http://127.0.0.1:{port}"),
+            admin_key: Some("sk-wrong-key".to_string()),
+        };
+
+        let err = connect(&resolved)
+            .await
+            .expect_err("a 401 must fail connect");
+
+        assert!(
+            err.contains("TOKENFUSE_GATEWAY_ADMIN_KEY") && err.contains("TOKENFUSE_ADMIN_KEYS"),
+            "must name the key variables, got: {err}"
+        );
+        assert!(
+            !err.to_lowercase().contains("transport"),
+            "must not read like a dead network, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_403_admin_keys_required_names_the_missing_key() {
+        let port = spawn_mock_gateway(
+            "HTTP/1.1 403 Forbidden",
+            r#"{"error":"admin_keys_required"}"#,
+        );
+        let resolved = ResolvedEnv {
+            source: EnvSource::Taipan {
+                name: "test".to_string(),
+            },
+            gateway_url: format!("http://127.0.0.1:{port}"),
+            admin_key: None,
+        };
+
+        let err = connect(&resolved)
+            .await
+            .expect_err("a 403 must fail connect");
+
+        assert!(
+            err.contains("TOKENFUSE_ADMIN_KEYS") && err.contains("TOKENFUSE_GATEWAY_ADMIN_KEY"),
+            "must name both the gateway's variable and the console's missing one, got: {err}"
+        );
+        assert!(
+            err.contains("non-loopback"),
+            "must name the cause (a wide bind with nothing configured), got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_configured_key_reaches_the_probe_request() {
+        let port = spawn_mock_gateway(
+            "HTTP/1.1 200 OK",
+            r#"{"strict_mode":"off","identity_map_configured":false,"history_available":false,"unauthorized_since_startup":{"attempts":0,"last_millis":null},"keys":[]}"#,
+        );
+        let resolved = ResolvedEnv {
+            source: EnvSource::Taipan {
+                name: "test".to_string(),
+            },
+            gateway_url: format!("http://127.0.0.1:{port}"),
+            admin_key: Some("sk-configured".to_string()),
+        };
+
+        let client = connect(&resolved)
+            .await
+            .expect("connect must succeed against a mock 200");
+        let _ = client;
     }
 }
