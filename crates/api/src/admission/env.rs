@@ -25,13 +25,20 @@
 //!
 //! Resolved EXACTLY like `crate::credentials::env` does: the SAME
 //! `services.gateway.url` `crate::drills::env`/`crate::money::env` read off a
-//! `taipan up` descriptor - explicitly NOT `services.cloud`. No key, no auth
-//! (see `genaryx_connectors::gateway`'s module doc). Deliberately duplicated
-//! rather than shared (this plane is its own independent one, same
-//! "parallel, not coupled" convention `identity::env`'s module doc states for
-//! why IT duplicates rather than imports `policy::env`/`money::env`) - a
-//! descriptor with no gateway service (or none found at all) resolves to
-//! `None`, a normal, renderable "no gateway leg" state, never an error.
+//! `taipan up` descriptor - explicitly NOT `services.cloud`. No auth on a
+//! loopback bind (see `genaryx_connectors::gateway`'s module doc).
+//! Deliberately duplicated rather than shared (this plane is its own
+//! independent one, same "parallel, not coupled" convention
+//! `identity::env`'s module doc states for why IT duplicates rather than
+//! imports `policy::env`/`money::env`) - a descriptor with no gateway
+//! service (or none found at all) resolves to `None`, a normal, renderable
+//! "no gateway leg" state, never an error.
+//!
+//! The admin key tokenfuse main's `TOKENFUSE_ADMIN_KEYS` gate requires on a
+//! non-loopback bind is resolved from [`ADMIN_KEY_ENV_VAR`]
+//! (`TOKENFUSE_GATEWAY_ADMIN_KEY`) alone, never from the descriptor - see
+//! `credentials::env`'s identical module-doc section, "The admin key,
+//! environment only", duplicated here rather than shared.
 //!
 //! ## The verdryx binary
 //!
@@ -97,6 +104,10 @@ use std::path::{Path, PathBuf};
 // The gateway (mirrors `credentials::env` exactly)
 // ============================================================================
 
+/// Env var carrying the gateway admin bearer key - see this module's doc
+/// comment.
+const ADMIN_KEY_ENV_VAR: &str = "TOKENFUSE_GATEWAY_ADMIN_KEY";
+
 /// Where a gateway [`ResolvedEnv`] came from, surfaced to the UI. A single
 /// variant, mirroring `credentials::env::EnvSource`'s identical rationale:
 /// the gateway read needs no key, so there is no env-fallback counterpart to
@@ -114,6 +125,9 @@ pub enum EnvSource {
 pub struct ResolvedEnv {
     pub source: EnvSource,
     pub gateway_url: String,
+    /// `TOKENFUSE_GATEWAY_ADMIN_KEY`, trimmed, `None` when unset or blank -
+    /// see this module's doc comment. Independent of `source`.
+    pub admin_key: Option<String>,
 }
 
 // ---- descriptor wire shape (read-only mirror, deliberately duplicated - see
@@ -178,7 +192,22 @@ fn try_load_descriptor(path: &Path) -> Option<ResolvedEnv> {
             name: descriptor.name,
         },
         gateway_url,
+        admin_key: admin_key_from_env(),
     })
+}
+
+/// `TOKENFUSE_GATEWAY_ADMIN_KEY`, read live from the process environment.
+fn admin_key_from_env() -> Option<String> {
+    admin_key_from(std::env::var(ADMIN_KEY_ENV_VAR).ok())
+}
+
+/// Testable core of [`admin_key_from_env`]: trims the raw value and treats
+/// blank as unset - mirrors `credentials::env::admin_key_from` exactly (see
+/// this module's doc comment for why the duplication).
+fn admin_key_from(raw: Option<String>) -> Option<String> {
+    let raw = raw?;
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 // ============================================================================
@@ -427,6 +456,39 @@ mod tests {
     #[test]
     fn discover_gateway_never_panics() {
         let _ = discover_gateway();
+    }
+
+    // ---- admin key (T2, PLAN-GATEWAY-ADMIN-KEY-2026-09-07.md) --------------
+
+    #[test]
+    fn admin_key_from_env_is_none_when_unset() {
+        assert!(admin_key_from(None).is_none());
+    }
+
+    #[test]
+    fn admin_key_from_env_treats_blank_as_unset() {
+        assert!(admin_key_from(Some(String::new())).is_none());
+        assert!(admin_key_from(Some("   ".to_string())).is_none());
+    }
+
+    #[test]
+    fn admin_key_from_env_trims_a_configured_key() {
+        assert_eq!(
+            admin_key_from(Some("  sk-gateway-admin  ".to_string())),
+            Some("sk-gateway-admin".to_string())
+        );
+    }
+
+    #[test]
+    fn a_resolved_gateway_carries_whatever_admin_key_from_env_would() {
+        let dir = unique_dir("admin-key-independence");
+        write(
+            &dir.join("p1full.json"),
+            r#"{"name":"p1full","services":{"gateway":{"url":"http://127.0.0.1:4100"}}}"#,
+        );
+        let resolved = discover_taipan_in(&dir).expect("must resolve the fixture descriptor");
+        assert_eq!(resolved.admin_key, admin_key_from_env());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- verdryx binary ----

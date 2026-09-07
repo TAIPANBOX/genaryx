@@ -8,21 +8,33 @@
 //! `docs/22-key-lifecycle.md` in the tokenfuse repo, built in parallel
 //! against this exact wire shape.
 //!
-//! ## No auth, and no secret ever appears here
+//! ## An optional bearer, and the secret never appears in a log
 //!
-//! The gateway is loopback/perimeter-bound (same posture idryx's own module
-//! doc argues for, `crates/connectors/src/idryx.rs`, though for a different
-//! reason: this is TokenFuse's own request path, not an unauthenticated
-//! snapshot service). This client sends no bearer and no signer - `/v1/keys`
-//! is an operator-facing admin read, mirroring idryx's connector shape
-//! exactly. And unlike a `TOKENFUSE_CLIENT_KEYS` entry (`<secret>:<key_id>`,
-//! docs/ONBOARD.md), the report below carries only `key_id`, the non-secret
-//! half - the secret itself never appears in this API and this client never
-//! transmits one either.
+//! The gateway is loopback/perimeter-bound by default (same posture idryx's
+//! own module doc argues for, `crates/connectors/src/idryx.rs`), and on that
+//! default bind this client still sends no bearer at all - `/v1/keys` is an
+//! operator-facing admin read, mirroring idryx's connector shape. But
+//! tokenfuse main (`crates/gateway/src/adminkeys.rs`) also gates `/v1/keys`
+//! and four sibling routes behind `TOKENFUSE_ADMIN_KEYS` once the gateway is
+//! bound off loopback, and a console reaching a gated gateway has to present
+//! a key or be refused. [`GatewayClient::with_admin_key`] carries that key;
+//! `None` (the default from [`GatewayClient::new`]) sends no
+//! `Authorization` header at all, matching a gateway with nothing
+//! configured. The key is never logged and never appears in `{:?}` output
+//! (see the manual [`std::fmt::Debug`] impl below) - unlike a
+//! `TOKENFUSE_CLIENT_KEYS` entry (`<secret>:<key_id>`, docs/ONBOARD.md), the
+//! report this client reads carries only `key_id`, the non-secret half, so
+//! the only secret this module ever touches is the admin key it sends, never
+//! one it receives.
 //!
 //! ## Fail-closed (06 §0.5) and forward-tolerant
 //!
-//! A transport failure becomes [`GatewayError::Transport`]; a non-2xx becomes
+//! A transport failure becomes [`GatewayError::Transport`]; a 401 (the
+//! gateway is keyed and refused the presented key, or none was presented)
+//! becomes [`GatewayError::Unauthorized`]; a 403 with
+//! `{"error":"admin_keys_required"}` (the gateway is unkeyed and bound off
+//! loopback, so it refuses every request regardless of what is presented)
+//! becomes [`GatewayError::AdminKeysRequired`]; any other non-2xx becomes
 //! [`GatewayError::Api`] with the raw status/body; a 2xx body that will not
 //! deserialize becomes [`GatewayError::Json`]. No panics, no `unwrap`.
 //! Every DTO tolerates unknown extra JSON fields (plain `#[serde(default)]`
@@ -50,7 +62,22 @@ pub enum GatewayError {
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// Any non-2xx response: the status and raw body text (UTF-8 lossy).
+    /// 401, body `{"error":"unauthorized"}`: the gateway has
+    /// `TOKENFUSE_ADMIN_KEYS` configured and the key this client presented
+    /// (or the absence of one) does not match. A key problem, not a network
+    /// one - `admission::state`/`credentials::state`'s `connect` names it
+    /// that way to the operator.
+    #[error("the gateway refused the presented key (401 unauthorized)")]
+    Unauthorized,
+
+    /// 403, body `{"error":"admin_keys_required"}`: the gateway is bound off
+    /// loopback with no `TOKENFUSE_ADMIN_KEYS` configured at all, so it
+    /// refuses every request to the five admin routes regardless of what is
+    /// presented.
+    #[error("the gateway requires TOKENFUSE_ADMIN_KEYS and refuses every request (403)")]
+    AdminKeysRequired,
+
+    /// Any other non-2xx response: the status and raw body text (UTF-8 lossy).
     #[error("gateway returned HTTP {status}: {body}")]
     Api { status: u16, body: String },
 }
@@ -142,51 +169,94 @@ pub struct GatewayKeyStats {
 
 // ---- response parsing -------------------------------------------------------
 
-/// Parse one REST response: a 2xx body deserializes as `T`; anything else
-/// becomes [`GatewayError::Api`] with the raw status/body (never a panic on
-/// an unexpected status) - identical shape to `idryx::parse_response`.
+/// Parse one REST response: a 2xx body deserializes as `T`; a 401 becomes
+/// [`GatewayError::Unauthorized`]; a 403 carrying `admin_keys_required`
+/// becomes [`GatewayError::AdminKeysRequired`]; anything else non-2xx becomes
+/// [`GatewayError::Api`] with the raw status/body (never a panic on an
+/// unexpected status) - the two named variants are the two the
+/// `adminkeys.rs` gate can actually return (see the module doc), every other
+/// status falls through to the generic shape `idryx::parse_response` also
+/// uses.
 async fn parse_response<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, GatewayError> {
     let status = resp.status();
     let bytes = resp.bytes().await?;
     if status.is_success() {
-        Ok(serde_json::from_slice(&bytes)?)
-    } else {
-        Err(GatewayError::Api {
-            status: status.as_u16(),
-            body: String::from_utf8_lossy(&bytes).into_owned(),
-        })
+        return Ok(serde_json::from_slice(&bytes)?);
     }
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(GatewayError::Unauthorized);
+    }
+    if status == reqwest::StatusCode::FORBIDDEN
+        && String::from_utf8_lossy(&bytes).contains("admin_keys_required")
+    {
+        return Err(GatewayError::AdminKeysRequired);
+    }
+    Err(GatewayError::Api {
+        status: status.as_u16(),
+        body: String::from_utf8_lossy(&bytes).into_owned(),
+    })
 }
 
 // ---- client ------------------------------------------------------------
 
-/// A typed client for the gateway's key-lifecycle read. Unauthenticated by
-/// design (see the module doc): no bearer, no signer. One method, one
-/// request/response round trip over `reqwest`, awaited directly - mirrors
-/// `IdryxClient`'s identical shape for its own REST reads.
-#[derive(Debug)]
+/// A typed client for the gateway's key-lifecycle read. No bearer by
+/// default (see the module doc): one method, one request/response round
+/// trip over `reqwest`, awaited directly - mirrors `IdryxClient`'s identical
+/// shape for its own REST reads. An admin key, when attached with
+/// [`with_admin_key`](Self::with_admin_key), rides along on every request as
+/// `Authorization: Bearer <key>`.
 pub struct GatewayClient {
     base_url: String,
     http: reqwest::Client,
+    admin_key: Option<String>,
+}
+
+/// Manual impl so a key attached with [`GatewayClient::with_admin_key`]
+/// never appears in a `{:?}` log line - `#[derive(Debug)]` would print the
+/// `Option<String>` field verbatim, and this is a secret the moment it is
+/// `Some`.
+impl std::fmt::Debug for GatewayClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GatewayClient")
+            .field("base_url", &self.base_url)
+            .field("admin_key", &self.admin_key.as_ref().map(|_| "<redacted>"))
+            .finish_non_exhaustive()
+    }
 }
 
 impl GatewayClient {
     /// Construct a client for `base_url` (e.g. `http://127.0.0.1:4100` - a
-    /// trailing slash is trimmed). Returns `Result` because building the
-    /// underlying HTTP client can fail (same rationale as
-    /// `IdryxClient::new`).
+    /// trailing slash is trimmed), with no admin key attached. Returns
+    /// `Result` because building the underlying HTTP client can fail (same
+    /// rationale as `IdryxClient::new`).
     pub fn new(base_url: impl Into<String>) -> Result<Self, GatewayError> {
         let http = reqwest::Client::builder().build()?;
         Ok(Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             http,
+            admin_key: None,
         })
+    }
+
+    /// Attach (or clear, with `None`) the admin bearer key: every request
+    /// after this call carries `Authorization: Bearer <key>` when `Some`,
+    /// and no `Authorization` header at all when `None` - the same "absent
+    /// means absent, never an empty header" rule the rest of this codebase's
+    /// bearer clients keep.
+    #[must_use]
+    pub fn with_admin_key(mut self, admin_key: Option<String>) -> Self {
+        self.admin_key = admin_key;
+        self
     }
 
     /// `GET /v1/keys` -> the whole key-lifecycle report.
     pub async fn get_keys(&self) -> Result<GatewayKeysReport, GatewayError> {
         let url = format!("{}/v1/keys", self.base_url);
-        let resp = self.http.get(&url).send().await?;
+        let mut req = self.http.get(&url);
+        if let Some(key) = &self.admin_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req.send().await?;
         parse_response(resp).await
     }
 }
@@ -298,5 +368,176 @@ mod tests {
         }"#;
         let report: GatewayKeysReport = serde_json::from_slice(json).expect("parse report");
         assert!(report.keys.is_empty());
+    }
+    // ---- admin key (T2, PLAN-GATEWAY-ADMIN-KEY-2026-09-07.md) --------------
+    //
+    // A minimal raw HTTP/1.1 mock server: bind an ephemeral port, read one
+    // request's headers off the socket, write back a fixed status/body.
+    // Mirrors `uapi_tls_pinning.rs`'s own raw `TcpListener` + manual
+    // read/write approach rather than adding a mock-HTTP-server dependency.
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Spawn a one-shot mock server on an ephemeral port. Returns the port
+    /// and a join handle yielding the raw request text it received (headers
+    /// only - `GET /v1/keys` never sends a body).
+    fn spawn_mock_server(
+        status_line: &'static str,
+        body: &'static str,
+    ) -> (u16, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        let port = listener.local_addr().expect("local_addr").port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept one connection");
+            let mut buf = [0u8; 4096];
+            let mut request = Vec::new();
+            loop {
+                let n = stream.read(&mut buf).expect("read the request");
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+                if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let response = format!(
+                "{status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write the response");
+            let _ = stream.flush();
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        (port, handle)
+    }
+
+    /// A minimal, valid `GET /v1/keys` 200 body - only used to prove the
+    /// request reached the server with (or without) a bearer, never to
+    /// exercise DTO parsing again.
+    const MINIMAL_REPORT: &str = r#"{
+        "strict_mode": "off",
+        "identity_map_configured": false,
+        "history_available": false,
+        "unauthorized_since_startup": { "attempts": 0, "last_millis": null },
+        "keys": []
+    }"#;
+
+    #[tokio::test]
+    async fn a_configured_key_is_sent_as_a_bearer() {
+        let (port, handle) = spawn_mock_server("HTTP/1.1 200 OK", MINIMAL_REPORT);
+        let client = GatewayClient::new(format!("http://127.0.0.1:{port}"))
+            .expect("build client")
+            .with_admin_key(Some("sk-console-admin-key".to_string()));
+
+        let result = client.get_keys().await;
+        let request = handle.join().expect("server thread must not panic");
+
+        assert!(result.is_ok(), "a keyed 200 must parse: {result:?}");
+        assert!(
+            request
+                .to_lowercase()
+                .contains("authorization: bearer sk-console-admin-key"),
+            "request must carry the configured key as a bearer, got: {request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_key_means_no_authorization_header() {
+        let (port, handle) = spawn_mock_server("HTTP/1.1 200 OK", MINIMAL_REPORT);
+        let client = GatewayClient::new(format!("http://127.0.0.1:{port}")).expect("build client");
+
+        let result = client.get_keys().await;
+        let request = handle.join().expect("server thread must not panic");
+
+        assert!(
+            result.is_ok(),
+            "an unkeyed 200 must still parse: {result:?}"
+        );
+        assert!(
+            !request.to_lowercase().contains("authorization"),
+            "no admin key attached must mean no Authorization header at all, got: {request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_401_is_classified_as_unauthorized_not_a_generic_api_error() {
+        let (port, handle) =
+            spawn_mock_server("HTTP/1.1 401 Unauthorized", r#"{"error":"unauthorized"}"#);
+        let client = GatewayClient::new(format!("http://127.0.0.1:{port}"))
+            .expect("build client")
+            .with_admin_key(Some("sk-wrong-key".to_string()));
+
+        let err = client.get_keys().await.expect_err("401 must be an error");
+        let _request = handle.join().expect("server thread must not panic");
+
+        assert!(
+            matches!(err, GatewayError::Unauthorized),
+            "expected GatewayError::Unauthorized, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_403_admin_keys_required_is_classified_distinctly_from_other_403s() {
+        let (port, handle) = spawn_mock_server(
+            "HTTP/1.1 403 Forbidden",
+            r#"{"error":"admin_keys_required"}"#,
+        );
+        let client = GatewayClient::new(format!("http://127.0.0.1:{port}")).expect("build client");
+
+        let err = client.get_keys().await.expect_err("403 must be an error");
+        let _request = handle.join().expect("server thread must not panic");
+
+        assert!(
+            matches!(err, GatewayError::AdminKeysRequired),
+            "expected GatewayError::AdminKeysRequired, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unrelated_403_falls_through_to_the_generic_api_error() {
+        // Guards against `AdminKeysRequired` swallowing every 403: only the
+        // gateway's own body shape gets the named variant.
+        let (port, handle) =
+            spawn_mock_server("HTTP/1.1 403 Forbidden", r#"{"error":"something_else"}"#);
+        let client = GatewayClient::new(format!("http://127.0.0.1:{port}")).expect("build client");
+
+        let err = client.get_keys().await.expect_err("403 must be an error");
+        let _request = handle.join().expect("server thread must not panic");
+
+        assert!(
+            matches!(err, GatewayError::Api { status: 403, .. }),
+            "an unrelated 403 body must stay the generic Api error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn the_key_never_appears_in_debug_output() {
+        let client = GatewayClient::new("http://127.0.0.1:4100")
+            .expect("build client")
+            .with_admin_key(Some("sk-super-secret-do-not-print-me".to_string()));
+
+        let debug = format!("{client:?}");
+        assert!(
+            !debug.contains("sk-super-secret-do-not-print-me"),
+            "the admin key must never appear in Debug output, got: {debug}"
+        );
+        assert!(
+            debug.contains("redacted"),
+            "Debug output should say the key is present-but-redacted, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn debug_output_says_none_when_no_key_is_attached() {
+        let client = GatewayClient::new("http://127.0.0.1:4100").expect("build client");
+        let debug = format!("{client:?}");
+        assert!(
+            debug.contains("None"),
+            "no admin key attached must show as None, got: {debug}"
+        );
     }
 }

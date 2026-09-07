@@ -69,6 +69,18 @@ impl From<GatewayError> for CredentialsError {
                 status: None,
                 message: format!("unexpected response shape from the gateway: {err}"),
             },
+            GatewayError::Unauthorized => CredentialsError::Gateway {
+                status: Some(401),
+                message: "the gateway refused the console's key: check \
+                          TOKENFUSE_GATEWAY_ADMIN_KEY against the gateway's TOKENFUSE_ADMIN_KEYS"
+                    .to_string(),
+            },
+            GatewayError::AdminKeysRequired => CredentialsError::Gateway {
+                status: Some(403),
+                message: "the gateway requires TOKENFUSE_ADMIN_KEYS on a non-loopback bind and \
+                          the console holds no key (TOKENFUSE_GATEWAY_ADMIN_KEY is unset)"
+                    .to_string(),
+            },
             GatewayError::Api { status, body } => CredentialsError::Gateway {
                 status: Some(status),
                 message: body,

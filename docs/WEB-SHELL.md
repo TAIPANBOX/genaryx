@@ -191,6 +191,14 @@ it wrong:
   Verdryx has no serve process to pair with.
 - The Money plane keys off `cloud`, Drills off `gateway`. They are not
   interchangeable names for the same service.
+- The Admission and Credentials planes both read `services.gateway` too, and
+  if tokenfuse's `TOKENFUSE_ADMIN_KEYS` is set on that gateway, set
+  `TOKENFUSE_GATEWAY_ADMIN_KEY` in the console's own environment to match one
+  of them. This key has no descriptor field: the URL still comes from
+  `services.gateway`, but the key is environment-only, trimmed, blank treated
+  as unset. A wrong key answers with a 401 naming the variable to check; a
+  gateway bound off loopback with nothing configured on either side answers
+  403 `admin_keys_required` and names that instead.
 - Policy needs `keys.wardryx_admin_ref` as well as the service URL. With the
   URL alone it stays at "no environment", even though Wardryx is healthy.
 - `events.dir` is what puts the Bus Explorer into live mode. Without it the
