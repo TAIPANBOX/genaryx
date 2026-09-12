@@ -333,3 +333,67 @@ fn a_file_rewritten_while_down_is_re_read_from_the_top() {
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&db);
 }
+
+/// One attested and two claimed subjects under the 1.0 envelope. A claimed
+/// subject validates under v1.0 and is refused by this console's decision
+/// (`conform.rs`, agent-passport SPEC 6.4.1), so the two must land in
+/// quarantine, not in the store, and not silently.
+const CLAIMED_V1_0: &str = r#"{"schema":"taipanbox.dev/agent-event/v1.0","ts":"2026-09-12T16:00:00Z","source":"tokenfuse","type":"budget_exhausted","agent_id":"agent://acme.example/support/bot"}
+{"schema":"taipanbox.dev/agent-event/v1.0","ts":"2026-09-12T16:00:01Z","source":"idryx","type":"identity_finding","agent_id":"claimed:agent://acme.example/support/bot"}
+{"schema":"taipanbox.dev/agent-event/v1.0","ts":"2026-09-12T16:00:02Z","source":"idryx","type":"identity_finding","agent_id":"claimed:agent://acme.example/eng/ci-fixer"}
+"#;
+
+/// The "counts" half of agent-passport SPEC 6.4.1, end to end. A producer that
+/// writes claimed subjects writes them on every line, so what an operator
+/// needs is one row saying how many and from where, not one row per line:
+/// the quarantine panel groups by reason, and the conformer refuses every
+/// claimed subject under the same fixed reason so that grouping is the count.
+/// The attested v1.0 line beside them proves the version itself is accepted
+/// and reaches the store as what it is.
+#[test]
+fn claimed_subjects_are_quarantined_under_one_reason_and_counted() {
+    let path = unique_ndjson_path("claimed");
+    write_new(&path, CLAIMED_V1_0);
+
+    let store = Store::open_in_memory().expect("open in-memory store");
+    let mut svc = IngestService::new(store, "test").expect("new IngestService");
+    svc.add_file_source("filetail:test", &path)
+        .expect("add_file_source");
+
+    let stats = svc.poll_once().expect("poll_once");
+    assert_eq!(stats.inserted, 1, "the attested v1.0 line is accepted");
+    assert_eq!(stats.quarantined, 2, "both claimed subjects are refused");
+
+    let stored = svc.store().recent_events(1).expect("recent_events");
+    assert_eq!(stored.len(), 1);
+    assert_eq!(
+        stored[0].schema,
+        genaryx_core::SchemaVersion::SCHEMA_V1_0,
+        "the accepted line is stored under its own version"
+    );
+    assert_eq!(stored[0].agent_id, "agent://acme.example/support/bot");
+
+    let reasons = svc
+        .store()
+        .quarantine_by_reason(12)
+        .expect("quarantine_by_reason");
+    assert_eq!(
+        reasons.len(),
+        1,
+        "one reason, not one row per line: {reasons:?}"
+    );
+    assert_eq!(
+        reasons[0].reason,
+        genaryx_core::conform::CLAIMED_SUBJECT_REFUSED
+    );
+    assert_eq!(reasons[0].count, 2, "the count an operator reads");
+    assert!(
+        reasons[0]
+            .raw_excerpt
+            .as_deref()
+            .unwrap_or("")
+            .contains("claimed:agent://"),
+        "the excerpt shows the producer's own line: {:?}",
+        reasons[0].raw_excerpt
+    );
+}
