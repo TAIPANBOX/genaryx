@@ -32,6 +32,7 @@
   ],
   "schema": "taipanbox.dev/components/v1",
   "repo": "TAIPANBOX/genaryx",
+  "distribution": "ghcr.io/taipanbox/genaryx-console; built and tagged by stack-k8s's image composition, not by this repository's own CI",
   "components": [
     {
       "name": "console",
