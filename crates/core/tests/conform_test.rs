@@ -281,3 +281,167 @@ fn a_delegation_proof_survives_the_envelope_struct_verbatim() {
         "the proof must reach a panel exactly as it arrived"
     );
 }
+
+// ---- the contract at 1.0 ---------------------------------------------------
+
+/// agent-passport 1.0 (2026-09-12). SPEC 6.4.1: a consumer MUST accept event
+/// v0.1, v0.2 and v1.0. v1.0 is v0.2's shape with the version string changed
+/// and one widening (the claimed subject, below), so every line a producer
+/// writes today is a v1.0 line once its version string moves. This is that
+/// move made on the spec's own example line, and it must RESOLVE to the new
+/// version rather than merely pass: a console that accepted the line and filed
+/// it under nothing would show it and could not say what it was.
+#[test]
+fn a_v1_0_event_is_accepted_and_resolved() {
+    let c = conformer();
+    let line = r#"{"schema":"taipanbox.dev/agent-event/v1.0","ts":"2026-09-12T16:00:00.000Z","source":"tokenfuse","type":"budget_exhausted","severity":"critical","agent_id":"agent://acme-bank.example/support/tier1-bot","run_id":"run-9001","on_behalf_of":["user://acme-bank.example/j.doe"],"data":{"budget_usd":2.0,"spent_usd":2.0,"action":"blocked_402"}}"#;
+    let r = c.check_line(line);
+    assert!(r.valid, "a v1.0 line must be accepted: {:?}", r.errors);
+    assert_eq!(r.schema_version, Some(genaryx_core::SchemaVersion::V1_0));
+
+    let event = c
+        .parse_valid(line)
+        .expect("a conforming v1.0 line must decode");
+    assert_eq!(
+        event.schema_version(),
+        Some(genaryx_core::SchemaVersion::V1_0)
+    );
+    assert_eq!(event.schema, genaryx_core::SchemaVersion::SCHEMA_V1_0);
+}
+
+/// The one widening, and what this console does with it. Under v1.0 `agent_id`
+/// may be `claimed:agent://...` (SPEC 3.3): an identity the producer read from
+/// the process's own environment and could not attest. The console has no
+/// model for a claim, so SPEC 6.4.1 leaves it one duty: refuse the line and
+/// count it, never show it as an agent. The refusal is asserted here under its
+/// one fixed reason; the count is `ingest_test.rs`'s
+/// `claimed_subjects_are_quarantined_under_one_reason_and_counted`.
+///
+/// The same subject under v0.2 is refused too, by the pattern, and that is
+/// asserted beside it on purpose. SPEC 6.4.1's sentence is that the refusal
+/// moved from the version to the subject: a v1.0 consumer refuses less by
+/// version and exactly as much by subject. The attested form of the same id
+/// under v1.0 is fine, so the prefix is the whole difference.
+#[test]
+fn a_v1_0_claimed_subject_is_refused_under_one_reason() {
+    let c = conformer();
+    let claimed = |schema: &str| -> String {
+        format!(
+            r#"{{"schema":"taipanbox.dev/agent-event/{schema}","ts":"2026-09-12T16:00:01.000Z","source":"idryx","type":"identity_finding","severity":"high","agent_id":"claimed:agent://acme-bank.example/support/tier1-bot","data":{{"detector":"unmanaged_egress"}}}}"#
+        )
+    };
+
+    let r = c.check_line(&claimed("v1.0"));
+    assert!(!r.valid, "a claimed subject must be refused");
+    assert_eq!(
+        r.schema_version,
+        Some(genaryx_core::SchemaVersion::V1_0),
+        "the version was recognized; it is the subject that was refused"
+    );
+    assert_eq!(
+        r.errors,
+        vec![genaryx_core::conform::CLAIMED_SUBJECT_REFUSED.to_string()],
+        "one fixed reason, so the quarantine panel can count under it"
+    );
+
+    // `parse_valid` is what the ingest path calls, and it must hand back the
+    // same report, because that report's errors become the quarantine reason.
+    let refused = c
+        .parse_valid(&claimed("v1.0"))
+        .expect_err("the ingest path must be refused too");
+    assert_eq!(
+        refused.errors,
+        vec![genaryx_core::conform::CLAIMED_SUBJECT_REFUSED.to_string()]
+    );
+
+    // Under v0.2 the pattern refuses it before the decision is reached.
+    let r = c.check_line(&claimed("v0.2"));
+    assert!(!r.valid, "v0.2's pattern admits no claimed form");
+    assert!(
+        r.errors
+            .iter()
+            .all(|e| e != genaryx_core::conform::CLAIMED_SUBJECT_REFUSED),
+        "under v0.2 it is the pattern, not the decision: {:?}",
+        r.errors
+    );
+
+    // And the attested form of the same id under v1.0 is accepted.
+    let attested = claimed("v1.0").replace("claimed:agent://", "agent://");
+    assert!(
+        c.check_line(&attested).valid,
+        "the prefix is the whole difference"
+    );
+}
+
+/// SPEC 6.4: a consumer MAY refuse v0.3, the interim version where the claimed
+/// subject first appeared. This one does, by version. Pinned so that adding
+/// v1.0 is not read as having admitted v0.3 with it, and so that the refusal
+/// names what IS accepted.
+#[test]
+fn v0_3_stays_refused_by_version() {
+    let c = conformer();
+    let line = r#"{"schema":"taipanbox.dev/agent-event/v0.3","ts":"2026-09-12T16:00:00.000Z","source":"tokenfuse","type":"budget_exhausted","agent_id":"agent://acme-bank.example/support/tier1-bot"}"#;
+    let r = c.check_line(line);
+    assert!(!r.valid);
+    assert_eq!(r.schema_version, None);
+    assert!(
+        r.errors[0].contains("agent-event/v1.0") && r.errors[0].contains("agent-event/v0.1"),
+        "the refusal names every accepted version: {:?}",
+        r.errors
+    );
+}
+
+/// The vendored v1.0 file is v0.2's shape with two fields changed, and this
+/// pins which two, so a re-vendor that brings anything else with it is a red
+/// rather than a surprise. Byte-identity with agent-passport's canonical file
+/// is held by estate-gates C2, in another repository; this is the shape, not
+/// the bytes.
+#[test]
+fn the_vendored_v1_0_schema_widens_only_the_subject() {
+    use serde_json::Value;
+    let v0_2: Value =
+        serde_json::from_str(include_str!("../src/schemas/agent-event.v0.2.schema.json"))
+            .expect("the vendored v0.2 schema parses");
+    let v1_0: Value =
+        serde_json::from_str(include_str!("../src/schemas/agent-event.v1.0.schema.json"))
+            .expect("the vendored v1.0 schema parses");
+
+    assert_eq!(
+        v1_0["$id"],
+        "https://taipanbox.dev/agent-passport/v1.0/agent-event.schema.json"
+    );
+    assert_eq!(
+        v1_0["properties"]["schema"]["const"],
+        genaryx_core::SchemaVersion::SCHEMA_V1_0
+    );
+    assert_eq!(
+        v1_0["properties"]["agent_id"]["pattern"],
+        "^(claimed:)?agent://[a-z0-9.-]+/[a-z0-9._/-]+$"
+    );
+    assert_eq!(v1_0["properties"]["agent_id"]["maxLength"], 263);
+    assert_eq!(v0_2["properties"]["agent_id"]["maxLength"], 255);
+
+    let rest = |v: &Value| {
+        let mut props = v["properties"]
+            .as_object()
+            .expect("properties is an object")
+            .clone();
+        props.remove("agent_id");
+        props.remove("schema");
+        props
+    };
+    assert_eq!(
+        rest(&v0_2),
+        rest(&v1_0),
+        "every other property is identical"
+    );
+    assert_eq!(v0_2["required"], v1_0["required"]);
+    for (key, value) in v0_2.as_object().expect("a schema is an object") {
+        if key != "$id" && key != "properties" {
+            assert_eq!(
+                &v1_0[key], value,
+                "top-level `{key}` differs between v0.2 and v1.0"
+            );
+        }
+    }
+}

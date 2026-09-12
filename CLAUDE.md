@@ -223,6 +223,32 @@ an absent invariant.
    panel and the quarantine, and nothing structural stops the next capped or
    unread thing elsewhere in the console from doing the same.)*
 
+9. **The console accepts every envelope version the contract obliges it to,
+   and refuses a claimed subject by decision rather than by accident.**
+   agent-passport SPEC 6.4.1 (1.0, 2026-09-12): a consumer MUST accept event
+   v0.1, v0.2 and v1.0, and a consumer that does not model a claimed subject
+   refuses, and counts, a line whose `agent_id` carries `claimed:` (SPEC 3.3).
+   This console has no model for a claim, so `Conformer` refuses such a line
+   under one fixed reason, `CLAIMED_SUBJECT_REFUSED`, and the quarantine panel
+   shows it as one row with a count. v0.3 stays refused by version, which SPEC
+   6.4 allows.
+
+   Two choices worth keeping. The refusal runs after schema validation, so the
+   reason names the decision and not a regex: only v1.0's pattern admits the
+   form at all. And the reason is one string without the subject in it, because
+   the panel groups by reason: a producer writing claimed subjects is one row
+   with a total, not one row per line and no total.
+   *(test: `crates/core/tests/conform_test.rs`,
+   `a_v1_0_event_is_accepted_and_resolved`,
+   `a_v1_0_claimed_subject_is_refused_under_one_reason`,
+   `v0_3_stays_refused_by_version`,
+   `the_vendored_v1_0_schema_widens_only_the_subject`;
+   `crates/core/tests/ingest_test.rs`,
+   `claimed_subjects_are_quarantined_under_one_reason_and_counted`. The two
+   claimed-subject tests were run first against the conformer with the refusal
+   removed and both failed there: the claimed line validated and reached the
+   store.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
