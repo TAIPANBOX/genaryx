@@ -124,14 +124,23 @@ fn bootstrap_live<S: EventSink>(
     sink: S,
     resolved: genaryx_core::bus::ResolvedBus,
 ) -> genaryx_core::Result<BusBootstrap> {
-    let store_dir = durable_store_dir(&resolved.env_name).unwrap_or_else(|| {
-        eprintln!(
-            "genaryx: neither TAIPAN_HOME nor HOME is set, so this session keeps no history; \
-             events are kept for this process only"
-        );
-        unique_events_dir()
-    });
-    std::fs::create_dir_all(&store_dir)?;
+    let store_dir = match create_store_dir(&resolved.env_name) {
+        Ok(dir) => dir,
+        Err(e)
+            if std::env::var_os("GENARYX_STATE_DIR").is_none()
+                && std::env::var_os("TAIPAN_HOME").is_none()
+                && std::env::var_os("HOME").is_none() =>
+        {
+            eprintln!(
+                "genaryx: neither GENARYX_STATE_DIR, TAIPAN_HOME nor HOME is set, so this session \
+                 keeps no history; events are kept for this process only ({e})"
+            );
+            let dir = unique_events_dir();
+            std::fs::create_dir_all(&dir)?;
+            dir
+        }
+        Err(e) => return Err(e),
+    };
 
     let db_path = store_dir.join("console.sqlite");
     let store = Store::open(&db_path)?;
@@ -260,19 +269,33 @@ fn pick_up_new_sources(ingest: &mut IngestService, dir: &Path, tailed: &mut Vec<
 /// previous, feeder-extended run would then look like the file had been
 /// truncated, and the whole baseline would be re-ingested as new rows. Plain
 /// ephemeral scratch space; never cleaned up here (Phase-0 demo storage).
-/// Where one environment's durable history lives: `<TAIPAN_HOME>/genaryx/<env>`.
+/// Where one environment's durable history may live, in order of preference.
 ///
-/// Under the same root the rest of the install already uses, and keyed by
-/// environment, because two environments hold different estates and a single
-/// shared history would let one answer questions about the other.
+/// Three candidates, first creatable wins ([`create_store_dir`]):
+///
+/// 1. `<GENARYX_STATE_DIR>/<env>`, when the operator names a state directory
+///    outright. A launcher that mounts one writable volume for the console
+///    says so here and nothing else is guessed.
+/// 2. `<TAIPAN_HOME>/genaryx/<env>`, the path every desktop install has used:
+///    under the same root the rest of the install keeps its descriptors.
+/// 3. `<HOME>/.taipan/genaryx/<env>`, when `TAIPAN_HOME` is set and not
+///    writable. Both launchers point `TAIPAN_HOME` at `/etc/genaryx/taipan`,
+///    a root-owned directory holding one read-only mount of `environments/`,
+///    and every console they ran until 2026-09-14 failed at `create_dir_all`
+///    with a bare `Permission denied`, the Bus Explorer empty on every
+///    install; `HOME` there is the console's own state volume. genaryx#71.
 ///
 /// The environment name is sanitized to one path segment: it comes from a
 /// descriptor file, and a name carrying `..` or a slash must not be able to
-/// choose where the console writes.
-fn durable_store_dir(env: &str) -> Option<PathBuf> {
-    let root = genaryx_core::taipan_home::environments_dir()?
-        .parent()?
-        .join("genaryx");
+/// choose where the console writes. Pure, so the order is testable without
+/// touching the process environment; [`create_store_dir`] reads the three
+/// variables and does the filesystem half.
+fn store_dir_candidates(
+    env: &str,
+    state_dir: Option<&Path>,
+    taipan_home: Option<&Path>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
     let safe: String = env
         .chars()
         .map(|c| {
@@ -288,7 +311,85 @@ fn durable_store_dir(env: &str) -> Option<PathBuf> {
     } else {
         safe
     };
-    Some(root.join(safe))
+    let mut out = Vec::new();
+    if let Some(d) = state_dir {
+        out.push(d.join(&safe));
+    }
+    if let Some(t) = taipan_home {
+        out.push(t.join("genaryx").join(&safe));
+    }
+    if let Some(h) = home {
+        // Only a fallback: with TAIPAN_HOME unset, `taipan_home` above is
+        // already `<HOME>/.taipan` and this would be the same path twice.
+        let under_home = h.join(".taipan").join("genaryx").join(&safe);
+        if !out.contains(&under_home) {
+            out.push(under_home);
+        }
+    }
+    out
+}
+
+/// The first candidate of [`store_dir_candidates`] this process can create,
+/// created. `TAIPAN_HOME` is read as `taipan_home::environments_dir` reads
+/// it (its parent: `<TAIPAN_HOME>` or `<HOME>/.taipan`), so the second
+/// candidate is exactly the path the console used before this function
+/// existed.
+///
+/// A candidate that cannot be created is skipped with one line on stderr
+/// naming it and the reason, so a store that lands one candidate down is
+/// never a silent move. When none can be created the error names every path
+/// tried: the bare `Permission denied` this replaces was read, for two weeks,
+/// as a problem with the bus files themselves.
+fn create_store_dir(env: &str) -> genaryx_core::Result<PathBuf> {
+    let state_dir = std::env::var_os("GENARYX_STATE_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let taipan_home = genaryx_core::taipan_home::environments_dir()
+        .and_then(|d| d.parent().map(Path::to_path_buf));
+    let home = std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let candidates = store_dir_candidates(
+        env,
+        state_dir.as_deref(),
+        taipan_home.as_deref(),
+        home.as_deref(),
+    );
+    first_creatable(&candidates)
+}
+
+/// The filesystem half of [`create_store_dir`], over explicit candidates so a
+/// test can hand it a read-only root and a writable one.
+fn first_creatable(candidates: &[PathBuf]) -> genaryx_core::Result<PathBuf> {
+    let mut refused: Vec<String> = Vec::new();
+    for (i, dir) in candidates.iter().enumerate() {
+        match std::fs::create_dir_all(dir) {
+            Ok(()) => {
+                if i > 0 {
+                    eprintln!(
+                        "genaryx: durable store at {} ({} could not be created: {})",
+                        dir.display(),
+                        candidates[..i]
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        refused.join("; ")
+                    );
+                }
+                return Ok(dir.clone());
+            }
+            Err(e) => refused.push(format!("{}: {e}", dir.display())),
+        }
+    }
+    Err(genaryx_core::Error::Other(format!(
+        "no durable store directory could be created; tried {}. Set GENARYX_STATE_DIR to a writable directory.",
+        if refused.is_empty() {
+            "nothing: neither GENARYX_STATE_DIR, TAIPAN_HOME nor HOME is set".to_string()
+        } else {
+            refused.join("; ")
+        }
+    )))
 }
 
 /// How long a durable store keeps events, in days.
@@ -606,6 +707,168 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir); // best-effort cleanup; not load-bearing
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "genaryx-store-dir-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// The explicit state directory is asked first, TAIPAN_HOME second, HOME
+    /// last, and the HOME candidate is not repeated when TAIPAN_HOME already
+    /// is `<HOME>/.taipan` (the desktop default, where the two would be one
+    /// path).
+    #[test]
+    fn the_store_dir_is_asked_for_in_the_order_state_dir_taipan_home_then_home() {
+        let state = Path::new("/state");
+        let taipan = Path::new("/etc/genaryx/taipan");
+        let home = Path::new("/var/lib/stack");
+        assert_eq!(
+            store_dir_candidates("single", Some(state), Some(taipan), Some(home)),
+            vec![
+                PathBuf::from("/state/single"),
+                PathBuf::from("/etc/genaryx/taipan/genaryx/single"),
+                PathBuf::from("/var/lib/stack/.taipan/genaryx/single"),
+            ]
+        );
+        // The desktop default: TAIPAN_HOME unset resolves to <HOME>/.taipan,
+        // and the fallback must not list that same path twice.
+        let desktop_taipan = home.join(".taipan");
+        assert_eq!(
+            store_dir_candidates("single", None, Some(&desktop_taipan), Some(home)),
+            vec![PathBuf::from("/var/lib/stack/.taipan/genaryx/single")]
+        );
+        // A descriptor name is one path segment, never a path.
+        assert_eq!(
+            store_dir_candidates("../../etc", None, Some(taipan), None),
+            vec![PathBuf::from("/etc/genaryx/taipan/genaryx/------etc")]
+        );
+        assert_eq!(
+            store_dir_candidates("", None, Some(taipan), None),
+            vec![PathBuf::from("/etc/genaryx/taipan/genaryx/default")]
+        );
+    }
+
+    /// The launchers' shape: TAIPAN_HOME is a directory the console cannot
+    /// write, HOME is its state volume. The store lands under HOME, and the
+    /// TAIPAN_HOME path is reported as skipped rather than as the error that
+    /// emptied the Bus Explorer on every install (genaryx#71).
+    #[test]
+    fn the_store_lands_under_home_when_taipan_home_cannot_be_written() {
+        if unsafe_is_root() {
+            eprintln!("skipped: root ignores directory modes, so this cannot be measured here");
+            return;
+        }
+        let root = scratch("readonly-taipan-home");
+        let taipan = root.join("etc-genaryx-taipan");
+        let home = root.join("var-lib-stack");
+        std::fs::create_dir_all(&taipan).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        read_only(&taipan);
+
+        let candidates = store_dir_candidates("single", None, Some(&taipan), Some(&home));
+        let got = first_creatable(&candidates).expect("a writable HOME must be enough");
+        assert_eq!(got, home.join(".taipan").join("genaryx").join("single"));
+        assert!(
+            got.is_dir(),
+            "the winning candidate is created, not merely named"
+        );
+        assert!(
+            !taipan.join("genaryx").exists(),
+            "nothing may be created under the read-only TAIPAN_HOME"
+        );
+
+        writable(&taipan);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// When no candidate can be created the error names every path it tried,
+    /// so an operator reads where the console looked instead of a bare
+    /// `Permission denied`.
+    #[test]
+    fn an_uncreatable_store_names_every_path_it_tried() {
+        if unsafe_is_root() {
+            eprintln!("skipped: root ignores directory modes, so this cannot be measured here");
+            return;
+        }
+        let root = scratch("no-writable-root");
+        let taipan = root.join("taipan");
+        let home = root.join("home");
+        std::fs::create_dir_all(&taipan).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        read_only(&taipan);
+        read_only(&home);
+
+        let candidates = store_dir_candidates("single", None, Some(&taipan), Some(&home));
+        let err = first_creatable(&candidates).expect_err("nothing here is writable");
+        let text = err.to_string();
+        for c in &candidates {
+            assert!(
+                text.contains(&c.display().to_string()),
+                "the error must name {}, got: {text}",
+                c.display()
+            );
+        }
+        assert!(
+            text.contains("GENARYX_STATE_DIR"),
+            "the error must say how to fix it: {text}"
+        );
+
+        writable(&taipan);
+        writable(&home);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The explicit state directory wins even when TAIPAN_HOME is writable:
+    /// a launcher that says where state goes is not second-guessed.
+    #[test]
+    fn an_explicit_state_dir_wins_over_a_writable_taipan_home() {
+        let root = scratch("explicit-state-dir");
+        let state = root.join("state");
+        let taipan = root.join("taipan");
+        std::fs::create_dir_all(&taipan).unwrap();
+        let candidates = store_dir_candidates("single", Some(&state), Some(&taipan), None);
+        let got = first_creatable(&candidates).unwrap();
+        assert_eq!(got, state.join("single"));
+        assert!(!taipan.join("genaryx").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    fn read_only(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    }
+    #[cfg(unix)]
+    fn writable(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    #[cfg(unix)]
+    fn unsafe_is_root() -> bool {
+        // `id -u` rather than libc: this crate has no libc dependency and a
+        // test must not add one for a guard.
+        std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    fn read_only(_: &Path) {}
+    #[cfg(not(unix))]
+    fn writable(_: &Path) {}
+    #[cfg(not(unix))]
+    fn unsafe_is_root() -> bool {
+        true
     }
 
     /// A source file that appears AFTER startup still reaches the bus.

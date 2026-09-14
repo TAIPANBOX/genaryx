@@ -72,6 +72,9 @@
           "GENARYX_SCAN_TARGET": {
             "required": false
           },
+          "GENARYX_STATE_DIR": {
+            "required": false
+          },
           "GENARYX_WEB_OIDC_ADMIN_ROLE": {
             "required": false
           },
