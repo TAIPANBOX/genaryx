@@ -210,6 +210,23 @@ run_case "no-fabricated-rows: the one module allowed to import fixtures" pass \
 s = open(p).read()
 open(p, "w").write("// a harmless comment added beside the allowed import\n" + s)')"
 
+# The scenarios in features/ stay bound to tests that exist, both ways:
+# a binding pointing at a renamed test reads as held and is not.
+run_case "features-are-bound: a binding names a test that is gone" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'edit("features/the-bus-store-lands-where-the-console-can-write.feature", "@test:an_uncreatable_store_names_every_path_it_tried", "@test:an_uncreatable_store_names_every_path_it_tried_renamed")')" \
+	"DANGLING"
+
+run_case "features-are-bound: a scenario with nothing behind it" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'edit("features/the-bus-store-lands-where-the-console-can-write.feature", "  # @test:an_explicit_state_dir_wins_over_a_writable_taipan_home\n", "")')" \
+	"UNBOUND"
+
+run_case "features-are-bound: the scenarios taken away entirely" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'import shutil; shutil.rmtree("features")')" \
+	"not a pass"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"

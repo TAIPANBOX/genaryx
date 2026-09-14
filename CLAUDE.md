@@ -47,6 +47,7 @@ the names change per build and stale ones are served forever otherwise.
 ./scripts/no-cloud-credentials.sh
 ./scripts/no-fabricated-rows.sh
 ./scripts/web-only-and-unpriced.sh
+./scripts/features-are-bound.sh      # invariant 10
 ./scripts/readme-numbers.sh          # runs the whole suite; slow
 ./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
 ```
@@ -248,6 +249,37 @@ an absent invariant.
    claimed-subject tests were run first against the conformer with the refusal
    removed and both failed there: the claimed line validated and reached the
    store.)*
+
+10. **The console's durable bus store lands where the console can write, and
+    a store that lands anywhere but the first choice says so.** `console.sqlite`
+    lived under `<TAIPAN_HOME>/genaryx/<env>` and nowhere else. Both launchers
+    point `TAIPAN_HOME` at `/etc/genaryx/taipan`, a root-owned directory
+    holding one read-only mount of `environments/`, so `create_dir_all` failed
+    with a bare `Permission denied` and the Bus Explorer was empty on every
+    stack-single install and every stack-k8s cluster, at v0.1.2 and v1.0.0
+    alike; measured 2026-09-14 on both rigs and reproduced on this image with
+    a clean events directory (genaryx#71). The error named no path, so it was
+    first read as a problem with the bus files, which it never was.
+
+    Three candidates, first creatable wins: `<GENARYX_STATE_DIR>/<env>` when
+    the operator names a state directory, `<TAIPAN_HOME>/genaryx/<env>` (the
+    desktop path, unchanged), then `<HOME>/.taipan/genaryx/<env>`, which in
+    both launchers is the console's own state volume. A skipped candidate is
+    named on stderr with its reason, so a store one candidate down is never a
+    silent move; a store nowhere creatable names every path tried and the
+    variable that fixes it. `GENARYX_STATE_DIR` is declared in
+    `components.json` and held by `crates/web/tests/manifest.rs`.
+    *(tests: `the_store_lands_under_home_when_taipan_home_cannot_be_written`,
+    `an_uncreatable_store_names_every_path_it_tried`,
+    `an_explicit_state_dir_wins_over_a_writable_taipan_home`,
+    `the_store_dir_is_asked_for_in_the_order_state_dir_taipan_home_then_home`
+    in `crates/api/src/bus/feed.rs`; red first as a compile failure on the
+    unfixed tree; two mutants caught, the HOME fallback removed and the search
+    stopping at the first refusal. Scenarios:
+    `features/the-bus-store-lands-where-the-console-can-write.feature`, four,
+    each bound; gate: `scripts/features-are-bound.sh`, three cases in
+    `gates-have-teeth.sh`. Not covered: a `TAIPAN_HOME` that is writable but
+    on a volume the launcher later drops, which is a launcher question.)*
 
 ## Decisions that have no gate yet
 

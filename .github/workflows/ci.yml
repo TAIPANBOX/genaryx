@@ -113,3 +113,7 @@ jobs:
         run: ./scripts/no-cloud-credentials.sh
       - name: no fabricated rows reach a panel or a failure path
         run: ./scripts/no-fabricated-rows.sh
+      # Every scenario in features/ names a test that exists, and every scenario
+      # names one; the readable form of what a change promised, kept honest.
+      - name: every scenario is bound to a test, both ways
+        run: ./scripts/features-are-bound.sh
