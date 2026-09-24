@@ -75,6 +75,12 @@
           "GENARYX_STATE_DIR": {
             "required": false
           },
+          "GENARYX_VOUCHRYX_REVOKE_KEY_FILE": {
+            "required": false
+          },
+          "GENARYX_VOUCHRYX_URL": {
+            "required": false
+          },
           "GENARYX_WEB_OIDC_ADMIN_ROLE": {
             "required": false
           },
@@ -157,6 +163,10 @@
         "doctor_is_the_other_half": {
           "value": "genaryx-web doctor",
           "why": "The same binary, run by a person to check a box rather than to serve it. No launcher schedules it, so it is a subcommand here and not a component of its own."
+        },
+        "the_revoke_pair_is_all_or_nothing": {
+          "value": "GENARYX_VOUCHRYX_URL + GENARYX_VOUCHRYX_REVOKE_KEY_FILE",
+          "why": "Both required=false above is honest about EACH variable in isolation, but not about the pair: one set without the other refuses to start (crates/api/src/delegation/env.rs), which this schema's boolean required has no way to express. Recorded here rather than left implied."
         }
       }
     }

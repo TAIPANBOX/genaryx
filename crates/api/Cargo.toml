@@ -40,12 +40,17 @@ getrandom = { workspace = true }
 # The issued WireGuard peer config rendered as a scannable QR (remote/
 # wg_operator.rs), SVG so no PNG encoder and no `qrencode` binary is needed.
 qrcode = { workspace = true }
+# `delegation::commands` calls vouchryx's `POST /v1/revoke` directly (no
+# connectors client: one call, one plane-less command, see the module doc).
+# Already resolved in this workspace's tree through genaryx-connectors; this
+# makes it a direct, nameable dependency of this crate rather than a
+# transitive one, the same promotion this crate's dev-dependencies note below
+# already relies on for tests.
+reqwest = { workspace = true }
 
 [dev-dependencies]
-# Both only for tests that moved here with their planes: money/state.rs's
-# gated live-e2e spawns a real tokenfuse-cloud and polls its /healthz, and
+# For tests that moved here with their planes: money/state.rs's gated
+# live-e2e spawns a real tokenfuse-cloud and polls its /healthz, and
 # quality/state.rs seeds a genuine SQLite file to prove the read-only re-open
-# path. Each already reaches this build transitively through
-# genaryx-connectors, but a transitive dependency is not directly nameable.
-reqwest = { workspace = true }
+# path.
 rusqlite = { workspace = true }

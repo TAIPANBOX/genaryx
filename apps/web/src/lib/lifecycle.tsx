@@ -187,3 +187,32 @@ export function KillRunButton({
     />
   );
 }
+
+/** Cut an agent's delegated authority at vouchryx: the same break-glass +
+ * WebAuthn ceremony as {@link KillRunButton}, and the same class of act -
+ * `delegation_revoke` takes access away mid-incident rather than stopping
+ * spend. Unlike a kill there is no "no live run" disabled state: an
+ * operator may revoke an agent's delegation whether or not it is currently
+ * running anything, so this is a plain break-glass button, never disabled
+ * on its own account. */
+export function RevokeDelegationButton({
+  agentId,
+  onRevoke,
+  disabled,
+}: {
+  agentId: string;
+  onRevoke: (subject: string, reason: string) => Promise<void>;
+  disabled?: boolean;
+}) {
+  return (
+    <ConfirmButton
+      label="Revoke delegation"
+      confirmLabel="Confirm revoke"
+      tone="var(--sev-critical)"
+      breakGlass
+      breakGlassDetail={agentId}
+      disabled={disabled}
+      onConfirm={(reason) => onRevoke(agentId, reason)}
+    />
+  );
+}

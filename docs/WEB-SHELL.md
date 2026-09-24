@@ -147,11 +147,12 @@ are in docs/CONSOLE-IDP.md.
 
 ## The per-action passkey ceremony
 
-Five commands carry it (`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`):
+Six commands carry it (`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`):
 `money_kill_run`, `money_set_budget`, `policy_decide_approval`,
-`remote_operator_wg_config` and `remote_operator_wg_revoke`. Each needs a
-fresh assertion from the operator's own passkey, bound to that exact command
-and its exact arguments, verified before the command dispatches.
+`remote_operator_wg_config`, `remote_operator_wg_revoke` and
+`delegation_revoke`. Each needs a fresh assertion from the operator's own
+passkey, bound to that exact command and its exact arguments, verified before
+the command dispatches.
 
 Enrolling and removing a passkey are part of the same control, and neither
 rides on the session:
@@ -172,7 +173,7 @@ export GENARYX_WEB_REQUIRE_PASSKEY=1
 ```
 
 Off by default, so an upgrade changes nothing on a running box. With it off,
-a caller with no enrolled passkey still runs those five commands and the
+a caller with no enrolled passkey still runs those six commands and the
 journal records them honestly as software-signed: a weaker state, deliberately
 kept as the bridge for an operator who has not enrolled yet. With it on, that
 bridge is gone and the refusal says to enrol a passkey. `genaryx-web serve`
@@ -298,7 +299,7 @@ carries what the bus receives, and a stack nobody is calling receives nothing.
   object the frontend already sends, a 2xx body is the command's Ok value, and
   a **422 body is the command's own Err value unwrapped**, so each plane's
   existing error normaliser works untouched. 400 is malformed arguments, 401 is
-  no session, 404 is an unknown command. For the five sensitive commands, 428
+  no session, 404 is an unknown command. For the six sensitive commands, 428
   means "send an assertion" and 403 means the ceremony was refused.
 - `GET /api/webauthn/passkeys`, `POST /api/webauthn/passkeys/remove`,
   `POST /api/webauthn/register/start` / `register/finish`,
@@ -306,7 +307,7 @@ carries what the bus receives, and a stack nobody is calling receives nothing.
 - `GET /api/events` is the live bus as Server-Sent Events (`event: bus`).
 
 Signing in opens the console, at whatever role the session carries. It does
-not by itself run a destructive action: those five re-sign in the moment they
+not by itself run a destructive action: those six re-sign in the moment they
 happen, with the operator's passkey, whenever one is enrolled (always, with
 `GENARYX_WEB_REQUIRE_PASSKEY=1`). docs/CONSOLE-IDP.md has the full contract
 and the honest limits.

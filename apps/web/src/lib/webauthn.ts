@@ -523,7 +523,7 @@ async function runCeremonyAndDispatch<T>(
 
 /**
  * Dispatch a sensitive command through the per-action WebAuthn ceremony
- * (docs/CONSOLE-IDP.md B3/2; the five commands in
+ * (docs/CONSOLE-IDP.md B3/2; the six commands in
  * `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`).
  *
  * Two paths, matching the two outcomes `webauthn_gate` has for a caller who
@@ -541,11 +541,14 @@ async function runCeremonyAndDispatch<T>(
  *
  * Callers never see `invokeBackend`'s plain command surface for these
  * commands - `lib/money.ts`'s `killRun`/`setBudget`, `lib/policy.ts`'s
- * `decideApproval` and `lib/remote.ts`'s `issueOperatorWgConfig`/
- * `revokeOperatorWgPeer` call this instead, so every existing caller of those
- * wrappers inherits the ceremony with no panel-side change. The two WireGuard
- * ones are here for the same reason a kill is: issuing a peer mints a road
- * into the control plane and revoking one cuts an operator off mid-incident.
+ * `decideApproval`, `lib/remote.ts`'s `issueOperatorWgConfig`/
+ * `revokeOperatorWgPeer` and `lib/delegation.ts`'s `revokeDelegation` call
+ * this instead, so every existing caller of those wrappers inherits the
+ * ceremony with no panel-side change. The two WireGuard ones are here for
+ * the same reason a kill is: issuing a peer mints a road into the control
+ * plane and revoking one cuts an operator off mid-incident; `revokeDelegation`
+ * joined 2026-09-24 for the same reason, cutting an agent's or a user's
+ * delegated authority.
  */
 export async function invokeWithCeremony<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const effectiveArgs = args ?? {};

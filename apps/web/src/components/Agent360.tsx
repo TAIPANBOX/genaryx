@@ -10,7 +10,14 @@ import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
 import { isQualityDriftEvent } from "../lib/incidents";
 import { describeMoneyError, fetchRuns, killRun } from "../lib/money";
-import { FreezeToggleButton, KillRunButton, runBlockedState, StateBadge } from "../lib/lifecycle";
+import { revokeDelegation } from "../lib/delegation";
+import {
+  FreezeToggleButton,
+  KillRunButton,
+  RevokeDelegationButton,
+  runBlockedState,
+  StateBadge,
+} from "../lib/lifecycle";
 import { useLifecycleBlocks } from "../lib/lifecycleBlocks";
 import { useConsoleStateVersion } from "../lib/consoleState";
 import { blockAgent } from "../lib/agentActions";
@@ -634,6 +641,10 @@ export function Agent360({
           run={liveRun}
           detail={liveRun ? `run ${liveRun.run_id} · spent ${formatUsd(liveRun.spent_usd)}` : undefined}
           onKill={(runId, reason) => killRun(runId, reason).then(() => {})}
+        />
+        <RevokeDelegationButton
+          agentId={agentId}
+          onRevoke={(subject, reason) => revokeDelegation(subject, reason).then(() => {})}
         />
         <WatchToggleButton kind="agent" id={agentId} label={shortAgentLabel(agentId)} />
         <button type="button" className="icon-btn" aria-label="Close Agent 360" onClick={onClose}>

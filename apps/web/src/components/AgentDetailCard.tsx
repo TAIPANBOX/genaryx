@@ -12,7 +12,14 @@ import {
 import { shortAgentLabel } from "../lib/graph";
 import { fetchIdentities } from "../lib/identity";
 import { fetchRuns, killRun } from "../lib/money";
-import { agentStateFromRecord, FreezeToggleButton, KillRunButton, StateBadge } from "../lib/lifecycle";
+import { revokeDelegation } from "../lib/delegation";
+import {
+  agentStateFromRecord,
+  FreezeToggleButton,
+  KillRunButton,
+  RevokeDelegationButton,
+  StateBadge,
+} from "../lib/lifecycle";
 import { useLifecycleBlocks } from "../lib/lifecycleBlocks";
 import { useConsoleStateVersion } from "../lib/consoleState";
 import { formatTimestamp, formatUsd } from "../lib/format";
@@ -393,6 +400,10 @@ export function AgentDetailCard({
                 run={liveRun}
                 detail={liveRun ? `run ${liveRun.run_id} · spent ${formatUsd(liveRun.spent_usd)}` : undefined}
                 onKill={(runId, reason) => killRun(runId, reason).then(() => {})}
+              />
+              <RevokeDelegationButton
+                agentId={agentId}
+                onRevoke={(subject, reason) => revokeDelegation(subject, reason).then(() => {})}
               />
             </div>
           )}

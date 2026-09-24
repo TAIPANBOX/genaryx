@@ -550,6 +550,32 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 genaryx_api::crypto::commands::crypto_verify_evidence(a.file, &ctx.crypto).await,
             ))
         }
+        // Cuts an agent's or a user's delegated authority at vouchryx. Admin
+        // only, sensitive-ceremony-gated (see `main.rs`'s
+        // `SENSITIVE_COMMANDS` and `roles.rs`'s `ADMIN_COMMANDS`), the same
+        // class of act as `money_kill_run` and `remote_operator_wg_revoke`.
+        "delegation_revoke" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                #[serde(default)]
+                subject: Option<String>,
+                #[serde(default)]
+                jti: Option<String>,
+                reason: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::delegation::commands::delegation_revoke(
+                    a.subject,
+                    a.jti,
+                    a.reason,
+                    &ctx.cfg.delegation,
+                    wg_journal(ctx).as_ref(),
+                )
+                .await,
+            ))
+        }
         "drills_run" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]
