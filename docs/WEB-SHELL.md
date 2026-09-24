@@ -48,22 +48,37 @@ locks the operator out with no explanation.
 ## IdP login and roles
 
 One local operator account (above) always works. If the customer runs an
-identity provider, `genaryx-web` can also verify its OIDC ID-tokens, and it
-does so entirely offline: no `.well-known` discovery, no outbound call to the
-IdP, ever. It is off unless configured, and configuring it never removes the
-local account.
+identity provider, `genaryx-web` can also verify its OIDC ID-tokens. By
+default it does so entirely offline: no `.well-known` discovery, no outbound
+call to the IdP, ever. An operator who instead points it at the IdP's own
+JWKS endpoint (`GENARYX_WEB_OIDC_JWKS_URL`, below) gets a console that
+fetches and caches its own keys, so a routine key rotation at the IdP does
+not lock every operator out until someone edits configuration by hand
+(CLAUDE.md invariant 11 has the full fetch/refresh/refusal contract). Either
+way it is off unless configured, and configuring it never removes the local
+account.
 
-Set all three of these before `serve` starts, or OIDC stays off and the
-console shows only the local login:
+Set `GENARYX_WEB_OIDC_ISSUER` and `GENARYX_WEB_OIDC_AUDIENCE`, plus exactly
+ONE of the two JWKS sources below, before `serve` starts, or OIDC stays off
+and the console shows only the local login:
 
 ```sh
 export GENARYX_WEB_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0
 export GENARYX_WEB_OIDC_AUDIENCE=genaryx-console
-export GENARYX_WEB_OIDC_JWKS=/etc/genaryx/jwks.json   # inline JSON also works
+
+# Either the static, offline path (inline JSON also works instead of a path):
+export GENARYX_WEB_OIDC_JWKS=/etc/genaryx/jwks.json
+
+# ...or the live path - fetched and cached, an https:// URL only:
+export GENARYX_WEB_OIDC_JWKS_URL=https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
 ```
 
+Setting both JWKS variables, or a `GENARYX_WEB_OIDC_JWKS_URL` that is not
+`https://`, makes `genaryx-web` refuse to start rather than guess which the
+operator meant.
+
 Four more are optional, each defaulting to what a plain OIDC token already
-carries:
+carries, and each applies to both JWKS sources equally:
 
 - `GENARYX_WEB_OIDC_SUB_CLAIM` (default `sub`): the claim used as the
   signed-in username.
@@ -79,9 +94,28 @@ and never fetched again: no live call to the IdP, air-gap safe by
 construction, the same contract tokenfuse-cloud's own OIDC already uses.
 Rotating the IdP's signing key means updating the file (or the env var) and
 restarting `genaryx-web`; there is no background refresh to fall back on.
-`GET /api/auth/session` reports `oidc_available: true` once the three
-required vars are set, and the browser then shows "Sign in with your
-organization" next to the local login form.
+This path is unaffected by `GENARYX_WEB_OIDC_JWKS_URL` existing at all.
+
+`GENARYX_WEB_OIDC_JWKS_URL`, when set instead, is fetched once at startup
+(best-effort; a failed startup fetch does not stop the console), refreshed
+before a verification whenever the current set is older than one hour, and
+refreshed on an unknown `kid` too - so a key the IdP rotates in is picked up
+without a restart, and a key the IdP removes stops being trusted within an
+hour of the next sign-in attempt. Either reason for a refresh is bounded by
+the same five-minute cooldown (the last attempt, startup included, must be
+at least that old): during an outage this means at most one fetch attempt
+per cooldown window, not one per sign-in. An IdP outage keeps the console
+verifying on the last good set it already fetched; a fetched body that is
+not valid JSON, has no usable key left in it, carries an `oct` key, or
+carries a private-key member on any key, is refused outright and never
+replaces that last good set. A key type this console cannot verify with
+(OKP among them) is dropped from the fetched set rather than refusing the
+whole fetch, so one such key published beside an IdP's RSA/EC ones does not
+lock operators out.
+
+`GET /api/auth/session` reports `oidc_available: true` once the required
+vars are set, and the browser then shows "Sign in with your organization"
+next to the local login form.
 
 The local Argon2id account (`set-password`, above) is unchanged by any of
 this: it stays the break-glass path onto the box, and it is always `admin`,
