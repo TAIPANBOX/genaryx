@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-784-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-809-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -233,12 +233,15 @@ box; these frames are not it, and say so here rather than in a footnote.
   + an Onboard view in the web shell; design in
   [`docs/ONBOARD.md`](docs/ONBOARD.md).
 - **Console IdP login and roles (D15/B3 part 1).** `genaryx-web` verifies a
-  customer's own OIDC ID-tokens offline (static JWKS, never fetched),
-  alongside the existing local account. Three roles (`viewer`, `approver`,
-  `admin`) gate every privileged command at the chokepoint before it
-  dispatches, and a web-originated mutation now names the signed-in person in
-  the audit trail instead of the box's OS account. The local account stays
-  the break-glass admin. Design and the honest limits in
+  customer's own OIDC ID-tokens, offline by default (a static JWKS, never
+  fetched) or, with `GENARYX_WEB_OIDC_JWKS_URL` set, against a JWKS the
+  console fetches and caches itself so an IdP key rotation does not lock
+  operators out (CLAUDE.md invariant 11) - alongside the existing local
+  account either way. Three roles (`viewer`, `approver`, `admin`) gate every
+  privileged command at the chokepoint before it dispatches, and a
+  web-originated mutation now names the signed-in person in the audit trail
+  instead of the box's OS account. The local account stays the break-glass
+  admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
 - **Per-action WebAuthn ceremony (D15/B3 part 2).** The five privileged
   commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,

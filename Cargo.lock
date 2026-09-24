@@ -1032,6 +1032,7 @@ name = "genaryx-web"
 version = "0.0.0"
 dependencies = [
  "argon2",
+ "async-trait",
  "axum",
  "axum-extra",
  "base64",
@@ -1049,6 +1050,7 @@ dependencies = [
  "p256",
  "password-hash",
  "rand 0.8.7",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
