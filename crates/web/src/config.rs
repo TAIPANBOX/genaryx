@@ -48,6 +48,12 @@ pub struct Config {
     /// ceremony", CLAUDE.md 2) sets `GENARYX_WEB_REQUIRE_PASSKEY=1` and the
     /// fallback is gone for every command in `SENSITIVE_COMMANDS`.
     pub require_passkey: bool,
+    /// Where `delegation_revoke` sends a revocation, resolved ONCE at
+    /// startup (`GENARYX_VOUCHRYX_URL` + `GENARYX_VOUCHRYX_REVOKE_KEY_FILE`).
+    /// Unlike every other field here, an inconsistent pair of variables never
+    /// reaches this struct at all: `main.rs`'s `Cmd::Serve` refuses to start
+    /// first. See `genaryx_api::delegation::env`'s module doc.
+    pub delegation: genaryx_api::delegation::env::RevokeConfig,
 }
 
 impl Config {
@@ -160,6 +166,7 @@ mod tests {
             ui_dir: None,
             secure_cookies: false,
             require_passkey: false,
+            delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
         }
     }
 

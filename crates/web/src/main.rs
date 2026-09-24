@@ -211,12 +211,26 @@ async fn main() {
             ui,
             secure_cookies,
         } => {
+            // Resolved eagerly, before this box serves a single request: a
+            // revoke key is a credential that cuts an agent's authority, and
+            // one variable set without the other (or a key file that cannot
+            // be read) is a configuration mistake to refuse at boot, never a
+            // half-working delegation_revoke discovered mid-incident. See
+            // `genaryx_api::delegation::env`'s module doc.
+            let delegation = match genaryx_api::delegation::env::resolve_from_env() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("genaryx-web: {e}");
+                    std::process::exit(1);
+                }
+            };
             let cfg = Config {
                 bind,
                 state_dir: state_dir.unwrap_or_else(Config::default_state_dir),
                 ui_dir: ui,
                 secure_cookies,
                 require_passkey: Config::require_passkey_from_env(),
+                delegation,
             };
             serve(cfg).await;
         }
@@ -473,7 +487,8 @@ fn guard(ctx: &Arc<Ctx>, jar: &CookieJar) -> Result<auth::SessionInfo, Response>
 
 /// The commands whose dispatch REQUIRES a fresh per-action assertion once the
 /// caller has a passkey enrolled: the kill and the budget mutation (the two
-/// break-glass carriers) and the approval grant/deny. The policy PUT/DELETE
+/// break-glass carriers), the approval grant/deny, the two operator
+/// WireGuard commands, and revoking a delegation. The policy PUT/DELETE
 /// editor joins this list the day it becomes routable (it is "v1, not built"
 /// today); an unknown name is already fail-closed to admin by the role gate.
 const SENSITIVE_COMMANDS: &[&str] = &[
@@ -487,6 +502,10 @@ const SENSITIVE_COMMANDS: &[&str] = &[
     // session could quietly mint itself a permanent tunnel.
     "remote_operator_wg_config",
     "remote_operator_wg_revoke",
+    // Cutting an agent's or a user's delegated authority at vouchryx: the
+    // same class of act as a kill (it takes something away mid-incident, and
+    // a stolen session must not be able to pull this switch alone).
+    "delegation_revoke",
 ];
 
 /// The two ceremony names that are NOT dispatchable commands: each names an
@@ -1330,6 +1349,7 @@ mod tests {
             ui_dir: None,
             secure_cookies: false,
             require_passkey,
+            delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
@@ -2046,6 +2066,77 @@ mod tests {
             post_command_with(&ctx, "money_kill_run", &sid, Some(&header), "{}").await,
             StatusCode::FORBIDDEN
         );
+    }
+
+    // -- delegation_revoke: role gate, ceremony gate, argument binding -------
+    //
+    // Bound in features/the-console-revokes-a-delegation.feature. Mirrors the
+    // money_kill_run tests just above exactly - same gate, same shape - since
+    // delegation_revoke is admin-only and sensitive-ceremony-gated for the
+    // same reason money_kill_run is (CLAUDE.md invariant 11).
+
+    #[tokio::test]
+    async fn a_viewer_is_refused_by_the_role_gate_on_delegation_revoke() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("carol", Role::Viewer, Method::Oidc);
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/delegation_revoke",
+            &sid,
+            None,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["error"], "role admin required");
+    }
+
+    #[tokio::test]
+    async fn an_approver_is_refused_by_the_role_gate_on_delegation_revoke() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("dave", Role::Approver, Method::Oidc);
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/delegation_revoke",
+            &sid,
+            None,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["error"], "role admin required");
+    }
+
+    #[tokio::test]
+    async fn delegation_revoke_with_a_passkey_and_no_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_eq!(
+            post_command_with(&ctx, "delegation_revoke", &sid, None, "{}").await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn delegation_revoke_with_a_valid_assertion_runs() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+
+        let args =
+            json!({ "subject": "agent://acme.example/bot/a", "reason": "compromised" }).to_string();
+        let challenge = start_action(&ctx, &sid, "delegation_revoke", &args).await;
+        let header = assertion_header(&ctx, &challenge);
+
+        // A genuine assertion passes the gate; whatever dispatch answers next
+        // (this test's Ctx has no vouchryx configured, so it is a 422
+        // "not_configured" refusal from the COMMAND, not the gate), it is
+        // never one of the gate's own refusals.
+        let status = post_command_with(&ctx, "delegation_revoke", &sid, Some(&header), &args).await;
+        assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
+        assert_ne!(status, StatusCode::FORBIDDEN);
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

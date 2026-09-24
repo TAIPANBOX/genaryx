@@ -101,6 +101,10 @@ const ADMIN_COMMANDS: &[&str] = &[
     // reason. Classified by what crosses the boundary, not by whether the
     // upstream call happens to be a GET.
     "remote_hetzner_list",
+    // Cuts an agent's or a user's delegated authority at vouchryx, the same
+    // reason `remote_operator_wg_revoke` is admin-only just above: it takes
+    // access away mid-incident, a deliberate, attributed act, not a read.
+    "delegation_revoke",
 ];
 
 /// The minimum role that may run `command`. Everything not named in the
@@ -301,6 +305,7 @@ mod tests {
         assert_eq!(required_role("policy_decide_approval"), Role::Approver);
         assert_eq!(required_role("money_kill_run"), Role::Admin);
         assert_eq!(required_role("onboard_write_passport"), Role::Admin);
+        assert_eq!(required_role("delegation_revoke"), Role::Admin);
     }
 
     /// A command that takes a live cloud API token in its request body is not

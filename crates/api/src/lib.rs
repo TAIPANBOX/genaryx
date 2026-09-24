@@ -37,6 +37,7 @@ pub mod admission;
 pub mod copilot;
 pub mod credentials;
 pub mod crypto;
+pub mod delegation;
 pub mod drills;
 pub mod egress;
 pub mod evidence;

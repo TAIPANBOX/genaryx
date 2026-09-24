@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-784-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-824-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -240,11 +240,12 @@ box; these frames are not it, and say so here rather than in a footnote.
   the audit trail instead of the box's OS account. The local account stays
   the break-glass admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
-- **Per-action WebAuthn ceremony (D15/B3 part 2).** The five privileged
+- **Per-action WebAuthn ceremony (D15/B3 part 2).** The six privileged
   commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
-  `remote_operator_wg_config`, `remote_operator_wg_revoke`) additionally
-  require a fresh, per-action passkey assertion once the operator has
-  enrolled one: a challenge minted for that exact command and its arguments,
+  `remote_operator_wg_config`, `remote_operator_wg_revoke`,
+  `delegation_revoke`) additionally require a fresh, per-action passkey
+  assertion once the operator has enrolled one: a challenge minted for that
+  exact command and its arguments,
   verified server-side (ES256, attestation "none", no `webauthn-rs`/OpenSSL
   dependency), and the assertion's algorithm and credential id journaled into
   the same `CommandRecord` the action already writes
@@ -257,6 +258,17 @@ box; these frames are not it, and say so here rather than in a footnote.
   everything between. Frontend (`lib/webauthn.ts`, the passkey panel in the
   session area) and server (`crates/web/src/webauthn.rs`) both built; design
   in [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
+- **Delegation revoke (2026-09-24).** `delegation_revoke` cuts a compromised
+  agent's or user's delegated authority at vouchryx (`POST /v1/revoke`), the
+  same class of act as a kill: admin-only, WebAuthn-ceremony-gated, one
+  attempt one journal entry, whatever vouchryx answers. Configured with
+  `GENARYX_VOUCHRYX_URL` (vouchryx's own http(s) URL) and
+  `GENARYX_VOUCHRYX_REVOKE_KEY_FILE` (a path; its trimmed content is the
+  bearer key, read once at startup, never logged); both unset is a normal
+  "not configured" box, one set without the other refuses to start. A
+  refused, not-durable, or unreachable answer from vouchryx is reported as
+  itself, never as success. `crates/api/src/delegation` + a "Revoke
+  delegation" button on the agent detail card in the web shell.
 
 ## Being written to, not just watched
 

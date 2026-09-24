@@ -137,7 +137,7 @@ paths (set => named actor; unset => OS-user default).
   session until it idles out or the process restarts (restart cuts all
   sessions, the same control the local account has).
 - Roles gate the console's command surface; they are NOT a second signature
-  by themselves. Part 2 (WebAuthn, below) re-signs all five sensitive
+  by themselves. Part 2 (WebAuthn, below) re-signs all six sensitive
   commands with a hardware-backed passkey once the operator has enrolled one;
   a caller with none enrolled still has the part-1 exposure only - "session
   opens the console" (docs/WEB-SHELL.md), narrowed by role - the documented
@@ -146,14 +146,16 @@ paths (set => named actor; unset => OS-user default).
 
 ## Part 2: WebAuthn per-action ceremony (built, branch `feat/webauthn-per-action`)
 
-Signing in gets you the console; it does not get you the kill. FIVE
+Signing in gets you the console; it does not get you the kill. SIX
 privileged commands carry the ceremony today
 (`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`): `money_kill_run`,
-`money_set_budget`, `policy_decide_approval`, `remote_operator_wg_config` and
-`remote_operator_wg_revoke`. The last two joined because issuing a WireGuard
-peer hands out a road into the control plane and revoking one takes an
-operator's access away mid-incident. (This document, the README and CLAUDE.md
-all said "three" until 2026-08-05, which is what a hand-copied list does.)
+`money_set_budget`, `policy_decide_approval`, `remote_operator_wg_config`,
+`remote_operator_wg_revoke` and `delegation_revoke`. The middle two joined
+because issuing a WireGuard peer hands out a road into the control plane and
+revoking one takes an operator's access away mid-incident; the last joined
+2026-09-24 for the same reason, cutting an agent's or a user's delegated
+authority. (This document, the README and CLAUDE.md all said "three" until
+2026-08-05, which is what a hand-copied list does.)
 Each additionally requires a fresh, per-action WebAuthn assertion once the
 caller has enrolled a passkey - the operator's authenticator (Touch ID,
 Windows Hello, a roaming key) signs a challenge minted FOR THAT ONE COMMAND,
@@ -206,7 +208,7 @@ throughout: any parse or verify failure is a refusal, never a pass.
   challenge bound to the exact command name and a SHA-256 of the exact args
   JSON that dispatch will carry (`args_sha256`) - an assertion for "kill run
   A" can never be replayed to authorize "kill run B", or the same command
-  with different arguments. `command` is one of the five sensitive commands,
+  with different arguments. `command` is one of the six sensitive commands,
   or one of the two lifecycle ceremony names above
   (`webauthn_enroll_passkey`, `webauthn_remove_passkey`), which are
   deliberately NOT in `SENSITIVE_COMMANDS`: they name an endpoint of this
@@ -290,10 +292,11 @@ were.
 `invalidatePasskeysCache()` after any change), `enrollPasskey(label,
 operatorPassword?)`, `removePasskey(credentialId, operatorPassword?)`, and
 `invokeWithCeremony(command, args)` - the wrapper `lib/money.ts`'s
-`killRun`/`setBudget`, `lib/policy.ts`'s `decideApproval` and
-`lib/remote.ts`'s `issueOperatorWgConfig`/`revokeOperatorWgPeer` call instead
-of `invokeBackend` directly, so every existing caller of those five commands
-inherits the ceremony with no panel-side change. `PasskeySettings.tsx`
+`killRun`/`setBudget`, `lib/policy.ts`'s `decideApproval`, `lib/remote.ts`'s
+`issueOperatorWgConfig`/`revokeOperatorWgPeer` and `lib/delegation.ts`'s
+`revokeDelegation` call instead of `invokeBackend` directly, so every
+existing caller of those six commands inherits the ceremony with no
+panel-side change. `PasskeySettings.tsx`
 (opened from the session area in `AppHeader.tsx`) lists enrolled passkeys,
 adds and removes them, and shows the operator-password field exactly where
 the server demands it (the first enrollment, the last removal); a plain

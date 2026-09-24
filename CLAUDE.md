@@ -74,18 +74,19 @@ an absent invariant.
    provider SDK is declared. An SDK exists to authenticate, so pulling one in is
    the same decision arriving under another name.)*
 2. **A sensitive command requires a per-action ceremony.** Kill, budget
-   change, approval and the two operator WireGuard commands (issue a peer,
-   revoke a peer) each need a fresh passkey confirmation. Five, not three:
-   `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS` is the list, and this file
-   said three until 2026-08-05. Not a session, not a role check alone: the
-   ceremony is per action, because the whole point is that a stolen session
-   cannot pull the switch.
+   change, approval, the two operator WireGuard commands (issue a peer,
+   revoke a peer), and revoking a delegation, each need a fresh passkey
+   confirmation. Six, not three: `crates/web/src/main.rs`'s
+   `SENSITIVE_COMMANDS` is the list, and this file said three until
+   2026-08-05, five until 2026-09-24. Not a session, not a role check alone:
+   the ceremony is per action, because the whole point is that a stolen
+   session cannot pull the switch.
    *(partly gated: router-level tests in `crates/web/src/main.rs` drive the
    real axum router through the whole ceremony, and hold that an enrolled
    caller is refused without an assertion, that the command and argument
    bindings are enforced, that enrolling and removing a passkey each need a
    factor the session does not carry, and that with
-   `GENARYX_WEB_REQUIRE_PASSKEY=1` all five are refused when nobody is
+   `GENARYX_WEB_REQUIRE_PASSKEY=1` all six are refused when nobody is
    enrolled. What is NOT held is the default configuration: with the setting
    off and no passkey enrolled, a sensitive command still runs and is
    journaled software-signed. So the invariant holds on a box that enrolled a
@@ -280,6 +281,89 @@ an absent invariant.
     each bound; gate: `scripts/features-are-bound.sh`, three cases in
     `gates-have-teeth.sh`. Not covered: a `TAIPAN_HOME` that is writable but
     on a volume the launcher later drops, which is a launcher question.)*
+
+11. **Cutting an agent's or a user's delegated authority is the same class of
+    act as a kill: admin-only, ceremony-gated, one journal entry per attempt.**
+    `@claude 2026-09-24`, a decision taken under delegated authority, open to
+    reversal. `delegation_revoke` (`crates/api/src/delegation`) posts to
+    vouchryx's `POST /v1/revoke` with exactly one of `subject`
+    (`agent://`/`user://`) or `jti`, a bounded non-empty `reason`, and the
+    actor this console already uses for its own audit trail
+    (`console_actor::operator_or`, the same call `journal.rs` makes).
+    Configuration (`GENARYX_VOUCHRYX_URL`, `GENARYX_VOUCHRYX_REVOKE_KEY_FILE`)
+    is resolved once at startup: both unset is a normal box that answers a
+    named refusal and calls nobody; one set without the other, or a key file
+    that cannot be read, refuses to start rather than run half-configured.
+    Every attempt journals into the same command journal `money_kill_run` and
+    `remote_operator_wg_revoke` write to, carrying vouchryx's REAL
+    `http_status` (0 for unreachable), never a fabricated 200: success,
+    refused (400/401/403), not durable (503), or unreachable each reach the
+    operator and the journal as themselves.
+
+    vouchryx's own `refuse()` (read read-only at `~/Development/vouchryx`,
+    `internal/api/api.go`, origin/main `19b5211`; the checked-out `main` was
+    two commits behind and lacked this) sends the identical
+    `{"error":"temporarily_unavailable"}` body whether its revocation list is
+    full or it accepted a revocation in memory and then failed to persist it,
+    so this console cannot and does not claim which one happened, only that
+    vouchryx did not confirm durability. Its 200 answer carries no `durable`
+    field either (that flag exists only in vouchryx's own event stream, never
+    the HTTP answer); `vouchryx_response` forwards the raw body rather than
+    inventing a field.
+    *(test: `crates/api/src/delegation/env.rs`'s eleven tests hold the
+    configuration resolution (both unset, both set, one without the other,
+    an unreadable/empty key file, a scheme-less URL, the key redacted from
+    `Debug`); `crates/api/src/delegation/commands.rs`'s
+    `exactly_one_of_subject_or_jti_is_required`,
+    `subject_must_be_agent_or_user_scheme`,
+    `reason_must_be_non_empty_and_bounded` hold argument validation, and its
+    `a_200_seed_sweep_of_hostile_args_never_panics_and_never_half_validates`
+    sweeps it; `crates/api/tests/delegation_revoke_test.rs` (17 tests) drives
+    the real function against a hand-rolled stub vouchryx for every outcome
+    (200/400/401/403/503/unreachable), the exact posted body and bearer
+    header, that a misconfigured pair refuses to start, that a bad argument
+    never reaches the stub (a counting stub asserts zero connections), and
+    that the bearer key never appears in the journaled line or the returned
+    error; `crates/web/src/main.rs`'s
+    `a_viewer_is_refused_by_the_role_gate_on_delegation_revoke`,
+    `an_approver_is_refused_by_the_role_gate_on_delegation_revoke`,
+    `delegation_revoke_with_a_passkey_and_no_assertion_is_428` and
+    `delegation_revoke_with_a_valid_assertion_runs` hold the full HTTP-level
+    gate. Red first as a compile failure on the unfixed tree (the module did
+    not exist); the HTTP-level gate tests were red on the unfixed tree for a
+    different, real reason: `delegation_revoke` was not yet a dispatchable
+    command at all, so a viewer's request 404'd rather than 403'd.
+
+    Mutants (planted by hand, the named test went red, restored): dropped
+    from `SENSITIVE_COMMANDS` caught by
+    `delegation_revoke_with_a_passkey_and_no_assertion_is_428` (428 became
+    400); the role moved from admin to approver caught by
+    `an_approver_is_refused_by_the_role_gate_on_delegation_revoke` (403
+    became 400); a vouchryx 503 mapped to the success shape caught by
+    `vouchryx_503_is_reported_as_not_durable_never_as_success`; the bearer
+    key appended onto the journaled `verify_result` caught by
+    `the_key_never_appears_in_the_journaled_line_or_the_returned_error`,
+    which printed the leaked key back in its own failure message; argument
+    validation bypassed caught by
+    `both_target_forms_together_are_refused_before_any_call` (and the
+    counting stub recorded a real connection, since the bypass let a
+    both-subject-and-jti call reach the network). Scenarios:
+    `features/the-console-revokes-a-delegation.feature`, four, each bound;
+    gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: the key file is trusted as the operator placed
+    it, this console never re-derives or checks its provenance. Revoking is
+    not banning in vouchryx (its own invariant 7): a token issued after the
+    revocation moment is not covered, and re-issuing after a revocation is
+    the expected recovery path, not a gap. The console's own UI offers only
+    `subject` (the agent detail card's "Revoke delegation" button,
+    `crates/web/src/lib/lifecycle.tsx`'s `RevokeDelegationButton`); revoking
+    a single token by its `jti` alone still needs the command directly, not
+    a console control. The mock/demo preview build has no synthetic
+    vouchryx to answer against, so the button errors there like any command
+    with no mock handler, which was left as is: the demo funnel's own scope
+    is fixed policy (see "Building the published demo" above), and a real
+    box is what this control is for.)*
 
 ## Decisions that have no gate yet
 
