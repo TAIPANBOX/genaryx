@@ -412,6 +412,20 @@ an absent invariant.
     refused (400/401/403), not durable (503), or unreachable each reach the
     operator and the journal as themselves.
 
+    A 200 status is not proof by itself, only vouchryx's own confirmed body
+    is: `call_vouchryx` checks the parsed body for `"revoked":true` and, on a
+    200 that does not confirm it (an HTML page from a `GENARYX_VOUCHRYX_URL`
+    pointing at the wrong service, `{}`, `{"revoked":false}`, anything else),
+    reports `DelegationError::Unconfirmed` (real `http_status` 200, journaled
+    `verify_result` "200 without revoked:true confirmation", NEVER
+    "revoked:true") rather than treating the status alone as success. Found
+    in review of the first draft, 2026-09-24, before this invariant's first
+    commit landed: the draft trusted any 200. The response body itself is
+    read capped at 64 KiB (`MAX_RESPONSE_BYTES`, `read_capped_body`,
+    incremental, not buffer-then-check), so the same wrong URL cannot make
+    this console hold an arbitrary amount of memory reading whatever
+    answered instead.
+
     vouchryx's own `refuse()` (read read-only at `~/Development/vouchryx`,
     `internal/api/api.go`, origin/main `19b5211`; the checked-out `main` was
     two commits behind and lacked this) sends the identical
@@ -430,21 +444,25 @@ an absent invariant.
     `subject_must_be_agent_or_user_scheme`,
     `reason_must_be_non_empty_and_bounded` hold argument validation, and its
     `a_200_seed_sweep_of_hostile_args_never_panics_and_never_half_validates`
-    sweeps it; `crates/api/tests/delegation_revoke_test.rs` (17 tests) drives
+    sweeps it; `crates/api/tests/delegation_revoke_test.rs` (21 tests) drives
     the real function against a hand-rolled stub vouchryx for every outcome
-    (200/400/401/403/503/unreachable), the exact posted body and bearer
-    header, that a misconfigured pair refuses to start, that a bad argument
-    never reaches the stub (a counting stub asserts zero connections), and
-    that the bearer key never appears in the journaled line or the returned
-    error; `crates/web/src/main.rs`'s
+    (200/400/401/403/503/unreachable), a 200 that does NOT confirm
+    (`vouchryx_200_with_an_html_body_is_not_confirmed_as_success`,
+    `_with_an_empty_object_`, `_with_revoked_false_`), a response body over
+    the cap (`a_response_body_over_the_cap_is_refused_and_never_buffered_whole`),
+    the exact posted body and bearer header, that a misconfigured pair
+    refuses to start, that a bad argument never reaches the stub (a counting
+    stub asserts zero connections), and that the bearer key never appears in
+    the journaled line or the returned error; `crates/web/src/main.rs`'s
     `a_viewer_is_refused_by_the_role_gate_on_delegation_revoke`,
     `an_approver_is_refused_by_the_role_gate_on_delegation_revoke`,
     `delegation_revoke_with_a_passkey_and_no_assertion_is_428` and
     `delegation_revoke_with_a_valid_assertion_runs` hold the full HTTP-level
     gate. Red first as a compile failure on the unfixed tree (the module did
-    not exist); the HTTP-level gate tests were red on the unfixed tree for a
-    different, real reason: `delegation_revoke` was not yet a dispatchable
-    command at all, so a viewer's request 404'd rather than 403'd.
+    not exist, and later the `Unconfirmed` variant did not); the HTTP-level
+    gate tests were red on the unfixed tree for a different, real reason:
+    `delegation_revoke` was not yet a dispatchable command at all, so a
+    viewer's request 404'd rather than 403'd.
 
     Mutants (planted by hand, the named test went red, restored): dropped
     from `SENSITIVE_COMMANDS` caught by
@@ -459,7 +477,10 @@ an absent invariant.
     validation bypassed caught by
     `both_target_forms_together_are_refused_before_any_call` (and the
     counting stub recorded a real connection, since the bypass let a
-    both-subject-and-jti call reach the network). Scenarios:
+    both-subject-and-jti call reach the network); the `revoked == true` check
+    replaced with a constant `true` caught by all three unconfirmed-200
+    tests at once, each showing the same `verify_result: "revoked:true"` an
+    HTML page or `{"revoked":false}` must never produce. Scenarios:
     `features/the-console-revokes-a-delegation.feature`, four, each bound;
     gate: `scripts/features-are-bound.sh`.
 
@@ -475,7 +496,11 @@ an absent invariant.
     vouchryx to answer against, so the button errors there like any command
     with no mock handler, which was left as is: the demo funnel's own scope
     is fixed policy (see "Building the published demo" above), and a real
-    box is what this control is for.)*
+    box is what this control is for. The 64 KiB cap bounds what this
+    console ACCUMULATES across `.chunk()` reads, checked before each chunk
+    is appended; it does not bound the size of any single underlying TCP
+    read reqwest itself performs, which is reqwest's own buffering and not
+    something this code controls.)*
 
 ## Decisions that have no gate yet
 

@@ -46,6 +46,20 @@ struct CapturedRequest {
 /// module ever sends is a short `POST` with a JSON body, so nothing more is
 /// needed) and answer it with `status`/`body`.
 fn serve_one(stream: TcpStream, status: u16, body: &Value) -> CapturedRequest {
+    let body_bytes = serde_json::to_vec(body).expect("serialize canned response");
+    serve_one_raw(stream, status, "application/json", &body_bytes)
+}
+
+/// Like [`serve_one`], answering with raw bytes and a chosen `Content-Type`
+/// instead of a JSON `Value` - for the responses vouchryx's own contract does
+/// NOT produce (an HTML error page from the wrong URL, an oversized body) but
+/// this console must still handle without buffering or trusting blindly.
+fn serve_one_raw(
+    stream: TcpStream,
+    status: u16,
+    content_type: &str,
+    body_bytes: &[u8],
+) -> CapturedRequest {
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
@@ -87,7 +101,6 @@ fn serve_one(stream: TcpStream, status: u16, body: &Value) -> CapturedRequest {
         serde_json::from_slice(&raw_body).unwrap_or(Value::Null)
     };
 
-    let body_bytes = serde_json::to_vec(body).expect("serialize canned response");
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
@@ -99,11 +112,11 @@ fn serve_one(stream: TcpStream, status: u16, body: &Value) -> CapturedRequest {
     let mut out = reader.into_inner();
     write!(
         out,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body_bytes.len()
     )
     .expect("write response head");
-    out.write_all(&body_bytes).expect("write response body");
+    out.write_all(body_bytes).expect("write response body");
     out.flush().ok();
 
     CapturedRequest {
@@ -125,6 +138,27 @@ fn spawn_stub(status: u16, body: Value) -> (String, Arc<Mutex<Option<CapturedReq
     std::thread::spawn(move || {
         if let Ok((stream, _)) = listener.accept() {
             let req = serve_one(stream, status, &body);
+            *captured_thread.lock().expect("captured lock") = Some(req);
+        }
+    });
+    (format!("http://{addr}"), captured)
+}
+
+/// Like [`spawn_stub`], answering with raw bytes and a chosen `Content-Type`,
+/// for a body shape vouchryx's own `/v1/revoke` never produces (HTML, an
+/// oversized body) that this console must still handle safely.
+fn spawn_stub_raw(
+    status: u16,
+    content_type: &'static str,
+    body_bytes: Vec<u8>,
+) -> (String, Arc<Mutex<Option<CapturedRequest>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub listener");
+    let addr = listener.local_addr().expect("stub local addr");
+    let captured = Arc::new(Mutex::new(None));
+    let captured_thread = Arc::clone(&captured);
+    std::thread::spawn(move || {
+        if let Ok((stream, _)) = listener.accept() {
+            let req = serve_one_raw(stream, status, content_type, &body_bytes);
             *captured_thread.lock().expect("captured lock") = Some(req);
         }
     });
@@ -327,6 +361,142 @@ async fn vouchryx_200_is_success_and_journals_it_as_200() {
     assert!(outcome.bus_recorded, "bus_error: {:?}", outcome.bus_error);
 
     assert_journaled_status(&bus, 200);
+}
+
+// ---------------------------------------------------------------------------
+// success must be PROVEN by vouchryx's own answer, never inferred from 200
+// alone: a misconfigured GENARYX_VOUCHRYX_URL pointing at some other service
+// that happens to answer 200 must never be journaled or shown as revoked:true.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn vouchryx_200_with_an_html_body_is_not_confirmed_as_success() {
+    let (url, _c) = spawn_stub_raw(
+        200,
+        "text/html",
+        b"<html><body>404 - this is not vouchryx</body></html>".to_vec(),
+    );
+    let cfg = configured(&url);
+    let bus = scratch_bus("200-html");
+
+    let err = delegation_revoke(
+        Some("agent://acme.example/bot/a".to_string()),
+        None,
+        "why".to_string(),
+        &cfg,
+        Some(&bus),
+    )
+    .await
+    .expect_err("a 200 that is not vouchryx's own confirmed shape must never be Ok");
+    assert!(
+        matches!(
+            err,
+            genaryx_api::delegation::commands::DelegationError::Unconfirmed { .. }
+        ),
+        "{err:?}"
+    );
+    // The real status (200) is still journaled honestly; only the outcome
+    // must never read as a completed revocation - checked on the exact
+    // `verify_result` VALUE, not a substring search, since the honest
+    // "200 without revoked:true confirmation" message legitimately mentions
+    // the phrase "revoked:true" while explaining that it did NOT happen.
+    assert_journaled_status(&bus, 200);
+    let body = std::fs::read_to_string(&bus.console_events_path).unwrap();
+    let line = body.lines().next_back().unwrap();
+    let v: Value = serde_json::from_str(line).unwrap();
+    assert_ne!(
+        v.pointer("/data/verify_result").and_then(|s| s.as_str()),
+        Some("revoked:true"),
+        "an unconfirmed 200 must never journal the success verify_result: {line}"
+    );
+}
+
+#[tokio::test]
+async fn vouchryx_200_with_an_empty_object_is_not_confirmed_as_success() {
+    let (url, _c) = spawn_stub(200, json!({}));
+    let cfg = configured(&url);
+    let bus = scratch_bus("200-empty");
+
+    let err = delegation_revoke(
+        Some("agent://acme.example/bot/a".to_string()),
+        None,
+        "why".to_string(),
+        &cfg,
+        Some(&bus),
+    )
+    .await
+    .expect_err("{} on a 200 must never be Ok");
+    assert!(
+        matches!(
+            err,
+            genaryx_api::delegation::commands::DelegationError::Unconfirmed { .. }
+        ),
+        "{err:?}"
+    );
+    assert_journaled_status(&bus, 200);
+}
+
+#[tokio::test]
+async fn vouchryx_200_with_revoked_false_is_not_confirmed_as_success() {
+    let (url, _c) = spawn_stub(200, json!({"revoked": false}));
+    let cfg = configured(&url);
+    let bus = scratch_bus("200-revoked-false");
+
+    let err = delegation_revoke(
+        Some("agent://acme.example/bot/a".to_string()),
+        None,
+        "why".to_string(),
+        &cfg,
+        Some(&bus),
+    )
+    .await
+    .expect_err("revoked:false on a 200 must never be Ok");
+    assert!(
+        matches!(
+            err,
+            genaryx_api::delegation::commands::DelegationError::Unconfirmed { .. }
+        ),
+        "{err:?}"
+    );
+    assert_journaled_status(&bus, 200);
+}
+
+// ---------------------------------------------------------------------------
+// the response body is capped: a wrong URL must not make this console
+// buffer an arbitrary amount of memory.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_response_body_over_the_cap_is_refused_and_never_buffered_whole() {
+    // Comfortably over the 64 KiB cap, so a correct implementation must stop
+    // reading (and error) well before this much has arrived.
+    let oversized = vec![b'a'; 200_000];
+    let (url, _c) = spawn_stub_raw(200, "application/json", oversized);
+    let cfg = configured(&url);
+    let bus = scratch_bus("oversized-body");
+
+    let err = delegation_revoke(
+        Some("agent://acme.example/bot/a".to_string()),
+        None,
+        "why".to_string(),
+        &cfg,
+        Some(&bus),
+    )
+    .await
+    .expect_err("an oversized body must never be Ok");
+    assert!(
+        matches!(
+            err,
+            genaryx_api::delegation::commands::DelegationError::Unreachable { .. }
+        ),
+        "{err:?}"
+    );
+    if let genaryx_api::delegation::commands::DelegationError::Unreachable { detail } = err {
+        assert!(
+            detail.contains("65536") || detail.to_lowercase().contains("exceed"),
+            "the refusal should name the cap, not a generic failure: {detail}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -29,6 +29,15 @@
 //! OWN event stream, never into the HTTP answer this console reads, so a 200
 //! here never carries a `durable` field to forward - see
 //! [`RevokeOutcome::vouchryx_response`]'s doc for how that is handled.
+//!
+//! A 200 status is not treated as proof by itself: only a body confirming
+//! `"revoked":true` is, because the one thing this whole T3 change exists to
+//! avoid is a silently wrong answer, and a misconfigured
+//! `GENARYX_VOUCHRYX_URL` pointing at some other service that happens to
+//! answer 200 is exactly that shape (see [`DelegationError::Unconfirmed`]).
+//! The body itself is read capped at [`MAX_RESPONSE_BYTES`]: a wrong URL
+//! must not make this console buffer an arbitrary amount of memory reading
+//! whatever answered instead.
 
 use super::env::RevokeConfig;
 use crate::money::state::BusHandle;
@@ -82,9 +91,20 @@ pub enum DelegationError {
     /// identical body either way (see this module's doc comment). Never
     /// reported as success: a restart could forget it either way.
     NotDurable,
-    /// No HTTP answer at all: a connection failure, TLS failure, or no
-    /// response inside [`VOUCHRYX_TIMEOUT`].
+    /// No HTTP answer at all: a connection failure, TLS failure, no response
+    /// inside [`VOUCHRYX_TIMEOUT`], or a body over [`MAX_RESPONSE_BYTES`]
+    /// that this console refused to keep reading.
     Unreachable { detail: String },
+    /// vouchryx answered 200, but the body did not confirm the revocation
+    /// (`"revoked":true`) - an HTML error page, `{}`, `{"revoked":false}`,
+    /// anything a `GENARYX_VOUCHRYX_URL` pointed at the wrong service could
+    /// answer instead. NEVER treated as success: a 200 status alone is not
+    /// proof, only vouchryx's own confirmed body is, because the whole
+    /// point of this command is that a wrong answer must not be silent.
+    /// `body` is what was actually returned (parsed JSON, or the raw text
+    /// wrapped as a string when it was not JSON at all), so the operator
+    /// can see what answered instead of vouchryx.
+    Unconfirmed { body: serde_json::Value },
 }
 
 /// The result of a revocation vouchryx accepted (200).
@@ -228,6 +248,15 @@ pub async fn delegation_revoke(
                 detail: detail.clone(),
             }),
         ),
+        Err(CallOutcome::Unconfirmed(body)) => (
+            // The real status vouchryx sent (200) is still journaled
+            // honestly; `verify_result` is what keeps this from ever being
+            // mistaken for the success shape (`"revoked:true"`).
+            200u16,
+            "200 without revoked:true confirmation".to_string(),
+            body.clone(),
+            Some(DelegationError::Unconfirmed { body: body.clone() }),
+        ),
     };
 
     let org_domain = std::env::var("GENARYX_ORG_DOMAIN").unwrap_or_else(|_| "local".to_string());
@@ -263,15 +292,46 @@ pub async fn delegation_revoke(
     }
 }
 
-/// What calling vouchryx produced, before it is folded into an outcome: an
-/// HTTP answer (whatever its status - vouchryx always answers JSON), or no
-/// answer at all.
+/// The most vouchryx's own `/v1/revoke` body could reasonably be
+/// (`{"revoked":true,"expires":<unix>}` or `{"error":"<code>"}`, both a
+/// handful of bytes). A `GENARYX_VOUCHRYX_URL` pointing at the wrong
+/// service, or anything else answering on that address, must not make this
+/// console buffer an arbitrary amount of memory reading the reply.
+const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+
+/// What calling vouchryx produced, before it is folded into an outcome:
+/// a refused answer (its own status, not 200), a 200 that did NOT confirm
+/// the revocation (see [`DelegationError::Unconfirmed`]'s doc), or no
+/// usable answer at all (a connection failure, or a body too large to trust).
 enum CallOutcome {
     Http {
         status: u16,
         body: serde_json::Value,
     },
+    Unconfirmed(serde_json::Value),
     Unreachable(String),
+}
+
+/// Read `resp`'s body incrementally, refusing once more than
+/// [`MAX_RESPONSE_BYTES`] has arrived rather than buffering it first and
+/// checking after - a streamed or chunked body with no (or a lying)
+/// `Content-Length` must still be bounded.
+async fn read_capped_body(resp: &mut reqwest::Response) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    loop {
+        let chunk = resp
+            .chunk()
+            .await
+            .map_err(|e| format!("reading vouchryx's response: {e}"))?;
+        let Some(chunk) = chunk else { break };
+        if buf.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "vouchryx's response exceeded {MAX_RESPONSE_BYTES} bytes; refused to read further"
+            ));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 async fn call_vouchryx(
@@ -294,19 +354,35 @@ async fn call_vouchryx(
         .json(body)
         .send()
         .await;
-    let resp = match sent {
+    let mut resp = match sent {
         Ok(r) => r,
         Err(e) => return Err(CallOutcome::Unreachable(e.to_string())),
     };
     let status = resp.status().as_u16();
-    let parsed: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-    if status == 200 {
-        Ok(parsed)
-    } else {
-        Err(CallOutcome::Http {
+
+    let raw = read_capped_body(&mut resp)
+        .await
+        .map_err(CallOutcome::Unreachable)?;
+    // Not valid JSON at all (an HTML error page from the wrong URL, say) -
+    // kept visible as a string rather than silently collapsing to `Null`,
+    // so `Unconfirmed`'s body still shows the operator what answered.
+    let parsed: serde_json::Value = serde_json::from_slice(&raw)
+        .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(&raw).into_owned()));
+
+    if status != 200 {
+        return Err(CallOutcome::Http {
             status,
             body: parsed,
-        })
+        });
+    }
+    // A 200 status is not proof by itself: only vouchryx's own confirmed
+    // body is. Anything else on a 200 - `{}`, `{"revoked":false}`, a body
+    // that is not even JSON - is reported as unconfirmed, never success.
+    let confirmed = parsed.get("revoked").and_then(|v| v.as_bool()) == Some(true);
+    if confirmed {
+        Ok(parsed)
+    } else {
+        Err(CallOutcome::Unconfirmed(parsed))
     }
 }
 
@@ -499,9 +575,18 @@ mod tests {
 
     // ---- journal --------------------------------------------------------
 
+    /// A per-process `AtomicU64` alongside the timestamp, not just the
+    /// timestamp: `crates/api/tests/delegation_revoke_test.rs` measured a
+    /// real collision under `cargo test --workspace`'s heavier thread
+    /// contention with timestamp-only naming (two calls landing on the same
+    /// nanosecond), and this module's own test harness runs on the same
+    /// parallel-by-default threads. `env.rs`'s own `unique_path` already
+    /// carries the counter; this mirrors it.
     fn scratch(tag: &str) -> std::path::PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "genaryx-delegation-journal-{tag}-{}-{}",
+            "genaryx-delegation-journal-{tag}-{}-{}-{n}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
