@@ -395,7 +395,7 @@ async fn login(
             )
                 .into_response();
         };
-        match oidc::verify(cfg, token) {
+        match oidc::verify(cfg, token).await {
             // Never log the token (a bearer secret); log only the mapped user.
             Some(v) => {
                 tracing::info!(user = %v.username, role = %v.role.as_str(), "signed in (oidc)");

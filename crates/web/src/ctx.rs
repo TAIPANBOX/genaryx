@@ -208,6 +208,16 @@ impl Ctx {
         resolve!(remote, genaryx_api::remote::bootstrap());
         resolve!(copilot, genaryx_api::copilot::bootstrap());
 
+        // The live OIDC JWKS source's one startup fetch (crates/web/src/
+        // oidc.rs module doc, CLAUDE.md invariant 11): best-effort, spawned
+        // so a slow or unreachable IdP delays nothing else here. A no-op for
+        // the static source and for `None` (OIDC unconfigured).
+        if let Some(oidc) = self.oidc.clone() {
+            tokio::spawn(async move {
+                oidc.warm_up().await;
+            });
+        }
+
         // Lifecycle blocks are durable in wardryx, not here: a restarted
         // console must not present a fleet an operator stopped as running
         // again. Rebuild the store from the policies this console wrote (see

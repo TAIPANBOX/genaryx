@@ -24,18 +24,23 @@ just says "signed in". Two problems:
 2. **There are no roles.** Anyone who can sign in can do anything: read,
    grant a Wardryx approval, kill a run, move a budget.
 
-Part 1 fixes both, without a live IdP (offline JWKS, like tokenfuse's
+Part 1 fixes both, offline by default (a static JWKS, like tokenfuse's
 `crates/cloud/src/oidc.rs`) and without touching the desktop shell's
-behavior.
+behavior. An optional live JWKS source (below, CLAUDE.md invariant 11) was
+added later so a key rotation at the IdP does not lock every operator out
+until someone edits configuration.
 
 ## What part 1 delivers
 
-1. **OIDC offline login** in `genaryx-web`, alongside the local account.
-   The customer hands the box a static JWKS from their IdP (Entra ID for the
-   first pilots, Q4); a browser signs in with an OIDC ID-token instead of a
-   password. No `.well-known` fetch, no network: air-gap safe, byte-identical
-   to tokenfuse's offline OIDC. Off unless configured; the local Argon2id
-   account always stays as the break-glass owner.
+1. **OIDC login** in `genaryx-web`, alongside the local account. The
+   customer hands the box a JWKS from their IdP (Entra ID for the first
+   pilots, Q4); a browser signs in with an OIDC ID-token instead of a
+   password. The default is still the static JWKS: no `.well-known` fetch, no
+   network, air-gap safe, byte-identical to tokenfuse's offline OIDC. An
+   operator who instead sets `GENARYX_WEB_OIDC_JWKS_URL` (below) gets a
+   console that fetches and caches its own JWKS, so the IdP can rotate its
+   signing keys without locking anyone out. Off unless configured; the local
+   Argon2id account always stays as the break-glass owner.
 2. **Three roles**: `viewer` (read everything), `approver` (+ grant/deny
    Wardryx approvals), `admin` (+ every privileged mutation: kill, budget,
    ack, remote ops, onboard, copilot-to-signed). Role gating happens at the
@@ -68,22 +73,48 @@ behavior.
   is verified offline; on success a session is minted for the mapped user and
   role. The raw token is never stored, never logged (it is a bearer secret).
 
-### OIDC verification (mirrors tokenfuse/crates/cloud/src/oidc.rs exactly)
+### OIDC verification (the static path mirrors tokenfuse/crates/cloud/src/oidc.rs exactly)
 
-Config from env, all three required or OIDC stays off:
-- `GENARYX_WEB_OIDC_ISSUER`, `GENARYX_WEB_OIDC_AUDIENCE`,
-  `GENARYX_WEB_OIDC_JWKS` (inline JSON or a file path; static, never fetched).
-Optional: `GENARYX_WEB_OIDC_SUB_CLAIM` (default `sub`),
+Config from env: `GENARYX_WEB_OIDC_ISSUER` and `GENARYX_WEB_OIDC_AUDIENCE` are
+always required, or OIDC stays off. The JWKS itself comes from exactly ONE of:
+- `GENARYX_WEB_OIDC_JWKS` (inline JSON or a file path; static, never
+  fetched - the default, air-gap-safe path).
+- `GENARYX_WEB_OIDC_JWKS_URL` (an `https://` URL; the console fetches and
+  caches the JWKS itself - CLAUDE.md invariant 11 has the full fetch/refresh/
+  refusal contract). Setting both variables, or a URL that is not `https://`,
+  makes `genaryx-web` refuse to start.
+
+With the live URL, two rules worth stating exactly rather than only pointing
+at the invariant:
+- **The cooldown bounds EVERY refresh attempt, not only the kid-miss one.**
+  A fetch happens only when due (the set has aged past `MAX_AGE`, one hour,
+  or the token's `kid` is missing from it) AND the last attempt - the
+  startup one counts - is at least `COOLDOWN` (five minutes) old. Gating
+  only the kid-miss path was tried first and was wrong: a startup fetch that
+  failed, or an outage that outlasted the hour, then retried on every single
+  verification, a request storm against the IdP and a queue of sign-ins
+  behind the one mutex that serializes fetches.
+- **A key type this console cannot verify with is DROPPED, not a reason to
+  refuse the whole fetch** - except `oct`, and except any key (of any type)
+  carrying a private-key member, both of which still refuse the whole set.
+  Some IdPs publish an OKP (Ed25519) key beside their RSA/EC ones; refusing
+  the whole JWKS over that one key would lock every operator at such an IdP
+  out of sign-in entirely. Only a set left with nothing usable after
+  dropping is refused, as empty.
+
+Optional, either way: `GENARYX_WEB_OIDC_SUB_CLAIM` (default `sub`),
 `GENARYX_WEB_OIDC_ROLES_CLAIM` (default `roles`),
 `GENARYX_WEB_OIDC_ADMIN_ROLE` (default `genaryx-admin`),
 `GENARYX_WEB_OIDC_APPROVER_ROLE` (default `genaryx-approver`).
 
-Checks, any failure => reject: well-formed JWS with `kid`; `kid` in the JWKS;
-signature verified with algorithms derived from the JWK key type (never the
-token header - closes RS256->HS256 alg-confusion); `exp`/`iss`/`aud` present
-and valid (`set_required_spec_claims`); `sub` present and non-empty. Role:
-`admin` if the roles claim contains the admin role, else `approver` if it
-contains the approver role, else `viewer` (least privilege).
+Checks, any failure => reject: well-formed JWS with `kid`; `kid` in the
+current JWKS (static, or the live cache, refreshed first per invariant 11's
+rules); signature verified with algorithms derived from the JWK key type
+(never the token header - closes RS256->HS256 alg-confusion); `exp`/`iss`/
+`aud` present and valid (`set_required_spec_claims`); `sub` present and
+non-empty. Role: `admin` if the roles claim contains the admin role, else
+`approver` if it contains the approver role, else `viewer` (least
+privilege). These checks do not fork between the static and live sources.
 
 ## Role gating (the command chokepoint)
 
@@ -129,8 +160,14 @@ paths (set => named actor; unset => OS-user default).
 
 ## Honest limits (stated, not buried)
 
-- No `.well-known`/JWKS rotation fetch: the JWKS is static (air-gap by
-  design). Rotating keys means updating the env/file, same as tokenfuse.
+- No `.well-known` discovery, ever - only the JWKS itself is ever fetched,
+  and only when the operator names a URL. By default the JWKS is still
+  static (air-gap by design), and rotating keys means updating the env/file,
+  same as tokenfuse. With `GENARYX_WEB_OIDC_JWKS_URL` set (CLAUDE.md
+  invariant 11), the console fetches and caches the JWKS itself: no
+  `Cache-Control` header is honoured, the one-hour refresh interval is fixed
+  in code, and there is no mTLS or certificate pinning to the IdP beyond the
+  platform's own root store.
 - No SAML/SCIM, no session-token refresh: an OIDC login mints a normal
   console session (12h idle), it does not track the IdP token's own lifetime
   beyond the one-time verification. A revoked IdP user keeps their console

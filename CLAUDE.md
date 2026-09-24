@@ -282,7 +282,119 @@ an absent invariant.
     `gates-have-teeth.sh`. Not covered: a `TAIPAN_HOME` that is writable but
     on a volume the launcher later drops, which is a launcher question.)*
 
-11. **Cutting an agent's or a user's delegated authority is the same class of
+11. **A key the IdP removed stays trusted until a refresh SUCCEEDS, and the
+    console's IdP sign-in no longer depends on a static JWKS alone.**
+    `GENARYX_WEB_OIDC_JWKS_URL` (`crates/web/src/oidc.rs`) is an optional
+    `https://` alternative to the static `GENARYX_WEB_OIDC_JWKS`: the console
+    fetches and caches the JWKS itself, so an IdP's routine key rotation
+    (Okta: about four times a year, unannounced; Entra: no fixed interval,
+    immediate in an emergency) no longer locks every operator out of IdP
+    sign-in until someone edits configuration by hand. The static path stays
+    the default and the air-gap path. Setting both JWKS variables, or a URL
+    that is not `https://`, refuses to start (exit non-zero, one message
+    naming the problem) rather than guessing which the operator meant.
+
+    A fetch happens: once at startup (best-effort - a failed one does not
+    stop the console, which starts with an empty live set and the local
+    Argon2id account still reachable as break-glass); before a verification
+    when the current set is older than one hour (`MAX_AGE`); on an unknown
+    `kid`. EITHER reason (age or kid) is bounded by the SAME cooldown
+    (`COOLDOWN`, five minutes): a fetch happens only when due AND the last
+    attempt (the startup one counts) is at least `COOLDOWN` old, or there has
+    been no attempt yet. A `tokio::sync::Mutex` held across the whole
+    decide-then-fetch step makes concurrent sign-ins single-flight: never two
+    fetches for one gap. The real fetcher (`ReqwestFetcher`) times out at
+    5 s, never follows a redirect, and reads the body incrementally, capped
+    at 1 MiB.
+
+    A fetched body is refused outright, and the last good set stays in
+    force, unless it is valid JSON with a non-empty `keys` array and no key
+    carries a private-key member (`d`, `p`, `q`, `dp`, `dq`, `qi`, `k`) - this
+    last check runs on the RAW JSON, before `jsonwebtoken`'s own
+    `RSAKeyParameters`/`EllipticCurveKeyParameters` silently drop any field
+    they do not model (there is no `deny_unknown_fields` on either), which is
+    the only point a leaked private key is still visible; by the time a
+    typed `JwkSet` exists, a `d` the source JSON carried would already be
+    gone and unrecoverable. A key of type `oct` also refuses the whole set (a
+    published symmetric secret is the same compromise as a leaked private
+    key). Any OTHER key type this code cannot verify with - OKP (Ed25519)
+    among them, legitimately published by some IdPs beside RSA/EC - is
+    DROPPED from the usable set instead (one debug line naming the kid and
+    kty), never a reason to refuse the whole fetch: refusing would lock every
+    operator at such an IdP out of sign-in over a type gap, not a
+    compromise. Only a set left with nothing usable after dropping is
+    refused, as empty.
+
+    Marked `@claude 2026-09-24`: a decision taken under delegated authority,
+    open to reversal. Corrected the same day, same authority: the age-due
+    refresh path originally bypassed the cooldown entirely (so a failed
+    startup fetch, or an outage past the hour, retried on every single
+    verification instead of at most once per cooldown), and any key type
+    other than RSA/EC originally refused the whole fetched set (so one OKP
+    key beside an IdP's RSA/EC ones locked out every operator there). Both
+    corrected below; the first draft's shape is kept only in the mutants that
+    now prove the fix.
+    *(test: `crates/web/src/oidc.rs`'s
+    `a_rotated_key_verifies_after_the_kid_miss_refresh`,
+    `an_outage_keeps_verifying_on_the_last_good_set`,
+    `a_second_unknown_kid_inside_the_cooldown_makes_no_fetch`,
+    `a_hundred_concurrent_unknown_kids_within_one_cooldown_make_exactly_one_fetch`,
+    `an_outage_past_max_age_with_a_hundred_verifications_in_one_cooldown_makes_exactly_one_fetch`,
+    `a_failed_startup_fetch_is_not_retried_faster_than_the_cooldown`,
+    `after_max_age_a_refresh_that_drops_a_key_fails_that_keys_token`,
+    `hostile_jwks_bodies_are_refused_and_the_last_good_set_stays` (plus
+    eleven direct `validate_rejects_*`/`validate_drops_*`/`validate_accepts_*`
+    cases and a 200-seed `two_hundred_seeds_of_hostile_jwks_bodies_never_panic`
+    sweep), `a_mixed_rsa_and_okp_set_verifies_the_rsa_token_and_drops_the_okp_key`,
+    `both_jwks_sources_set_refuses_to_start`,
+    `a_plain_http_jwks_url_refuses_to_start`,
+    `the_real_fetcher_refuses_a_redirect`,
+    `the_real_fetcher_refuses_an_oversized_body`,
+    `a_body_over_the_cap_through_the_real_fetcher_keeps_the_last_good_set`.
+    Eight mutants planted in product code, each run red against its catching
+    test and restored byte for byte: the cooldown ignored (refresh on every
+    unknown kid), caught by
+    `a_second_unknown_kid_inside_the_cooldown_makes_no_fetch`; the cooldown
+    bypassed on the age-due path, caught by
+    `an_outage_past_max_age_with_a_hundred_verifications_in_one_cooldown_makes_exactly_one_fetch`
+    and `a_failed_startup_fetch_is_not_retried_faster_than_the_cooldown`; the
+    last good set dropped on a failed fetch, caught by
+    `an_outage_keeps_verifying_on_the_last_good_set`; a plain `http://` URL
+    allowed, caught by `a_plain_http_jwks_url_refuses_to_start`; the MAX_AGE
+    refresh skipped, caught by
+    `after_max_age_a_refresh_that_drops_a_key_fails_that_keys_token`; the
+    private-member check dropped, caught by
+    `validate_rejects_a_leaked_private_rsa_exponent` and
+    `validate_rejects_every_forbidden_member_individually` directly, and by
+    `hostile_jwks_bodies_are_refused_and_the_last_good_set_stays` as a side
+    effect (the leaked key wrongly replaces the trusted set); single flight
+    removed (two fetches for two concurrent misses), caught by
+    `a_hundred_concurrent_unknown_kids_within_one_cooldown_make_exactly_one_fetch`;
+    OKP (and any other non-RSA/EC type) refusing the whole set again instead
+    of being dropped, caught by
+    `a_mixed_rsa_and_okp_set_verifies_the_rsa_token_and_drops_the_okp_key`,
+    `validate_drops_an_okp_key_and_keeps_the_rsa_key`,
+    `validate_drops_any_unrecognised_key_type_the_same_way` and
+    `validate_refuses_a_set_that_is_only_an_okp_key_as_empty`.
+    Scenarios: `features/oidc-live-jwks.feature`, eight, each bound; gate:
+    `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no `Cache-Control` response header is honoured,
+    the hour is fixed in code rather than read from the response; no mTLS or
+    certificate pinning to the IdP beyond the platform's own root store; the
+    static path still needs a restart to rotate its key (unchanged); the
+    once-per-failure-streak warning suppression is not itself asserted
+    against captured log output, only the fetch counts and the verification
+    outcomes are; the 5 s timeout is not exercised by a test (a test that
+    honestly proved it would cost a real 5 s per run for one line of client
+    configuration); an extremely deeply nested JSON body could in principle
+    exhaust `serde_json`'s recursive-descent parser before the 1 MiB cap is
+    even reached, which is a known `serde_json` limitation this change does
+    not specifically defend against; a dropped key's kid/kty is logged at
+    `debug` only, so an operator who wants to know an IdP is publishing a key
+    type this console cannot use must raise the log level to see it.)*
+
+12. **Cutting an agent's or a user's delegated authority is the same class of
     act as a kill: admin-only, ceremony-gated, one journal entry per attempt.**
     `@claude 2026-09-24`, a decision taken under delegated authority, open to
     reversal. `delegation_revoke` (`crates/api/src/delegation`) posts to

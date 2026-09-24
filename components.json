@@ -96,6 +96,9 @@
           "GENARYX_WEB_OIDC_JWKS": {
             "required": false
           },
+          "GENARYX_WEB_OIDC_JWKS_URL": {
+            "required": false
+          },
           "GENARYX_WEB_OIDC_ROLES_CLAIM": {
             "required": false
           },
