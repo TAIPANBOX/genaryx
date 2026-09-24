@@ -99,12 +99,19 @@ This path is unaffected by `GENARYX_WEB_OIDC_JWKS_URL` existing at all.
 `GENARYX_WEB_OIDC_JWKS_URL`, when set instead, is fetched once at startup
 (best-effort; a failed startup fetch does not stop the console), refreshed
 before a verification whenever the current set is older than one hour, and
-refreshed on an unknown `kid` at most once every five minutes - so a key the
-IdP rotates in is picked up without a restart, and a key the IdP removes
-stops being trusted within an hour of the next sign-in attempt. An IdP
-outage keeps the console verifying on the last good set it already fetched;
-a fetched body that is not a clean, public, RSA-or-EC-only key set is
-refused outright and never replaces that last good set.
+refreshed on an unknown `kid` too - so a key the IdP rotates in is picked up
+without a restart, and a key the IdP removes stops being trusted within an
+hour of the next sign-in attempt. Either reason for a refresh is bounded by
+the same five-minute cooldown (the last attempt, startup included, must be
+at least that old): during an outage this means at most one fetch attempt
+per cooldown window, not one per sign-in. An IdP outage keeps the console
+verifying on the last good set it already fetched; a fetched body that is
+not valid JSON, has no usable key left in it, carries an `oct` key, or
+carries a private-key member on any key, is refused outright and never
+replaces that last good set. A key type this console cannot verify with
+(OKP among them) is dropped from the fetched set rather than refusing the
+whole fetch, so one such key published beside an IdP's RSA/EC ones does not
+lock operators out.
 
 `GET /api/auth/session` reports `oidc_available: true` once the required
 vars are set, and the browser then shows "Sign in with your organization"

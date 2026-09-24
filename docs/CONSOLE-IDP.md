@@ -84,6 +84,24 @@ always required, or OIDC stays off. The JWKS itself comes from exactly ONE of:
   refusal contract). Setting both variables, or a URL that is not `https://`,
   makes `genaryx-web` refuse to start.
 
+With the live URL, two rules worth stating exactly rather than only pointing
+at the invariant:
+- **The cooldown bounds EVERY refresh attempt, not only the kid-miss one.**
+  A fetch happens only when due (the set has aged past `MAX_AGE`, one hour,
+  or the token's `kid` is missing from it) AND the last attempt - the
+  startup one counts - is at least `COOLDOWN` (five minutes) old. Gating
+  only the kid-miss path was tried first and was wrong: a startup fetch that
+  failed, or an outage that outlasted the hour, then retried on every single
+  verification, a request storm against the IdP and a queue of sign-ins
+  behind the one mutex that serializes fetches.
+- **A key type this console cannot verify with is DROPPED, not a reason to
+  refuse the whole fetch** - except `oct`, and except any key (of any type)
+  carrying a private-key member, both of which still refuse the whole set.
+  Some IdPs publish an OKP (Ed25519) key beside their RSA/EC ones; refusing
+  the whole JWKS over that one key would lock every operator at such an IdP
+  out of sign-in entirely. Only a set left with nothing usable after
+  dropping is refused, as empty.
+
 Optional, either way: `GENARYX_WEB_OIDC_SUB_CLAIM` (default `sub`),
 `GENARYX_WEB_OIDC_ROLES_CLAIM` (default `roles`),
 `GENARYX_WEB_OIDC_ADMIN_ROLE` (default `genaryx-admin`),

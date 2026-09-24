@@ -27,14 +27,26 @@
 //!   at startup (once, best-effort - a failed startup fetch does not stop the
 //!   console, which starts with an empty live set and the local Argon2id
 //!   account still reachable), before a verification if the current set is
-//!   older than one hour (`MAX_AGE`), and on an unknown `kid` at most once
-//!   every five minutes (`COOLDOWN`). Concurrent sign-ins never start two
-//!   fetches: a `tokio::sync::Mutex` is held across the whole decide-then-fetch
-//!   step. A fetched body is refused, and the last good set stays in force,
-//!   unless it is valid JSON with a non-empty `keys` array, every key is RSA
-//!   or EC, and no key carries a private-key member (`d`, `p`, `q`, `dp`,
-//!   `dq`, `qi`, `k`) - an IdP publishing a private key is a compromise to
-//!   refuse loudly, not a key to use (see [`validate_jwks_bytes`]).
+//!   older than one hour (`MAX_AGE`), and on an unknown `kid`. EITHER reason
+//!   is bounded by the SAME cooldown (`COOLDOWN`, five minutes): a fetch
+//!   attempt happens only when due (by age or by kid) AND the last attempt
+//!   is at least `COOLDOWN` old (or there has been no attempt yet). Without
+//!   this on the age-due side too, a startup fetch that failed, or an
+//!   outage that outlasted MAX_AGE, would retry on EVERY single
+//!   verification - a request storm against the IdP and a queue of sign-ins
+//!   behind the mutex, not just a slow one. Concurrent sign-ins never start
+//!   two fetches: a `tokio::sync::Mutex` is held across the whole
+//!   decide-then-fetch step. A fetched body is refused, and the last good
+//!   set stays in force, unless it is valid JSON with a non-empty `keys`
+//!   array, no key carries a private-key member (`d`, `p`, `q`, `dp`, `dq`,
+//!   `qi`, `k` - an IdP publishing a private key is a compromise to refuse
+//!   loudly, not a key to use), no key has type `oct` (a published symmetric
+//!   secret is the same compromise), and at least one key is left once every
+//!   OTHER unsupported type (OKP among them) has been DROPPED rather than
+//!   refused: some IdPs legitimately publish an OKP key beside RSA/EC ones,
+//!   and refusing the whole fetch over one key type this code cannot verify
+//!   with would lock every operator at such an IdP out of sign-in entirely
+//!   (see [`validate_jwks_bytes`]).
 //! * **Default off.** [`OidcConfig::from_env`] returns `None` unless issuer,
 //!   audience and a JWKS source are all configured. When `None`, the login
 //!   route never calls in here, so a password-only box is byte-for-byte
@@ -416,17 +428,25 @@ impl LiveJwks {
     /// fetch: a second caller blocks here until the first's attempt (and its
     /// state update) is finished, then makes its own decision from the fresh
     /// state rather than the stale one it started with.
+    ///
+    /// EITHER reason to refresh - the set has aged out, or this kid is
+    /// missing from it - is bounded by the SAME cooldown. An earlier version
+    /// gated only the kid-miss path: the age-due path called
+    /// `attempt_locked` unconditionally, so a startup fetch that failed
+    /// (`fetched_at` stays `None` forever) or an outage that outlasted
+    /// MAX_AGE meant every single verification started its own fetch - a
+    /// request storm against the IdP, one per sign-in, serialized behind
+    /// this same mutex into a queue. Principal review, 2026-09-24.
     async fn find(&self, kid: &str) -> Option<Jwk> {
         let mut state = self.state.lock().await;
         let now = self.clock.now();
 
-        let stale = match state.fetched_at {
+        let due_by_age = match state.fetched_at {
             None => true,
             Some(t) => now.saturating_duration_since(t) >= MAX_AGE,
         };
-        if stale {
-            self.attempt_locked(&mut state).await;
-        } else if state.keys.find(kid).is_none() {
+        let due_by_kid = state.keys.find(kid).is_none();
+        if due_by_age || due_by_kid {
             let cooled_down = match state.last_attempt {
                 None => true,
                 Some(t) => now.saturating_duration_since(t) >= COOLDOWN,
@@ -617,22 +637,42 @@ impl fmt::Display for RefusedSet {
 /// silently DROP anything else on parse - a `d` the source JSON carried would
 /// already be gone, and unrecoverable, by the time a `JwkSet` exists. This
 /// function is the only point a leaked private key is still visible.
+///
+/// A key of a type this console cannot verify with is DROPPED from the
+/// usable set, not a reason to refuse the whole set: some IdPs legitimately
+/// publish an OKP (Ed25519) key beside their RSA/EC ones, and refusing the
+/// whole fetch over one key type this code does not support would lock
+/// every operator at such an IdP out of sign-in entirely. `oct` is the one
+/// exception that still refuses the WHOLE set outright: a published
+/// symmetric key is not a type gap, it is a compromise (see
+/// `FORBIDDEN_PRIVATE_MEMBERS`'s own `k`, which an `oct` key would also
+/// carry - this check exists independently of that one so the reason is
+/// named `UnsupportedKeyType`, not `PrivateKeyMember`, and so an `oct` key
+/// missing its `k` for some other reason still refuses). Principal review,
+/// 2026-09-24: an earlier version refused the whole set for anything but
+/// RSA/EC, OKP included.
 fn validate_jwks_bytes(body: &[u8]) -> Result<JwkSet, RefusedSet> {
-    let raw: Value = serde_json::from_slice(body).map_err(|_| RefusedSet::InvalidJson)?;
-    let obj = raw.as_object().ok_or(RefusedSet::NotAnObject)?;
-    let keys = obj
-        .get("keys")
-        .and_then(Value::as_array)
-        .ok_or(RefusedSet::KeysMissingOrNotArray)?;
-    if keys.is_empty() {
+    let mut raw: Value = serde_json::from_slice(body).map_err(|_| RefusedSet::InvalidJson)?;
+    let original_keys = {
+        let obj = raw.as_object_mut().ok_or(RefusedSet::NotAnObject)?;
+        match obj.get_mut("keys") {
+            Some(v @ Value::Array(_)) => match std::mem::replace(v, Value::Null) {
+                Value::Array(a) => a,
+                _ => unreachable!("just matched Value::Array"),
+            },
+            _ => return Err(RefusedSet::KeysMissingOrNotArray),
+        }
+    };
+    if original_keys.is_empty() {
         return Err(RefusedSet::EmptyKeys);
     }
-    for key in keys {
+
+    let mut kept = Vec::with_capacity(original_keys.len());
+    for key in original_keys {
         let key_obj = key.as_object().ok_or(RefusedSet::KeyNotAnObject)?;
-        let kty = key_obj.get("kty").and_then(Value::as_str).unwrap_or("");
-        if kty != "RSA" && kty != "EC" {
-            return Err(RefusedSet::UnsupportedKeyType(kty.to_string()));
-        }
+        // The private-member scan applies to every key regardless of type,
+        // before the type is even looked at: a leaked private component is
+        // a compromise whether or not this code would otherwise use the key.
         for member in FORBIDDEN_PRIVATE_MEMBERS {
             if key_obj.contains_key(*member) {
                 let kid = key_obj
@@ -642,11 +682,38 @@ fn validate_jwks_bytes(body: &[u8]) -> Result<JwkSet, RefusedSet> {
                 return Err(RefusedSet::PrivateKeyMember { kid, member });
             }
         }
+        let kty = key_obj
+            .get("kty")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        match kty.as_str() {
+            "RSA" | "EC" => kept.push(key),
+            "oct" => return Err(RefusedSet::UnsupportedKeyType(kty)),
+            _ => {
+                let kid = key_obj
+                    .get("kid")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<no kid>");
+                tracing::debug!(
+                    kid = %kid,
+                    kty = %kty,
+                    "oidc: dropping a fetched JWKS key of a type this console does not verify with"
+                );
+            }
+        }
     }
-    // Only now the typed parse, which is what `find` actually uses. Cannot
-    // fail given the checks above already confirmed an object with an array
-    // of key objects, but `?` (via `map_err`) over `unwrap` keeps this
-    // function panic-free by construction rather than by review.
+    if kept.is_empty() {
+        return Err(RefusedSet::EmptyKeys);
+    }
+
+    // Only now the typed parse, over the FILTERED array, which is what
+    // `find` actually uses - parsing the original array here would fail on
+    // an OKP/unknown-type entry `AlgorithmParameters`'s `#[serde(untagged)]`
+    // has no variant for.
+    raw.as_object_mut()
+        .expect("still an object: only the value at \"keys\" was replaced above")
+        .insert("keys".to_string(), Value::Array(kept));
     serde_json::from_value(raw).map_err(|_| RefusedSet::InvalidJson)
 }
 
@@ -862,10 +929,26 @@ mod tests {
     const ROTATED_KID: &str = "rotated-key";
     const ROTATED_JWKS: &str = r#"{"keys":[{"kty":"EC","crv":"P-256","kid":"rotated-key","x":"VwZiOgRNAUCThzWDb99zwMS6YC5VUIRV8ByIL8ZBY6Y","y":"PojpZ-tQgOISWpDhqXmkliEa-VAiADx4ndH8CHxF8bU"}]}"#;
 
+    // An RSA-2048 test keypair (PKCS#8), generated once with openssl; never a
+    // real key. Exercises the RSA arm of `verify`'s algorithm-selection match
+    // (module doc step 3), which nothing above touches - every other fixture
+    // in this file is EC. `RSA_KID`'s JWK carries no private member (n/e
+    // only), the shape a real IdP publishes.
+    const RSA_PRIV_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCmetaMuZBFPkn3\n7c8Sx8VBiPV3s9oTfieowNhtTMH/25XER1HdB2jJh/5brFokeP7NRymY31IdA6wA\nG4RDGaRvsvqjMqAhI97eL7f384KZJ87OEtSTS02kS0G+ObaO1C0tFIQXLVs9hnnB\nJcf6ZLjsT+RfP+y5q9x/HUBCybEbIFgw4edRuc3OAEpdo+2o5g9plZMK/EnxPOW1\nH1N6nP1w5VHaI2jSLBuTzrBxeF23AQeZMro1CuHsdLOYceX/+6BVDdsl26BDsoVC\n6Nk3FlGzmgHV1nH7Yzlnm7sbu2jFznwBd43T/Pnn+nh9ePxiv+1NexO47yJTD0ZU\nYjRDbumVAgMBAAECggEABPjJEDMOgg9URmlaEM6EhM4waSzfwL0OGX0WOZVqe5Cm\n6rUn5NVns9ijxJXHASz0U41T9UElO6TQwzJIEXh+r6++H9B6A//MW1aRtkb5WA6z\nu9lWHeMd8pizcEOwTwoed7b3P87WoGWl1W+iaoANj/rqYdueGCFv7cqTu7kb2NNi\nmibfSlh7oBa5ZLEBTWiQoJFnRmIrGse1Kdf1KxLxU3q0gdDLSj45tkCPkuux2/eP\n5pPxkciQouKEEH7XteELwmGzuFSCq4tO8P8bDtqaEZb44Aq3HzA2XQwyF1Up4CoV\nAefwo7mwFVscNdiVtqDA7S8bNKKb3z/z9XtqduawtQKBgQDn5u7Yl5IlPHHVD4sz\n6eoMfdNGW9lkfd7MzYyMG+smYmS7VTG9OEsFoU9juaDeS8BWt/n0aDC98vsPWgfO\nHWeMe58adDv73xFxmoPgQNrYmrrxMBeNMfwwX4BFwGHqjWPR9b3Wu32jM6JDhDqS\nQHeeCMXVWDZbktvTL9z8UARkGwKBgQC3x4pRZ8vt9j1M9wytsAhf169PkzQzEGDZ\n9mGY6wapLb6LUaHIYuB3eW4hOvez5gQ8c5rLID1j3HY36a8rzX5l3JWHNhshLnAu\noogMVvcenkeR1H52M+LbhhCc9oeJHvIawFWzL7yP/PScRA7KCfN+qzwHz5b6kKvx\n+VZTzF/kDwKBgEhtA2N50xb2DccxF5SbFZHZKkbrILYV6aOk/qQzg/l0+WjYbrRe\nBHA5tQW8T9WdavCqfNIsSCzK2kYtJArnfBOP+FzWuHUtcdE9JLrBBphnmsMA9hoO\n5mhlKzadovcSOX61dRi/bbmuwpq7jV9n6vPcYY0EA9YNw8HtTOMwSm7JAoGBAIdM\n35dJHIkHxV+5blsdAz1UdFvYWxDRGQy+6GGFfnTlGahGJB58NRegjaTnXd/TEwFS\ndv7esHOppltJrs5Hzqu9d1SBT/3gy3R58kFrcSnYi4Zgc+4gCv9lNyvoECayYrmx\nKibumRtEtu2o6V5zbxGtjVeOzG+SPRS7ZYPyLhKfAoGBAOPJyNtxncQycsywyUSs\nrhvf8Vm8eIBXvfp0uOuu9q/v0dZdoxN2VPu48Fs0T9ELuaUCadylUXXRQ/XQbLvN\nXFdeOxRR+Vu6HysGqIx7gj6wSJJABBBUnaTOGFpBkLiW2SN+gjm2yYNdugsfgHR3\nkmmlMxi5qZUi/IJEswga3ugR\n-----END PRIVATE KEY-----\n";
+    const RSA_KID: &str = "rsa-key";
+    const RSA_N: &str = "pnrWjLmQRT5J9-3PEsfFQYj1d7PaE34nqMDYbUzB_9uVxEdR3QdoyYf-W6xaJHj-zUcpmN9SHQOsABuEQxmkb7L6ozKgISPe3i-39_OCmSfOzhLUk0tNpEtBvjm2jtQtLRSEFy1bPYZ5wSXH-mS47E_kXz_suavcfx1AQsmxGyBYMOHnUbnNzgBKXaPtqOYPaZWTCvxJ8TzltR9Tepz9cOVR2iNo0iwbk86wcXhdtwEHmTK6NQrh7HSzmHHl__ugVQ3bJdugQ7KFQujZNxZRs5oB1dZx-2M5Z5u7G7toxc58AXeN0_z55_p4fXj8Yr_tTXsTuO8iUw9GVGI0Q27plQ";
+
     fn token_with_key(pem: &str, kid: &str, claims: serde_json::Value) -> String {
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(kid.to_string());
         let key = EncodingKey::from_ec_pem(pem.as_bytes()).expect("valid key");
+        encode(&header, &claims, &key).expect("encode")
+    }
+
+    fn token_with_rsa_key(kid: &str, claims: serde_json::Value) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(kid.to_string());
+        let key = EncodingKey::from_rsa_pem(RSA_PRIV_PEM.as_bytes()).expect("valid key");
         encode(&header, &claims, &key).expect("encode")
     }
 
@@ -1112,6 +1195,92 @@ mod tests {
         assert_eq!(fetcher.calls(), 2);
     }
 
+    // @test:an_outage_past_max_age_with_a_hundred_verifications_in_one_cooldown_makes_exactly_one_fetch
+    //
+    // The age-due path used to call `attempt_locked` unconditionally, with no
+    // cooldown check at all - so once the set was stale (permanently, since a
+    // failing fetch never updates `fetched_at`), EVERY verification, not just
+    // one per cooldown, started its own fetch: a request storm against the
+    // IdP and a queue of sign-ins behind the mutex.
+    #[tokio::test]
+    async fn an_outage_past_max_age_with_a_hundred_verifications_in_one_cooldown_makes_exactly_one_fetch()
+     {
+        let fetcher = FakeFetcher::new();
+        fetcher.queue(Ok(JWKS.as_bytes().to_vec()));
+        let clock = FakeClock::new();
+        let live = Arc::new(LiveJwks::new(
+            "https://idp.example/jwks".into(),
+            fetcher.clone(),
+            clock.clone(),
+        ));
+        live.warm_up().await;
+        let cfg = live_cfg(live);
+        let good_tok = token_with(good_claims());
+        assert!(verify(&cfg, &good_tok).await.is_some());
+
+        // The IdP goes dark, and stays dark past MAX_AGE: every verification
+        // from here is "due by age".
+        fetcher.queue(Err(FetchError::Transport("connection refused".into())));
+        clock.advance(MAX_AGE + Duration::from_secs(1));
+
+        let tasks = (0..100u32).map(|_| {
+            let cfg = &cfg;
+            let good_tok = &good_tok;
+            async move { verify(cfg, good_tok).await }
+        });
+        let results = futures_util::future::join_all(tasks).await;
+        assert!(
+            results.iter().all(Option::is_some),
+            "every one of the 100 verifications must still use the last good set"
+        );
+        assert_eq!(
+            fetcher.calls(),
+            2,
+            "one warm-up fetch, one shared refresh for all 100 age-due attempts in one cooldown"
+        );
+    }
+
+    // @test:a_failed_startup_fetch_is_not_retried_faster_than_the_cooldown
+    #[tokio::test]
+    async fn a_failed_startup_fetch_is_not_retried_faster_than_the_cooldown() {
+        let fetcher = FakeFetcher::new();
+        fetcher.queue(Err(FetchError::Transport("connection refused".into())));
+        let clock = FakeClock::new();
+        let live = Arc::new(LiveJwks::new(
+            "https://idp.example/jwks".into(),
+            fetcher.clone(),
+            clock.clone(),
+        ));
+        live.warm_up().await; // the startup fetch itself fails; still counts as an attempt
+        assert_eq!(fetcher.calls(), 1);
+        let cfg = live_cfg(live);
+
+        // No key has ever been fetched; probe with 100 different kids, all
+        // inside the cooldown the failed startup attempt just started.
+        let tasks = (0..100u32).map(|i| {
+            let cfg = &cfg;
+            async move {
+                let tok = token_with_key(PRIV_PEM, &format!("probe-{i}"), good_claims());
+                verify(cfg, &tok).await
+            }
+        });
+        let results = futures_util::future::join_all(tasks).await;
+        assert!(results.iter().all(Option::is_none));
+        assert_eq!(
+            fetcher.calls(),
+            1,
+            "nothing inside the cooldown may retry a failed startup fetch"
+        );
+
+        // Past the cooldown, the next attempt is allowed, and this one
+        // succeeds.
+        fetcher.queue(Ok(JWKS.as_bytes().to_vec()));
+        clock.advance(COOLDOWN + Duration::from_secs(1));
+        let good_tok = token_with(good_claims());
+        assert!(verify(&cfg, &good_tok).await.is_some());
+        assert_eq!(fetcher.calls(), 2);
+    }
+
     // @test:hostile_jwks_bodies_are_refused_and_the_last_good_set_stays
     #[tokio::test]
     async fn hostile_jwks_bodies_are_refused_and_the_last_good_set_stays() {
@@ -1221,17 +1390,104 @@ mod tests {
 
     #[test]
     fn validate_rejects_an_oct_key() {
-        let err = validate_jwks_bytes(br#"{"keys":[{"kty":"oct","kid":"x","k":"c2VjcmV0"}]}"#)
-            .unwrap_err();
+        // No `k` here on purpose: a real oct key always carries one, and the
+        // private-member scan (`FORBIDDEN_PRIVATE_MEMBERS` includes `k`)
+        // would refuse it for that alone. This body isolates the OTHER
+        // rule - oct is refused by TYPE, not merely dropped like an
+        // unrecognised kty - so the case still proves something if that scan
+        // were ever narrowed to skip `k`.
+        let err = validate_jwks_bytes(br#"{"keys":[{"kty":"oct","kid":"x"}]}"#).unwrap_err();
         assert!(matches!(err, RefusedSet::UnsupportedKeyType(ref t) if t == "oct"));
     }
 
     #[test]
-    fn validate_rejects_an_okp_key() {
+    fn validate_rejects_an_oct_key_with_its_ordinary_shape_too() {
+        // The realistic shape (kty=oct WITH k): refused either way, via the
+        // private-member scan this time, since `k` IS the symmetric secret.
+        let err = validate_jwks_bytes(br#"{"keys":[{"kty":"oct","kid":"x","k":"c2VjcmV0"}]}"#)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            RefusedSet::PrivateKeyMember { member: "k", .. }
+        ));
+    }
+
+    // An OKP (Ed25519) key is legitimately published by some IdPs alongside
+    // RSA/EC keys this console CAN verify with. Refusing the whole set over
+    // one key type this code does not support would lock every operator at
+    // such an IdP out of sign-in entirely - so an OKP or otherwise
+    // unrecognised `kty` is DROPPED from the usable set instead, and only a
+    // set left with nothing usable is refused.
+
+    #[test]
+    fn validate_drops_an_okp_key_and_keeps_the_rsa_key() {
+        let body = format!(
+            r#"{{"keys":[
+                {{"kty":"RSA","kid":"{RSA_KID}","n":"{RSA_N}","e":"AQAB"}},
+                {{"kty":"OKP","crv":"Ed25519","kid":"okp-1","x":"not-a-real-ed25519-key"}}
+            ]}}"#
+        );
+        let set = validate_jwks_bytes(body.as_bytes()).expect("RSA key alone is a clean set");
+        assert_eq!(
+            set.keys.len(),
+            1,
+            "the OKP key must not survive into the usable set"
+        );
+        assert!(set.find(RSA_KID).is_some());
+        assert!(set.find("okp-1").is_none());
+    }
+
+    #[test]
+    fn validate_drops_any_unrecognised_key_type_the_same_way() {
+        let body = format!(
+            r#"{{"keys":[
+                {{"kty":"RSA","kid":"{RSA_KID}","n":"{RSA_N}","e":"AQAB"}},
+                {{"kty":"SOME-FUTURE-TYPE","kid":"future-1","x":"whatever"}}
+            ]}}"#
+        );
+        let set = validate_jwks_bytes(body.as_bytes()).expect("RSA key alone is a clean set");
+        assert_eq!(set.keys.len(), 1);
+        assert!(set.find("future-1").is_none());
+    }
+
+    #[test]
+    fn validate_refuses_a_set_that_is_only_an_okp_key_as_empty() {
         let err =
             validate_jwks_bytes(br#"{"keys":[{"kty":"OKP","crv":"Ed25519","kid":"x","x":"abc"}]}"#)
                 .unwrap_err();
-        assert!(matches!(err, RefusedSet::UnsupportedKeyType(ref t) if t == "OKP"));
+        assert_eq!(err, RefusedSet::EmptyKeys);
+    }
+
+    // @test:a_mixed_rsa_and_okp_set_verifies_the_rsa_token_and_drops_the_okp_key
+    #[tokio::test]
+    async fn a_mixed_rsa_and_okp_set_verifies_the_rsa_token_and_drops_the_okp_key() {
+        let mixed = format!(
+            r#"{{"keys":[
+                {{"kty":"RSA","kid":"{RSA_KID}","n":"{RSA_N}","e":"AQAB"}},
+                {{"kty":"OKP","crv":"Ed25519","kid":"okp-1","x":"not-a-real-ed25519-key"}}
+            ]}}"#
+        );
+        let fetcher = FakeFetcher::new();
+        fetcher.queue(Ok(mixed.into_bytes()));
+        let clock = FakeClock::new();
+        let live = Arc::new(LiveJwks::new(
+            "https://idp.example/jwks".into(),
+            fetcher.clone(),
+            clock.clone(),
+        ));
+        live.warm_up().await;
+        let cfg = live_cfg(live);
+
+        let rsa_tok = token_with_rsa_key(RSA_KID, good_claims());
+        let v = verify(&cfg, &rsa_tok)
+            .await
+            .expect("the RSA key must still verify from a set that also carried an OKP key");
+        assert_eq!(v.username, "x");
+
+        // The OKP key was never usable in the first place: it is absent from
+        // the very set `verify` just read (no clock advance since warm-up,
+        // so this reads the current cache rather than triggering a refetch).
+        assert!(cfg.keys.find("okp-1").await.is_none());
     }
 
     #[test]

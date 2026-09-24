@@ -41,7 +41,7 @@ Feature: Operator sign-in keeps working when the IdP rotates its keys
   # @test:hostile_jwks_bodies_are_refused_and_the_last_good_set_stays
   Scenario: A published private key is refused
     Given the console asks the IdP for its JWKS
-    When the response carries a key with a private-key member, or an unsupported key type, or is otherwise not a well-formed key set
+    When the response carries a key with a private-key member, or a symmetric (oct) key, or is otherwise not a well-formed key set
     Then the console refuses the whole fetched set
     And it keeps verifying with the last good set it already trusted
 
@@ -50,3 +50,18 @@ Feature: Operator sign-in keeps working when the IdP rotates its keys
     Given both GENARYX_WEB_OIDC_JWKS and GENARYX_WEB_OIDC_JWKS_URL are set
     When genaryx-web starts
     Then it refuses to start rather than guess which key source to trust
+
+  # @test:an_outage_past_max_age_with_a_hundred_verifications_in_one_cooldown_makes_exactly_one_fetch
+  Scenario: Every fetch attempt is bounded by the cooldown, not only the kid-miss one
+    Given the console's key set has gone stale past the one-hour age limit
+    And the IdP stays unreachable
+    When a hundred sign-in attempts arrive inside one five-minute cooldown window
+    Then the console attempts a fetch only once, not once per attempt
+    And every one of the hundred attempts still verifies against the last good set
+
+  # @test:a_mixed_rsa_and_okp_set_verifies_the_rsa_token_and_drops_the_okp_key
+  Scenario: An unsupported key type is dropped, not a reason to refuse the whole set
+    Given the IdP publishes an RSA key and an OKP (Ed25519) key in the same JWKS
+    When the console fetches and validates that JWKS
+    Then it keeps the RSA key and drops the OKP key rather than refusing the fetch
+    And an operator with an RSA-signed token still signs in
