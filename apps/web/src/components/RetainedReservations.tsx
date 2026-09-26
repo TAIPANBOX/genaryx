@@ -93,13 +93,15 @@ export function RetainedReservationsBody({
       title="Retained reservations"
       right={
         <span className="mono" style={{ fontSize: 11, color: "var(--faint)" }}>
-          {formatUsd(data.total_retained_usd)} held after unknown outcome
+          {formatUsd(data.total_retained_usd)} held
         </span>
       }
     >
+      {/* The explanation lives in the body, not the header's right slot: the
+          rail card is narrow and a long right-hand label ran past its edge. */}
       <div className="mono px-4 pt-2" style={{ fontSize: 10.5, color: "var(--faint)", lineHeight: 1.5 }}>
-        The gateway keeps this money open, neither spent nor released, after a call whose outcome it
-        could not confirm.
+        Money held after unknown outcome: the gateway keeps it open, neither spent nor released,
+        after a call whose outcome it could not confirm.
       </div>
       <Feed items={retainedFeedItems(data)} empty="no reservations currently held" />
     </Section>
