@@ -10,6 +10,24 @@ import type { FeedItem } from "./dash";
  * gateway's held reservations change as calls resolve, same reasoning. */
 const REFRESH_INTERVAL_MS = 20_000;
 
+function isRetainedReport(d: unknown): d is GatewayRetained {
+  if (typeof d !== "object" || d === null || Array.isArray(d)) return false;
+  const o = d as Record<string, unknown>;
+  return (
+    Array.isArray(o.runs) &&
+    typeof o.total_retained === "number" &&
+    typeof o.total_retained_usd === "number" &&
+    o.runs.every(
+      (r) =>
+        typeof r === "object" &&
+        r !== null &&
+        typeof (r as Record<string, unknown>).run_id === "string" &&
+        typeof (r as Record<string, unknown>).retained === "number" &&
+        typeof (r as Record<string, unknown>).retained_usd === "number",
+    )
+  );
+}
+
 /** `data.runs` -> `Feed`'s row shape - factored out so it is testable without
  * a DOM (same rationale `lib/quality.ts`'s `formatQualityMean` gives). */
 export function retainedFeedItems(data: GatewayRetained): FeedItem[] {
@@ -73,6 +91,19 @@ export function RetainedReservationsBody({
       <Section title="Retained reservations">
         <div className="mono px-4 py-4" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeCredentialsError(error)}
+        </div>
+      </Section>
+    );
+  }
+
+  // An answer that is not a retained report (a wrong shape from a transport
+  // or an older console build) is named, never rendered: formatting an
+  // undefined total threw and took the whole Money tab down with it.
+  if (data !== null && !isRetainedReport(data)) {
+    return (
+      <Section title="Retained reservations">
+        <div className="mono px-4 py-4" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
+          the gateway's retained report could not be read.
         </div>
       </Section>
     );

@@ -3029,6 +3029,20 @@ function mockCloudList(provider: string) {
 // tests, `lib/credentials.ts`'s doc comment) rather than a sixth/seventh row
 // here - five is enough to show the table's full worst-first sort and every
 // severity tone `CredentialsKeysTable` renders.
+/** Two runs the gateway holds money for after an unknown outcome, the shape
+ * `credentials_gateway_retained_runs` answers (`GatewayRetainedDto`). */
+function mockGatewayRetained() {
+  const runs = [
+    { run_id: "run-finance-217", retained: 1, retained_usd: 0.02 },
+    { run_id: "run-outbound-901", retained: 2, retained_usd: 0.015 },
+  ];
+  return {
+    runs,
+    total_retained: runs.reduce((n, r) => n + r.retained, 0),
+    total_retained_usd: runs.reduce((n, r) => n + r.retained_usd, 0),
+  };
+}
+
 function mockCredentialsKeys() {
   return {
     strict_mode: "enforce",
@@ -3488,6 +3502,9 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "identity_list_alerts": return r(mockAlerts());
     case "identity_list_remediations": return r([]);
     case "credentials_keys": return r(mockCredentialsKeys());
+    // Explicit, not left to the catch-all below: its `_runs` rule answers
+    // `[]`, the wrong shape for this object, and blanked the Money tab.
+    case "credentials_gateway_retained_runs": return r(mockGatewayRetained());
     case "admission_check": return r(mockAdmissionCheck(String(args?.key_id ?? ""), String(args?.agent_id ?? "")));
     case "admission_baseline": return r(mockAdmissionBaseline(String(args?.agent_id ?? "")));
 
