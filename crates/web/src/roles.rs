@@ -142,6 +142,7 @@ const VIEWER_COMMANDS: &[&str] = &[
     "copilot_ask",
     "copilot_explain",
     "copilot_status",
+    "credentials_gateway_retained_runs",
     "credentials_keys",
     "credentials_status",
     "crypto_scan_cbom",

@@ -3,7 +3,7 @@ import { agentShortName } from "../lib/dashData";
 import type { Run } from "../moneyTypes";
 import { runBlockedState } from "../lib/lifecycle";
 import { LIFECYCLE_BADGE, lifecyclePillClass } from "../lib/lifecycleTypes";
-import { cacheHitsLabel, NOT_RECORDED, runModelLabel, runUnitLabel } from "../lib/moneyExport";
+import { cacheHitsLabel, NOT_RECORDED, runModelLabel, runOwnerLabel, runUnitLabel } from "../lib/moneyExport";
 import { BudgetEditor } from "./BudgetEditor";
 import { ConfirmButton } from "./ConfirmButton";
 import { FuseBar } from "./FuseBar";
@@ -155,17 +155,19 @@ export function RunsBoard({
               ) : (
                 <span className="rag">-</span>
               )}
-              {/* The model priced this run and the unit was charged for it.
-                  Both ride on every row of GET /v1/runs and rendered nowhere
-                  outside Incident360 until now. An empty unit is the Cloud's
-                  identity map answering "none", which is why it says that
-                  rather than showing a blank. */}
+              {/* The model priced this run, the unit was charged for it, and
+                  the owner is who started it (the root of its delegation
+                  chain). All three ride on every row of GET /v1/runs. An
+                  empty unit is the Cloud's identity map answering "none";
+                  an empty owner is this Cloud never having sent one at all
+                  (older Cloud, or never asked) - see `runOwnerLabel`'s doc
+                  comment for why the two wordings differ. */}
               <span
                 className="rag"
                 style={{ fontSize: 9.5, color: "var(--faint)" }}
-                title={`model ${runModelLabel(r)} · unit ${runUnitLabel(r)}`}
+                title={`model ${runModelLabel(r)} · unit ${runUnitLabel(r)} · owner ${runOwnerLabel(r)}`}
               >
-                {runModelLabel(r)} · {runUnitLabel(r)}
+                {runModelLabel(r)} · {runUnitLabel(r)} · {runOwnerLabel(r)}
               </span>
             </div>
             <div className="d-spentcell">

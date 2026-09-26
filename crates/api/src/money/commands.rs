@@ -103,6 +103,12 @@ pub struct RunDto {
     /// nothing (no map configured, or nothing matched). Empty and absent are
     /// the same thing here and both mean "do not claim a unit for this run".
     pub unit: String,
+    /// The human at the root of this run's delegation chain
+    /// (`RunAgg.owner`), or `""` when a Cloud older than the field sent
+    /// nothing at all - "not reported", not "nobody": a Cloud that DID
+    /// resolve an owner and found none would say so through the separate
+    /// `/v1/owners` "unassigned" bucket, never through this field.
+    pub owner: String,
     pub model: String,
     pub agent_id: String,
     pub spent_usd: f64,
@@ -598,6 +604,7 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
             RunDto {
                 run_id: r.run_id.clone(),
                 unit: r.unit.clone(),
+                owner: r.owner.clone(),
                 model: r.model.clone(),
                 agent_id: r.agent_id.clone(),
                 spent_usd: micros_to_usd(r.spent_microusd),

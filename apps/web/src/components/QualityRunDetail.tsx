@@ -1,4 +1,4 @@
-import { describeQualityError } from "../lib/quality";
+import { describeQualityError, formatQualityMean } from "../lib/quality";
 import { formatUsd } from "../lib/format";
 import type { QualityError, VerdryxRunSummary, VerdryxScore } from "../qualityTypes";
 import { StatTile } from "./StatTile";
@@ -7,8 +7,13 @@ const COLUMNS = "1fr 90px 90px 110px";
 
 /**
  * Run detail (docs/PHASE4.md W1 position 2): the run-summary header (mean
- * score, total tokens, total cost, case count - mean shown as "n/a" when
- * `mean_score` is null, never `0`) plus the per-case scores table.
+ * score, total tokens, total cost, case count - mean shown as "unmeasured"
+ * when `mean_score` is null, never `0`) plus the per-case scores table.
+ *
+ * On a store that can answer the unanswered-cases question
+ * (`unanswered_supported`), the full sentence - "mean 0.82 over 57 answered,
+ * 3 unanswered (label_mass_too_low: 3)" - appears under the stat tiles; an
+ * older store omits that line entirely rather than claiming zero.
  */
 export function QualityRunDetail({
   summary,
@@ -30,11 +35,17 @@ export function QualityRunDetail({
   return (
     <div className="flex flex-col gap-3">
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
-        <StatTile label="Mean score" value={summary.mean_score !== null ? summary.mean_score.toFixed(3) : "n/a"} />
+        <StatTile label="Mean score" value={summary.mean_score !== null ? summary.mean_score.toFixed(3) : "unmeasured"} />
         <StatTile label="Cases" value={String(summary.case_count)} />
         <StatTile label="Total tokens" value={summary.total_tokens.toLocaleString()} />
         <StatTile label="Total cost" value={formatUsd(summary.total_cost_usd)} />
       </div>
+
+      {summary.unanswered_supported && (
+        <div className="mono" style={{ fontSize: 11.5, color: "var(--dim)" }}>
+          {formatQualityMean(summary)}
+        </div>
+      )}
 
       {error && (
         <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>

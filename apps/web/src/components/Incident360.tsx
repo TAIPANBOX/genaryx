@@ -7,6 +7,7 @@ import { fetchRuns } from "../lib/money";
 import { fetchAgentRecord, type AgentRecord } from "../lib/agentRecord";
 import { fetchRecentEvents } from "../lib/recentEvents";
 import { formatUsd } from "../lib/format";
+import { runOwnerLabel } from "../lib/moneyExport";
 import { shortAgentLabel } from "../lib/graph";
 import { sevColor } from "../lib/dashData";
 import { downloadJson } from "../lib/download";
@@ -391,6 +392,7 @@ export function Incident360({
               <span className="mono" style={{ fontSize: 10.5, color: "var(--faint)" }}>
                 model {run.model}
                 {run.unit ? ` · unit ${run.unit}` : " · no unit resolved"}
+                {` · owner ${runOwnerLabel(run)}`}
               </span>
             </span>
           ) : null}

@@ -71,6 +71,12 @@ export interface Run {
    * able to tell that from a resolved unit, which is why it is an empty string
    * rather than a missing field. */
   unit: string;
+  /** The human at the root of this run's delegation chain (`RunAgg.owner`).
+   * `""` means a Cloud older than this field sent nothing at all - "not
+   * reported", not "nobody" (the money plane's separate `/v1/owners` view
+   * says "nobody" through the literal `"unassigned"` bucket, never through
+   * this field). */
+  owner: string;
   model: string;
   agent_id: string;
   spent_usd: number;

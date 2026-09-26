@@ -36,6 +36,9 @@ function run(
     // "" is the honest default here and mirrors a real box: a Cloud with no
     // identity map configured resolves nothing for every run.
     unit,
+    // Same default reasoning as `unit` above: an older/unconfigured Cloud
+    // sends no owner at all.
+    owner: "",
     spent_usd: spent,
     budget_usd: budget,
     calls,

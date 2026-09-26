@@ -614,6 +614,17 @@ pub struct RunAgg {
     /// caller must be able to tell from a resolved one.
     #[serde(default)]
     pub unit: String,
+    /// The human at the root of this run's delegation chain (`store.rs`'s
+    /// `RunAgg.owner` in tokenfuse), a bare `String` with `#[serde(default)]`,
+    /// the same additive-field pattern `unit` above already established.
+    ///
+    /// `""` on a Cloud older than the field means "not reported", never
+    /// "nobody" (`OwnerAgg.owner` reserves the literal `"unassigned"` for
+    /// that answer, folded server-side; this field is never that literal, it
+    /// is either a `user://` principal or empty because this Cloud has not
+    /// been asked to attribute one at all).
+    #[serde(default)]
+    pub owner: String,
     pub spent_microusd: i64,
     pub calls: u64,
     pub cache_hits: u64,
@@ -865,6 +876,21 @@ mod tests {
         assert_eq!(runs[0].run_id, "r1");
         assert_eq!(runs[0].last_seen_millis, 1_758_000_000_000);
         assert!(!runs[0].killed);
+        assert_eq!(
+            runs[0].owner, "",
+            "a Cloud older than the owner field must default to empty, not fail to parse"
+        );
+    }
+
+    #[test]
+    fn run_agg_carries_a_resolved_owner_when_the_cloud_sends_one() {
+        let runs: Vec<RunAgg> = serde_json::from_str(
+            r#"[{"run_id":"r1","model":"gpt-4o","agent_id":"","owner":"user://acme.example/platform-lead",
+                 "spent_microusd":9000,"calls":5,"cache_hits":1,"steps":3,
+                 "last_seen_millis":1758000000000,"killed":false}]"#,
+        )
+        .expect("valid RunAgg json");
+        assert_eq!(runs[0].owner, "user://acme.example/platform-lead");
     }
 
     #[test]

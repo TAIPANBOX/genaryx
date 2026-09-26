@@ -117,7 +117,7 @@ pub use engram::{
 pub use evidence::{EvidenceBuildError, EvidenceInputs, EvidencePack, build_evidence_pack};
 pub use gateway::{
     GatewayClient, GatewayError, GatewayKeyEntry, GatewayKeyStats, GatewayKeysReport,
-    GatewayUnauthorized,
+    GatewayRunView, GatewayUnauthorized,
 };
 pub use hetzner::{HetznerClient, HetznerError, HetznerServer};
 pub use idryx::{
@@ -140,8 +140,9 @@ pub use tokenfuse::{
 };
 pub use urlpath::PathSegmentError;
 pub use verdryx::{
-    Baseline as VerdryxBaseline, EvalRun as VerdryxEvalRun, RunSummary as VerdryxRunSummary,
-    Score as VerdryxScore, VerdryxClient, VerdryxError,
+    Baseline as VerdryxBaseline, BaselineSummary as VerdryxBaselineSummary,
+    EvalRun as VerdryxEvalRun, RunSummary as VerdryxRunSummary, Score as VerdryxScore,
+    UnansweredReasonCount as VerdryxUnansweredReasonCount, VerdryxClient, VerdryxError,
 };
 pub use wardryx::{
     Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, DecideRequest,

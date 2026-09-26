@@ -22,6 +22,7 @@ import {
   NOT_RECORDED,
   RUNS_EXPORT_COLUMNS,
   runModelLabel,
+  runOwnerLabel,
   runsExportMeta,
   runsExportRows,
   runUnitLabel,
@@ -32,6 +33,7 @@ import type { Run, Savings } from "../moneyTypes";
 const RUN: Run = {
   run_id: "run-0217",
   unit: "financial-crime",
+  owner: "user://meridian.example/treasury-lead",
   model: "claude-sonnet-4",
   agent_id: "agent://meridian.example/treasury/cashflow-forecaster",
   spent_usd: 5.85,
@@ -218,6 +220,14 @@ describe("the labels keep a zero apart from an absence", () => {
     expect(runUnitLabel({ ...RUN, unit: "" })).toBe("no unit resolved");
     expect(runModelLabel({ ...RUN, model: "" })).toBe(NOT_RECORDED);
   });
+
+  it("reads the owner off a run, and says 'not reported' rather than 'no owner resolved'", () => {
+    expect(runOwnerLabel(RUN)).toBe("user://meridian.example/treasury-lead");
+    // Deliberately NOT "no owner resolved": an empty owner cannot tell
+    // "this Cloud resolved none" from "this Cloud was never asked", which is
+    // a different claim than unit's own empty-string case.
+    expect(runOwnerLabel({ ...RUN, owner: "" })).toBe("not reported");
+  });
 });
 
 describe("the runs export is the whole list, and says what its blanks mean", () => {
@@ -232,19 +242,20 @@ describe("the runs export is the whole list, and says what its blanks mean", () 
   });
 
   it("writes an absent value as null so the CSV leaves the cell empty", () => {
-    const withoutCache = { ...RUN, unit: "", model: "", budget_usd: null } as Partial<Run>;
+    const withoutCache = { ...RUN, unit: "", owner: "", model: "", budget_usd: null } as Partial<Run>;
     delete withoutCache.cache_hits;
     const [row] = runsExportRows([withoutCache as Run]);
     expect(row.cache_hits).toBeNull();
     expect(row.unit).toBeNull();
+    expect(row.owner).toBeNull();
     expect(row.model).toBeNull();
     expect(row.budget_usd).toBeNull();
 
     const csv = toCsv(RUNS_EXPORT_COLUMNS, [row], runsExportMeta(META));
     const lines = csv.trim().split("\n");
     const dataLine = lines[lines.length - 1];
-    // run_id, agent_id, then unit and model as two empty cells in a row.
-    expect(dataLine).toContain(",,,");
+    // run_id, agent_id, then unit, owner and model as three empty cells in a row.
+    expect(dataLine).toContain(",,,,");
     expect(dataLine).not.toContain(",0,");
   });
 
