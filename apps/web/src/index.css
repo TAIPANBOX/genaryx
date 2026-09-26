@@ -417,13 +417,18 @@ body {
   font-size: 14.5px;
   letter-spacing: -0.01em;
   color: var(--fg);
+  white-space: nowrap;
 }
+/* The right-hand label wraps and shrinks, never the title: a label that could
+   not wrap ran past the edge of a narrow rail card ("Governed savings",
+   9px at 1440px) while the title beside it broke onto two lines instead. */
 .d-sechead .r {
   font-family: var(--font-m);
   font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--dim);
-  white-space: nowrap;
+  min-width: 0;
+  text-align: right;
 }
 
 /* hero band: big number + spark, and a 2x2 tile grid */
