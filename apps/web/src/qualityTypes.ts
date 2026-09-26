@@ -70,13 +70,38 @@ export interface VerdryxBaseline {
   label: string;
 }
 
+/** Mirrors `genaryx_connectors::VerdryxUnansweredReasonCount` - one
+ * `unanswered.reason` bucket for a run (verdryx 2bfd3c8). */
+export interface VerdryxUnansweredReasonCount {
+  reason: string;
+  count: number;
+}
+
 /** Mirrors `genaryx_connectors::VerdryxRunSummary` - a derived per-run
- * rollup. `mean_score` is `null` for a run with zero scores (never a
- * fabricated `0`) - render as "n/a", not `0`. */
+ * rollup. `mean_score` is `null` for a run with zero ANSWERED cases (never a
+ * fabricated `0`) - render as "unmeasured", not `0` and not a bare "n/a".
+ *
+ * `unanswered_supported` is `false` on a `verdryx.db` written before verdryx
+ * 2bfd3c8 added the `unanswered` table: render NO unanswered column at all in
+ * that case, never a `0` that looks measured. */
 export interface VerdryxRunSummary {
   run: VerdryxEvalRun;
+  /** Answered (scored) cases, not "asked" - an unanswered case never reaches
+   * `scores`. */
   case_count: number;
   mean_score: number | null;
   total_tokens: number;
   total_cost_usd: number;
+  unanswered_count: number;
+  unanswered_by_reason: VerdryxUnansweredReasonCount[];
+  unanswered_supported: boolean;
+}
+
+/** Mirrors `genaryx_connectors::VerdryxBaselineSummary` - a saved baseline
+ * plus the unanswered accounting of the run it was snapshotted from. */
+export interface VerdryxBaselineSummary {
+  baseline: VerdryxBaseline;
+  unanswered_count: number;
+  unanswered_by_reason: VerdryxUnansweredReasonCount[];
+  unanswered_supported: boolean;
 }

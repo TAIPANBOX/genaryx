@@ -491,6 +491,10 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "copilot_status" => Ok(reply(
             genaryx_api::copilot::commands::copilot_status(&ctx.copilot).await,
         )),
+        "credentials_gateway_retained_runs" => Ok(reply(
+            genaryx_api::credentials::commands::credentials_gateway_retained_runs(&ctx.credentials)
+                .await,
+        )),
         "credentials_keys" => Ok(reply(
             genaryx_api::credentials::commands::credentials_keys(&ctx.credentials).await,
         )),

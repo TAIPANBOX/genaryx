@@ -44,7 +44,7 @@ import {
 } from "./cryptoExport";
 import { toCsv } from "./download";
 import type { EvidenceReport, NcscFinding, NcscReport } from "../cryptoTypes";
-import type { VerdryxBaseline, VerdryxRunSummary } from "../qualityTypes";
+import type { VerdryxBaselineSummary, VerdryxRunSummary } from "../qualityTypes";
 import type { RoutineRunDto, RoutinesHistoryDto } from "../routinesTypes";
 
 // ============================================================================
@@ -142,6 +142,9 @@ function runSummary(over: Partial<VerdryxRunSummary> = {}): VerdryxRunSummary {
     mean_score: 0.8125,
     total_tokens: 4200,
     total_cost_usd: 1.5,
+    unanswered_count: 0,
+    unanswered_by_reason: [],
+    unanswered_supported: true,
     ...over,
   };
 }
@@ -528,14 +531,24 @@ describe("qualityRunExportMeta", () => {
   });
 });
 
-describe("baselineExportRows", () => {
-  const baseline: VerdryxBaseline = {
-    id: "b-1",
-    eval_run_id: "run-1",
-    mean_score: 0.77,
-    created_at: "2026-08-02T10:00:00Z",
-    label: "release-gate",
+function baselineSummary(over: Partial<VerdryxBaselineSummary> = {}): VerdryxBaselineSummary {
+  return {
+    baseline: {
+      id: "b-1",
+      eval_run_id: "run-1",
+      mean_score: 0.77,
+      created_at: "2026-08-02T10:00:00Z",
+      label: "release-gate",
+    },
+    unanswered_count: 0,
+    unanswered_by_reason: [],
+    unanswered_supported: true,
+    ...over,
   };
+}
+
+describe("baselineExportRows", () => {
+  const baseline = baselineSummary();
 
   it("resolves the source run's model when the run is loaded", () => {
     expect(baselineExportRows([baseline], [runSummary()])[0].source_run_model).toBe("opus");
@@ -548,11 +561,34 @@ describe("baselineExportRows", () => {
   });
 
   it("leaves an unlabeled baseline's label unrecorded, not '(unlabeled)'", () => {
-    expect(baselineExportRows([{ ...baseline, label: "  " }], [runSummary()])[0].label).toBeNull();
+    expect(
+      baselineExportRows(
+        [{ ...baseline, baseline: { ...baseline.baseline, label: "  " } }],
+        [runSummary()],
+      )[0].label,
+    ).toBeNull();
   });
 
   it("has a column for every field it fills", () => {
     expect(BASELINE_EXPORT_COLUMNS.map((c) => c.key).sort()).toEqual(Object.keys(baselineExportRows([baseline], null)[0]).sort());
+  });
+
+  it("carries the source run's unanswered breakdown", () => {
+    const row = baselineExportRows(
+      [baselineSummary({ unanswered_count: 3, unanswered_by_reason: [{ reason: "timeout", count: 3 }] })],
+      null,
+    )[0];
+    expect(row.unanswered_count).toBe(3);
+    expect(row.unanswered_by_reason).toBe("timeout: 3");
+  });
+
+  it("reports unanswered as unrecorded on a store that predates the unanswered table", () => {
+    const row = baselineExportRows(
+      [baselineSummary({ unanswered_supported: false, unanswered_count: 0 })],
+      null,
+    )[0];
+    expect(row.unanswered_count).toBeNull();
+    expect(row.unanswered_by_reason).toBeNull();
   });
 });
 

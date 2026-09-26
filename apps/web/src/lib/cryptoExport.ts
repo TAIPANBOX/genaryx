@@ -31,7 +31,7 @@
  * milestone views and the export provenance blocks say which is which.
  */
 import type { EvidenceReport, EvidenceSummary, NcscFinding, NcscReport } from "../cryptoTypes";
-import type { VerdryxBaseline, VerdryxRunSummary } from "../qualityTypes";
+import type { VerdryxBaselineSummary, VerdryxRunSummary } from "../qualityTypes";
 import type { RoutineRunDto, RoutinesHistoryDto } from "../routinesTypes";
 import { SEVERITIES } from "../types";
 import type { ExportMeta } from "./download";
@@ -517,6 +517,11 @@ export interface QualityRunExportRow {
   mean_score: number | null;
   total_tokens: number;
   total_cost_usd: number;
+  /** `null` on a store that predates verdryx's `unanswered` table
+   * (`unanswered_supported` false) - never a `0` that looks measured. */
+  unanswered_count: number | null;
+  /** `"reason: count; reason: count"`, or `null` when unsupported or empty. */
+  unanswered_by_reason: string | null;
 }
 
 export const QUALITY_RUN_EXPORT_COLUMNS: { key: keyof QualityRunExportRow & string; header: string }[] = [
@@ -528,7 +533,14 @@ export const QUALITY_RUN_EXPORT_COLUMNS: { key: keyof QualityRunExportRow & stri
   { key: "mean_score", header: "mean_score" },
   { key: "total_tokens", header: "total_tokens" },
   { key: "total_cost_usd", header: "total_cost_usd" },
+  { key: "unanswered_count", header: "unanswered_count" },
+  { key: "unanswered_by_reason", header: "unanswered_by_reason" },
 ];
+
+function unansweredByReasonText(s: VerdryxRunSummary): string | null {
+  if (!s.unanswered_supported || s.unanswered_by_reason.length === 0) return null;
+  return s.unanswered_by_reason.map((r) => `${r.reason}: ${r.count}`).join("; ");
+}
 
 export function qualityRunExportRows(runs: VerdryxRunSummary[]): QualityRunExportRow[] {
   return runs.map((s) => ({
@@ -543,6 +555,8 @@ export function qualityRunExportRows(runs: VerdryxRunSummary[]): QualityRunExpor
     mean_score: s.mean_score,
     total_tokens: s.total_tokens,
     total_cost_usd: s.total_cost_usd,
+    unanswered_count: s.unanswered_supported ? s.unanswered_count : null,
+    unanswered_by_reason: unansweredByReasonText(s),
   }));
 }
 
@@ -553,6 +567,10 @@ export interface BaselineExportRow {
   source_run_model: string | null;
   mean_score: number;
   created_at: string;
+  /** `null` when the source run's store predates verdryx's `unanswered`
+   * table - never a `0` that looks measured. */
+  unanswered_count: number | null;
+  unanswered_by_reason: string | null;
 }
 
 export const BASELINE_EXPORT_COLUMNS: { key: keyof BaselineExportRow & string; header: string }[] = [
@@ -562,13 +580,15 @@ export const BASELINE_EXPORT_COLUMNS: { key: keyof BaselineExportRow & string; h
   { key: "source_run_model", header: "source_run_model" },
   { key: "mean_score", header: "mean_score" },
   { key: "created_at", header: "created" },
+  { key: "unanswered_count", header: "unanswered_count" },
+  { key: "unanswered_by_reason", header: "unanswered_by_reason" },
 ];
 
 export function baselineExportRows(
-  baselines: VerdryxBaseline[],
+  baselines: VerdryxBaselineSummary[],
   runs: VerdryxRunSummary[] | null,
 ): BaselineExportRow[] {
-  return baselines.map((b) => ({
+  return baselines.map(({ baseline: b, unanswered_count, unanswered_by_reason, unanswered_supported }) => ({
     // The screen shows "(unlabeled)". A file must not: that string is this
     // console's word, not verdryx's, and it would sort and filter as a real
     // label.
@@ -578,6 +598,11 @@ export function baselineExportRows(
     source_run_model: blank(runs?.find((r) => r.run.id === b.eval_run_id)?.run.model),
     mean_score: b.mean_score,
     created_at: b.created_at,
+    unanswered_count: unanswered_supported ? unanswered_count : null,
+    unanswered_by_reason:
+      unanswered_supported && unanswered_by_reason.length > 0
+        ? unanswered_by_reason.map((r) => `${r.reason}: ${r.count}`).join("; ")
+        : null,
   }));
 }
 
@@ -761,7 +786,7 @@ export function qualityRunExportMeta(
 }
 
 export function baselineExportMeta(
-  baselines: VerdryxBaseline[],
+  baselines: VerdryxBaselineSummary[],
   runs: VerdryxRunSummary[] | null,
   dbPath: string,
   takenAt: string,

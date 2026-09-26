@@ -82,6 +82,37 @@ pub enum GatewayError {
     Api { status: u16, body: String },
 }
 
+// ---- DTOs (GET /v1/runs, exact shape of tokenfuse's own gateway obs.rs) ----
+
+/// One row of the gateway's `GET /v1/runs` (`crates/gateway/src/obs.rs`'s
+/// `RunView` in tokenfuse - a different endpoint from
+/// [`crate::CloudClient::runs`]'s Cloud-side `RunAgg` aggregate, and the two
+/// are never mixed here: this one is the GATEWAY's own live enforcement view,
+/// with a field the Cloud aggregate does not carry at all.
+///
+/// `retained`/`retained_usd` (tokenfuse invariant 50) are reservations the
+/// gateway deliberately kept open after a call whose outcome it never
+/// learned - money held, not spent and not released, until the gateway can
+/// tell which one it was. A console that shows `spent_usd` alone and stays
+/// silent about this is missing money that is neither free nor gone.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct GatewayRunView {
+    pub run_id: String,
+    pub budget_usd: f64,
+    pub spent_usd: f64,
+    pub reserved_usd: f64,
+    pub remaining_usd: f64,
+    pub steps: u32,
+    pub pct_used: f64,
+    pub killed: bool,
+    /// Reservations on this run kept outstanding on purpose: a call whose
+    /// outcome the gateway could not learn, so it neither released the money
+    /// nor counted it spent.
+    pub retained: u32,
+    /// The sum of `retained`'s reservations, in USD.
+    pub retained_usd: f64,
+}
+
 // ---- DTOs (exact wire shape, docs/22-key-lifecycle.md in tokenfuse) --------
 
 /// `GET /v1/keys`'s top-level shape.
@@ -259,6 +290,19 @@ impl GatewayClient {
         let resp = req.send().await?;
         parse_response(resp).await
     }
+
+    /// `GET /v1/runs` -> every run the gateway currently knows about, most-
+    /// spent first (the same admin-key gate as [`get_keys`](Self::get_keys) -
+    /// tokenfuse's `adminkeys.rs` gates both under one `route_layer`).
+    pub async fn get_runs(&self) -> Result<Vec<GatewayRunView>, GatewayError> {
+        let url = format!("{}/v1/runs", self.base_url);
+        let mut req = self.http.get(&url);
+        if let Some(key) = &self.admin_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req.send().await?;
+        parse_response(resp).await
+    }
 }
 
 #[cfg(test)]
@@ -355,6 +399,48 @@ mod tests {
         let report: GatewayKeysReport =
             serde_json::from_slice(json).expect("tolerate unknown fields");
         assert_eq!(report.keys.len(), 1);
+    }
+
+    #[test]
+    fn a_retained_reservation_parses_with_its_run() {
+        let json = br#"[
+          { "run_id": "held", "budget_usd": 10.0, "spent_usd": 1.0, "reserved_usd": 0.008657,
+            "remaining_usd": 8.991343, "steps": 3, "pct_used": 10.0, "killed": false,
+            "retained": 1, "retained_usd": 0.008657 },
+          { "run_id": "clean", "budget_usd": 5.0, "spent_usd": 2.0, "reserved_usd": 0.0,
+            "remaining_usd": 3.0, "steps": 1, "pct_used": 40.0, "killed": false,
+            "retained": 0, "retained_usd": 0.0 }
+        ]"#;
+        let runs: Vec<GatewayRunView> = serde_json::from_slice(json).expect("parse GatewayRunView");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].run_id, "held");
+        assert_eq!(runs[0].retained, 1);
+        assert!((runs[0].retained_usd - 0.008657).abs() < 1e-9);
+        assert_eq!(runs[1].retained, 0);
+        assert_eq!(runs[1].retained_usd, 0.0);
+    }
+
+    #[tokio::test]
+    async fn get_runs_sends_the_bearer_and_hits_v1_runs() {
+        let (port, handle) = spawn_mock_server(
+            "HTTP/1.1 200 OK",
+            r#"[{"run_id":"r1","budget_usd":1.0,"spent_usd":0.5,"reserved_usd":0.0,"remaining_usd":0.5,"steps":1,"pct_used":50.0,"killed":false,"retained":0,"retained_usd":0.0}]"#,
+        );
+        let client = GatewayClient::new(format!("http://127.0.0.1:{port}"))
+            .expect("build client")
+            .with_admin_key(Some("sk-console-admin-key".to_string()));
+
+        let runs = client.get_runs().await.expect("get_runs must parse");
+        let request = handle.join().expect("server thread must not panic");
+
+        assert_eq!(runs.len(), 1);
+        assert!(request.starts_with("GET /v1/runs"), "got: {request}");
+        assert!(
+            request
+                .to_lowercase()
+                .contains("authorization: bearer sk-console-admin-key"),
+            "get_runs must carry the configured key as a bearer, got: {request}"
+        );
     }
 
     #[test]

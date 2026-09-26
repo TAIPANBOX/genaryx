@@ -77,6 +77,25 @@ export interface GatewayKeysReport {
   keys: GatewayKeyEntry[];
 }
 
+/** Mirrors `credentials::commands::RetainedRunDto`: one run the gateway is
+ * holding money open for, after a call whose outcome it never learned. */
+export interface RetainedRun {
+  run_id: string;
+  retained: number;
+  retained_usd: number;
+}
+
+/** Mirrors `credentials::commands::GatewayRetainedDto`, `GET /v1/runs` on the
+ * GATEWAY (not the Cloud's own `/v1/runs`) folded into a held-reservations
+ * report. `runs` already excludes every run with `retained === 0`; the totals
+ * are summed over the whole fleet the gateway answered for, not just the rows
+ * shown. */
+export interface GatewayRetained {
+  runs: RetainedRun[];
+  total_retained: number;
+  total_retained_usd: number;
+}
+
 // ============================================================================
 // Fetch helpers (mirrors lib/identity.ts's call()/toIdentityError() shape)
 // ============================================================================
@@ -126,6 +145,13 @@ export async function fetchCredentialsStatus(): Promise<CredentialsStatus> {
 /** `GET /v1/keys` via the console's own command layer. */
 export const fetchCredentialsKeys = (): Promise<GatewayKeysReport> =>
   call<GatewayKeysReport>("credentials_keys");
+
+/** The gateway's held-reservations report - throws the same `CredentialsError`
+ * shape as every other fetcher here when the gateway plane is not configured
+ * or not reachable, so a caller can say so instead of rendering a zero that
+ * looks measured. */
+export const fetchGatewayRetainedRuns = (): Promise<GatewayRetained> =>
+  call<GatewayRetained>("credentials_gateway_retained_runs");
 
 /** Human-readable text for any `CredentialsError` - mirrors
  * `lib/identity.ts`'s `describeIdentityError`. */

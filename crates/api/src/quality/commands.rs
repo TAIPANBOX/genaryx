@@ -27,7 +27,7 @@
 use super::env::EnvSource;
 use super::state::{QualityClient, QualityInner, QualityState};
 use genaryx_connectors::{
-    VerdryxBaseline, VerdryxClient, VerdryxError, VerdryxRunSummary, VerdryxScore,
+    VerdryxBaselineSummary, VerdryxClient, VerdryxError, VerdryxRunSummary, VerdryxScore,
 };
 use serde::Serialize;
 
@@ -184,13 +184,15 @@ pub async fn quality_run_scores(
     run_blocking(move || VerdryxClient::open(&client.db_path)?.scores_for_run(&run_id)).await
 }
 
-/// Every saved baseline, newest-created first (docs/PHASE4.md W1 position
-/// 3).
+/// Every saved baseline, newest-created first, each paired with the
+/// unanswered accounting of the run it was snapshotted from (docs/PHASE4.md
+/// W1 position 3; unanswered accounting added so a baseline taken from a
+/// partly-unanswered run shows that too, never just the frozen mean).
 pub async fn quality_list_baselines(
     state: &QualityState,
-) -> Result<Vec<VerdryxBaseline>, QualityError> {
+) -> Result<Vec<VerdryxBaselineSummary>, QualityError> {
     let client = ready_client(&state).await?;
-    run_blocking(move || VerdryxClient::open(&client.db_path)?.list_baselines()).await
+    run_blocking(move || VerdryxClient::open(&client.db_path)?.list_baseline_summaries()).await
 }
 
 #[cfg(test)]

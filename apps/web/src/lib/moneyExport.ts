@@ -61,6 +61,20 @@ export function runUnitLabel(run: Run): string {
   return run.unit && run.unit.length > 0 ? run.unit : "no unit resolved";
 }
 
+/** The human at the root of this run's delegation chain, or an honest
+ * absence.
+ *
+ * `RunAgg.owner` is `""` on a Cloud older than the field (`serde(default)`),
+ * which is why this reads "not reported" and not "no owner resolved": unlike
+ * `unit` (where an empty string is the Cloud's own answer, "nothing
+ * resolved"), an empty owner does not distinguish "this Cloud resolved none"
+ * from "this Cloud was never asked" - the money plane's separate `/v1/owners`
+ * view is where "resolved and nobody" lives, as the literal `"unassigned"`
+ * bucket. */
+export function runOwnerLabel(run: Run): string {
+  return run.owner && run.owner.length > 0 ? run.owner : "not reported";
+}
+
 /** The Governed savings caption on the Money tab.
  *
  * `Savings.budget_breaks` reaches this view on every refresh and rendered only
@@ -87,6 +101,10 @@ export interface RunExportRow {
   run_id: string;
   agent_id: string;
   unit: string | null;
+  /** `null` when the Cloud sent nothing (older Cloud, or never asked to
+   * attribute one) - see [`runOwnerLabel`]'s doc comment for why this reads
+   * differently from `unit`'s own empty-string case. */
+  owner: string | null;
   model: string | null;
   spent_usd: number;
   budget_usd: number | null;
@@ -101,6 +119,7 @@ export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: st
   { key: "run_id", header: "run_id" },
   { key: "agent_id", header: "agent_id" },
   { key: "unit", header: "unit" },
+  { key: "owner", header: "owner" },
   { key: "model", header: "model" },
   { key: "spent_usd", header: "spent_usd" },
   { key: "budget_usd", header: "budget_usd" },
@@ -132,6 +151,7 @@ export function runsExportRows(runs: Run[]): RunExportRow[] {
     // money plane carried for that run, not a value this console lost.
     agent_id: r.agent_id,
     unit: orNull(r.unit),
+    owner: orNull(r.owner),
     model: orNull(r.model),
     spent_usd: r.spent_usd,
     budget_usd: numberOrNull(r.budget_usd),
@@ -166,6 +186,7 @@ export function runsExportMeta(opts: {
       "This console does not page GET /v1/runs, so the file is exactly that endpoint's answer. Whether the Cloud itself caps or windows that array is the Cloud's own decision and is not visible from here.",
       "An empty budget_usd means this console could not learn a budget for the run, never that the run has none: a budget is knowable only once the Cloud's alert threshold has tripped for it, or somebody set one from this console in this session.",
       "An empty unit means the Cloud's identity map resolved none for that run. The run was still charged whatever the Cloud charged it.",
+      "An empty owner means this Cloud sent no owner for that run at all (an older Cloud, or one never asked to attribute one). It is not the same claim as an empty unit: this console cannot tell 'resolved and nobody' from 'never asked' through this field.",
       "An empty agent_id is what the money plane carried for that run, not a value this console dropped.",
       "An empty model means the run's aggregate carried none.",
       "An empty cache_hits means the field never arrived. A cache_hits of 0 means the money plane counted no cache hit for that run. They are different statements and this file keeps them apart.",

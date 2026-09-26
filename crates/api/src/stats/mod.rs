@@ -92,14 +92,16 @@ const BLOCKED_TYPES: &[&str] = &[
 /// description of the behaviour rather than a category of it, and it reaches
 /// the operator through [`AgentStats::by_detector`].
 const ANOMALY_TYPES: &[&str] = &[
-    // tokenfuse, the three runaway shapes.
+    // tokenfuse, the three runaway shapes, plus a stop that never resolved.
     "sustained_loop",
     "spend_spike",
     "fanout_explosion",
-    // verdryx, engram, mockryx.
+    "run_stalled",
+    // verdryx, engram, mockryx, typryx.
     "quality_drift",
     "contradiction_found",
     "sim_finding",
+    "calibration_drift",
     // idryx, one type carrying twenty-five detectors.
     "identity_finding",
 ];
@@ -1068,6 +1070,26 @@ mod tests {
             "console_command is the audit record of a kill, and run_killed is the kill"
         );
         assert!(BLOCKED_TYPES.contains(&"run_killed"));
+    }
+
+    /// agent-passport's SPEC.md registry names `run_stalled` (tokenfuse,
+    /// medium) and `calibration_drift` (typryx, high) as anomaly-shaped
+    /// findings this console had never onboarded: `run_stalled` is a stop
+    /// that never resolved rather than an operator-initiated block, and
+    /// `calibration_drift` is typryx's own drift signal, the same class as
+    /// verdryx's `quality_drift`. Neither travels a detector name the way
+    /// `identity_finding` does, so each is its own counted type here, exactly
+    /// like `quality_drift`/`sim_finding`/`contradiction_found` above.
+    #[test]
+    fn run_stalled_and_calibration_drift_are_recognized_anomaly_types() {
+        assert!(
+            ANOMALY_TYPES.contains(&"run_stalled"),
+            "run_stalled (tokenfuse, agent-passport SPEC 6.2) must count as an anomaly"
+        );
+        assert!(
+            ANOMALY_TYPES.contains(&"calibration_drift"),
+            "calibration_drift (typryx, agent-passport SPEC 6.2) must count as an anomaly"
+        );
     }
 
     /// SPEC 6.2 marks the whole idryx row RESERVED: those detections leave by

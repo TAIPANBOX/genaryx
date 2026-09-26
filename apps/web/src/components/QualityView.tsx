@@ -13,7 +13,7 @@ import { ExportBar } from "../lib/cryptoExportBar";
 import { downloadCsv, downloadJson } from "../lib/download";
 import { useQualityStatus } from "../lib/useQualityStatus";
 import { formatHm } from "../lib/format";
-import type { QualityError, QualityStatus, VerdryxBaseline, VerdryxRunSummary, VerdryxScore } from "../qualityTypes";
+import type { QualityError, QualityStatus, VerdryxBaselineSummary, VerdryxRunSummary, VerdryxScore } from "../qualityTypes";
 import { QualityBaselines } from "./QualityBaselines";
 import { QualityDriftStream } from "./QualityDriftStream";
 import { QualityRunDetail } from "./QualityRunDetail";
@@ -107,7 +107,7 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
   const ready = status?.state === "ready";
 
   const [runs, setRuns] = useState<VerdryxRunSummary[] | null>(null);
-  const [baselines, setBaselines] = useState<VerdryxBaseline[] | null>(null);
+  const [baselines, setBaselines] = useState<VerdryxBaselineSummary[] | null>(null);
   const [error, setError] = useState<QualityError | null>(null);
   const [asOfMs, setAsOfMs] = useState<number | null>(null);
 
@@ -209,14 +209,14 @@ export function QualityView({ onOpenAgent }: { onOpenAgent: (agentId: string) =>
             <Hero
               cap="Quality · eval runs"
               value={runs.length.toLocaleString("en-US")}
-              sub={<>latest mean {latestRun?.mean_score !== null && latestRun?.mean_score !== undefined ? latestRun.mean_score.toFixed(3) : "n/a"}</>}
+              sub={<>latest mean {latestRun?.mean_score !== null && latestRun?.mean_score !== undefined ? latestRun.mean_score.toFixed(3) : "unmeasured"}</>}
             />
           }
           tiles={
             <>
               <KpiTile
                 label="Latest mean score"
-                value={latestRun?.mean_score !== null && latestRun?.mean_score !== undefined ? latestRun.mean_score.toFixed(3) : "n/a"}
+                value={latestRun?.mean_score !== null && latestRun?.mean_score !== undefined ? latestRun.mean_score.toFixed(3) : "unmeasured"}
                 sub={latestRun ? `${latestRun.run.model} · ${latestRun.case_count} cases` : "no runs yet"}
               />
               <KpiTile label="Baselines" value={baselines.length.toLocaleString("en-US")} sub="saved snapshots" />

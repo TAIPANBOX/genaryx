@@ -2,7 +2,7 @@ import { hasBackend, invokeBackend } from "./transport";
 import type {
   QualityError,
   QualityStatus,
-  VerdryxBaseline,
+  VerdryxBaselineSummary,
   VerdryxRunSummary,
   VerdryxScore,
 } from "../qualityTypes";
@@ -63,9 +63,37 @@ export const fetchRunSummaries = (): Promise<VerdryxRunSummary[]> =>
 export const fetchRunScores = (runId: string): Promise<VerdryxScore[]> =>
   call<VerdryxScore[]>("quality_run_scores", { run_id: runId });
 
-/** Every saved baseline, newest-created first. */
-export const fetchBaselines = (): Promise<VerdryxBaseline[]> =>
-  call<VerdryxBaseline[]>("quality_list_baselines");
+/** Every saved baseline, newest-created first, each paired with the
+ * unanswered accounting of the run it was snapshotted from. */
+export const fetchBaselines = (): Promise<VerdryxBaselineSummary[]> =>
+  call<VerdryxBaselineSummary[]>("quality_list_baselines");
+
+/** Something with a mean score and an unanswered breakdown - the shape both
+ * [`VerdryxRunSummary`](../qualityTypes) and [`VerdryxBaselineSummary`] carry,
+ * factored out so one formatter serves both the Eval-runs table and
+ * Baselines. */
+export interface QualityMeanFields {
+  mean_score: number | null;
+  case_count: number;
+  unanswered_count: number;
+  unanswered_by_reason: { reason: string; count: number }[];
+  unanswered_supported: boolean;
+}
+
+/** The mean-score sentence the Quality panel reads instead of a bare number:
+ * "mean 0.82 over 57 answered, 3 unanswered (label_mass_too_low: 3)", or
+ * "unmeasured" for a run that answered none at all - never a mean of `0`.
+ *
+ * On a store that predates verdryx's `unanswered` table
+ * (`unanswered_supported` false), the unanswered half is omitted entirely
+ * rather than rendered as a `0` that looks measured. */
+export function formatQualityMean(s: QualityMeanFields): string {
+  if (s.mean_score === null) return "unmeasured";
+  const base = `mean ${s.mean_score.toFixed(2)} over ${s.case_count} answered`;
+  if (!s.unanswered_supported || s.unanswered_count === 0) return base;
+  const reasons = s.unanswered_by_reason.map((r) => `${r.reason}: ${r.count}`).join(", ");
+  return `${base}, ${s.unanswered_count} unanswered (${reasons})`;
+}
 
 /** Human-readable text for any `QualityError` - used for the plain error
  * banner (mirrors `lib/identity.ts`'s `describeIdentityError`). */
