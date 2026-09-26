@@ -57,6 +57,20 @@ describe("RetainedReservationsBody", () => {
   });
 });
 
+describe("RetainedReservationsBody, an answer that is not a report", () => {
+  // The mock transport's catch-all once answered this command with `[]`
+  // (its name ends in `_runs`), and the Money tab went blank: formatUsd threw
+  // on an undefined total and took the whole view down with it.
+  it("says the answer could not be read instead of crashing the Money tab", () => {
+    const ready = { state: "ready", source: { source: "taipan", name: "p1" }, gateway_url: "http://x" } as const;
+    for (const bad of [[], {}, { runs: [] }, { runs: "x", total_retained: 0, total_retained_usd: 0 }]) {
+      const out = render(ready, bad as unknown as GatewayRetained);
+      expect(out).toContain("could not be read");
+      expect(out).not.toContain("held after unknown outcome");
+    }
+  });
+});
+
 describe("retainedFeedItems", () => {
   it("pluralizes the reservation count", () => {
     const data: GatewayRetained = {
