@@ -67,6 +67,17 @@ pub struct CopilotConfig {
     /// Hard gate, default `false`: a non-local `base_url` is refused unless this
     /// is explicitly `true` (the BYO-cloud path, D13.2).
     pub allow_non_local_endpoints: bool,
+    /// `GENARYX_COPILOT_LOCAL_HOSTNAMES` (2026-09-27, invariant 14): an
+    /// allow-list of exact hostnames (case-insensitive) the residency gate
+    /// may resolve and check, so a Kubernetes Service name or a Compose
+    /// service name (which is neither a literal address nor `localhost`, the
+    /// only two things `residency::is_local_endpoint` can prove local on its
+    /// own) can pass the gate without opening it to every destination the
+    /// way `allow_non_local_endpoints` does. Empty (the default) keeps the
+    /// gate's original behaviour: any hostname other than `localhost` is
+    /// refused outright, with no DNS lookup at all. See
+    /// `crate::provider::check_residency` and `crate::resolver`.
+    pub local_hostnames: Vec<String>,
     /// The copilot's own daily spend ceiling, enforced via the local TokenFuse
     /// gateway in C2 (D13.3). Carried in config from C0 so the knob is stable.
     pub max_usd_per_day: f64,
@@ -97,6 +108,7 @@ impl Default for CopilotConfig {
             model: None,
             api_key_ref: None,
             allow_non_local_endpoints: false,
+            local_hostnames: Vec::new(),
             max_usd_per_day: 5.0,
             max_iterations: 6,
             max_tokens: 1024,

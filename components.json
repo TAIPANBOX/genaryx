@@ -60,6 +60,9 @@
           "GENARYX_COPILOT_BASE_URL": {
             "required": false
           },
+          "GENARYX_COPILOT_LOCAL_HOSTNAMES": {
+            "required": false
+          },
           "GENARYX_COPILOT_MODEL": {
             "required": false
           },

@@ -17,10 +17,14 @@ mod openai;
 pub use anthropic::AnthropicMessages;
 pub use openai::OpenAiCompat;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::config::{ConfigError, CopilotConfig, ProviderKind};
+use crate::residency::{HostResidency, classify_host};
+use crate::resolver::{HostnameLookup, ResidencyDnsResolver, SystemLookup, resolve_all_local};
 
 /// A provider-agnostic chat turn request. `tools` are advertised to the model;
 /// the loop, not the provider, decides what to do with any returned tool calls.
@@ -188,6 +192,7 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
                 model,
                 api_key,
                 config.allow_non_local_endpoints,
+                config.local_hostnames.clone(),
                 config.run_id.clone(),
                 agent_id,
             )
@@ -206,6 +211,7 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
                 model,
                 api_key,
                 config.allow_non_local_endpoints,
+                config.local_hostnames.clone(),
                 config.run_id.clone(),
                 agent_id,
             )
@@ -213,4 +219,115 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
             Ok(Some(Box::new(provider)))
         }
     }
+}
+
+/// What the residency gate decided about a `base_url`, and what the HTTP
+/// client needs to keep enforcing it: `local` for the descriptor banner,
+/// plus, only for a checked hostname, the custom DNS resolver that re-runs
+/// the same check on every connection (invariant 14).
+pub(crate) struct ResidencyOutcome {
+    pub local: bool,
+    pub dns_resolver: Option<ResidencyDnsResolver>,
+}
+
+/// The residency gate itself, shared by both real provider constructors.
+///
+/// A literal IP or `localhost` is decided instantly, exactly as before this
+/// change (invariant D13.2's original behaviour, untouched): local passes
+/// with no resolver installed; non-local passes only when
+/// `allow_non_local_endpoints` is set (`GENARYX_COPILOT_ALLOW_REMOTE`), and
+/// that path is untouched too - no hostname logic runs once that opt-in is
+/// set, exactly like before.
+///
+/// A bare hostname is refused outright UNLESS the operator named it in
+/// `local_hostnames` (`GENARYX_COPILOT_LOCAL_HOSTNAMES`): the safe default
+/// stays "any hostname other than `localhost` is refused, with no DNS call
+/// at all", and only a hostname the operator explicitly listed - a
+/// Kubernetes Service name or Compose service name they themselves put in
+/// the deployment's manifest - gets resolved and checked at all. When it is
+/// checked, EVERY address it resolves to right now must be local (checked
+/// once here, for a fast, friendly refusal at construction), and the same
+/// check is wired into the returned resolver so it runs again on every
+/// connection the client makes (see `resolver.rs`'s module doc for why a
+/// build-time-only check is not enough).
+pub(crate) fn check_residency(
+    base_url: &str,
+    allow_non_local_endpoints: bool,
+    local_hostnames: &[String],
+    lookup: Arc<dyn HostnameLookup>,
+) -> Result<ResidencyOutcome, ProviderError> {
+    match classify_host(base_url) {
+        HostResidency::Literal(true) => Ok(ResidencyOutcome {
+            local: true,
+            dns_resolver: None,
+        }),
+        HostResidency::Literal(false) => {
+            if allow_non_local_endpoints {
+                Ok(ResidencyOutcome {
+                    local: false,
+                    dns_resolver: None,
+                })
+            } else {
+                Err(ProviderError::NonLocalEndpointRefused {
+                    url: base_url.to_string(),
+                })
+            }
+        }
+        HostResidency::Hostname(name) => {
+            if allow_non_local_endpoints {
+                // Unchanged BYO-cloud opt-in: any destination, no hostname
+                // check, no DNS call - exactly the pre-existing behaviour.
+                return Ok(ResidencyOutcome {
+                    local: false,
+                    dns_resolver: None,
+                });
+            }
+            if !local_hostnames
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(&name))
+            {
+                return Err(ProviderError::NonLocalEndpointRefused {
+                    url: base_url.to_string(),
+                });
+            }
+            resolve_all_local(lookup.as_ref(), &name).map_err(|refusal| {
+                ProviderError::NonLocalEndpointRefused {
+                    url: format!("{base_url} ({refusal})"),
+                }
+            })?;
+            Ok(ResidencyOutcome {
+                local: true,
+                dns_resolver: Some(ResidencyDnsResolver::new(lookup)),
+            })
+        }
+    }
+}
+
+/// The production lookup every real provider constructor uses by default:
+/// the OS resolver. Test-only constructors (`new_with_lookup`) inject a
+/// fixed table instead.
+pub(crate) fn system_lookup() -> Arc<dyn HostnameLookup> {
+    Arc::new(SystemLookup)
+}
+
+/// Turn a `reqwest::Error` from `.send()` into a `ProviderError`, promoting a
+/// residency refusal found in its source chain (`resolver::ResidencyRefusal`,
+/// raised by `ResidencyDnsResolver` at connect time - invariant 14) to
+/// `NonLocalEndpointRefused` instead of the generic `Transport` every other
+/// send failure gets. Without this, a hostname refused at the moment reqwest
+/// actually dials it would read as an ordinary network error, indistinguishable
+/// from a timeout or a DNS hiccup - the opposite of an operator-readable
+/// refusal that stays the same shape whether it is caught at construction or
+/// at connection time.
+pub(crate) fn map_send_error(url: &str, e: reqwest::Error) -> ProviderError {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
+    while let Some(err) = source {
+        if let Some(refusal) = err.downcast_ref::<crate::resolver::ResidencyRefusal>() {
+            return ProviderError::NonLocalEndpointRefused {
+                url: format!("{url} ({refusal})"),
+            };
+        }
+        source = err.source();
+    }
+    ProviderError::Transport(e.to_string())
 }

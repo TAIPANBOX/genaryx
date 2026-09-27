@@ -111,6 +111,7 @@ async fn anthropic_request_carries_the_configured_x_fuse_agent_id_header() {
         "claude".into(),
         "k".into(),
         false, // the stub is bound to 127.0.0.1, which the residency gate treats as local
+        Vec::new(),
         "genaryx-copilot".into(),
         "agent://acme.example/genaryx/felyx".into(),
     )
@@ -150,6 +151,7 @@ async fn openai_compat_request_carries_the_configured_x_fuse_agent_id_header() {
         "x".into(),
         None,
         false,
+        Vec::new(),
         "genaryx-copilot".into(),
         "agent://acme.example/genaryx/felyx".into(),
     )
