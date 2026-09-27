@@ -80,6 +80,13 @@ pub struct CopilotConfig {
     /// 402 stops a runaway copilot). Harmless against a raw Ollama/Anthropic
     /// endpoint, which just ignores the header. Defaults to `genaryx-copilot`.
     pub run_id: String,
+    /// `GENARYX_COPILOT_AGENT_ID` (2026-09-27 defect fix): an explicit override
+    /// for the `x-fuse-agent-id` header every real provider now sends beside
+    /// `x-fuse-run-id`, so a TokenFuse gateway running its Wardryx hook in
+    /// enforce mode can identify Felyx's own calls instead of refusing them for
+    /// carrying no agent identity. `None` (or empty after trimming) resolves to
+    /// a default rather than disabling anything; see [`Self::resolved_agent_id`].
+    pub agent_id: Option<String>,
 }
 
 impl Default for CopilotConfig {
@@ -94,8 +101,62 @@ impl Default for CopilotConfig {
             max_iterations: 6,
             max_tokens: 1024,
             run_id: "genaryx-copilot".to_string(),
+            agent_id: None,
         }
     }
+}
+
+/// `GENARYX_ORG_DOMAIN`, default `local`: the same variable
+/// `crates/api/src/journal.rs` reads to build the console's OWN emitted
+/// `agent_id` (`agent://<org_domain>/console/<host>`). A second, independent
+/// reader of the same name, in the sanctioned shape CLAUDE.md's trap 13
+/// already names for `TOKENFUSE_GATEWAY_ADMIN_KEY` and `GENARYX_SCAN_TARGET`:
+/// this crate does not depend on `genaryx-api`, so it cannot call
+/// `journal.rs`'s own resolution, and inventing a second variable name for
+/// the same concept would be the actual mistake.
+const ORG_DOMAIN_VAR: &str = "GENARYX_ORG_DOMAIN";
+const DEFAULT_ORG_DOMAIN: &str = "local";
+
+fn org_domain() -> String {
+    std::env::var(ORG_DOMAIN_VAR)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_ORG_DOMAIN.to_string())
+}
+
+/// The estate's agent-id grammar, byte-for-byte the pattern
+/// `crates/core/src/schemas/agent-event.v0.2.schema.json` enforces on the
+/// wire (`^agent://[a-z0-9.-]+/[a-z0-9._/-]+$`, `maxLength` 255) and
+/// `crates/core/src/command.rs`'s `console_command_line` doc comment names
+/// for the console's own emitted `agent_id`. `crates/api/src/onboard/
+/// commands.rs`'s `valid_agent_id` holds the identical shape for the onboard
+/// wizard's agent ids; kept as its own copy here rather than reached for
+/// across the crate boundary (this crate has no dependency on `genaryx-api`,
+/// and `genaryx-core` is DTOs only, not this predicate).
+fn is_valid_agent_id(id: &str) -> bool {
+    if id.len() > 255 {
+        return false;
+    }
+    let Some(rest) = id.strip_prefix("agent://") else {
+        return false;
+    };
+    let Some((domain, path)) = rest.split_once('/') else {
+        return false;
+    };
+    !domain.is_empty()
+        && domain
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
+        && !path.is_empty()
+        && path.chars().all(|c| {
+            c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || c == '.'
+                || c == '_'
+                || c == '/'
+                || c == '-'
+        })
 }
 
 impl CopilotConfig {
@@ -132,6 +193,25 @@ impl CopilotConfig {
         match &self.api_key_ref {
             None => Ok(None),
             Some(reference) => SecretRef::parse(reference)?.resolve().map(Some),
+        }
+    }
+
+    /// The `x-fuse-agent-id` header value every real provider sends: an
+    /// explicit `agent_id` when it is set and non-empty after trimming,
+    /// refused (never silently substituted) when it does not match the
+    /// estate's agent-id grammar; otherwise the default,
+    /// `agent://<GENARYX_ORG_DOMAIN>/genaryx/felyx`. Never logged above
+    /// `debug` by any caller, and never alongside the provider API key.
+    pub fn resolved_agent_id(&self) -> Result<String, ConfigError> {
+        match self.agent_id.as_deref().map(str::trim) {
+            Some(v) if !v.is_empty() => {
+                if is_valid_agent_id(v) {
+                    Ok(v.to_string())
+                } else {
+                    Err(ConfigError::BadAgentId(v.to_string()))
+                }
+            }
+            _ => Ok(format!("agent://{}/genaryx/felyx", org_domain())),
         }
     }
 }
@@ -182,6 +262,11 @@ pub enum ConfigError {
     BadSecretRef(String),
     #[error("copilot secret unavailable: {0}")]
     SecretUnavailable(String),
+    #[error(
+        "GENARYX_COPILOT_AGENT_ID `{0}` does not match the agent-id grammar \
+         `agent://<domain>/<path>` (agent-passport SPEC section 3)"
+    )]
+    BadAgentId(String),
     #[error(transparent)]
     Provider(ProviderError),
 }
@@ -267,5 +352,78 @@ mod tests {
             .resolve()
             .unwrap();
         assert_eq!(resolved, "sk-abc123");
+    }
+
+    /// One sequential test for the whole `agent_id` resolution surface, the
+    /// same discipline `state.rs`'s `config_from_env_reads_the_provider_surface`
+    /// already uses for `GENARYX_COPILOT_*`: `GENARYX_ORG_DOMAIN` is process-wide
+    /// state, so splitting these cases across separate `#[test]` fns would race
+    /// under the parallel runner. Run against the unfixed tree (no `agent_id`
+    /// field, no `resolved_agent_id` method, no `BadAgentId` variant), this
+    /// failed to compile with 11 errors naming exactly those three names.
+    #[test]
+    fn resolved_agent_id_defaults_explicit_empty_and_malformed() {
+        // SAFETY: single-threaded within this test; no other test in this
+        // binary reads or writes GENARYX_ORG_DOMAIN.
+        unsafe {
+            std::env::remove_var("GENARYX_ORG_DOMAIN");
+        }
+
+        // No override at all: the default, org domain "local".
+        let cfg = CopilotConfig::default();
+        assert_eq!(
+            cfg.resolved_agent_id().unwrap(),
+            "agent://local/genaryx/felyx"
+        );
+
+        // An explicit org domain changes the default.
+        unsafe {
+            std::env::set_var("GENARYX_ORG_DOMAIN", "acme.example");
+        }
+        assert_eq!(
+            cfg.resolved_agent_id().unwrap(),
+            "agent://acme.example/genaryx/felyx"
+        );
+        unsafe {
+            std::env::remove_var("GENARYX_ORG_DOMAIN");
+        }
+
+        // An explicit, valid override wins over any default.
+        let explicit = CopilotConfig {
+            agent_id: Some("agent://acme.example/genaryx/felyx-2".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            explicit.resolved_agent_id().unwrap(),
+            "agent://acme.example/genaryx/felyx-2"
+        );
+
+        // Empty (or all-whitespace) falls back to the default rather than
+        // being treated as a set value.
+        let empty = CopilotConfig {
+            agent_id: Some("   ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            empty.resolved_agent_id().unwrap(),
+            "agent://local/genaryx/felyx"
+        );
+
+        // A malformed value is refused, never silently substituted.
+        let malformed = CopilotConfig {
+            agent_id: Some("not-an-agent-id".to_string()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            malformed.resolved_agent_id(),
+            Err(ConfigError::BadAgentId(v)) if v == "not-an-agent-id"
+        ));
+
+        // A value missing the required second path segment is refused too.
+        let no_path = CopilotConfig {
+            agent_id: Some("agent://acme.example".to_string()),
+            ..Default::default()
+        };
+        assert!(no_path.resolved_agent_id().is_err());
     }
 }

@@ -48,6 +48,9 @@
         "listen_default": "127.0.0.1:7420",
         "health_path": "/healthz",
         "env": {
+          "GENARYX_COPILOT_AGENT_ID": {
+            "required": false
+          },
           "GENARYX_COPILOT_ALLOW_REMOTE": {
             "required": false
           },

@@ -133,6 +133,11 @@ fn config_from_env() -> CopilotConfig {
         api_key_ref: std::env::var("GENARYX_COPILOT_API_KEY_REF").ok(),
         allow_non_local_endpoints: std::env::var("GENARYX_COPILOT_ALLOW_REMOTE")
             .is_ok_and(|v| v == "1"),
+        // 2026-09-27 defect fix: an explicit `x-fuse-agent-id` override, read
+        // verbatim like every other GENARYX_COPILOT_* setting. `None` (unset)
+        // is fine: `CopilotConfig::resolved_agent_id` derives a default from
+        // `GENARYX_ORG_DOMAIN` rather than treating this as required.
+        agent_id: std::env::var("GENARYX_COPILOT_AGENT_ID").ok(),
         ..CopilotConfig::default()
     }
 }
@@ -338,6 +343,7 @@ mod tests {
             std::env::set_var("GENARYX_COPILOT_BASE_URL", "http://127.0.0.1:11434/v1");
             std::env::set_var("GENARYX_COPILOT_MODEL", "qwen2.5:3b");
             std::env::remove_var("GENARYX_COPILOT_ALLOW_REMOTE");
+            std::env::remove_var("GENARYX_COPILOT_AGENT_ID");
             let cfg = config_from_env();
             assert_eq!(cfg.provider, ProviderKind::Ollama);
             assert_eq!(cfg.base_url.as_deref(), Some("http://127.0.0.1:11434/v1"));
@@ -347,6 +353,10 @@ mod tests {
                 cfg.max_usd_per_day,
                 CopilotConfig::default().max_usd_per_day
             );
+            // Unset (2026-09-27 defect fix): no explicit override reaches the
+            // config type at all, so `CopilotConfig::resolved_agent_id`'s own
+            // default derivation is what runs, not this shell.
+            assert_eq!(cfg.agent_id, None);
 
             // The BYO-cloud opt-in is the literal "1", nothing looser.
             std::env::set_var("GENARYX_COPILOT_ALLOW_REMOTE", "true");
@@ -354,11 +364,26 @@ mod tests {
             std::env::set_var("GENARYX_COPILOT_ALLOW_REMOTE", "1");
             assert!(config_from_env().allow_non_local_endpoints);
 
+            // An explicit GENARYX_COPILOT_AGENT_ID is read the same way every
+            // other GENARYX_COPILOT_* setting is: verbatim into the config
+            // type, unvalidated here (validation is `resolved_agent_id`'s job,
+            // `crates/copilot/src/config.rs`, so a malformed value fails
+            // copilot construction rather than this env-reading step).
+            std::env::set_var(
+                "GENARYX_COPILOT_AGENT_ID",
+                "agent://acme.example/genaryx/felyx",
+            );
+            assert_eq!(
+                config_from_env().agent_id.as_deref(),
+                Some("agent://acme.example/genaryx/felyx")
+            );
+
             for var in [
                 "GENARYX_COPILOT_PROVIDER",
                 "GENARYX_COPILOT_BASE_URL",
                 "GENARYX_COPILOT_MODEL",
                 "GENARYX_COPILOT_ALLOW_REMOTE",
+                "GENARYX_COPILOT_AGENT_ID",
             ] {
                 std::env::remove_var(var);
             }

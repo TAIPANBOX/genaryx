@@ -502,6 +502,56 @@ an absent invariant.
     read reqwest itself performs, which is reqwest's own buffering and not
     something this code controls.)*
 
+13. **Felyx's own model calls carry an agent identity, so a TokenFuse gateway
+    enforcing policy can govern the console's own AI instead of refusing it.**
+    `@decided 2026-09-27`, measured the same day on a live cluster: Felyx
+    pointed at the stack's own gateway with its Wardryx hook in enforce mode
+    got a `400 identity_required` on every call, because
+    `crates/copilot/src/provider/{anthropic,openai}.rs` sent `x-api-key`/bearer
+    auth and `x-fuse-run-id` (the C2 self-budget) but never `x-fuse-agent-id`.
+    Both real provider clients now send `x-fuse-agent-id` beside
+    `x-fuse-run-id` on every call. The value comes from
+    `GENARYX_COPILOT_AGENT_ID` (`crates/api/src/copilot/state.rs`, read into
+    `CopilotConfig::agent_id`, `crates/copilot/src/config.rs`): unset or empty
+    resolves to `agent://<GENARYX_ORG_DOMAIN, default "local">/genaryx/felyx`,
+    the same domain source `crates/api/src/journal.rs` already reads for the
+    console's own emitted `agent_id` (a second independent reader, the
+    sanctioned shape trap 13 already names for
+    `TOKENFUSE_GATEWAY_ADMIN_KEY`/`GENARYX_SCAN_TARGET`); an explicit value
+    that does not match the estate's agent-id grammar
+    (`^agent://[a-z0-9.-]+/[a-z0-9._/-]+$`, `crates/core/src/schemas/
+    agent-event.v0.2.schema.json`) is refused, naming the setting and the
+    value, the same "say so, do not guess" posture every other misconfigured
+    copilot setting already takes (`ConfigError`, surfaced as
+    `CopilotInner::Failed`'s reason: Felyx reports itself disabled, the
+    console keeps serving every other panel). The launchers are NOT changed
+    by this: nothing sets `GENARYX_COPILOT_AGENT_ID` in a running stack yet,
+    which is a separate, later decision.
+    *(test: `crates/copilot/src/config.rs`'s
+    `resolved_agent_id_defaults_explicit_empty_and_malformed` (default
+    derivation, an explicit org domain, an explicit override, empty falling
+    back, a malformed value refused, a value missing its path segment
+    refused); `crates/copilot/tests/agent_id_header_test.rs`'s
+    `anthropic_request_carries_the_configured_x_fuse_agent_id_header` and
+    `openai_compat_request_carries_the_configured_x_fuse_agent_id_header`
+    (a hand-rolled stub server capturing the real outbound request, both
+    providers); `crates/api/src/copilot/state.rs`'s
+    `config_from_env_reads_the_provider_surface` (the env var reaches the
+    config type verbatim). Every one of these ran against the unfixed tree
+    first: the config-level test failed to compile (11 errors: no `agent_id`
+    field, no `resolved_agent_id` method, no `BadAgentId` variant); the header
+    tests failed on an assertion (`x-fuse-agent-id` absent) with the header
+    line removed; the state.rs test failed on an assertion (`None` where
+    `Some("agent://acme.example/genaryx/felyx")` was expected) before
+    `config_from_env` read the variable. Scenarios:
+    `features/felyx-sends-its-own-agent-identity.feature`, four, each bound;
+    gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: this has not run against a real TokenFuse gateway
+    with Wardryx in enforce mode (the defect that motivated this was measured
+    live, the fix was not re-measured live); a launcher setting the variable
+    in a real deployment.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
