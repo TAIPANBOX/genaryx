@@ -665,6 +665,86 @@ an absent invariant.
     blocking task per connection attempt (matching hyper-util's own
     `GaiResolver`), and that scheduling overhead is not measured here.)*
 
+15. **Every money value a copilot tool hands to the model is decimal USD
+    under a key that says so, never a bare micro-USD integer.**
+    `@decided 2026-09-27`, found the same day, console v1.1.17, forge lab:
+    asked "Which planes can you see, and is each one healthy?", Felyx
+    answered "Run `genaryx-copilot` exceeded its $50 budget by 27% ($63.64
+    spent)". The Cloud's own figures were `budget_micros: 50000` (five
+    cents) and `spent_microusd: 63640` (about six and a third cents), read
+    straight off a `genaryx_connectors` DTO (`crates/copilot/src/tools/
+    cloud.rs`'s `to_result`, a plain `serde_json::to_value` of the wire
+    struct) and handed to the model as bare integers, with only the
+    tool's own prose description, not the JSON itself, ever saying the unit
+    was microdollars. In the SAME session, a different question about the
+    SAME run's alert got the conversion right ("spent $0.0547 on a $0.05
+    budget"): the model can do this arithmetic, it is just not required to,
+    and a value that is only sometimes converted correctly is a defect even
+    on the calls where it happens to come out right.
+
+    Every affected tool (`money_summary`, `list_runs`, `list_agents`,
+    `savings`, `alerts` in `crates/copilot/src/tools/cloud.rs`;
+    `savings_breakdown`, `cost_per_action` in `crates/copilot/src/tools/
+    optimize.rs`) now passes its result through `dollarize`
+    (`crates/copilot/src/tools/mod.rs`) before returning it: every
+    `..._microusd` key becomes a `..._usd` decimal sibling, and the one
+    field in this whole contract that means microUSD without saying "usd"
+    in its own name, `Alert`/`BudgetResponse`'s `budget_micros`, is
+    converted by an explicit allow-list entry rather than a bare `_micros`
+    suffix match, so a future unrelated `..._micros` field (a duration, say)
+    is never misread as money. A nested reason -> amount map
+    (`TokenfuseSavings::by_reason_microusd`) is walked one level further,
+    since there the unit lives in the outer key, not a sibling field, and a
+    `null` amount (`cost_per_tool_call_microusd: None`, "the rate is not
+    known") stays `null` under the renamed key rather than becoming a
+    computed `0.0` a model could read as a real answer. The
+    `genaryx_connectors` wire DTOs themselves are untouched, staying
+    byte-exact mirrors of the Cloud's own `store.rs` shapes
+    (`crates/connectors/src/cloud_rest.rs`'s own doc); the conversion runs on
+    the JSON `to_result` already built, the same "wire DTO stays wire-exact,
+    a separate value carries the conversion" split `crates/api/src/money/
+    commands.rs` already draws for the web frontend (its own
+    `micros_to_usd`, `dollarize`'s sibling on the other side of a crate
+    boundary this crate cannot depend across).
+    *(test: `crates/copilot/src/tools/mod.rs`'s eight `dollarize_*`/
+    `the_real_defect_amounts_*` tests hold the shared conversion itself,
+    including the allow-list (not suffix) rule and the null-stays-null rule;
+    `crates/copilot/src/tools/cloud.rs`'s
+    `money_summary_dollarizes_its_spend_field`,
+    `list_runs_dollarizes_every_row_and_the_wrapping_total`,
+    `alerts_dollarizes_both_the_spent_and_the_ambiguously_named_budget_field`
+    and `crates/copilot/src/tools/optimize.rs`'s
+    `savings_breakdown_dollarizes_its_money_fields`,
+    `cost_per_action_dollarizes_its_money_fields_and_keeps_a_null_rate_null`
+    hold each tool's own exact shape against a constructed connector DTO, no
+    live plane needed; `crates/copilot/tests/
+    money_reaches_the_model_as_usd_test.rs`'s five tests drive the REAL
+    `ToolRegistry::dispatch` path the agent loop uses, against a hand-rolled
+    stub Cloud (the same shape `crates/copilot/tests/
+    agent_id_header_test.rs` and `crates/api/tests/delegation_revoke_test.rs`
+    already use) - the layer the in-module tests do NOT cover, and the one
+    that actually caught the mutant below. Every test here failed to compile
+    against the unfixed tree (`dollarize` did not exist).
+    Mutant (planted by hand, run red, restored): the `read_tool!` macro's
+    call to `dollarize` dropped, reverting `money_summary`/`list_agents`/
+    `savings`/`alerts` to the raw connector JSON. Every in-module unit test
+    in `cloud.rs` and `optimize.rs` still passed, because they call
+    `to_result`/`dollarize` directly rather than through the tool the model
+    actually calls; only `money_reaches_the_model_as_usd_test.rs`'s
+    `ToolRegistry::dispatch` tests caught it (4 of its 5 failed, each on the
+    exact assertion the dropped conversion breaks). That gap is the reason
+    the integration test file exists at all rather than stopping at the
+    in-module tests. Scenarios: `features/felyx-reads-money-as-usd.feature`,
+    six, each bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no live model rerun against a real Cloud proves
+    Felyx itself now answers the three demo questions correctly; this closes
+    the tool-output half of the defect (the model can no longer receive a
+    bare micro-USD integer from these tools), not a re-run of the exact
+    2026-09-27 conversation. `incidents` carries no money field today and is
+    unchanged; a money field added to it later must still be wrapped in
+    `dollarize` by hand; nothing here makes that automatic.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
