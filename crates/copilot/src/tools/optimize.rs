@@ -4,6 +4,11 @@
 //! `spawn_blocking` bridge `crypto_scan` already established for a CLI
 //! connector (`crates/copilot/src/tools/crypto.rs`).
 //!
+//! Both results pass through `super::dollarize` before reaching the model,
+//! same as `tools::cloud`'s money tools, so every money field here reaches
+//! the model as a decimal `_usd` amount rather than a bare micro-USD
+//! integer (`dollarize`'s own doc comment, `tools/mod.rs`, names the defect).
+//!
 //! Both tools are READ ONLY. Felyx can see the cost/savings numbers, but this
 //! crate holds no signer (`crates/copilot/tests/no_signer.rs`), so it cannot
 //! itself flip on caching, change a route, or touch gateway config - an
@@ -34,7 +39,7 @@ use serde_json::Value;
 
 use genaryx_connectors::TokenfuseClient;
 
-use super::{Clients, TokenfuseTraces, Tool, ToolError, to_result};
+use super::{Clients, TokenfuseTraces, Tool, ToolError, dollarize, to_result};
 
 pub(super) fn tools() -> Vec<Box<dyn Tool>> {
     vec![Box::new(SavingsBreakdown), Box::new(CostPerAction)]
@@ -70,7 +75,7 @@ impl Tool for SavingsBreakdown {
                 tool: "savings_breakdown",
                 detail: e.to_string(),
             })?;
-        to_result("savings_breakdown", report)
+        Ok(dollarize(to_result("savings_breakdown", report)?))
     }
 }
 
@@ -86,7 +91,7 @@ impl Tool for CostPerAction {
          by model and by agent, including an average cost per tool call. `tool_calls` is only \
          recorded from I1 onward, so a row from an older trace reports it as UNKNOWN \
          (`tool_calls_known_rows == 0`) rather than zero - check that before reading \
-         `cost_per_tool_call_microusd` as real; it is `null` whenever the rate is not known or not \
+         `cost_per_tool_call_usd` as real; it is `null` whenever the rate is not known or not \
          defined. Use to find which model or agent is expensive per unit of work."
     }
     async fn run(&self, clients: &Clients, _args: &Value) -> Result<Value, ToolError> {
@@ -104,7 +109,7 @@ impl Tool for CostPerAction {
                 tool: "cost_per_action",
                 detail: e.to_string(),
             })?;
-        to_result("cost_per_action", report)
+        Ok(dollarize(to_result("cost_per_action", report)?))
     }
 }
 
@@ -126,8 +131,71 @@ fn run_cost_per_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use genaryx_connectors::{CostBreakdownRow, CostPerActionReport, TokenfuseSavings};
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    // Both tests below name the exact shaping `savings_breakdown` and
+    // `cost_per_action` hand back to the model, run against the same
+    // `to_result` + `dollarize` composition their `run` methods use (no live
+    // `tokenfuse-gateway` binary needed to prove the shape). Each failed to
+    // compile against the unfixed tree (`dollarize` did not exist yet).
+
+    #[test]
+    fn savings_breakdown_dollarizes_its_money_fields() {
+        let mut by_reason = BTreeMap::new();
+        by_reason.insert("budget_exceeded".to_string(), 3_000_000i64);
+        let report = TokenfuseSavings {
+            trace_data_found: true,
+            blocked_spend_microusd: 3_500_000,
+            blocked_calls: 4,
+            budget_breaks_prevented: 2,
+            cache_saved_microusd: 750_000,
+            router_saved_microusd: 100_000,
+            by_reason_microusd: by_reason,
+        };
+        let shaped = dollarize(to_result("savings_breakdown", report).unwrap());
+        assert_eq!(shaped["blocked_spend_usd"], json!(3.5));
+        assert_eq!(shaped["cache_saved_usd"], json!(0.75));
+        assert_eq!(shaped["router_saved_usd"], json!(0.1));
+        assert_eq!(shaped["by_reason_usd"]["budget_exceeded"], json!(3.0));
+        // Non-money counts pass through untouched.
+        assert_eq!(shaped["blocked_calls"], json!(4));
+        assert!(shaped.get("blocked_spend_microusd").is_none());
+        assert!(shaped.get("by_reason_microusd").is_none());
+    }
+
+    #[test]
+    fn cost_per_action_dollarizes_its_money_fields_and_keeps_a_null_rate_null() {
+        let report = CostPerActionReport {
+            by_model: vec![CostBreakdownRow {
+                label: "claude-opus".to_string(),
+                calls: 20,
+                total_cost_microusd: 28_750_000_404,
+                total_tool_calls: 0,
+                tool_calls_known_rows: 0,
+                cost_per_tool_call_microusd: None,
+            }],
+            by_agent: vec![CostBreakdownRow {
+                label: "planner".to_string(),
+                calls: 5,
+                total_cost_microusd: 1_000_000,
+                total_tool_calls: 20,
+                tool_calls_known_rows: 5,
+                cost_per_tool_call_microusd: Some(50_000),
+            }],
+        };
+        let shaped = dollarize(to_result("cost_per_action", report).unwrap());
+        assert_eq!(
+            shaped["by_model"][0]["total_cost_usd"],
+            json!(28_750.000404)
+        );
+        assert_eq!(shaped["by_model"][0]["cost_per_tool_call_usd"], json!(null));
+        assert_eq!(shaped["by_agent"][0]["total_cost_usd"], json!(1.0));
+        assert_eq!(shaped["by_agent"][0]["cost_per_tool_call_usd"], json!(0.05));
+        assert!(shaped["by_model"][0].get("total_cost_microusd").is_none());
+    }
 
     fn clients_with_tokenfuse() -> Clients {
         Clients {
