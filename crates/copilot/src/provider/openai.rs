@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::{
     ChatRequest, ChatTurn, LlmProvider, Message, ProviderDescriptor, ProviderError, Role, ToolCall,
-    Usage, check_residency, system_lookup,
+    Usage, check_residency, residency_client, system_lookup,
 };
 use crate::config::ProviderKind;
 use crate::resolver::HostnameLookup;
@@ -86,19 +86,14 @@ impl OpenAiCompat {
             &local_hostnames,
             lookup,
         )?;
-        let mut builder = reqwest::Client::builder();
-        if let Some(resolver) = outcome.dns_resolver {
-            builder = builder.dns_resolver(resolver);
-        }
-        let http = builder
-            .build()
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        let local = outcome.local;
+        let http = residency_client(outcome, allow_non_local_endpoints)?;
         Ok(Self {
             kind,
             base_url,
             model,
             api_key,
-            local: outcome.local,
+            local,
             run_id,
             agent_id,
             http,

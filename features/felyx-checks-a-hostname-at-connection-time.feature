@@ -71,3 +71,16 @@ Feature: The residency gate accepts an allow-listed hostname, checked at connect
     Given a literal public IP or GENARYX_COPILOT_ALLOW_REMOTE=1
     When the provider is constructed
     Then it behaves exactly as it did before this hostname allow-list existed
+
+  # @test:a_gated_client_on_a_literal_local_address_does_not_follow_a_redirect
+  # @test:a_gated_client_on_an_allow_listed_hostname_does_not_follow_a_redirect
+  Scenario: A local endpoint answers with a redirect elsewhere
+    Given Felyx points at a local address or an allow-listed hostname
+    When that endpoint answers 307 with a Location somewhere else
+    Then Felyx does not follow it, and nothing reaches the other address
+
+  # @test:a_gated_client_ignores_the_proxy_the_environment_names
+  Scenario: The process inherited a proxy setting
+    Given HTTP_PROXY names a proxy in Felyx's environment
+    When Felyx sends a turn to its local endpoint
+    Then the turn goes to the endpoint directly and never to the proxy

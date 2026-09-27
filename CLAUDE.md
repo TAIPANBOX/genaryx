@@ -594,8 +594,17 @@ an absent invariant.
     refusal found in a failed request's error chain is promoted to that
     shape rather than left as an indistinguishable network failure. Literal
     IPs and `GENARYX_COPILOT_ALLOW_REMOTE` are untouched: neither hostname
-    logic nor any DNS lookup runs on either of those paths.
-    *(test: `crates/copilot/src/resolver.rs`'s
+    logic nor any DNS lookup runs on either of those paths. While the gate is
+    in force the client follows no redirect and reads no proxy from the
+    environment (`provider::residency_client`): a `Location` naming a literal
+    public address, or an inherited `HTTP_PROXY`, would be a destination the
+    gate never checked, since neither passes through the resolver.
+    *(test: `crates/copilot/tests/residency_no_redirect_test.rs`'s
+    `a_gated_client_on_a_literal_local_address_does_not_follow_a_redirect`,
+    `a_gated_client_on_an_allow_listed_hostname_does_not_follow_a_redirect`;
+    `crates/copilot/tests/residency_no_proxy_test.rs`'s
+    `a_gated_client_ignores_the_proxy_the_environment_names`;
+    `crates/copilot/src/resolver.rs`'s
     `a_name_resolving_only_to_private_addresses_is_accepted`,
     `a_name_resolving_to_one_private_and_one_public_address_is_refused`,
     `a_name_resolving_to_a_public_ipv6_address_is_refused`,

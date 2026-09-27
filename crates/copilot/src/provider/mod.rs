@@ -303,6 +303,31 @@ pub(crate) fn check_residency(
     }
 }
 
+/// The HTTP client a provider sends through. When the residency gate is in
+/// force (`allow_non_local_endpoints` unset) the client follows no redirect
+/// and reads no proxy from the environment: a `Location` naming a literal
+/// public address, or an `HTTP_PROXY` the process inherited, is a second
+/// destination the gate never checked, and neither passes through the
+/// resolver that re-checks every connection (invariant 14). With the BYO-cloud
+/// opt-in the client keeps reqwest's defaults, exactly as before.
+pub(crate) fn residency_client(
+    outcome: ResidencyOutcome,
+    allow_non_local_endpoints: bool,
+) -> Result<reqwest::Client, ProviderError> {
+    let mut builder = reqwest::Client::builder();
+    if !allow_non_local_endpoints {
+        builder = builder
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy();
+    }
+    if let Some(resolver) = outcome.dns_resolver {
+        builder = builder.dns_resolver(resolver);
+    }
+    builder
+        .build()
+        .map_err(|e| ProviderError::Transport(e.to_string()))
+}
+
 /// The production lookup every real provider constructor uses by default:
 /// the OS resolver. Test-only constructors (`new_with_lookup`) inject a
 /// fixed table instead.
