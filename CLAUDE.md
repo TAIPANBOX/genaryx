@@ -561,6 +561,110 @@ an absent invariant.
     own trust domain, so a launcher wiring this up should also set
     `GENARYX_ORG_DOMAIN` or `GENARYX_COPILOT_AGENT_ID` to match it.)*
 
+14. **The residency gate accepts a HOSTNAME only when it can prove every
+    address that name resolves to is local, and only for a hostname the
+    operator explicitly named, and that proof is re-run at connection time,
+    not only once when the provider is built.**
+    `@decided 2026-09-27`, measured the same day: the launchers route Felyx
+    through the stack's own TokenFuse gateway by default, reached in
+    Kubernetes as a Service name and in Compose as a service name on a
+    private bridge network - neither a literal address nor `localhost`, the
+    only two things `residency::is_local_endpoint` could prove local on its
+    own, so the gate refused both outright. The only existing workaround,
+    `GENARYX_COPILOT_ALLOW_REMOTE`, opens every destination, which defeats
+    the gate's own purpose.
+
+    `GENARYX_COPILOT_LOCAL_HOSTNAMES` is a comma-separated allow-list of
+    exact hostnames (case-insensitive); empty, the default, keeps the gate's
+    original behaviour exactly - any hostname other than `localhost` refused
+    outright, no DNS call at all. Only a hostname the operator names is
+    resolved and checked at all: every address it resolves to, right now,
+    must be loopback/RFC1918/link-local (either IP family); one public
+    address among several refuses the whole name, and an unresolvable name,
+    or one resolving to nothing, is refused too, never treated as local by
+    default. The SAME check is wired into the HTTP client itself as a custom
+    DNS resolver, so it re-runs on every connection the client makes, not
+    only the one build-time check the provider constructor performed: a name
+    that resolves privately today and differently tomorrow (DNS rebinding,
+    or a Service's backing pod changing) is caught at the moment reqwest
+    actually dials, because the address checked is always the address
+    handed to the connector. A refusal, whether caught at construction or at
+    connection time, surfaces as the existing operator-readable
+    `NonLocalEndpointRefused`, never a bare transport error: a residency
+    refusal found in a failed request's error chain is promoted to that
+    shape rather than left as an indistinguishable network failure. Literal
+    IPs and `GENARYX_COPILOT_ALLOW_REMOTE` are untouched: neither hostname
+    logic nor any DNS lookup runs on either of those paths. While the gate is
+    in force the client follows no redirect and reads no proxy from the
+    environment (`provider::residency_client`): a `Location` naming a literal
+    public address, or an inherited `HTTP_PROXY`, would be a destination the
+    gate never checked, since neither passes through the resolver.
+    *(test: `crates/copilot/tests/residency_no_redirect_test.rs`'s
+    `a_gated_client_on_a_literal_local_address_does_not_follow_a_redirect`,
+    `a_gated_client_on_an_allow_listed_hostname_does_not_follow_a_redirect`;
+    `crates/copilot/tests/residency_no_proxy_test.rs`'s
+    `a_gated_client_ignores_the_proxy_the_environment_names`;
+    `crates/copilot/src/resolver.rs`'s
+    `a_name_resolving_only_to_private_addresses_is_accepted`,
+    `a_name_resolving_to_one_private_and_one_public_address_is_refused`,
+    `a_name_resolving_to_a_public_ipv6_address_is_refused`,
+    `a_name_that_does_not_resolve_is_refused`,
+    `a_name_resolving_to_no_addresses_is_refused`,
+    `the_resolver_rechecks_on_every_call_and_catches_a_later_public_answer`,
+    `counting_lookup_records_every_call`;
+    `crates/copilot/src/residency.rs`'s
+    `classify_host_distinguishes_a_hostname_from_a_literal`;
+    `crates/copilot/tests/residency_hostname_test.rs`'s
+    `a_hostname_resolving_only_to_a_private_address_is_accepted_end_to_end`,
+    `a_hostname_not_on_the_allow_list_is_refused_with_no_dns_lookup_at_all`,
+    `a_hostname_resolving_to_one_private_and_one_public_address_is_refused_at_construction`,
+    `an_unresolvable_hostname_is_refused_at_construction`,
+    `a_hostname_that_resolves_privately_at_build_and_publicly_at_request_is_refused_at_request_time`,
+    `anthropic_hostname_path_also_rechecks_at_request_time`;
+    `crates/api/src/copilot/state.rs`'s
+    `config_from_env_reads_the_provider_surface` (extended: the new
+    variable's comma-split/trim/empty-drop parsing). Every test above that
+    names a NEW behaviour ran against the unfixed tree first: the module
+    (`crates/copilot/src/resolver.rs`) did not exist, so every reference to
+    `HostnameLookup`/`ResidencyDnsResolver`/`resolve_all_local` failed to
+    compile, the same shape invariant 13's own red-first record took. The
+    existing literal-IP and ALLOW_REMOTE tests
+    (`refuses_public_by_default_allows_when_opted_in`,
+    `allows_public_endpoint_when_opted_in`, `local_endpoint_needs_no_opt_in`,
+    and their `openai.rs` equivalents) are unchanged and still pass, holding
+    that this addition left both paths alone.
+
+    Four mutants planted by hand in `crates/copilot/src/resolver.rs` and
+    `provider/mod.rs`, each run red against its catching test and restored
+    byte for byte: accepting a name if ANY of its addresses is local instead
+    of requiring ALL, caught by
+    `a_name_resolving_to_one_private_and_one_public_address_is_refused` and
+    `a_hostname_resolving_to_one_private_and_one_public_address_is_refused_at_construction`;
+    never wiring the connection-time resolver (checking only once, at build
+    time), caught by
+    `a_hostname_that_resolves_privately_at_build_and_publicly_at_request_is_refused_at_request_time`
+    (without it, the real system resolver fails the fake hostname with an
+    ordinary transport error rather than the readable residency refusal the
+    test requires); treating an unresolvable or empty answer as local
+    instead of refusing it, caught by `a_name_that_does_not_resolve_is_refused`,
+    `a_name_resolving_to_no_addresses_is_refused`, and
+    `an_unresolvable_hostname_is_refused_at_construction`; and skipping the
+    check for IPv6 (any IPv6 address treated as local, unchecked), caught by
+    `a_name_resolving_to_a_public_ipv6_address_is_refused`. Scenarios:
+    `features/felyx-checks-a-hostname-at-connection-time.feature`, six, each
+    bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no launcher sets `GENARYX_COPILOT_LOCAL_HOSTNAMES`
+    in a running stack, so this closes the gap invariant 13 measured without
+    itself wiring anything up - that remains a separate, later decision. The
+    OS resolver (`SystemLookup`, via `ToSocketAddrs`) is the production
+    lookup; every test here injects a fixed or sequenced answer table
+    instead, so nothing above is proven against a real DNS server, a real
+    Kubernetes Service, or a real Compose network - only against the
+    resolver seam this gate is built on. `resolve_all_local` runs on a
+    blocking task per connection attempt (matching hyper-util's own
+    `GaiResolver`), and that scheduling overhead is not measured here.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

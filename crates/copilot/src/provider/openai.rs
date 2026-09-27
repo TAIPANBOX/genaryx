@@ -3,15 +3,17 @@
 //! Bodies are built and parsed with `serde_json` (no reqwest `json` feature),
 //! matching `CloudClient`'s style.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::{
     ChatRequest, ChatTurn, LlmProvider, Message, ProviderDescriptor, ProviderError, Role, ToolCall,
-    Usage,
+    Usage, check_residency, residency_client, system_lookup,
 };
 use crate::config::ProviderKind;
-use crate::residency::is_local_endpoint;
+use crate::resolver::HostnameLookup;
 
 #[derive(Debug)]
 pub struct OpenAiCompat {
@@ -35,22 +37,57 @@ pub struct OpenAiCompat {
 }
 
 impl OpenAiCompat {
+    /// `local_hostnames` (`GENARYX_COPILOT_LOCAL_HOSTNAMES`): the allow-list
+    /// of hostnames the residency gate may resolve and check (invariant 14).
+    /// Empty keeps the original behaviour - any hostname other than
+    /// `localhost` refused outright, no DNS call at all.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kind: ProviderKind,
         base_url: String,
         model: String,
         api_key: Option<String>,
         allow_non_local_endpoints: bool,
+        local_hostnames: Vec<String>,
         run_id: String,
         agent_id: String,
     ) -> Result<Self, ProviderError> {
-        let local = is_local_endpoint(&base_url);
-        if !local && !allow_non_local_endpoints {
-            return Err(ProviderError::NonLocalEndpointRefused { url: base_url });
-        }
-        let http = reqwest::Client::builder()
-            .build()
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        Self::new_with_lookup(
+            kind,
+            base_url,
+            model,
+            api_key,
+            allow_non_local_endpoints,
+            local_hostnames,
+            run_id,
+            agent_id,
+            system_lookup(),
+        )
+    }
+
+    /// Test-support back door: build against an injected [`HostnameLookup`]
+    /// instead of the real OS resolver, so a test can prove the hostname
+    /// half of the residency gate (invariant 14) without touching real DNS.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_lookup(
+        kind: ProviderKind,
+        base_url: String,
+        model: String,
+        api_key: Option<String>,
+        allow_non_local_endpoints: bool,
+        local_hostnames: Vec<String>,
+        run_id: String,
+        agent_id: String,
+        lookup: Arc<dyn HostnameLookup>,
+    ) -> Result<Self, ProviderError> {
+        let outcome = check_residency(
+            &base_url,
+            allow_non_local_endpoints,
+            &local_hostnames,
+            lookup,
+        )?;
+        let local = outcome.local;
+        let http = residency_client(outcome, allow_non_local_endpoints)?;
         Ok(Self {
             kind,
             base_url,
@@ -117,7 +154,7 @@ impl LlmProvider for OpenAiCompat {
         let resp = request
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| super::map_send_error(&self.base_url, e))?;
         let status = resp.status();
         let text = resp
             .text()
@@ -259,6 +296,7 @@ mod tests {
             "x".into(),
             Some("k".into()),
             false,
+            Vec::new(),
             "genaryx-copilot".into(),
             "agent://local/genaryx/felyx".into(),
         )
@@ -274,6 +312,7 @@ mod tests {
             "x".into(),
             Some("k".into()),
             true,
+            Vec::new(),
             "genaryx-copilot".into(),
             "agent://local/genaryx/felyx".into(),
         )
@@ -289,6 +328,7 @@ mod tests {
             "qwen3:8b".into(),
             None,
             false,
+            Vec::new(),
             "genaryx-copilot".into(),
             "agent://local/genaryx/felyx".into(),
         )

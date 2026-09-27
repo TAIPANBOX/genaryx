@@ -25,6 +25,7 @@ pub mod agent;
 pub mod config;
 pub mod provider;
 pub mod residency;
+pub mod resolver;
 pub mod service;
 pub mod tools;
 

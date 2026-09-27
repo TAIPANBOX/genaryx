@@ -111,7 +111,12 @@ pub async fn bootstrap() -> CopilotInner {
 /// semantics untouched: a non-local `base_url` still fails construction
 /// unless `GENARYX_COPILOT_ALLOW_REMOTE=1` states the BYO-cloud opt-in
 /// explicitly, so an operator cannot leak a prompt off-box by setting only
-/// a URL. Spend/loop ceilings stay at their defaults - the config-file form
+/// a URL. `GENARYX_COPILOT_LOCAL_HOSTNAMES` (2026-09-27, invariant 14) is
+/// the narrower alternative: a comma-separated allow-list of exact
+/// hostnames (a Kubernetes Service name, a Compose service name) the
+/// residency gate may resolve and check instead of refusing outright,
+/// without opening the destination to anything the way ALLOW_REMOTE does.
+/// Spend/loop ceilings stay at their defaults - the config-file form
 /// remains the place for tuning those, this is deliberately the minimal
 /// provider surface.
 fn config_from_env() -> CopilotConfig {
@@ -133,6 +138,21 @@ fn config_from_env() -> CopilotConfig {
         api_key_ref: std::env::var("GENARYX_COPILOT_API_KEY_REF").ok(),
         allow_non_local_endpoints: std::env::var("GENARYX_COPILOT_ALLOW_REMOTE")
             .is_ok_and(|v| v == "1"),
+        // 2026-09-27, invariant 14: a comma-separated allow-list of exact
+        // hostnames, trimmed and with empty entries dropped so a trailing
+        // comma or repeated whitespace never yields an accidental empty
+        // string that then matches nothing (and is never eligible on its
+        // own: `check_residency` still requires a NAME, never an empty one).
+        local_hostnames: std::env::var("GENARYX_COPILOT_LOCAL_HOSTNAMES")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
         // 2026-09-27 defect fix: an explicit `x-fuse-agent-id` override, read
         // verbatim like every other GENARYX_COPILOT_* setting. `None` (unset)
         // is fine: `CopilotConfig::resolved_agent_id` derives a default from
@@ -378,12 +398,29 @@ mod tests {
                 Some("agent://acme.example/genaryx/felyx")
             );
 
+            // GENARYX_COPILOT_LOCAL_HOSTNAMES (2026-09-27, invariant 14):
+            // unset is the empty allow-list (the gate's original strict
+            // behaviour); set, it splits on commas, trims each entry, and
+            // drops empty ones (a trailing comma or repeated whitespace never
+            // yields a spurious empty-string "hostname").
+            std::env::remove_var("GENARYX_COPILOT_LOCAL_HOSTNAMES");
+            assert_eq!(config_from_env().local_hostnames, Vec::<String>::new());
+            std::env::set_var(
+                "GENARYX_COPILOT_LOCAL_HOSTNAMES",
+                " tokenfuse-gateway, other-svc ,,",
+            );
+            assert_eq!(
+                config_from_env().local_hostnames,
+                vec!["tokenfuse-gateway".to_string(), "other-svc".to_string()]
+            );
+
             for var in [
                 "GENARYX_COPILOT_PROVIDER",
                 "GENARYX_COPILOT_BASE_URL",
                 "GENARYX_COPILOT_MODEL",
                 "GENARYX_COPILOT_ALLOW_REMOTE",
                 "GENARYX_COPILOT_AGENT_ID",
+                "GENARYX_COPILOT_LOCAL_HOSTNAMES",
             ] {
                 std::env::remove_var(var);
             }

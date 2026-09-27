@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-876-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-893-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -205,10 +205,17 @@ box; these frames are not it, and say so here rather than in a footnote.
   with figures equal to the control plane's own, proposed a kill on a
   stalled run with a stated confidence and reason, and had that kill refused
   without a passkey; lowering its run budget then had the next question
-  refused before it reached the provider. The residency gate accepts only a
-  literal loopback or private address, so pointing Felyx at the stack's own
-  gateway needed its ClusterIP rather than its name, and no launcher wires
-  this up yet: the run patched one console by hand.
+  refused before it reached the provider. The residency gate accepts a
+  literal loopback or private address outright, and, since 2026-09-27
+  (invariant 14), a HOSTNAME too when the operator names it in
+  `GENARYX_COPILOT_LOCAL_HOSTNAMES` and it resolves to nothing but local
+  addresses, checked again on every connection rather than only once at
+  startup, so a Kubernetes Service name or a Compose service name
+  (`tokenfuse-gateway`, not its ClusterIP) can satisfy the gate without
+  opening it to every destination the way `GENARYX_COPILOT_ALLOW_REMOTE`
+  does. No launcher sets either variable yet: the run measured above
+  patched one console by hand, pointing it at the gateway's ClusterIP
+  because this gate did not yet accept the Service name.
 - **The web shell** (`genaryx-web` + `genaryx-api`). `genaryx-api` holds the
   command layer the browser console calls, so every privileged action goes
   through one chokepoint. Operator auth is one account per box, Argon2id,
