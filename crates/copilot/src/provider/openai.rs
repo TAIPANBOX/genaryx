@@ -23,6 +23,14 @@ pub struct OpenAiCompat {
     /// C2 self-budget: sent as `x-fuse-run-id` so a TokenFuse gateway meters the
     /// copilot's own inference spend (harmless against a raw endpoint).
     run_id: String,
+    /// 2026-09-27 defect fix: sent as `x-fuse-agent-id` beside `x-fuse-run-id`,
+    /// so a TokenFuse gateway running its Wardryx hook in enforce mode can
+    /// identify Felyx's own calls instead of refusing them with
+    /// `identity_required` for carrying no agent identity at all. Resolved by
+    /// `CopilotConfig::resolved_agent_id` (explicit or the
+    /// `agent://<org_domain>/genaryx/felyx` default), never logged above
+    /// `debug` and never alongside `api_key`.
+    agent_id: String,
     http: reqwest::Client,
 }
 
@@ -34,6 +42,7 @@ impl OpenAiCompat {
         api_key: Option<String>,
         allow_non_local_endpoints: bool,
         run_id: String,
+        agent_id: String,
     ) -> Result<Self, ProviderError> {
         let local = is_local_endpoint(&base_url);
         if !local && !allow_non_local_endpoints {
@@ -49,6 +58,7 @@ impl OpenAiCompat {
             api_key,
             local,
             run_id,
+            agent_id,
             http,
         })
     }
@@ -99,6 +109,7 @@ impl LlmProvider for OpenAiCompat {
             .http
             .post(self.endpoint())
             .header("x-fuse-run-id", &self.run_id)
+            .header("x-fuse-agent-id", &self.agent_id)
             .json(&body);
         if let Some(key) = &self.api_key {
             request = request.bearer_auth(key);
@@ -249,6 +260,7 @@ mod tests {
             Some("k".into()),
             false,
             "genaryx-copilot".into(),
+            "agent://local/genaryx/felyx".into(),
         )
         .unwrap_err();
         assert!(matches!(err, ProviderError::NonLocalEndpointRefused { .. }));
@@ -263,6 +275,7 @@ mod tests {
             Some("k".into()),
             true,
             "genaryx-copilot".into(),
+            "agent://local/genaryx/felyx".into(),
         )
         .unwrap();
         assert!(!p.descriptor().local);
@@ -277,6 +290,7 @@ mod tests {
             None,
             false,
             "genaryx-copilot".into(),
+            "agent://local/genaryx/felyx".into(),
         )
         .unwrap();
         assert!(p.descriptor().local);

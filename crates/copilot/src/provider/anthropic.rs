@@ -23,6 +23,14 @@ pub struct AnthropicMessages {
     local: bool,
     /// C2 self-budget: sent as `x-fuse-run-id` for TokenFuse-gateway metering.
     run_id: String,
+    /// 2026-09-27 defect fix: sent as `x-fuse-agent-id` beside `x-fuse-run-id`,
+    /// so a TokenFuse gateway running its Wardryx hook in enforce mode can
+    /// identify Felyx's own calls instead of refusing them with
+    /// `identity_required` for carrying no agent identity at all. Resolved by
+    /// `CopilotConfig::resolved_agent_id` (explicit or the
+    /// `agent://<org_domain>/genaryx/felyx` default), never logged above
+    /// `debug` and never alongside `api_key`.
+    agent_id: String,
     http: reqwest::Client,
 }
 
@@ -33,6 +41,7 @@ impl AnthropicMessages {
         api_key: String,
         allow_non_local_endpoints: bool,
         run_id: String,
+        agent_id: String,
     ) -> Result<Self, ProviderError> {
         let local = is_local_endpoint(&base_url);
         if !local && !allow_non_local_endpoints {
@@ -47,6 +56,7 @@ impl AnthropicMessages {
             api_key,
             local,
             run_id,
+            agent_id,
             http,
         })
     }
@@ -88,6 +98,7 @@ impl LlmProvider for AnthropicMessages {
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("x-fuse-run-id", &self.run_id)
+            .header("x-fuse-agent-id", &self.agent_id)
             .json(&body)
             .send()
             .await
@@ -230,7 +241,8 @@ mod tests {
                 "claude".into(),
                 "k".into(),
                 false,
-                "genaryx-copilot".into()
+                "genaryx-copilot".into(),
+                "agent://local/genaryx/felyx".into(),
             ),
             Err(ProviderError::NonLocalEndpointRefused { .. })
         ));
@@ -240,6 +252,7 @@ mod tests {
             "k".into(),
             true,
             "genaryx-copilot".into(),
+            "agent://local/genaryx/felyx".into(),
         )
         .unwrap();
         assert_eq!(p.endpoint(), "https://api.anthropic.com/v1/messages");

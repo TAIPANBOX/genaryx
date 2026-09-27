@@ -181,6 +181,7 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
             let base_url = config.resolved_base_url()?;
             let model = config.require_model()?;
             let api_key = config.resolve_api_key()?; // Option: local runtimes need none
+            let agent_id = config.resolved_agent_id()?;
             let provider = OpenAiCompat::new(
                 config.provider,
                 base_url,
@@ -188,6 +189,7 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
                 api_key,
                 config.allow_non_local_endpoints,
                 config.run_id.clone(),
+                agent_id,
             )
             .map_err(ConfigError::Provider)?;
             Ok(Some(Box::new(provider)))
@@ -198,12 +200,14 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
             let api_key = config.resolve_api_key()?.ok_or(ConfigError::MissingField(
                 "api_key_ref (Anthropic requires a key)",
             ))?;
+            let agent_id = config.resolved_agent_id()?;
             let provider = AnthropicMessages::new(
                 base_url,
                 model,
                 api_key,
                 config.allow_non_local_endpoints,
                 config.run_id.clone(),
+                agent_id,
             )
             .map_err(ConfigError::Provider)?;
             Ok(Some(Box::new(provider)))
