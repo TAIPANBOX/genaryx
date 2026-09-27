@@ -547,10 +547,19 @@ an absent invariant.
     `features/felyx-sends-its-own-agent-identity.feature`, four, each bound;
     gate: `scripts/features-are-bound.sh`.
 
-    Where it says nothing: this has not run against a real TokenFuse gateway
-    with Wardryx in enforce mode (the defect that motivated this was measured
-    live, the fix was not re-measured live); a launcher setting the variable
-    in a real deployment.)*
+    Measured 2026-09-27 on a three-node k3d cluster, stack-k8s v1.1.13 with
+    TokenFuse v1.3.0: Felyx, pointed at the stack's own gateway by its
+    ClusterIP (the residency gate accepts only a literal loopback/private
+    address, not a service name) with Wardryx's policy hook in enforce and
+    the console built as `genaryx-console:v1.1.14`, answered money, incident,
+    identity-alert and approval-inbox questions with figures equal to the
+    control plane's own, using its default agent id
+    (`agent://local/genaryx/felyx`, no `GENARYX_ORG_DOMAIN` set). Where it
+    still says nothing: no launcher sets `GENARYX_COPILOT_AGENT_ID` or wires
+    a console at this gateway in a real deployment, this run patched one
+    console by hand; and the default agent id used sits outside the stack's
+    own trust domain, so a launcher wiring this up should also set
+    `GENARYX_ORG_DOMAIN` or `GENARYX_COPILOT_AGENT_ID` to match it.)*
 
 ## Decisions that have no gate yet
 

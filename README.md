@@ -198,7 +198,17 @@ box; these frames are not it, and say so here rather than in a footnote.
   propose, never act**. C0 read-only triage, C1 explanation, C2
   propose-and-confirm (every action still goes through the signed ceremony).
   Provider-agnostic, local/BYO model, residency-gated; validated against a
-  real cloud model with bounded tool output.
+  real cloud model with bounded tool output, and, measured 2026-09-27 on a
+  three-node cluster, against a governed stack's own TokenFuse gateway with
+  its policy hook in enforce mode (console v1.1.14, Anthropic Haiku 4.5):
+  Felyx answered money, incident, identity-alert and approval-inbox questions
+  with figures equal to the control plane's own, proposed a kill on a
+  stalled run with a stated confidence and reason, and had that kill refused
+  without a passkey; lowering its run budget then had the next question
+  refused before it reached the provider. The residency gate accepts only a
+  literal loopback or private address, so pointing Felyx at the stack's own
+  gateway needed its ClusterIP rather than its name, and no launcher wires
+  this up yet: the run patched one console by hand.
 - **The web shell** (`genaryx-web` + `genaryx-api`). `genaryx-api` holds the
   command layer the browser console calls, so every privileged action goes
   through one chokepoint. Operator auth is one account per box, Argon2id,
@@ -299,6 +309,15 @@ could only echo an address back is the kind this console does not build.
   health", review-stage check): `crates/connectors/src/gateway.rs`'s DTOs
   are proven against fixtures only; a round trip against an actual running
   TokenFuse gateway is verified at review, not by a unit test.
+
+Two further limits found running Felyx against a real governed stack
+(2026-09-27), neither yet closed: Felyx's `policies` tool reads only
+policies stored through wardryx's HTTP API, not wardryx's file-loaded base
+set, so a box running only the starter policies shows "no governance rules
+in place" while two are actually in force; and Felyx's default agent id
+(`agent://local/genaryx/felyx`, unset `GENARYX_ORG_DOMAIN`) sits outside a
+stack's own trust domain, so wiring Felyx through a gateway should also set
+`GENARYX_ORG_DOMAIN` or `GENARYX_COPILOT_AGENT_ID` to match it.
 
 ## Layout
 
