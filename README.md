@@ -213,9 +213,11 @@ box; these frames are not it, and say so here rather than in a footnote.
   startup, so a Kubernetes Service name or a Compose service name
   (`tokenfuse-gateway`, not its ClusterIP) can satisfy the gate without
   opening it to every destination the way `GENARYX_COPILOT_ALLOW_REMOTE`
-  does. No launcher sets either variable yet: the run measured above
-  patched one console by hand, pointing it at the gateway's ClusterIP
-  because this gate did not yet accept the Service name.
+  does. Both launchers now set `GENARYX_COPILOT_LOCAL_HOSTNAMES` to
+  `tokenfuse-gateway` (stack-single since v1.1.12, stack-k8s since v1.1.18)
+  and neither sets `GENARYX_COPILOT_ALLOW_REMOTE`; the run measured above
+  predates that and patched one console by hand, pointing it at the
+  gateway's ClusterIP.
 - **The web shell** (`genaryx-web` + `genaryx-api`). `genaryx-api` holds the
   command layer the browser console calls, so every privileged action goes
   through one chokepoint. Operator auth is one account per box, Argon2id,
