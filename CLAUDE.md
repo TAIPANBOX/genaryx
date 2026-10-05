@@ -795,10 +795,63 @@ an absent invariant.
     budgets; a negative claim separated from its runs by a semicolon escapes
     it. A budget a gateway applies on its own (a per-run default ceiling, an
     identity-map unit cap) is invisible to the Cloud and so to this tool,
-    which says so in its own result. The Money panel's runs table still shows
-    a run's budget only from `alerts` and this session's own changes
-    (`crates/api/src/money/state.rs`'s `budget_overrides`); this change does
-    not touch it.)*
+    which says so in its own result. The Money panel's runs table read
+    budgets from `alerts` until invariant 17 moved it to the same
+    `GET /v1/budgets` read.)*
+
+17. **The Money panel's runs table shows every run budget the Cloud holds, and
+    a budget it could not read is never shown as "no budget".**
+    `@decided 2026-10-05`, measured the same day on the forge lab: the table
+    read a run's budget only from `GET /v1/alerts` plus the budgets set in the
+    current console session (`MoneyState::budget_overrides`). `/v1/alerts`
+    lists a run only once it is near or over its limit, so mig-flint (4500 uUSD
+    budget, 3210 spent) showed no budget and the table printed "no cap": a
+    real budget under the label of an absence, invariant 8's shape.
+
+    `money_runs` (`crates/api/src/money/commands.rs`) now joins `GET /v1/runs`
+    with `CloudClient::budgets()` (`GET /v1/budgets`), and that map is the only
+    budget source while it answers; `alerts` is not read at all then. The
+    session overrides are removed: the Cloud's map holds a budget the moment
+    `set_budget` returns, and an override could outlive a change made
+    anywhere else. A budget map that cannot be read (any status, a transport
+    error, a body that is not a run -> micros map) does not cost the table:
+    the runs are still listed, `GET /v1/alerts` supplies the budgets it knows,
+    one stderr line names the failure, and every `RunDto` carries
+    `budgets_read: false`. The web views read that flag through one helper
+    (`apps/web/src/lib/moneyExport.ts`'s `budgetUnknown`): the runs board
+    prints "cap unknown" with a hover naming the failed read, Agent 360
+    "unknown", Incident 360 "budget could not be read", and only a read map
+    earns "no cap"; the runs export carries a `budgets_read` column beside
+    `budget_usd` and its caveat says what an empty cell means on each. The
+    flag is per row so `Vec<RunDto>` keeps the shape every existing view
+    reads. The mock preview stands in for a box whose map answered. The
+    requirement (the map is the source, and "none" is kept apart from
+    "could not read") is the decision; the per-row flag, the fallback to
+    `alerts` and the wording are `@claude` design choices, open to reversal.
+    `GET /v1/budgets` has existed since tokenfuse #64, so a Cloud without the
+    route is the rare case; one that refuses or is unreachable is the likely
+    one.
+    *(test: `crates/api/tests/money_runs_budgets_test.rs`, seven, on a stub
+    Cloud carrying the forge figures: a budgeted run with no alert, a run with
+    none, the map winning over an alert figure, 404/500/403 on the map,
+    neither map nor alerts answering, runs failing as an error, and ten named
+    hostile bodies plus a 200-seed sweep. Red first on the unfixed tree: the
+    file failed to compile (no `budgets_read`), and with the flag swapped for
+    an existing field five of the seven failed on assertions, the defect test
+    as `left: None, right: Some(0.0045)`. Two mutants planted in
+    `money_runs` and restored, each caught by three tests: an unread map
+    reported as read, and an unread map failing the whole table.
+    `apps/web/src/lib/moneyExport.test.ts`'s six board and export cases,
+    three of them red against the unfixed `RunsBoard.tsx`/`moneyExport.ts`.
+    Scenarios: `features/money-runs-show-every-cloud-budget.feature`, five,
+    each bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: a budget a gateway applies on its own (a per-run
+    default ceiling, `x-fuse-budget-usd` sent by the caller) never reaches
+    the Cloud's map, so the table cannot show it, the same limit invariant 16
+    names. Unit budgets are not in this table. No live console has been
+    pointed at the forge Cloud with this build; the figures above come from a
+    stub carrying the forge numbers.)*
 
 ## Decisions that have no gate yet
 

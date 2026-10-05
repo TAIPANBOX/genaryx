@@ -71,6 +71,17 @@ export function runUnitLabel(run: Run): string {
  * from "this Cloud was never asked" - the money plane's separate `/v1/owners`
  * view is where "resolved and nobody" lives, as the literal `"unassigned"`
  * bucket. */
+/** True when a run shows no budget because the Cloud's budget map could not
+ * be read, not because the run has none (invariant 17). Every view that prints
+ * a run's budget asks this before it writes "no cap". */
+export function budgetUnknown(run: Run): boolean {
+  return run.budget_usd === null && !run.budgets_read;
+}
+
+/** The hover text beside an unknown budget, said once so every view agrees. */
+export const BUDGET_UNKNOWN_TITLE =
+  "TokenFuse Cloud did not answer GET /v1/budgets, so this run's budget could not be read. Only budgets near or over their alert threshold are known.";
+
 export function runOwnerLabel(run: Run): string {
   return run.owner && run.owner.length > 0 ? run.owner : "not reported";
 }
@@ -108,6 +119,7 @@ export interface RunExportRow {
   model: string | null;
   spent_usd: number;
   budget_usd: number | null;
+  budgets_read: boolean;
   calls: number | null;
   cache_hits: number | null;
   steps: number | null;
@@ -123,6 +135,7 @@ export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: st
   { key: "model", header: "model" },
   { key: "spent_usd", header: "spent_usd" },
   { key: "budget_usd", header: "budget_usd" },
+  { key: "budgets_read", header: "budgets_read" },
   { key: "calls", header: "calls" },
   { key: "cache_hits", header: "cache_hits" },
   { key: "steps", header: "steps" },
@@ -155,6 +168,7 @@ export function runsExportRows(runs: Run[]): RunExportRow[] {
     model: orNull(r.model),
     spent_usd: r.spent_usd,
     budget_usd: numberOrNull(r.budget_usd),
+    budgets_read: r.budgets_read,
     calls: numberOrNull(r.calls),
     cache_hits: numberOrNull(r.cache_hits),
     steps: numberOrNull(r.steps),
@@ -184,7 +198,7 @@ export function runsExportMeta(opts: {
     caveats: [
       `This file carries every one of the ${opts.total.toLocaleString("en-US")} run(s) the money plane returned, not the ${opts.shown.toLocaleString("en-US")} the Runs table shows. The table is a sorted top slice; this is not.`,
       "This console does not page GET /v1/runs, so the file is exactly that endpoint's answer. Whether the Cloud itself caps or windows that array is the Cloud's own decision and is not visible from here.",
-      "An empty budget_usd means this console could not learn a budget for the run, never that the run has none: a budget is knowable only once the Cloud's alert threshold has tripped for it, or somebody set one from this console in this session.",
+      "budget_usd is the run's budget on the Cloud (GET /v1/budgets). An empty budget_usd on a row whose budgets_read is true means the Cloud holds no budget for that run. On a row whose budgets_read is false the Cloud's budget map could not be read for this file, only the budgets GET /v1/alerts lists are known, and an empty budget_usd means unknown, never that the run has none.",
       "An empty unit means the Cloud's identity map resolved none for that run. The run was still charged whatever the Cloud charged it.",
       "An empty owner means this Cloud sent no owner for that run at all (an older Cloud, or one never asked to attribute one). It is not the same claim as an empty unit: this console cannot tell 'resolved and nobody' from 'never asked' through this field.",
       "An empty agent_id is what the money plane carried for that run, not a value this console dropped.",

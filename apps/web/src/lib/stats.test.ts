@@ -41,6 +41,7 @@ function run(
     owner: "",
     spent_usd: spent,
     budget_usd: budget,
+    budgets_read: true,
     calls,
     cache_hits: 0,
     steps: 1,
