@@ -80,7 +80,14 @@ export interface Run {
   model: string;
   agent_id: string;
   spent_usd: number;
+  /** The run's budget on the Cloud (`GET /v1/budgets`). `null` means "no
+   * budget" only when `budgets_read` is true; otherwise it means "could not
+   * read", and a view must say so rather than print "no cap". */
   budget_usd: number | null;
+  /** Whether the Cloud's budget map answered for this read. False when it did
+   * not: only the budgets `/v1/alerts` lists are known then, so a `null`
+   * budget is unknown, never "none" (invariant 17). */
+  budgets_read: boolean;
   calls: number;
   cache_hits: number;
   steps: number;

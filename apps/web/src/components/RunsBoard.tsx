@@ -3,7 +3,15 @@ import { agentShortName } from "../lib/dashData";
 import type { Run } from "../moneyTypes";
 import { runBlockedState } from "../lib/lifecycle";
 import { LIFECYCLE_BADGE, lifecyclePillClass } from "../lib/lifecycleTypes";
-import { cacheHitsLabel, NOT_RECORDED, runModelLabel, runOwnerLabel, runUnitLabel } from "../lib/moneyExport";
+import {
+  BUDGET_UNKNOWN_TITLE,
+  budgetUnknown,
+  cacheHitsLabel,
+  NOT_RECORDED,
+  runModelLabel,
+  runOwnerLabel,
+  runUnitLabel,
+} from "../lib/moneyExport";
 import { BudgetEditor } from "./BudgetEditor";
 import { ConfirmButton } from "./ConfirmButton";
 import { FuseBar } from "./FuseBar";
@@ -173,7 +181,9 @@ export function RunsBoard({
             <div className="d-spentcell">
               <div className="amt">
                 <span>{formatUsd(r.spent_usd)}</span>
-                <span className="cap">{r.budget_usd !== null ? formatUsd(r.budget_usd) : "no cap"}</span>
+                <span className="cap" title={budgetUnknown(r) ? BUDGET_UNKNOWN_TITLE : undefined}>
+                  {r.budget_usd !== null ? formatUsd(r.budget_usd) : budgetUnknown(r) ? "cap unknown" : "no cap"}
+                </span>
               </div>
               {r.budget_usd !== null && r.budget_usd > 0 && <FuseBar fraction={frac} />}
             </div>

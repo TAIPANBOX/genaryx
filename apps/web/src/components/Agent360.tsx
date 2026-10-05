@@ -6,6 +6,7 @@ import type { IdentityError, IdryxAlert, IdryxIdentity } from "../identityTypes"
 import { cssVar } from "../lib/cssVars";
 import { sevRank, spendSeries } from "../lib/dashData";
 import { formatTimestamp, formatUsd } from "../lib/format";
+import { budgetUnknown } from "../lib/moneyExport";
 import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph";
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
 import { isQualityDriftEvent } from "../lib/incidents";
@@ -917,7 +918,7 @@ export function Agent360({
                     {formatUsd(r.spent_usd)}
                   </span>
                   <span className="mono tabular text-[11.5px]" style={{ color: "var(--dim)" }}>
-                    {r.budget_usd !== null ? formatUsd(r.budget_usd) : "-"}
+                    {r.budget_usd !== null ? formatUsd(r.budget_usd) : budgetUnknown(r) ? "unknown" : "-"}
                   </span>
                   <span>
                     {(() => {

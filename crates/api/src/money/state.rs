@@ -25,7 +25,6 @@
 use super::env::{self, EnvSource, ResolvedEnv};
 use genaryx_connectors::CloudClient;
 use genaryx_signing::{Es256Signer, SoftwareSigner};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -147,19 +146,6 @@ pub enum MoneyInner {
 /// module's docs) before making any network call.
 pub struct MoneyState {
     pub inner: Mutex<MoneyInner>,
-    /// Session-local `run_id -> budget_micros` overrides, applied on top of
-    /// whatever `/v1/alerts` reveals when building the runs table
-    /// (`commands::money_runs`). `CloudClient` (Phase-1 wave 1) does not
-    /// wrap a `GET /v1/budgets` read - only the three DTOs its own module
-    /// docs list (`summary`/`runs`/`agents`/`savings`/`incidents`/`alerts`/
-    /// `audit-verify`) - so a run's budget is otherwise only visible once it
-    /// is already at/above its alert threshold. Recording our own successful
-    /// `set_budget` calls here means the operator's own actions always show
-    /// up immediately, even for a run `/v1/alerts` has not flagged.
-    /// Deliberately in-memory only: it resets on restart along with the rest
-    /// of this process's Money state, never presented as more durable than
-    /// it is.
-    pub budget_overrides: Mutex<HashMap<String, i64>>,
 }
 
 impl MoneyState {
@@ -170,7 +156,6 @@ impl MoneyState {
     pub fn pending() -> Self {
         Self {
             inner: Mutex::new(MoneyInner::Bootstrapping),
-            budget_overrides: Mutex::new(HashMap::new()),
         }
     }
 }

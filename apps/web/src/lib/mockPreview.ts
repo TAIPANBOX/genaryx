@@ -804,6 +804,8 @@ function baseRunFor(a: FleetAgent, opts: { ignoreClosed?: boolean } = {}) {
     unit: unitForTeam(a.team),
     spent_usd: spentUsd,
     budget_usd: budget,
+    // The preview stands in for a box whose budget map answered.
+    budgets_read: true,
     calls,
     cache_hits: Math.round(calls * 0.12),
     steps: Math.min(calls, 40),
@@ -844,6 +846,8 @@ function runFor(a: FleetAgent) {
     unit: unitForTeam(a.team),
     spent_usd: spent,
     budget_usd: budget,
+    // The preview stands in for a box whose budget map answered.
+    budgets_read: true,
     calls,
     cache_hits: Math.round(calls * 0.04),
     steps: Math.min(calls, 40),
@@ -879,6 +883,7 @@ function mockDriftAgentRunHistory() {
     unit: unitForTeam(agentTeam(DRIFT_DEMO_AGENT_ID)),
     spent_usd: p.spentUsd,
     budget_usd: 3,
+    budgets_read: true,
     calls: p.calls,
     cache_hits: Math.round(p.calls * 0.1),
     steps: Math.min(p.calls, 40),

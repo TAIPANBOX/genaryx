@@ -16,6 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BOARD_MIN_WIDTH_PX, RUN_COL_MIN_PX, RUNS_BOARD_TRACKS, RunsBoard } from "../components/RunsBoard";
 import { GovernedSavingsSection } from "../components/MoneyView";
 import {
+  budgetUnknown,
   cacheHitsLabel,
   countLabel,
   governedSavingsCaption,
@@ -38,6 +39,7 @@ const RUN: Run = {
   agent_id: "agent://meridian.example/treasury/cashflow-forecaster",
   spent_usd: 5.85,
   budget_usd: 10,
+  budgets_read: true,
   calls: 12,
   cache_hits: 148,
   steps: 3,
@@ -305,5 +307,58 @@ describe("the runs export is the whole list, and says what its blanks mean", () 
     const json = JSON.parse(toJson(runsExportRows([RUN]), meta)) as { meta: unknown; rows: unknown[] };
     expect(json.meta).toEqual(meta);
     expect(json.rows).toHaveLength(1);
+  });
+});
+
+describe("a run's budget reads as none only when the Cloud's budget map answered", () => {
+  /** The spend cell, isolated so "no cap" cannot match anything else in the row. */
+  function capCell(html: string): string {
+    const m = html.match(/<span class="cap"[^>]*>(.*?)<\/span>/);
+    return m ? m[1] : "";
+  }
+
+  it("shows a Cloud budget the alerts list never named", () => {
+    // mig-flint on the forge lab, 2026-10-05: 4500 uUSD budget, 3210 spent,
+    // under its alert threshold. The table used to print "no cap" for it.
+    const html = board([{ ...RUN, run_id: "mig-flint", spent_usd: 0.00321, budget_usd: 0.0045 }]);
+    expect(capCell(html)).not.toContain("no cap");
+    expect(capCell(html)).not.toContain("unknown");
+  });
+
+  it("says no cap when the budget map answered and holds none for the run", () => {
+    const html = board([{ ...RUN, budget_usd: null, budgets_read: true }]);
+    expect(capCell(html)).toBe("no cap");
+  });
+
+  it("says cap unknown, never no cap, when the budget map could not be read", () => {
+    const html = board([{ ...RUN, budget_usd: null, budgets_read: false }]);
+    expect(capCell(html)).toBe("cap unknown");
+    expect(html).toContain("did not answer GET /v1/budgets");
+  });
+
+  it("still shows a budget the alerts list knew when the map could not be read", () => {
+    const html = board([{ ...RUN, budget_usd: 10, budgets_read: false }]);
+    expect(capCell(html)).not.toContain("unknown");
+    expect(capCell(html)).not.toContain("no cap");
+  });
+
+  it("budgetUnknown is true only for a missing budget on an unread map", () => {
+    expect(budgetUnknown({ ...RUN, budget_usd: null, budgets_read: false })).toBe(true);
+    expect(budgetUnknown({ ...RUN, budget_usd: null, budgets_read: true })).toBe(false);
+    expect(budgetUnknown({ ...RUN, budget_usd: 10, budgets_read: false })).toBe(false);
+  });
+
+  it("the export carries budgets_read beside budget_usd, so an empty cell can be read", () => {
+    const rows = runsExportRows([
+      { ...RUN, run_id: "none", budget_usd: null, budgets_read: true },
+      { ...RUN, run_id: "unknown", budget_usd: null, budgets_read: false },
+    ]);
+    expect(rows.map((r) => r.budgets_read)).toEqual([true, false]);
+    const keys = RUNS_EXPORT_COLUMNS.map((c) => c.key);
+    expect(keys.indexOf("budgets_read")).toBe(keys.indexOf("budget_usd") + 1);
+    const meta = { shown: 2, total: 2, environment: "console.example", takenAt: "2026-10-05T09:00:00.000Z" };
+    const joined = (runsExportMeta(meta).caveats ?? []).join(" ");
+    expect(joined).toMatch(/budgets_read is true means the Cloud holds no budget/);
+    expect(joined).not.toMatch(/alert threshold has tripped for it, or somebody set one/);
   });
 });

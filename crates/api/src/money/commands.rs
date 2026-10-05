@@ -112,11 +112,18 @@ pub struct RunDto {
     pub model: String,
     pub agent_id: String,
     pub spent_usd: f64,
-    /// `None` when this run has neither tripped `/v1/alerts`' threshold nor
-    /// had its budget set via this console session - see
-    /// [`MoneyState::budget_overrides`] for why a budget is not always
-    /// knowable from the connector's current read surface.
+    /// The run's budget on the Cloud (`GET /v1/budgets`). `None` means "no
+    /// budget" only when [`Self::budgets_read`] is true; otherwise it means
+    /// "could not read".
     pub budget_usd: Option<f64>,
+    /// Whether the Cloud's budget map answered for this read. False when
+    /// `GET /v1/budgets` failed (unreachable, refused, an unexpected body):
+    /// the table then knows only the budgets `/v1/alerts` lists, a run is in
+    /// that list only once it is near or over its limit, and a `None` budget
+    /// is "cannot say", never "no budget" (invariant 17). The same value on
+    /// every row of one read, carried per row so `Vec<RunDto>` keeps its shape
+    /// for the many views that already read it.
+    pub budgets_read: bool,
     pub calls: u64,
     pub cache_hits: u64,
     pub steps: u32,
@@ -561,10 +568,6 @@ pub async fn money_overview(state: &MoneyState) -> Result<OverviewDto, MoneyErro
     Ok(OverviewDto::build(&summary, &runs, &incidents, &savings))
 }
 
-/// The runs table. Budget is enriched from `GET /v1/alerts` (the only
-/// connector read that carries `budget_micros`) overlaid with any budget
-/// this console session itself has set - see
-/// [`MoneyState::budget_overrides`].
 /// Spend over a PERIOD, per agent, or `None` when this Cloud cannot fold by
 /// period at all (anything older than tokenfuse #199).
 ///
@@ -583,38 +586,62 @@ pub async fn money_spend_window(
         .map_err(MoneyError::from)
 }
 
+/// The runs table, each run's budget from the Cloud's own budget map
+/// (`GET /v1/budgets`), the only read that answers "which runs have a budget"
+/// (invariant 17).
+///
+/// It used to come from `GET /v1/alerts` plus the budgets this console session
+/// had set itself. `/v1/alerts` lists a run only once it is near or over its
+/// limit, so a budgeted run under its alert threshold showed no budget at all,
+/// and the table rendered that as "no cap". The session overrides are gone
+/// with it: the Cloud's map already holds a budget the moment `set_budget`
+/// returns, and an override could outlive a later change made anywhere else.
+///
+/// A budget map that cannot be read does not cost the table: the runs are
+/// still listed, `/v1/alerts` still supplies the budgets it knows, and every
+/// row says `budgets_read: false` so a missing budget reads as "cannot say".
 pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
     let client = ready_client(&state).await?;
-    let (runs, alerts) =
-        tokio::try_join!(client.client.runs(), client.client.alerts()).map_err(MoneyError::from)?;
+    let (runs, budgets) = tokio::join!(client.client.runs(), client.client.budgets());
+    let runs = runs.map_err(MoneyError::from)?;
 
-    let alert_budgets: HashMap<&str, i64> = alerts
-        .iter()
-        .map(|a| (a.run_id.as_str(), a.budget_micros))
-        .collect();
-    let overrides = state.budget_overrides.lock().await;
+    let (budgets, budgets_read) = match budgets {
+        Ok(map) => (map, true),
+        Err(e) => {
+            eprintln!(
+                "genaryx: money_runs could not read GET /v1/budgets ({e}); \
+                 showing only the budgets /v1/alerts lists"
+            );
+            let from_alerts = match client.client.alerts().await {
+                Ok(alerts) => alerts
+                    .into_iter()
+                    .map(|a| (a.run_id, a.budget_micros))
+                    .collect(),
+                Err(e) => {
+                    eprintln!("genaryx: money_runs could not read GET /v1/alerts either ({e})");
+                    HashMap::new()
+                }
+            };
+            (from_alerts, false)
+        }
+    };
 
     Ok(runs
         .iter()
-        .map(|r| {
-            let budget_micros = overrides
-                .get(&r.run_id)
-                .copied()
-                .or_else(|| alert_budgets.get(r.run_id.as_str()).copied());
-            RunDto {
-                run_id: r.run_id.clone(),
-                unit: r.unit.clone(),
-                owner: r.owner.clone(),
-                model: r.model.clone(),
-                agent_id: r.agent_id.clone(),
-                spent_usd: micros_to_usd(r.spent_microusd),
-                budget_usd: budget_micros.map(micros_to_usd),
-                calls: r.calls,
-                cache_hits: r.cache_hits,
-                steps: r.steps,
-                last_seen: millis_to_iso(r.last_seen_millis),
-                killed: r.killed,
-            }
+        .map(|r| RunDto {
+            run_id: r.run_id.clone(),
+            unit: r.unit.clone(),
+            owner: r.owner.clone(),
+            model: r.model.clone(),
+            agent_id: r.agent_id.clone(),
+            spent_usd: micros_to_usd(r.spent_microusd),
+            budget_usd: budgets.get(&r.run_id).copied().map(micros_to_usd),
+            budgets_read,
+            calls: r.calls,
+            cache_hits: r.cache_hits,
+            steps: r.steps,
+            last_seen: millis_to_iso(r.last_seen_millis),
+            killed: r.killed,
         })
         .collect())
 }
@@ -703,11 +730,6 @@ pub async fn money_set_budget(
     require_break_glass_reason(&reason)?;
     let client = ready_client(&state).await?;
     let result = client.client.set_budget(&run_id, budget_usd).await;
-
-    if let Ok(resp) = &result {
-        let mut overrides = state.budget_overrides.lock().await;
-        overrides.insert(run_id.clone(), resp.budget_micros);
-    }
 
     finish_mutation(
         &client,

@@ -7,7 +7,7 @@ import { fetchRuns } from "../lib/money";
 import { fetchAgentRecord, type AgentRecord } from "../lib/agentRecord";
 import { fetchRecentEvents } from "../lib/recentEvents";
 import { formatUsd } from "../lib/format";
-import { runOwnerLabel } from "../lib/moneyExport";
+import { budgetUnknown, runOwnerLabel } from "../lib/moneyExport";
 import { shortAgentLabel } from "../lib/graph";
 import { sevColor } from "../lib/dashData";
 import { downloadJson } from "../lib/download";
@@ -386,7 +386,11 @@ export function Incident360({
           {!runAsked ? undefined : run ? (
             <span>
               {formatUsd(run.spent_usd)} spent
-              {run.budget_usd !== null ? ` of ${formatUsd(run.budget_usd)}` : " (no budget set)"}
+              {run.budget_usd !== null
+                ? ` of ${formatUsd(run.budget_usd)}`
+                : budgetUnknown(run)
+                  ? " (budget could not be read)"
+                  : " (no budget set)"}
               {` · ${run.calls} call(s) · ${run.steps} step(s)`}
               <br />
               <span className="mono" style={{ fontSize: 10.5, color: "var(--faint)" }}>
