@@ -79,7 +79,7 @@ read_tool!(
 read_tool!(
     Alerts,
     "alerts",
-    "Runs at or above their budget alert threshold (run id, spent, budget, fraction of budget, whether killed). Use to find near-cap and over-cap runs.",
+    "Runs already at or above their budget alert threshold (run id, spent, budget, fraction of budget, whether killed). Use to find near-cap and over-cap runs. NOT a list of budgets: a run under its alert threshold is absent here even when it has a budget, and each row's budget belongs to that row's run only. Use `budgets` to know which runs have a budget.",
     alerts
 );
 

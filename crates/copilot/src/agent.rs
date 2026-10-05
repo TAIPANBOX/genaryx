@@ -28,6 +28,12 @@ Rules you must follow:
 - You can READ and you can RECOMMEND. You cannot ACT: you have no ability to kill a run, \
   change a budget, grant an approval, or sign anything. If the operator asks you to do one \
   of those, explain what you would recommend and that a human must approve and sign it.
+- Budgets: a run or unit has a budget only if a tool returned one for it. Call `budgets` \
+  before saying which runs have a budget, what a budget is, or whether a run is under, at or \
+  over one. Never infer a budget or its absence from `alerts`: it lists only runs already near \
+  or over their limit, and each alert's budget belongs to that alert's run alone. If no tool \
+  returned a budget for a run, say it has none on the control plane or that you cannot tell, \
+  never a figure.
 - Be concise. Cite the specific runs/incidents/agents your answer rests on so the operator \
   can check them.";
 
@@ -50,6 +56,10 @@ pub struct Answer {
     pub tool_trace: Vec<ToolInvocation>,
     pub proposals: Vec<crate::action::ProposedAction>,
     pub usage: Usage,
+    /// Budget statements in `text` that no tool result supported and that
+    /// survived one revision (`crate::grounding`). `text` already ends with a
+    /// note naming them; this is the same list, for a shell or a test.
+    pub unsupported_claims: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,6 +122,9 @@ impl Felyx {
         let mut trace: Vec<ToolInvocation> = Vec::new();
         let mut proposals: Vec<crate::action::ProposedAction> = Vec::new();
         let mut usage = Usage::default();
+        let mut facts = crate::grounding::BudgetFacts::default();
+        let budgets_available = self.registry.tool_names().contains(&"budgets");
+        let mut revised = false;
 
         for _ in 0..self.max_iterations {
             let turn = self
@@ -127,11 +140,25 @@ impl Felyx {
             usage += turn.usage;
 
             if turn.tool_calls.is_empty() {
+                let mut text = turn.content.unwrap_or_default();
+                let findings = crate::grounding::check(&text, &facts, budgets_available);
+                if !findings.is_empty() && !revised {
+                    // One chance to correct against the same tool results;
+                    // the model may also call `budgets` now.
+                    revised = true;
+                    messages.push(Message::assistant_tool_calls(Some(text), Vec::new()));
+                    messages.push(Message::user(crate::grounding::revision_request(&findings)));
+                    continue;
+                }
+                if !findings.is_empty() {
+                    text.push_str(&crate::grounding::residual_note(&findings));
+                }
                 return Ok(Answer {
-                    text: turn.content.unwrap_or_default(),
+                    text,
                     tool_trace: trace,
                     proposals,
                     usage,
+                    unsupported_claims: findings,
                 });
             }
 
@@ -148,6 +175,9 @@ impl Felyx {
                     // never propagated as a hard failure of the whole answer.
                     Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
                 };
+                if !self.registry.is_propose_tool(&call.name) {
+                    facts.record(&call.name, ok, &value);
+                }
                 trace.push(ToolInvocation {
                     name: call.name.clone(),
                     ok,

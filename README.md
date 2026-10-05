@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-910-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-934-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -217,7 +217,14 @@ box; these frames are not it, and say so here rather than in a footnote.
   `tokenfuse-gateway` (stack-single since v1.1.12, stack-k8s since v1.1.18)
   and neither sets `GENARYX_COPILOT_ALLOW_REMOTE`; the run measured above
   predates that and patched one console by hand, pointing it at the
-  gateway's ClusterIP.
+  gateway's ClusterIP. Since 2026-10-05 (invariant 16) Felyx reads budgets
+  from a `budgets` tool, the control plane's own run budgets joined with each
+  run's spend plus unit budgets with month-to-date spend, instead of
+  inferring them from `alerts`, which lists a run only once it is near or
+  over its limit. A draft answer that states a run's budget no tool
+  returned, or calls a budgeted run unbudgeted, is sent back once for
+  revision, and a statement that survives reaches the operator with a note
+  naming it.
 - **The web shell** (`genaryx-web` + `genaryx-api`). `genaryx-api` holds the
   command layer the browser console calls, so every privileged action goes
   through one chokepoint. Operator auth is one account per box, Argon2id,

@@ -23,6 +23,7 @@
 pub mod action;
 pub mod agent;
 pub mod config;
+mod grounding;
 pub mod provider;
 pub mod residency;
 pub mod resolver;
