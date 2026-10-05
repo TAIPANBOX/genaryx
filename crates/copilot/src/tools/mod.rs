@@ -20,6 +20,7 @@
 //! full rationale, including why this overlaps in shape (but not source)
 //! with `tools::cloud`'s existing `savings` tool.
 
+mod budgets;
 mod cloud;
 mod crypto;
 mod idryx;
@@ -129,6 +130,7 @@ impl ToolRegistry {
         let mut tools: Vec<Box<dyn Tool>> = Vec::new();
         if clients.cloud.is_some() {
             tools.extend(cloud::tools());
+            tools.extend(budgets::tools());
         }
         if clients.idryx.is_some() {
             tools.extend(idryx::tools());

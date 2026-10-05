@@ -745,6 +745,61 @@ an absent invariant.
     unchanged; a money field added to it later must still be wrapped in
     `dollarize` by hand; nothing here makes that automatic.)*
 
+16. **Felyx states a budget only when a tool returned it.**
+    `@decided 2026-10-05`, measured the same day on the forge lab
+    (genaryx-console v1.1.19, Haiku 4.5 through the stack's own gateway):
+    asked about the home router agents, Felyx said p1-beryl2 "exceeded
+    budget alert (spent $0.004019 vs $0.001 cap)" although no budget existed
+    on any beryl2 run (the cap was p1-brume's), and asked which runs have a
+    budget it called mig-flint "no budget" although `GET /v1/budgets` held
+    4500 uUSD for it. There was no budgets tool, so it read budgets off
+    `alerts`, which lists a run only once it is near or over its limit.
+
+    Three parts, each held separately. A read-only `budgets` tool
+    (`crates/copilot/src/tools/budgets.rs`) joins `GET /v1/budgets` with each
+    run's spend from `GET /v1/runs`, lists the runs with spend and no budget,
+    and adds unit budgets from `GET /v1/unit-budgets` with `GET /v1/units`'
+    month-to-date spend; a spend the Cloud has no record of is `null`, never
+    zero, and a Cloud without `/v1/unit-budgets` is reported as unable to say,
+    never as having none (`CloudClient::{budgets,unit_budgets,units}`). The
+    system prompt says budgets come from `budgets`, never from `alerts`. And
+    the agent loop checks every draft answer against that answer's own tool
+    results (`crates/copilot/src/grounding.rs`): a clause naming one run with
+    a budget no tool returned, a clause calling a budgeted run unbudgeted, or
+    budget facts stated while `budgets` was available and not called, sends
+    the draft back once with the findings; a finding that survives is
+    appended to the answer as a note and listed in `Answer::unsupported_claims`.
+    The clause heuristic and the single revision turn are `@claude` design
+    choices, open to reversal; the requirement above is the decision.
+    The no-signer, propose-only shape is unchanged: the tool issues GETs only
+    and is not a propose tool, and a propose tool's result is never counted
+    as a budget fact.
+    *(test: `crates/copilot/tests/felyx_reads_budgets_test.rs`, fourteen,
+    on a stub Cloud carrying the forge figures; `crates/copilot/src/
+    grounding.rs`'s seven, including a 200-seed hostile-text sweep;
+    `crates/copilot/src/tools/budgets.rs`'s three. Red first on the unfixed
+    tree: twelve of the fourteen failed on assertions (no `budgets` tool, no
+    revision turn, no prompt rule) with the two `unsupported_claims` lines
+    removed so the file compiled; the two that passed are the no-false-alarm
+    cases, green by design. Seven mutants planted by hand, each caught and
+    restored: the single-run budget check removed, the no-budget phrasing
+    never recognised, the budgets-unread rule dropped, the revision turn
+    skipped, run spend not joined, at-or-over made strict, the residual note
+    dropped. Scenarios:
+    `features/felyx-reads-budgets-from-the-budgets-tool.feature`, nine, each
+    bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: the answer check is a clause-level text heuristic,
+    not a parser. It does not check a positive budget claim in a clause that
+    names several runs, a run id no tool returned, budget AMOUNTS, or unit
+    budgets; a negative claim separated from its runs by a semicolon escapes
+    it. A budget a gateway applies on its own (a per-run default ceiling, an
+    identity-map unit cap) is invisible to the Cloud and so to this tool,
+    which says so in its own result. The Money panel's runs table still shows
+    a run's budget only from `alerts` and this session's own changes
+    (`crates/api/src/money/state.rs`'s `budget_overrides`); this change does
+    not touch it.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

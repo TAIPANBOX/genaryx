@@ -83,6 +83,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use genaryx_signing::{Es256Signer, SigningError, sign_mutation};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ---- error -----------------------------------------------------------------
 
@@ -321,6 +322,53 @@ impl CloudClient {
     /// `Alert` in `store.rs`).
     pub async fn alerts(&self) -> Result<Vec<Alert>, ConnectorError> {
         self.get_json("/v1/alerts").await
+    }
+
+    /// `GET /v1/budgets` - the caller org's run -> budget-micros map
+    /// (`http.rs::budgets`, `Store::budgets`): every run budget set on the
+    /// control plane, whatever that run has spent. A flat map old gateways
+    /// parse verbatim, so it carries no spend; join it with [`Self::runs`].
+    ///
+    /// The only read here that answers "which runs have a budget". `/v1/alerts`
+    /// does not: it lists a budgeted run only once it is near or over the
+    /// limit, so a run well under its budget is absent there.
+    pub async fn budgets(&self) -> Result<HashMap<String, i64>, ConnectorError> {
+        self.get_json("/v1/budgets").await
+    }
+
+    /// `GET /v1/unit-budgets` - the caller org's unit -> monthly budget-micros
+    /// overrides set on the control plane (`http.rs::unit_budgets`).
+    ///
+    /// `Ok(None)` when this Cloud has no such route (404), which is "cannot
+    /// say", never "no unit budgets". Covers only what the Cloud holds: a
+    /// unit cap a gateway reads from its own identity map is not here.
+    pub async fn unit_budgets(&self) -> Result<Option<HashMap<String, i64>>, ConnectorError> {
+        self.get_json_or_absent("/v1/unit-budgets").await
+    }
+
+    /// `GET /v1/units` - per-unit spend rollup with month-to-date columns
+    /// (`http.rs::units`, `UnitAgg` in `store.rs`). `Ok(None)` on a 404, as
+    /// [`Self::unit_budgets`].
+    pub async fn units(&self) -> Result<Option<Vec<UnitAgg>>, ConnectorError> {
+        self.get_json_or_absent("/v1/units").await
+    }
+
+    /// A read whose route an older Cloud may not have: 404 is `Ok(None)`,
+    /// kept apart from an empty answer, the same rule as [`Self::spend_window`].
+    async fn get_json_or_absent<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Option<T>, ConnectorError> {
+        let resp = self
+            .http
+            .get(format!("{}{path}", self.base_url))
+            .bearer_auth(&self.bearer_token)
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        parse_response(resp).await.map(Some)
     }
 
     /// `GET /v1/audit/verify` - whether the caller org's tamper-evident audit
@@ -674,6 +722,28 @@ pub struct SavingsSummary {
     pub router_saved_microusd: i64,
     pub budget_breaks: u64,
     pub total_saved_microusd: i64,
+}
+
+/// One element of `GET /v1/units`. Exact shape of `store.rs::UnitAgg`. The
+/// `month_*` columns cover the current UTC calendar month, the window unit
+/// budgets are enforced over; `serde(default)` on the later additions so an
+/// older Cloud still parses.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UnitAgg {
+    /// The literal `"unassigned"` for runs with no resolved unit, never `""`.
+    pub unit: String,
+    pub spent_microusd: i64,
+    pub calls: u64,
+    pub runs: u64,
+    pub last_seen_millis: i64,
+    #[serde(default)]
+    pub tool_calls: u64,
+    #[serde(default)]
+    pub month: String,
+    #[serde(default)]
+    pub month_spent_microusd: i64,
+    #[serde(default)]
+    pub month_calls: u64,
 }
 
 /// One element of `GET /v1/alerts`. Exact shape of `store.rs::Alert`.
