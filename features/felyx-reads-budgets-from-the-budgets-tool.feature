@@ -79,3 +79,23 @@ Feature: Felyx states a budget only when a tool returned it
     Given an answer whose every budget statement matches the tool results
     And an answer that only says Felyx cannot change a budget
     Then no revision is requested and no extra model call is made
+
+  # @test:an_agent_said_to_be_over_budget_with_no_run_over_is_sent_back
+  # @test:an_agent_is_over_only_if_one_of_its_runs_is
+  # @test:a_run_said_to_be_over_its_budget_while_under_it_is_sent_back
+  # @test:an_alert_at_a_fraction_of_one_or_more_counts_as_over
+  Scenario: Over budget means a run the tools returned at or over its budget
+    Given the second forge run, where every run was right and the summary said
+      "Flint and brume have budget overages"
+    And no flint run is at or over its budget, while p1-brume is
+    When the draft is checked
+    Then Felyx is asked to revise the claim about flint, and only flint
+    And a run called over its budget while the tools show it under is sent back too
+
+  # @test:the_live_forge_rows_alone_raise_nothing
+  # @test:no_budget_issues_is_not_a_no_budget_claim
+  # @test:the_revision_request_asks_for_a_fresh_answer_that_does_not_mention_the_check
+  Scenario: The corrected answer reads as an answer
+    Given the per-agent rows Felyx wrote on forge, with "no budget issues" for beryl2
+    Then they raise nothing, because "no budget issues" is not a claim that a run has no budget
+    And a revision request asks for a fresh answer that does not mention the check

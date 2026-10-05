@@ -789,11 +789,30 @@ an absent invariant.
     `features/felyx-reads-budgets-from-the-budgets-tool.feature`, nine, each
     bound; gate: `scripts/features-are-bound.sh`.
 
+    The second forge run, the same day on `genaryx-console:v1.1.24`, got
+    every run right, matched `GET /v1/budgets` exactly on "which runs have a
+    budget", and still closed with "Flint and brume have budget overages":
+    no flint run was over, and "flint" is an agent, not a run id. So the
+    check also reads OVER claims ("over", "overages", "exceeded"...): a
+    clause calling one run over its budget while the tools returned it
+    under, or naming an agent (by full id or the last segment of it) none of
+    whose runs a tool returned at or over its budget, is sent back too; "no
+    budget issues" is no longer read as "no budget"; and the revision
+    request asks for a fresh answer, after the first run showed the
+    operator "You're right. Let me revise".
+    *(test: four more in the integration file, the live forge rows as a
+    no-false-alarm fixture; three more in `grounding.rs`. Three of the new
+    integration tests were red on `1a38148`. Five more mutants caught: the
+    agent check, the run-over check, the "no budget issues" exemption, an
+    alert's fraction ignored, the fresh-answer instruction dropped.
+    Scenarios: two more, eleven in all.)*
+
     Where it says nothing: the answer check is a clause-level text heuristic,
     not a parser. It does not check a positive budget claim in a clause that
     names several runs, a run id no tool returned, budget AMOUNTS, or unit
     budgets; a negative claim separated from its runs by a semicolon escapes
-    it. A budget a gateway applies on its own (a per-run default ceiling, an
+    it, and an over claim about several runs in one clause is not checked
+    run by run (agents are). A budget a gateway applies on its own (a per-run default ceiling, an
     identity-map unit cap) is invisible to the Cloud and so to this tool,
     which says so in its own result. The Money panel's runs table read
     budgets from `alerts` until invariant 17 moved it to the same

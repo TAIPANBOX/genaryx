@@ -517,3 +517,103 @@ async fn the_system_prompt_says_budgets_come_from_the_budgets_tool_not_alerts() 
     assert!(system.contains("`budgets`"), "{system}");
     assert!(system.contains("`alerts`"), "{system}");
 }
+
+// ---- the second forge run, 2026-10-05, console v1.1.24 ------------------
+//
+// With the budgets tool and the run-level check in place, Felyx got every
+// run right and still closed with "Flint and brume have budget overages".
+// No flint run is over its budget (mig-flint used 71%), and "flint" is an
+// agent name, not a run id, so the run-level check never looked at it.
+
+const LIVE_Q1_ROWS: &str = "| **flint** | $0.01325 | mig-flint ($0.0032), p1-flint ($0.0026, **killed**), p1-flint-2 ($0.0013) | p1-flint killed |\n\
+| **beryl2** | $0.00658 | p1-beryl2 ($0.0040), mig-beryl2 ($0.0026) | mig-beryl2 stalled; no budget issues |\n\
+| **brume** | $0.00329 | p1-brume ($0.0020, **over budget $0.001**), mig-brume ($0.0013, **at budget $0.0013**) | p1-brume exceeded budget 2x; mig-brume at its budget limit |";
+
+const LIVE_Q1_SUMMARY: &str =
+    "**Summary:** Flint and brume have budget overages. Flint has a killed run (p1-flint).";
+
+#[tokio::test]
+async fn an_agent_said_to_be_over_budget_with_no_run_over_is_sent_back() {
+    let cloud = forge_cloud();
+    let wrong = format!("{LIVE_Q1_ROWS}\n\n{LIVE_Q1_SUMMARY}");
+    let right = format!(
+        "{LIVE_Q1_ROWS}\n\n**Summary:** brume has budget overages. Flint has a killed run (p1-flint)."
+    );
+    let (felyx, seen) = felyx(
+        &cloud.base,
+        vec![
+            calls(&["list_runs", "alerts", "budgets"]),
+            says(&wrong),
+            says(&right),
+        ],
+    );
+    let answer = felyx.answer("router fleet").await.unwrap();
+    assert_eq!(answer.text, right);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3, "exactly one revision");
+    let feedback = last_user_message(&seen[2]);
+    assert!(feedback.contains("`flint`"), "{feedback}");
+    assert!(
+        !feedback.contains("`brume`"),
+        "brume really has a run over its budget: {feedback}"
+    );
+}
+
+#[tokio::test]
+async fn the_live_forge_rows_alone_raise_nothing() {
+    let cloud = forge_cloud();
+    let (felyx, seen) = felyx(
+        &cloud.base,
+        vec![
+            calls(&["list_runs", "alerts", "budgets"]),
+            says(LIVE_Q1_ROWS),
+        ],
+    );
+    let answer = felyx.answer("router fleet").await.unwrap();
+    assert!(
+        answer.unsupported_claims.is_empty(),
+        "{:?}",
+        answer.unsupported_claims
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        2,
+        "a correct answer costs no revision"
+    );
+}
+
+#[tokio::test]
+async fn a_run_said_to_be_over_its_budget_while_under_it_is_sent_back() {
+    let cloud = forge_cloud();
+    let (felyx, seen) = felyx(
+        &cloud.base,
+        vec![
+            calls(&["budgets"]),
+            says("mig-flint is over its budget."),
+            says("mig-flint is within its budget (71%)."),
+        ],
+    );
+    let answer = felyx.answer("is mig-flint over?").await.unwrap();
+    assert_eq!(answer.text, "mig-flint is within its budget (71%).");
+    let feedback = last_user_message(&seen.lock().unwrap()[2]);
+    assert!(feedback.contains("`mig-flint`"), "{feedback}");
+}
+
+#[tokio::test]
+async fn the_revision_request_asks_for_a_fresh_answer_that_does_not_mention_the_check() {
+    let cloud = forge_cloud();
+    let (felyx, seen) = felyx(
+        &cloud.base,
+        vec![
+            calls(&["budgets"]),
+            says("p1-beryl2 is over its $0.001 cap."),
+            says("ok"),
+        ],
+    );
+    felyx.answer("router fleet").await.unwrap();
+    let feedback = last_user_message(&seen.lock().unwrap()[2]);
+    assert!(
+        feedback.contains("Do not mention this check"),
+        "the operator saw \"You're right. Let me revise\" on forge: {feedback}"
+    );
+}

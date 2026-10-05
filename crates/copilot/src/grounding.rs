@@ -16,14 +16,19 @@
 //! - a clause that names exactly ONE known run and states it has a budget
 //!   ("over budget", "$0.001 cap"), when no tool returned a budget for it;
 //! - a clause that says its runs have NO budget ("do not have budgets set",
-//!   "no budget") naming a run a tool returned a budget for.
+//!   "no budget") naming a run a tool returned a budget for;
+//! - a clause that says a run, or an AGENT, is over a budget ("flint has
+//!   budget overages") when no tool returned that run, or any run of that
+//!   agent, at or over its budget. Added after the second forge run the same
+//!   day: every run was right and the summary line still said "Flint and
+//!   brume have budget overages", and "flint" is an agent name, not a run id.
 //!
 //! What it deliberately does not check, to stay free of false alarms: a
 //! positive claim in a clause naming several runs (it cannot tell which run
 //! the budget word is about), a run id no tool returned, budget AMOUNTS, and
 //! unit budgets. Those are the model's and the prompt's.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -36,6 +41,13 @@ pub(crate) struct BudgetFacts {
     budgeted: BTreeSet<String>,
     /// Whether `budgets` ran (successfully) this answer.
     budgets_read: bool,
+    /// Runs a tool returned at or over their budget (`budgets`'
+    /// `at_or_over`, or an alert's `fraction` of 1 or more).
+    runs_over: BTreeSet<String>,
+    /// Run id to agent id, from any row that carries both.
+    run_agent: BTreeMap<String, String>,
+    /// Every agent id any read tool returned.
+    agents: BTreeSet<String>,
 }
 
 impl BudgetFacts {
@@ -61,6 +73,24 @@ impl BudgetFacts {
                     if map.get("budget_usd").is_some_and(|b| !b.is_null()) {
                         self.budgeted.insert(id.to_string());
                     }
+                    let over = map.get("at_or_over").and_then(Value::as_bool) == Some(true)
+                        || map
+                            .get("fraction")
+                            .and_then(Value::as_f64)
+                            .is_some_and(|f| f >= 1.0);
+                    if over {
+                        self.runs_over.insert(id.to_string());
+                    }
+                    if let Some(agent) = map.get("agent_id").and_then(Value::as_str)
+                        && !agent.is_empty()
+                    {
+                        self.run_agent.insert(id.to_string(), agent.to_string());
+                    }
+                }
+                if let Some(agent) = map.get("agent_id").and_then(Value::as_str)
+                    && !agent.is_empty()
+                {
+                    self.agents.insert(agent.to_string());
                 }
                 map.values().for_each(|v| self.walk(v));
             }
@@ -95,6 +125,29 @@ pub(crate) fn check(text: &str, facts: &BudgetFacts, budgets_available: bool) ->
                     .to_string(),
             );
         }
+        if words.iter().any(|w| is_over_word(w)) && !words.iter().any(|w| is_negator(w)) {
+            if let [run] = runs.as_slice()
+                && facts.budgeted.contains(*run)
+                && !facts.runs_over.contains(*run)
+                && seen.insert(format!("over:{run}"))
+            {
+                findings.push(format!(
+                    "says run `{run}` is over its budget, but the tools returned `{run}` under it"
+                ));
+            }
+            for (label, ids) in agents_named(&clause, &facts.agents) {
+                let any_over = facts
+                    .runs_over
+                    .iter()
+                    .any(|r| facts.run_agent.get(r).is_some_and(|a| ids.contains(a)));
+                if !any_over && seen.insert(format!("agent-over:{label}")) {
+                    findings.push(format!(
+                        "says agent `{label}` is over a budget, but no tool returned a run of \
+                         `{label}` at or over its budget"
+                    ));
+                }
+            }
+        }
         if says_no_budget(&words) {
             for run in &runs {
                 if facts.budgeted.contains(*run) && seen.insert(format!("none:{run}")) {
@@ -126,7 +179,9 @@ pub(crate) fn revision_request(findings: &[String]) -> String {
          the console, not the operator):{list}\n\nRevise the answer so every budget statement \
          comes from a tool result. A run has a budget only if `budgets` (or `alerts`) returned \
          one for that run, and a budget returned for one run never belongs to another. If \
-         budgets cannot be read, say so. Reply with the full revised answer."
+         budgets cannot be read, say so. Reply with only the corrected answer for the \
+         operator, written as if it were your first answer. Do not mention this check, \
+         apologise, or say that you are revising."
     )
 }
 
@@ -142,6 +197,31 @@ pub(crate) fn residual_note(findings: &[String]) -> String {
 }
 
 const BUDGET_WORDS: [&str; 6] = ["budget", "budgets", "budgeted", "cap", "caps", "capped"];
+/// Words that claim a budget was reached or passed.
+const OVER_WORDS: [&str; 12] = [
+    "over",
+    "overage",
+    "overages",
+    "overspent",
+    "overspend",
+    "overrun",
+    "exceed",
+    "exceeds",
+    "exceeded",
+    "exceeding",
+    "breach",
+    "breached",
+];
+/// A budget word followed by one of these is about trouble, not about having
+/// a budget: "no budget issues" says nothing about whether one exists.
+const NOT_ABSENCE: [&str; 12] = [
+    "issue", "issues", "problem", "problems", "concern", "concerns", "alert", "alerts", "overage",
+    "overages", "warning", "warnings",
+];
+
+fn is_over_word(w: &str) -> bool {
+    OVER_WORDS.contains(&w)
+}
 const NEGATORS: [&str; 7] = ["no", "not", "without", "lack", "lacks", "lacking", "none"];
 /// Words that may sit between a negator and the budget word it governs:
 /// "do NOT have budgets", "has NO control-plane budget", "WITHOUT a budget".
@@ -166,7 +246,11 @@ fn says_no_budget(words: &[String]) -> bool {
         return true;
     }
     words.iter().enumerate().any(|(i, w)| {
-        if !is_budget_word(w) {
+        if !is_budget_word(w)
+            || words
+                .get(i + 1)
+                .is_some_and(|n| NOT_ABSENCE.contains(&n.as_str()))
+        {
             return false;
         }
         let mut j = i;
@@ -206,6 +290,32 @@ fn runs_named<'a>(clause: &str, known: &'a BTreeSet<String>) -> Vec<&'a String> 
             clause.match_indices(id.as_str()).any(|(at, _)| {
                 let before = clause[..at].chars().next_back();
                 let after = clause[at + id.len()..].chars().next();
+                !before.is_some_and(is_id_char) && !after.is_some_and(is_id_char)
+            })
+        })
+        .collect()
+}
+
+/// Agents named in the clause, by full id or by the last segment of their id
+/// ("flint" for `agent://taipanbox.dev/routers/flint`), case-insensitive and
+/// whole: "flint" is not found inside the run id "mig-flint". Returns each
+/// label with every agent id it may stand for.
+fn agents_named(clause: &str, agents: &BTreeSet<String>) -> Vec<(String, BTreeSet<String>)> {
+    let mut by_label: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for id in agents {
+        let last = id.rsplit('/').next().unwrap_or(id).to_lowercase();
+        if !last.is_empty() {
+            by_label.entry(last).or_default().insert(id.clone());
+        }
+    }
+    let lower = clause.to_lowercase();
+    let is_id_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_';
+    by_label
+        .into_iter()
+        .filter(|(label, _)| {
+            lower.match_indices(label.as_str()).any(|(at, _)| {
+                let before = lower[..at].chars().next_back();
+                let after = lower[at + label.len()..].chars().next();
                 !before.is_some_and(is_id_char) && !after.is_some_and(is_id_char)
             })
         })
@@ -262,6 +372,7 @@ mod tests {
             known_runs: known.iter().map(|s| s.to_string()).collect(),
             budgeted: budgeted.iter().map(|s| s.to_string()).collect(),
             budgets_read: read,
+            ..Default::default()
         }
     }
 
@@ -312,7 +423,8 @@ mod tests {
 
     #[test]
     fn a_contrast_word_separates_two_claims() {
-        let f = facts(&["p1-brume", "mig-flint"], &["p1-brume", "mig-flint"], true);
+        let mut f = facts(&["p1-brume", "mig-flint"], &["p1-brume", "mig-flint"], true);
+        f.runs_over.insert("p1-brume".to_string());
         assert!(
             check(
                 "p1-brume is over its budget, but mig-flint is under its budget",
@@ -332,9 +444,60 @@ mod tests {
 
     #[test]
     fn no_budgets_tool_in_this_install_means_no_demand_to_call_it() {
-        let f = facts(&["p1-brume"], &["p1-brume"], false);
+        let mut f = facts(&["p1-brume"], &["p1-brume"], false);
+        f.runs_over.insert("p1-brume".to_string());
         assert!(check("p1-brume is over its budget", &f, false).is_empty());
         assert_eq!(check("p1-brume is over its budget", &f, true).len(), 1);
+    }
+
+    #[test]
+    fn no_budget_issues_is_not_a_no_budget_claim() {
+        let f = facts(&["mig-flint"], &["mig-flint"], true);
+        assert!(check("mig-flint: no budget issues.", &f, true).is_empty());
+        assert_eq!(check("mig-flint: no budget set.", &f, true).len(), 1);
+    }
+
+    #[test]
+    fn an_agent_is_over_only_if_one_of_its_runs_is() {
+        let mut f = BudgetFacts::default();
+        f.record(
+            "budgets",
+            true,
+            &json!({"run_budgets": [
+                {"run_id": "p1-brume", "agent_id": "agent://x/routers/brume", "budget_usd": 0.001, "at_or_over": true},
+                {"run_id": "mig-flint", "agent_id": "agent://x/routers/flint", "budget_usd": 0.0045, "at_or_over": false}
+            ]}),
+        );
+        let found = check("Flint and Brume have budget overages.", &f, true);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("`flint`"));
+        assert!(
+            check(
+                "brume is over budget, but flint is not over its budget.",
+                &f,
+                true
+            )
+            .is_empty()
+        );
+        assert!(check("mig-flint is a flint run under its budget.", &f, true).is_empty());
+    }
+
+    #[test]
+    fn an_alert_at_a_fraction_of_one_or_more_counts_as_over() {
+        let mut f = BudgetFacts::default();
+        f.record(
+            "list_runs",
+            true,
+            &json!({"runs": [{"run_id": "r", "agent_id": "agent://x/a/alpha"}]}),
+        );
+        f.record(
+            "alerts",
+            true,
+            &json!([{"run_id": "r", "budget_usd": 0.01, "fraction": 1.2}]),
+        );
+        f.record("budgets", true, &json!({}));
+        assert!(check("alpha exceeded its budget.", &f, true).is_empty());
+        assert!(check("r is over its budget.", &f, true).is_empty());
     }
 
     #[test]
