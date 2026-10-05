@@ -224,7 +224,10 @@ box; these frames are not it, and say so here rather than in a footnote.
   over its limit. A draft answer that states a run's budget no tool
   returned, or calls a budgeted run unbudgeted, is sent back once for
   revision, and a statement that survives reaches the operator with a note
-  naming it.
+  naming it. The check also covers over claims: a run called over budget
+  that the tools returned under its budget, or an agent named as over budget
+  when none of its runs is at or over, is sent back the same way, and the
+  revision request asks for a fresh answer rather than an apology.
 - **The web shell** (`genaryx-web` + `genaryx-api`). `genaryx-api` holds the
   command layer the browser console calls, so every privileged action goes
   through one chokepoint. Operator auth is one account per box, Argon2id,
@@ -298,6 +301,16 @@ box; these frames are not it, and say so here rather than in a footnote.
   refused, not-durable, or unreachable answer from vouchryx is reported as
   itself, never as success. `crates/api/src/delegation` + a "Revoke
   delegation" button on the agent detail card in the web shell.
+- **Money runs table reads the Cloud's budgets (2026-10-05, invariant 17).**
+  The table takes each run's budget from the Cloud's `GET /v1/budgets`, not
+  from `alerts`, which lists a run only once it is near or over its limit, so
+  a budgeted run that is still under that threshold shows its cap instead of
+  "no cap". When the budget map cannot be read the runs are still listed, the
+  board shows "cap unknown" rather than "no cap", and the runs export carries a
+  `budgets_read` column beside `budget_usd` saying which of the two an empty
+  cell means. Verified against a stub Cloud carrying the forge figures
+  (`crates/api/tests/money_runs_budgets_test.rs`); invariant 17 records no run
+  against a live console yet.
 
 ## Being written to, not just watched
 
@@ -376,7 +389,7 @@ cd ../..    && cargo build -p genaryx-web --release
 
 ## Architecture source of truth
 
-The plan lives in [`~/Development/itrat-console`](../itrat-console): decisions
+The plan lives in `~/Development/itrat-console`, a private repository: decisions
 00 through 18. This pointed at "00-09 and 13" until 2026-08-04, which left out
 the file describing the work three sections of this README are about: **15**
 (registration, identity and units, D15/B2 and B3). Per-phase scopes and exit-gate results
