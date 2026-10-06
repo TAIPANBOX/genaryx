@@ -56,7 +56,7 @@ Two `taipan` gaps block the full-stack e2e (tracked as task #29, fixed in Wave
 1. **DONE** (commit `58ef1a2`): Wardryx connector — `WardryxClient`
    (approvals/policies/decide), `ApprovalTokenClaims` display decoder,
    `WardryxError`, live hold->grant->token->allow e2e
-   (`crates/connectors/{src/wardryx.rs, tests/wardryx_test.rs}`).
+   (`crates/connectors/{src/wardryx.rs, tests/it/wardryx_test.rs}`).
 2. **Policy panel, BOTH shells** (two parallel tracks from the data contract
    below): Track A (Tauri/Web) `apps/desktop/src-tauri/src/policy/` +
    React panel; Track B (SwiftUI) `crates/ffi/src/wardryx/` (`WardryxHandle`) +

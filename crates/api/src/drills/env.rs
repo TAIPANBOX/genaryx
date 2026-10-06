@@ -20,7 +20,7 @@
 //! 2. `~/Development/mockryx/bin/mockryx` - a local checkout's own build
 //!    output, matching `go build -o bin/mockryx ./cmd/mockryx` exactly
 //!    (mockryx's own Makefile convention, also how
-//!    `crates/connectors/tests/exit_gate_test.rs::build_mockryx` builds it;
+//!    `crates/connectors/tests/it/exit_gate_test.rs::build_mockryx` builds it;
 //!    docs/PHASE4.md grounds Mockryx from `~/Development/mockryx`).
 //!
 //! ## The gateway: the SAME taipan descriptor identity/quality/money read

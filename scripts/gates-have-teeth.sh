@@ -199,6 +199,18 @@ d.setdefault("dependencies", {})["tauri"] = "^2"
 json.dump(d, open(p, "w"), indent=2)')" \
 	"FAIL"
 
+# invariant 18: one integration-test binary per crate. The way it is lost is a
+# new top-level tests/*.rs that works fine and relinks the whole tree again.
+run_case "one-test-binary-per-crate: a second top-level tests/*.rs" fail \
+	'./scripts/one-test-binary-per-crate.sh' \
+	"$(py 'open("crates/core/tests/planted_by_teeth.rs", "w").write("#[test]\nfn planted() {}\n")')" \
+	"SPLIT"
+
+run_case "one-test-binary-per-crate: the allow-listed file is gone" fail \
+	'./scripts/one-test-binary-per-crate.sh' \
+	"$(py 'import os; os.remove("crates/copilot/tests/residency_no_proxy_test.rs")')" \
+	"STALE"
+
 echo
 echo "=== and what they must NOT catch ==="
 
@@ -209,6 +221,13 @@ run_case "no-fabricated-rows: the one module allowed to import fixtures" pass \
 	"$(py 'p = "apps/web/src/lib/recentEvents.ts"
 s = open(p).read()
 open(p, "w").write("// a harmless comment added beside the allowed import\n" + s)')"
+
+# A new file inside tests/it/ is a module of the one binary, which is the
+# shape the gate asks for.
+run_case "one-test-binary-per-crate: a new module inside tests/it/" pass \
+	'./scripts/one-test-binary-per-crate.sh' \
+	"$(py 'open("crates/core/tests/it/planted_by_teeth.rs", "w").write("#[test]\nfn planted() {}\n")
+edit("crates/core/tests/it/main.rs", "mod store_test;", "mod store_test;\nmod planted_by_teeth;")')"
 
 # The scenarios in features/ stay bound to tests that exist, both ways:
 # a binding pointing at a renamed test reads as held and is not.
@@ -237,6 +256,11 @@ run_case "readme-numbers: a failing suite is not a smaller count" fail \
 	'./scripts/readme-numbers.sh' \
 	"$(py 'edit("crates/core/src/bus.rs", "#[cfg(test)]", "#[cfg(test)]\nmod teeth_forced_failure {\n    #[test]\n    fn this_test_fails_on_purpose() { assert!(false, \"planted by gates-have-teeth\"); }\n}\n\n#[cfg(test)]")')" \
 	"the suite did not pass"
+
+run_case "one-test-binary-per-crate: no crates left to look at" fail \
+	'./scripts/one-test-binary-per-crate.sh' \
+	"$(py 'import shutil; shutil.rmtree("crates")')" \
+	"measured nothing"
 
 echo
 if [ -n "$(git status --porcelain)" ]; then

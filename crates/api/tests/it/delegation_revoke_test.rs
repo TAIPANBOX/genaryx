@@ -26,7 +26,7 @@ use std::time::Duration;
 /// two tests calling `configured()` (or touching the vars directly)
 /// concurrently can interleave their set/read/clear cycles, so one test
 /// resolves a URL or key file that belongs to another. Measured, not
-/// assumed: `cargo test -p genaryx-api --test delegation_revoke_test` alone
+/// assumed: `cargo test -p genaryx-api --test it delegation_revoke_test` alone
 /// (this binary only, less contention) passed all 17 tests; the same suite
 /// inside `cargo test --workspace` (every binary's threads contending at
 /// once) failed three of them until this lock was added.
@@ -826,7 +826,7 @@ async fn an_oversized_reason_is_refused_before_any_call() {
 /// leak into a log line, an error, or a response, by construction.
 #[test]
 fn the_key_is_read_out_of_revoke_key_in_exactly_one_place() {
-    const SOURCE: &str = include_str!("../src/delegation/commands.rs");
+    const SOURCE: &str = include_str!("../../src/delegation/commands.rs");
     let call_sites = SOURCE.matches("revoke_key.as_str()").count();
     assert_eq!(
         call_sites, 1,

@@ -13,7 +13,7 @@ description = "Felyx, the Genaryx AI copilot (D13): read + propose, never act. A
 # structurally unable to produce an `X-Fuse` signature, so an accepted proposal
 # can only be executed by the EXISTING human-signed ceremony, never by the
 # copilot. Do not add genaryx-signing here. A test asserts this at build time
-# (tests/no_signer.rs).
+# (tests/it/no_signer.rs).
 
 [dependencies]
 # The copilot is a CONSUMER of the existing connectors (all tool I/O is a typed

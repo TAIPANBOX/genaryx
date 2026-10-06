@@ -166,7 +166,7 @@ pub const CRATE: &str = "genaryx-connectors";
 /// Pair this with `#[serde(default)]` to map absent, `null`, and a real array
 /// all to `T::default()`. This is exactly the "type written against an
 /// assumption, not the real bytes" class the Engram live testing surfaced; the
-/// qryx/mockryx live-shape tests (`tests/live_shapes_test.rs`) guard it.
+/// qryx/mockryx live-shape tests (`tests/it/live_shapes_test.rs`) guard it.
 pub(crate) fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,

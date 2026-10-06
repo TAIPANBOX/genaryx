@@ -31,7 +31,7 @@ fn assert_fixture_all_valid(name: &str, body: &str) {
 #[test]
 fn canonical_examples_all_valid() {
     // 7 events across all sources, spanning v0.1 and v0.2 (07 §1 examples).
-    assert_fixture_all_valid("canonical", include_str!("fixtures/canonical.ndjson"));
+    assert_fixture_all_valid("canonical", include_str!("../fixtures/canonical.ndjson"));
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn real_bank_campaign_all_valid() {
     // Real bank-in-a-box campaign output; conforming agent:// ids.
     assert_fixture_all_valid(
         "campaign-bank",
-        include_str!("fixtures/campaign-bank.ndjson"),
+        include_str!("../fixtures/campaign-bank.ndjson"),
     );
 }
 
@@ -50,7 +50,7 @@ fn real_aws_campaign_agent_ids_are_nonconforming() {
     // via the fail-open emission path (07 §3). The conformer must catch all 12,
     // which is exactly what the Posture "schema conformance" check surfaces.
     let c = conformer();
-    let body = include_str!("fixtures/campaign-aws-176.ndjson");
+    let body = include_str!("../fixtures/campaign-aws-176.ndjson");
     let mut checked = 0;
     for (i, line) in body.lines().enumerate() {
         if line.trim().is_empty() {
@@ -399,12 +399,14 @@ fn v0_3_stays_refused_by_version() {
 #[test]
 fn the_vendored_v1_0_schema_widens_only_the_subject() {
     use serde_json::Value;
-    let v0_2: Value =
-        serde_json::from_str(include_str!("../src/schemas/agent-event.v0.2.schema.json"))
-            .expect("the vendored v0.2 schema parses");
-    let v1_0: Value =
-        serde_json::from_str(include_str!("../src/schemas/agent-event.v1.0.schema.json"))
-            .expect("the vendored v1.0 schema parses");
+    let v0_2: Value = serde_json::from_str(include_str!(
+        "../../src/schemas/agent-event.v0.2.schema.json"
+    ))
+    .expect("the vendored v0.2 schema parses");
+    let v1_0: Value = serde_json::from_str(include_str!(
+        "../../src/schemas/agent-event.v1.0.schema.json"
+    ))
+    .expect("the vendored v1.0 schema parses");
 
     assert_eq!(
         v1_0["$id"],

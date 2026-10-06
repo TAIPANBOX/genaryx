@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// `http://127.0.0.1:8080` is `tokenfuse-cloud`'s own documented default bind
-/// address (matching `crates/connectors/tests/cloud_rest_test.rs`'s and
+/// address (matching `crates/connectors/tests/it/cloud_rest_test.rs`'s and
 /// `docs/PHASE1.md`'s local dev-loop conventions).
 const FALLBACK_CLOUD_URL: &str = "http://127.0.0.1:8080";
 

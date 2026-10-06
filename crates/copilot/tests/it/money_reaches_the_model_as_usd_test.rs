@@ -13,7 +13,7 @@
 //! macro losing its own conversion step.
 //!
 //! HAND-ROLLED stub server, same shape `crates/copilot/tests/
-//! agent_id_header_test.rs` and `crates/api/tests/delegation_revoke_test.rs`
+//! agent_id_header_test.rs` and `crates/api/tests/it/delegation_revoke_test.rs`
 //! already use: this proves GENARYX's own tool dispatch, never a real
 //! Cloud's correctness.
 

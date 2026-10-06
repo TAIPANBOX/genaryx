@@ -117,3 +117,7 @@ jobs:
       # names one; the readable form of what a change promised, kept honest.
       - name: every scenario is bound to a test, both ways
         run: ./scripts/features-are-bound.sh
+      # One integration-test binary per crate: each extra tests/*.rs links the
+      # whole dependency tree again, on every test run, on every machine.
+      - name: one integration-test binary per crate
+        run: ./scripts/one-test-binary-per-crate.sh

@@ -309,7 +309,7 @@ box; these frames are not it, and say so here rather than in a footnote.
   board shows "cap unknown" rather than "no cap", and the runs export carries a
   `budgets_read` column beside `budget_usd` saying which of the two an empty
   cell means. Verified against a stub Cloud carrying the forge figures
-  (`crates/api/tests/money_runs_budgets_test.rs`); invariant 17 records no run
+  (`crates/api/tests/it/money_runs_budgets_test.rs`); invariant 17 records no run
   against a live console yet.
 
 ## Being written to, not just watched

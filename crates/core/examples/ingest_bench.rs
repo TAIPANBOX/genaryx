@@ -5,7 +5,7 @@
 //! Run: `cargo run --release --example ingest_bench -p genaryx-core`
 //!
 //! Builds a large corpus by repeating `demo::generate`'s own output (already
-//! proven conforming line-by-line in `tests/demo_test.rs`) up to a fixed
+//! proven conforming line-by-line in `tests/it/demo_test.rs`) up to a fixed
 //! target line count, then times two stages with `std::time::Instant`:
 //!
 //!   1. conform-only: `Conformer::parse_valid` over every line, nothing else.
@@ -176,7 +176,7 @@ fn warm_up(conformer: &Conformer, lines: &[String]) {
 
 /// Stage 1: `Conformer` alone, over every line in `corpus`. Every line must
 /// parse valid: the corpus is entirely repeated `demo::generate` output,
-/// already proven conforming by `tests/demo_test.rs`. A failure here would
+/// already proven conforming by `tests/it/demo_test.rs`. A failure here would
 /// mean the corpus itself regressed, so it is a hard panic, not a skipped
 /// line.
 fn bench_conform_only(conformer: &Conformer, corpus: &[String]) -> Duration {

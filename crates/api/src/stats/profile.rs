@@ -52,7 +52,7 @@
 //! than on a feeling, and the measurement has since been taken.** On 42 agents
 //! at 100 events a day over 90 days, 378,000 rows, one profile answers in
 //! 4.6 ms, against 1.1 ms at a hundredth of the data
-//! (`crates/api/tests/stats_scale.rs`, 2026-08-11). A hundredfold in rows costs
+//! (`crates/api/tests/it/stats_scale.rs`, 2026-08-11). A hundredfold in rows costs
 //! roughly four times in latency, on an index doing its job. The decision
 //! stands, and it now stands on a number.
 

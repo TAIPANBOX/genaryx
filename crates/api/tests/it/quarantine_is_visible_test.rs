@@ -24,7 +24,7 @@ use genaryx_core::store::Store;
 /// 2026-07-16. Also lives in `genaryx-core`'s own conformance suite, which
 /// asserts each of the twelve is refused; this asserts what the CONSOLE then
 /// does about it.
-const CAMPAIGN: &str = include_str!("../../core/tests/fixtures/campaign-aws-176.ndjson");
+const CAMPAIGN: &str = include_str!("../../../core/tests/fixtures/campaign-aws-176.ndjson");
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()

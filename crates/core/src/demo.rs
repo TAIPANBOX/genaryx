@@ -11,7 +11,7 @@
 //! Volume mirrors real campaigns (08 §2): a ~65-run, ~34-agent burst with
 //! ~12 tokenfuse budget/breaker blocks and 170+ total events. Every line is
 //! built through `serde_json` (never string concatenation), and every line
-//! this module writes is asserted, in `tests/demo_test.rs`, to pass
+//! this module writes is asserted, in `tests/it/demo_test.rs`, to pass
 //! [`crate::conform::Conformer`]: the loop from "demo data" to "conforming
 //! agent-event" is closed by that test, not just by inspection.
 //!

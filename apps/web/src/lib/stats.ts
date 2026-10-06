@@ -46,7 +46,7 @@ const NO_ENVIRONMENT_ERROR: StatsError = { kind: "no_environment" };
  * operator's block halted.
  *
  * It used to bound everything, at 20,000, and that was a silent truncation on
- * any busy estate. @measured `genaryx/crates/api/tests/stats_scale.rs`,
+ * any busy estate. @measured `genaryx/crates/api/tests/it/stats_scale.rs`,
  * 2026-08-11, on 42 agents x 100 events/day x 90 days: 378,000 events in the
  * window, of which the panel read 20,000, so a question about that window was
  * answered from about five per cent of it under a sentence reading "counted

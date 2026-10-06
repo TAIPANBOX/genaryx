@@ -5,7 +5,7 @@
 //! at CONNECTION time, not only when the provider is built (DNS rebinding).
 //!
 //! HAND-ROLLED stub server, same shape `agent_id_header_test.rs` and
-//! `crates/api/tests/delegation_revoke_test.rs` already use: this proves
+//! `crates/api/tests/it/delegation_revoke_test.rs` already use: this proves
 //! GENARYX's own client behaviour, never a real provider's or a real DNS
 //! server's correctness. Every lookup here is injected (`FixedLookup`/
 //! `ErrLookup`/`SequencedLookup`/`CountingLookup`), so nothing depends on

@@ -13,7 +13,7 @@
 //! To run them against real artifacts:
 //!   QRYX_BIN=/path/to/qryx QRYX_SCAN_TARGET=/some/crypto/dir \
 //!   VERDRYX_DB=/path/to/verdryx.db \
-//!   cargo test -p genaryx-connectors --test live_shapes_test -- --nocapture
+//!   cargo test -p genaryx-connectors --test it live_shapes_test -- --nocapture
 
 use std::path::PathBuf;
 

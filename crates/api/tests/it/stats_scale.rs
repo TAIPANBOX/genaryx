@@ -4,7 +4,7 @@
 //! name:
 //!
 //! ```sh
-//! cargo test -p genaryx-api --release --test stats_scale -- --ignored --nocapture
+//! cargo test -p genaryx-api --release --test it stats_scale -- --ignored --nocapture
 //! ```
 //!
 //! # WHY THIS IS A COMMITTED TEST AND NOT A SCRIPT SOMEBODY RAN ONCE
