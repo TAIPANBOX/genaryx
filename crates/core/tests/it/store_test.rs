@@ -5,7 +5,7 @@
 use genaryx_core::store::Store;
 use genaryx_core::{Conformer, ConsoleEvent, Provenance};
 
-const CANONICAL: &str = include_str!("fixtures/canonical.ndjson");
+const CANONICAL: &str = include_str!("../fixtures/canonical.ndjson");
 
 /// Parse+conform every non-empty line of `canonical.ndjson` into a
 /// `ConsoleEvent` with a synthetic `Provenance`, offset by line index.
@@ -395,7 +395,7 @@ fn the_offset_journal_remembers_the_inode() {
 /// argument: a cache that can drift from the events will drift, and the
 /// evidence that a speculative one never gets built was sitting in the schema.
 /// The decision to go without one was then confirmed by measurement rather than
-/// by taste (`crates/api/tests/stats_scale.rs`: a per-agent profile stays
+/// by taste (`crates/api/tests/it/stats_scale.rs`: a per-agent profile stays
 /// between 1 and 5 ms across a hundredfold increase in rows).
 ///
 /// This test is the marker that keeps it gone. Adding a table here is fine;

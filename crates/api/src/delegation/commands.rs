@@ -576,7 +576,7 @@ mod tests {
     // ---- journal --------------------------------------------------------
 
     /// A per-process `AtomicU64` alongside the timestamp, not just the
-    /// timestamp: `crates/api/tests/delegation_revoke_test.rs` measured a
+    /// timestamp: `crates/api/tests/it/delegation_revoke_test.rs` measured a
     /// real collision under `cargo test --workspace`'s heavier thread
     /// contention with timestamp-only naming (two calls landing on the same
     /// nanosecond), and this module's own test harness runs on the same

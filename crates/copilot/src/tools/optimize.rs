@@ -10,7 +10,7 @@
 //! integer (`dollarize`'s own doc comment, `tools/mod.rs`, names the defect).
 //!
 //! Both tools are READ ONLY. Felyx can see the cost/savings numbers, but this
-//! crate holds no signer (`crates/copilot/tests/no_signer.rs`), so it cannot
+//! crate holds no signer (`crates/copilot/tests/it/no_signer.rs`), so it cannot
 //! itself flip on caching, change a route, or touch gateway config - an
 //! "enable the semantic cache" or "route this model to a cheaper one"
 //! recommendation can only ever be INFORMATIONAL text in the model's answer.

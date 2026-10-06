@@ -320,7 +320,7 @@ impl IdryxClient {
     /// get wrong because "agent-bom" IS what idryx prints
     /// (`internal/bom/cyclonedx.go`'s "idryx agent-bom: N agent(s)" header) and
     /// what the product is called everywhere else; it is only the CLI verb
-    /// that is short. `tests/idryx_agent_bom_test.rs` runs the real binary.
+    /// that is short. `tests/it/idryx_agent_bom_test.rs` runs the real binary.
     ///
     /// Same shape and rationale as [`Self::rescan`]: a synchronous, non-`self`
     /// associated function (the caller resolves the idryx binary + the `--load`

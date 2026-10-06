@@ -39,7 +39,7 @@ labelled `software-signed` until the SE signer is selected in a later pass.
       concern, not part of the wave-1 data spine. Live-proven against a real
       `tokenfuse-cloud`: pair, reads, a signed kill, a signed budget change,
       and a tampered signature rejected `403` - see
-      `crates/connectors/tests/cloud_rest_test.rs`.
+      `crates/connectors/tests/it/cloud_rest_test.rs`.
 - [x] CommandBroker (`crates/core`): draft -> precheck -> (Wardryx decide, ENT)
       -> sign -> execute -> journal + emit `console_command`; fail-closed,
       break-glass ceremony.
@@ -57,7 +57,7 @@ labelled `software-signed` until the SE signer is selected in a later pass.
       `--devkey`) -> console auto-discovers a bare-token bearer -> pair 200 ->
       summary -> signed kill 200 -> console_command conforms (v0.2, source:console,
       verify_result:killed:true) -> clean teardown. Live-verified in
-      `crates/connectors/tests/killer_demo_test.rs`. `--devkey` remains a valid dev
+      `crates/connectors/tests/it/killer_demo_test.rs`. `--devkey` remains a valid dev
       convenience but is no longer required for auto-discovery auth.
 
 ## Cloud API (verified from `~/Development/tokenfuse/crates/cloud/src`)

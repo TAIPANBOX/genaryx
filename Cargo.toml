@@ -88,3 +88,13 @@ url = "2.5.4"
 [profile.release]
 lto = "thin"
 strip = true
+
+# A test run's disk writes are mostly debug info inside test executables. With
+# full DWARF every integration-test binary carried the whole dependency tree's
+# symbols. Line tables keep file:line in panics and backtraces for this
+# workspace's own code; dependencies carry none. Tests inherit this profile.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

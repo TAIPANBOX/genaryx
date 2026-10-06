@@ -8,7 +8,7 @@
 #[test]
 fn copilot_does_not_depend_on_the_signer() {
     let doc: toml::Value =
-        toml::from_str(include_str!("../Cargo.toml")).expect("own Cargo.toml parses");
+        toml::from_str(include_str!("../../Cargo.toml")).expect("own Cargo.toml parses");
     for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
         if let Some(deps) = doc.get(table).and_then(toml::Value::as_table) {
             assert!(

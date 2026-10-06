@@ -48,6 +48,7 @@ the names change per build and stale ones are served forever otherwise.
 ./scripts/no-fabricated-rows.sh
 ./scripts/web-only-and-unpriced.sh
 ./scripts/features-are-bound.sh      # invariant 10
+./scripts/one-test-binary-per-crate.sh  # invariant 18
 ./scripts/readme-numbers.sh          # runs the whole suite; slow
 ./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
 ```
@@ -97,7 +98,7 @@ an absent invariant.
    appended into a product's file breaks that product's chain from its next
    event onward, because every producer on this bus seeds its chain from the
    file tail once at open and advances it in memory.
-   *(partly gated: `crates/core/tests/console_chain_test.rs` holds the chain
+   *(partly gated: `crates/core/tests/it/console_chain_test.rs` holds the chain
    itself, that the console's lines stay one chain with another writer
    appending to the same file throughout and with several commands landing at
    once, and `crates/core/src/command.rs`'s own tests hold that a line and its
@@ -178,7 +179,7 @@ an absent invariant.
    It was found on 2026-08-11 by measuring, not by reading. `stats_counts` read
    the N most recent events and tallied them, with N a cap chosen when the store
    was scratch and held a few thousand lines. Durable history made that cap a
-   truncation nobody could see: @measured `crates/api/tests/stats_scale.rs` at
+   truncation nobody could see: @measured `crates/api/tests/it/stats_scale.rs` at
    42 agents and 100 events a day, ninety days is 378,000 events and the
    frontend asked for 20,000, so "how often was this agent stopped in the last
    thirty days" was answered from about five per cent of the window, under a
@@ -215,7 +216,7 @@ an absent invariant.
    instance: twelve events refused for an `agent_id` with no `agent://` prefix,
    and every count about that agent was exactly right and described nothing
    that happened.
-   `crates/api/tests/quarantine_is_visible_test.rs` drives the REAL captured
+   `crates/api/tests/it/quarantine_is_visible_test.rs` drives the REAL captured
    campaign through the REAL ingest path and holds that the console reports the
    refusal, names the validator's own reason, and points at the file and
    offset; that a clean bus claims the check rather than rendering blank; and
@@ -240,12 +241,12 @@ an absent invariant.
    form at all. And the reason is one string without the subject in it, because
    the panel groups by reason: a producer writing claimed subjects is one row
    with a total, not one row per line and no total.
-   *(test: `crates/core/tests/conform_test.rs`,
+   *(test: `crates/core/tests/it/conform_test.rs`,
    `a_v1_0_event_is_accepted_and_resolved`,
    `a_v1_0_claimed_subject_is_refused_under_one_reason`,
    `v0_3_stays_refused_by_version`,
    `the_vendored_v1_0_schema_widens_only_the_subject`;
-   `crates/core/tests/ingest_test.rs`,
+   `crates/core/tests/it/ingest_test.rs`,
    `claimed_subjects_are_quarantined_under_one_reason_and_counted`. The two
    claimed-subject tests were run first against the conformer with the refusal
    removed and both failed there: the claimed line validated and reached the
@@ -444,7 +445,7 @@ an absent invariant.
     `subject_must_be_agent_or_user_scheme`,
     `reason_must_be_non_empty_and_bounded` hold argument validation, and its
     `a_200_seed_sweep_of_hostile_args_never_panics_and_never_half_validates`
-    sweeps it; `crates/api/tests/delegation_revoke_test.rs` (21 tests) drives
+    sweeps it; `crates/api/tests/it/delegation_revoke_test.rs` (21 tests) drives
     the real function against a hand-rolled stub vouchryx for every outcome
     (200/400/401/403/503/unreachable), a 200 that does NOT confirm
     (`vouchryx_200_with_an_html_body_is_not_confirmed_as_success`,
@@ -531,7 +532,7 @@ an absent invariant.
     `resolved_agent_id_defaults_explicit_empty_and_malformed` (default
     derivation, an explicit org domain, an explicit override, empty falling
     back, a malformed value refused, a value missing its path segment
-    refused); `crates/copilot/tests/agent_id_header_test.rs`'s
+    refused); `crates/copilot/tests/it/agent_id_header_test.rs`'s
     `anthropic_request_carries_the_configured_x_fuse_agent_id_header` and
     `openai_compat_request_carries_the_configured_x_fuse_agent_id_header`
     (a hand-rolled stub server capturing the real outbound request, both
@@ -599,7 +600,7 @@ an absent invariant.
     environment (`provider::residency_client`): a `Location` naming a literal
     public address, or an inherited `HTTP_PROXY`, would be a destination the
     gate never checked, since neither passes through the resolver.
-    *(test: `crates/copilot/tests/residency_no_redirect_test.rs`'s
+    *(test: `crates/copilot/tests/it/residency_no_redirect_test.rs`'s
     `a_gated_client_on_a_literal_local_address_does_not_follow_a_redirect`,
     `a_gated_client_on_an_allow_listed_hostname_does_not_follow_a_redirect`;
     `crates/copilot/tests/residency_no_proxy_test.rs`'s
@@ -614,7 +615,7 @@ an absent invariant.
     `counting_lookup_records_every_call`;
     `crates/copilot/src/residency.rs`'s
     `classify_host_distinguishes_a_hostname_from_a_literal`;
-    `crates/copilot/tests/residency_hostname_test.rs`'s
+    `crates/copilot/tests/it/residency_hostname_test.rs`'s
     `a_hostname_resolving_only_to_a_private_address_is_accepted_end_to_end`,
     `a_hostname_not_on_the_allow_list_is_refused_with_no_dns_lookup_at_all`,
     `a_hostname_resolving_to_one_private_and_one_public_address_is_refused_at_construction`,
@@ -721,7 +722,7 @@ an absent invariant.
     money_reaches_the_model_as_usd_test.rs`'s five tests drive the REAL
     `ToolRegistry::dispatch` path the agent loop uses, against a hand-rolled
     stub Cloud (the same shape `crates/copilot/tests/
-    agent_id_header_test.rs` and `crates/api/tests/delegation_revoke_test.rs`
+    agent_id_header_test.rs` and `crates/api/tests/it/delegation_revoke_test.rs`
     already use) - the layer the in-module tests do NOT cover, and the one
     that actually caught the mutant below. Every test here failed to compile
     against the unfixed tree (`dollarize` did not exist).
@@ -774,7 +775,7 @@ an absent invariant.
     The no-signer, propose-only shape is unchanged: the tool issues GETs only
     and is not a propose tool, and a propose tool's result is never counted
     as a budget fact.
-    *(test: `crates/copilot/tests/felyx_reads_budgets_test.rs`, fourteen,
+    *(test: `crates/copilot/tests/it/felyx_reads_budgets_test.rs`, fourteen,
     on a stub Cloud carrying the forge figures; `crates/copilot/src/
     grounding.rs`'s seven, including a 200-seed hostile-text sweep;
     `crates/copilot/src/tools/budgets.rs`'s three. Red first on the unfixed
@@ -850,7 +851,7 @@ an absent invariant.
     `GET /v1/budgets` has existed since tokenfuse #64, so a Cloud without the
     route is the rare case; one that refuses or is unreachable is the likely
     one.
-    *(test: `crates/api/tests/money_runs_budgets_test.rs`, seven, on a stub
+    *(test: `crates/api/tests/it/money_runs_budgets_test.rs`, seven, on a stub
     Cloud carrying the forge figures: a budgeted run with no alert, a run with
     none, the map winning over an alert figure, 404/500/403 on the map,
     neither map nor alerts answering, runs failing as an error, and ten named
@@ -871,6 +872,34 @@ an absent invariant.
     names. Unit budgets are not in this table. No live console has been
     pointed at the forge Cloud with this build; the figures above come from a
     stub carrying the forge numbers.)*
+
+18. **Each crate's integration tests link into one test binary.** Cargo makes
+    every top-level `tests/*.rs` its own executable, each statically linking the
+    crate and its whole dependency tree, so one `cargo test` after a change
+    relinks all of them and writes one binary's size times the file count.
+    `@claude 2026-10-06`, measured the cost in a sibling repo in this estate:
+    about forty such binaries of 200 MB, about 8 GB written per run, several TB
+    to one SSD in a week. Each file lives at `tests/it/<file>.rs`, declared
+    once in `tests/it/main.rs`, test names
+    unchanged (`features-are-bound.sh` binds to them), and a single file runs as
+    `cargo test -p <crate> --test it <file>`. `[profile.dev]` in the root
+    `Cargo.toml` carries line tables only for this workspace and no debug info
+    for dependencies, which tests inherit; a panic still names its file and line.
+
+    One binary is one process, so the merge was audited for state the files
+    used to keep apart (environment writes, statics, scratch paths, ports,
+    global subscribers). One file stays alone, allow-listed with its reason:
+    `crates/copilot/tests/residency_no_proxy_test.rs` sets `HTTP_PROXY` for the
+    whole process, which every other reqwest client in that crate's tests
+    would read.
+    *(gate: `scripts/one-test-binary-per-crate.sh`, which counts top-level
+    `tests/*.rs` files and `[[test]]` tables per crate and fails on a second one
+    outside its allow-list, and on an allow-list entry whose file is gone; four
+    cases in `gates-have-teeth.sh`: a planted second file, the allow-listed file
+    removed, a new module inside `tests/it/` that must NOT fire, and no crates
+    at all, which must say it measured nothing. Not held: that a merged file
+    does not race another one in the same process; the audit was by reading,
+    and a later test that writes process-wide state is caught only if it fails.)*
 
 ## Decisions that have no gate yet
 

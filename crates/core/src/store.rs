@@ -170,7 +170,7 @@ CREATE INDEX IF NOT EXISTS idx_events_agent_ts_ms ON events(agent_id, ts_ms);
 /// leads on `type`, and `idx_events_agent_ts_ms` has no `type` at all, so
 /// SQLite scanned the table and built a temporary b-tree for the grouping.
 ///
-/// @measured `crates/api/tests/stats_scale.rs`, 2026-08-11, on 42 agents x 100
+/// @measured `crates/api/tests/it/stats_scale.rs`, 2026-08-11, on 42 agents x 100
 /// events/day x 90 days (378,000 rows): 268 ms without this index, 117 ms with
 /// it, and 21 MB added to a 260 MB store. The column order is the GROUP BY's,
 /// with `ts_ms` last so the window is a range scan inside each group.
@@ -194,7 +194,7 @@ CREATE INDEX IF NOT EXISTS idx_events_agent_type_ts_ms ON events(agent_id, type,
 /// That case was then settled by measurement rather than by preference: on
 /// 42 agents at 100 events a day over 90 days, 378,000 rows, a per-agent
 /// profile answers in 1 to 5 ms straight off the events
-/// (`crates/api/tests/stats_scale.rs`, 2026-08-11). There is nothing for a
+/// (`crates/api/tests/it/stats_scale.rs`, 2026-08-11). There is nothing for a
 /// rollup to buy.
 ///
 /// # WHAT THE DROP CAN DESTROY
@@ -241,7 +241,7 @@ pub struct StoredEvent {
 /// and `raw` (the producer's whole original line) is the bulk of every row.
 /// Nothing in that fold reads it.
 ///
-/// @measured `crates/api/tests/stats_scale.rs`, 2026-08-11, 52,920 rows out of
+/// @measured `crates/api/tests/it/stats_scale.rs`, 2026-08-11, 52,920 rows out of
 /// 378,000: 211 ms as `StoredEvent`, 205 ms as this. So this buys MEMORY and
 /// bytes moved, NOT time. The query is scan-bound, and dropping `raw` from the
 /// projection does not change how many rows SQLite has to walk. Said plainly

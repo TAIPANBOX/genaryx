@@ -19,7 +19,7 @@ New workspace member. Modules: `provider` (the `LlmProvider` trait + `OpenAiComp
 **The three-line safety model is structural, from day one:**
 - `crates/copilot` has **no dependency on `genaryx-signing`** and holds no signer — it
   cannot produce an `X-Fuse` signature, so it cannot act. Enforced by
-  `tests/no_signer.rs`, which parses the crate's own `Cargo.toml` dependency tables and
+  `tests/it/no_signer.rs`, which parses the crate's own `Cargo.toml` dependency tables and
   fails if the signer ever appears.
 - Read tools execute; `Propose` returns a `ProposedAction` object (C2); `Act` does not
   exist as a code path.

@@ -842,7 +842,7 @@ impl ApprovalTokenClaims {
     }
 }
 
-// ---- unit tests (no network; see tests/wardryx_test.rs for the live cycle) -
+// ---- unit tests (no network; see tests/it/wardryx_test.rs for the live cycle) -
 
 #[cfg(test)]
 mod tests {

@@ -402,7 +402,7 @@ mod tests {
     // a real console_command appended and re-read back off disk.
     // ==========================================================================
     // Same gated, hermetic, single-test-function shape as
-    // `crates/connectors/tests/cloud_rest_test.rs` (builds `tokenfuse-cloud`
+    // `crates/connectors/tests/it/cloud_rest_test.rs` (builds `tokenfuse-cloud`
     // from `~/Development/tokenfuse` with `TOKENFUSE_CLOUD_ALLOW_DEVKEY=1` on
     // a fresh ephemeral port, torn down after), reused here rather than
     // reimplemented from scratch. `env::discover` itself is already fully
