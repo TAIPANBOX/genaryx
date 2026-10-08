@@ -47,8 +47,12 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # `--no-fail-fast`: without it cargo stops at the first crate with a
+      # failing test and the crates after it never report, so one red run
+      # names one crate's failures and hides the rest. Found 2026-10-08 on a
+      # red-first commit whose core and connector tests never ran.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
 
       # A number in a README is a claim with no owner: right the day it is
       # written, and the suite grows in commits that never open the file. Four
