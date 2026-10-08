@@ -901,6 +901,71 @@ an absent invariant.
     does not race another one in the same process; the audit was by reading,
     and a later test that writes process-wide state is caught only if it fails.)*
 
+19. **An identity refusal is filed under the key that made the call, never
+    under the agent it claimed.** TokenFuse's `identity_mismatch` puts the
+    CLAIMED agent on the envelope's `agent_id` and the credential that
+    actually called in `data.key_id` (its strict-identity enforce path), so
+    the envelope names the one agent known NOT to have made the call. Found
+    reading the code on 2026-10-08, against the home-lab run of 2026-10-07
+    behind TokenFuse's invariant 81 (a key `forge-imposter` claiming
+    `agent://taipanbox.dev/routers/flint`): this console read the envelope
+    like any other event and charged the attempt to flint four times over,
+    as a stop in the Statistics counts, on flint's Agent 360 stop list (and
+    its profile), as the subject of a high-severity incident, and among
+    flint's own calls in Felyx's `cost_per_action`.
+
+    `@decided 2026-10-08`: filed under `key:<key_id>`, the rule TokenFuse
+    applies to its own FOCUS export; under `key:(none)` when the event names
+    no readable key (a non-empty string is the only thing that names one),
+    never back under the claim. The `key:` prefix keeps a key named like an
+    agent out of that agent's figures. One rule, three spellings, each held:
+    `genaryx_core::attribution::filed_under` (Rust),
+    `attribution::FILED_UNDER_SQL` (the store's aggregate, the detail read,
+    and the per-subject profile filter, built from it rather than restated),
+    and `apps/web/src/lib/attribution.ts` (the incident centre, Incident 360,
+    the export link, the Statistics table). The incident leads with "claimed
+    <agent> with key <key>" instead of the agent, groups by key, and Incident
+    360 shows no agent card or owner for a key. `PER_AGENT_COST_QUERY` re-keys
+    the trace row the same way (`decision = 'identity_mismatch'` and
+    `key_id`, both in TokenFuse's trace read schema since before
+    `tool_calls`, which the query already needed). The demo's simulated bus
+    carries one such refusal and the demo Statistics a `key:forge-imposter`
+    row.
+    *(test: `crates/core/tests/it/store_test.rs`'s
+    `an_identity_refusal_is_grouped_under_its_key_in_the_aggregate` (the
+    aggregate and the profile, keys null, empty, a number, absent, SQL-shaped
+    and agent-shaped) and
+    `an_identity_refusal_is_filed_the_same_way_in_sql_and_in_rust` (a
+    200-seed sweep of hostile `key_id` shapes through both spellings and the
+    aggregate); `crates/core/src/attribution.rs`'s two;
+    `crates/api/src/stats/mod.rs`'s
+    `an_identity_refusal_is_counted_under_the_key_not_the_claimed_agent` and
+    `an_identity_refusal_is_not_on_the_claimed_agents_stop_list`;
+    `crates/connectors/src/tokenfuse.rs`'s
+    `an_identity_refusal_is_filed_under_its_key_in_cost_per_action` (the
+    exact query text, run on SQLite); `apps/web/src/lib/incidents.test.ts`'s
+    five, `incidentExport.test.ts`'s one, `attribution.test.ts`'s three.
+    Red first: the test-only commit of genaryx#93 failed in CI on the stats,
+    store and connector tests and on five of the six incident tests (the
+    sixth, every other event keeping its own agent, is a control and green by
+    design). Scenarios:
+    `features/an-identity-refusal-is-filed-under-its-key.feature`, six, each
+    bound; `scripts/features-are-bound.sh` now also binds a scenario to a web
+    test by its exact title. Gate: four product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh`, run through cargo in CI (the aggregate
+    grouping by envelope, the stop list reading the envelope, a keyless
+    refusal falling back to the claim, the cost query not re-keying), plus a
+    case for a web binding whose test is gone. Three web mutants planted by
+    hand and caught: the incident group key, the incident subject and the
+    claim sentence each put back on the envelope.
+
+    Where it says nothing: Agent 360's raw event list (`agent_events`) still
+    shows the refusal on the claimed agent's feed, as the bus line it is,
+    under its own type; the per-model cost row still counts the refused calls
+    as calls of the model they named; in TokenFuse's `warn` mode a mismatched
+    call is forwarded and its trace row says `allow` with the claimed id, so
+    nothing here can tell; and a key subject has no card of its own yet.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

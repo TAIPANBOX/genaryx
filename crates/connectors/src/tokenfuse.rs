@@ -182,9 +182,26 @@ pub struct CostPerActionReport {
 /// test doc comments.
 const PER_MODEL_COST_QUERY: &str = "select coalesce(model,'') as model, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls group by model order by model";
 
-/// The same aggregate as [`PER_MODEL_COST_QUERY`], grouped by `agent_id`
-/// instead of `model`.
-const PER_AGENT_COST_QUERY: &str = "select coalesce(agent_id,'') as agent_id, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls group by agent_id order by agent_id";
+/// The same aggregate as [`PER_MODEL_COST_QUERY`], grouped by who each call
+/// is FILED under instead of `model`.
+///
+/// That is the row's `agent_id`, except on a call the gateway refused for
+/// identity (`decision = 'identity_mismatch'`): there `agent_id` is the agent
+/// the caller CLAIMED and `key_id` the credential that actually called, so the
+/// row is filed under `key:<key_id>`, or `key:(none)` when the gateway ran
+/// without client keys. Grouping by `agent_id` alone counted every
+/// impersonation attempt among its victim's own calls. The rule is
+/// `genaryx_core::attribution::filed_under`, the one the console applies to
+/// the bus, and TokenFuse's own for its FOCUS export (its invariant 81).
+///
+/// `key_id` is in the trace's read schema since 2026-07-21 (tokenfuse
+/// `e3bd5df`), before `tool_calls`, which this query already needed, so it
+/// asks nothing of the binary the existing query did not. The derived table is
+/// there so the label is computed once and grouped and ordered by name, a
+/// shape both DataFusion and SQLite read the same way;
+/// `an_identity_refusal_is_filed_under_its_key_in_cost_per_action` runs this
+/// exact text on SQLite.
+const PER_AGENT_COST_QUERY: &str = "select filed_under as agent_id, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from (select case when decision = 'identity_mismatch' then 'key:' || coalesce(nullif(key_id,''),'(none)') else coalesce(agent_id,'') end as filed_under, cost_microusd, tool_calls from calls) as t group by filed_under order by filed_under";
 
 // ---- client ----------------------------------------------------------------
 
@@ -920,6 +937,67 @@ mod tests {
             savings.blocked_spend_microusd,
             report.by_model.len(),
             report.by_agent.len()
+        );
+    }
+
+    /// The trace row a refused identity writes (tokenfuse `proxy.rs`, the
+    /// strict-identity enforce path): `decision = 'identity_mismatch'`,
+    /// `agent_id` the agent the caller CLAIMED, `key_id` the credential that
+    /// called, cost zero. Run through the EXACT `PER_AGENT_COST_QUERY` text on
+    /// SQLite, because no `tokenfuse` binary is on a CI runner and the query's
+    /// grouping is the whole question. SQLite stands in for DataFusion here:
+    /// the query keeps to what both read the same way (a derived table,
+    /// `case`, `coalesce`, `nullif`, `||`).
+    #[test]
+    fn an_identity_refusal_is_filed_under_its_key_in_cost_per_action() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open");
+        conn.execute_batch(
+            "create table calls (model text, decision text, agent_id text, key_id text, \
+             cost_microusd integer, tool_calls integer);",
+        )
+        .expect("schema");
+        let flint = "agent://taipanbox.dev/routers/flint";
+        let rows = [
+            // flint's own two calls.
+            ("allow", flint, Some("flint-key"), 3000, Some(2)),
+            ("allow", flint, Some("flint-key"), 1000, Some(1)),
+            // Three calls by another key, claiming to be flint.
+            ("identity_mismatch", flint, Some("forge-imposter"), 0, None),
+            ("identity_mismatch", flint, Some("forge-imposter"), 0, None),
+            ("identity_mismatch", flint, Some("forge-imposter"), 0, None),
+            // No client keys on the gateway.
+            ("identity_mismatch", flint, Some(""), 0, None),
+            ("identity_mismatch", flint, None, 0, None),
+        ];
+        for (decision, agent, key, cost, tools) in rows {
+            conn.execute(
+                "insert into calls values ('m', ?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![decision, agent, key, cost, tools],
+            )
+            .expect("insert");
+        }
+
+        let mut stmt = conn
+            .prepare(PER_AGENT_COST_QUERY)
+            .expect("the query prepares on SQLite");
+        let got: Vec<(String, i64, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+
+        let calls_of = |label: &str| got.iter().find(|g| g.0 == label).map(|g| g.1);
+        assert_eq!(
+            calls_of(flint),
+            Some(2),
+            "the impersonation attempts were counted among flint's own calls: {got:?}"
+        );
+        assert_eq!(calls_of("key:forge-imposter"), Some(3), "{got:?}");
+        assert_eq!(calls_of("key:(none)"), Some(2), "{got:?}");
+        assert_eq!(
+            got.iter().find(|g| g.0 == flint).map(|g| g.2),
+            Some(4000),
+            "flint's own spend is unchanged"
         );
     }
 }

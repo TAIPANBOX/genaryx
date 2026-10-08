@@ -37,6 +37,7 @@ import type { IdryxAlert } from "../identityTypes";
 import type { Incident } from "../moneyTypes";
 import type { PostureFinding } from "./posture";
 import type { UiEvent } from "../types";
+import { claimSentence, filedUnder } from "./attribution";
 import type { ViewId } from "./views";
 import { sevRank } from "./dashData";
 import type { Severity } from "../types";
@@ -300,9 +301,16 @@ function fromBus(
     if (tsRank(e.ts) > tsRank(g.newest.ts)) g.newest = e;
   }
   return [...groups.values()].map(({ newest, count }) => {
-    const parts: string[] = [newest.agent_id || "fleet"];
+    // An identity refusal leads with what it claimed and which key it was,
+    // never with the claimed agent as if it were the subject: see
+    // `attribution.ts`. Every other event leads with its own agent.
+    const claim = claimSentence(newest);
+    const parts: string[] = [claim ?? (newest.agent_id || "fleet")];
     if (newest.run_id) parts.push(`run ${newest.run_id}`);
     for (const key of BUS_DETAIL_KEYS) {
+      // The claim sentence already names the key; a second "key_id" clause
+      // would say it twice.
+      if (claim !== null && key === "key_id") continue;
       const value = dataString(newest.data, key);
       if (value !== null) parts.push(`${key} ${value}`);
     }
@@ -341,7 +349,10 @@ function fromBus(
  * making when they look at this card. A run-less event groups per agent, which
  * is the right fallback for a fleet-wide signal that has no run to belong to. */
 function busGroupKey(e: UiEvent): string {
-  return `${e.source}|${e.type}|${e.agent_id}|${e.run_id ?? ""}`;
+  // Who the event is FILED under, not its envelope: two keys that both tried
+  // to be one agent are two incidents, one per key, and neither is that
+  // agent's.
+  return `${e.source}|${e.type}|${filedUnder(e)}|${e.run_id ?? ""}`;
 }
 
 /** `data` members worth putting in a one-line detail, in the order they read.
@@ -366,6 +377,9 @@ const BUS_DETAIL_KEYS: readonly string[] = [
   "verdict",
   "reason",
   "tool",
+  // Which credential made the call. A gateway event that names one says who
+  // actually called, which is not always the agent on the envelope.
+  "key_id",
 ];
 
 function fromQualityDrift(events: readonly UiEvent[]): UnifiedIncident[] {
@@ -590,7 +604,9 @@ export function incidentSubject(row: UnifiedIncident): string {
   switch (row.source) {
     case "bus":
     case "verdryx":
-      return row.raw.agent_id ?? "";
+      // Filed-under, not the envelope: an identity refusal's envelope names
+      // the agent its caller claimed to be. See `attribution.ts`.
+      return row.raw.agent_id === undefined ? "" : filedUnder(row.raw);
     case "money":
       return row.raw.agent_id ?? "";
     case "idryx":

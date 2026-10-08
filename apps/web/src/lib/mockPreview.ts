@@ -1550,6 +1550,23 @@ function mockStatsCounts(windowDays: number) {
     scanned += 31;
   }
 
+  // An identity refusal, filed the way the real store files it: under the
+  // KEY that made the call, never the agent it claimed (the bus line is in
+  // `mockData.ts`; the rule is `genaryx_core::attribution`). Two attempts,
+  // so the row reads as a pattern rather than a stray.
+  agents.push({
+    agent_id: "key:forge-imposter",
+    blocked: 2,
+    blocked_by_operator: 0,
+    anomalies: 0,
+    budget_events: 0,
+    worst_overshoot_microusd: null,
+    by_type: { identity_mismatch: 2 },
+    by_detector: {},
+    last_seen: new Date(now - 6 * 60_000).toISOString(),
+  });
+  scanned += 2;
+
   return {
     measured: true,
     note:

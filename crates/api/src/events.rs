@@ -524,6 +524,18 @@ fn seeds() -> Vec<Seed> {
             20,
             true,
         ),
+        // A key that may not speak as billing-bot tried to anyway. The
+        // envelope names the agent it CLAIMED; the console files the refusal
+        // under the key in `data.key_id` (`genaryx_core::attribution`).
+        Seed::new(
+            "tokenfuse",
+            true,
+            "identity_mismatch",
+            "high",
+            "billing-bot",
+            21,
+            false,
+        ),
     ]
 }
 
@@ -536,6 +548,11 @@ fn seed_data(event_type: &str, run: u32, agent_id: &str) -> Value {
     let scenario = SCENARIOS[(run as usize) % SCENARIOS.len()];
 
     match event_type {
+        "identity_mismatch" => json!({
+            "key_id": "forge-imposter",
+            "agent_id": agent_id,
+            "reason": "agent_id_not_allowed",
+        }),
         "budget_exhausted" => json!({
             "budget_usd": 0.0012,
             "spent_usd": 0.0028,

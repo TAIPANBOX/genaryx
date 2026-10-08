@@ -51,7 +51,17 @@ while IFS= read -r file; do
 			# `fn name(` covers both the in-module `#[test]`/`#[tokio::test]`
 			# functions and the ones in crates/*/tests/. `async fn` matches
 			# too, because the needle is the `fn name(` substring.
-			if ! grep -rq --include='*.rs' "fn ${t}(" crates/ 2>/dev/null; then
+			#
+			# A web test binds by its exact title, `it("name"` or
+			# `test("name"`, in a `*.test.ts(x)` under apps/web/src. Added
+			# with invariant 19, whose incident half lives only in the
+			# TypeScript console: a scenario about what the incident centre
+			# says had no Rust test to point at, and pointing it at one that
+			# checks something else would be a binding that reads as held
+			# and is not.
+			if ! grep -rq --include='*.rs' "fn ${t}(" crates/ 2>/dev/null &&
+				! grep -rqE --include='*.test.ts' --include='*.test.tsx' \
+					"(it|test)\(\"${t}\"" apps/web/src 2>/dev/null; then
 				printf 'DANGLING  %s:%s\n          @test:%s names no test\n' \
 					"$file" "$lineno" "$t"
 				fail=$((fail + 1))

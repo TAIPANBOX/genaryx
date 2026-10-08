@@ -1,3 +1,4 @@
+import { claimSentence, isKeySubject } from "../lib/attribution";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { SeverityBadge } from "./SeverityBadge";
 import { UserCard } from "./UserCard";
@@ -93,6 +94,7 @@ export function Incident360({
 }) {
   const { open } = usePopover();
   const subject = incidentSubject(row);
+  const claim = row.source === "bus" || row.source === "verdryx" ? claimSentence(row.raw) : null;
   const chain = incidentDelegation(row);
   const data = incidentData(row);
   const firewall = firewallFrom(data);
@@ -123,7 +125,11 @@ export function Incident360({
   }, [runId]);
 
   useEffect(() => {
-    if (!subject) {
+    // A key is not an agent: there is no record, owner or team to read, and
+    // asking for one would answer with the empty card of an agent that does
+    // not exist (an identity refusal is filed under its key, see
+    // `lib/attribution.ts`).
+    if (!subject || isKeySubject(subject)) {
       setRecordAsked(true);
       return;
     }
@@ -245,7 +251,15 @@ export function Incident360({
         <Q label="What happened">{row.detail}</Q>
 
         <Q label="Which agent">
-          {subject ? (
+          {claim !== null ? (
+            // An identity refusal: the gateway refused this call because the
+            // key may not speak as the agent it named. Say both halves, and do
+            // not offer the claimed agent as the subject: it did not make the
+            // call. The key is the subject the console files this under.
+            <span className="mono" style={{ fontSize: 11.5 }} title={`filed under ${subject}`}>
+              {`None: ${claim}. The gateway refused it, so it is filed under the key, not the agent.`}
+            </span>
+          ) : subject ? (
             <button
               type="button"
               className="mono"

@@ -384,3 +384,66 @@ describe("filtering by an agent finds it in the field, not only in the prose", (
     expect(filterIncidents(rows, { query: "somebody-else" })).toHaveLength(0);
   });
 });
+
+/**
+ * TokenFuse's `identity_mismatch` puts the agent its caller CLAIMED on the
+ * envelope and the credential that actually called in `data.key_id`. Read by
+ * envelope, the incident centre named the impersonated agent as the subject of
+ * a high-severity incident it had nothing to do with.
+ */
+describe("an identity refusal is filed under the key, never the claimed agent", () => {
+  const flint = "agent://taipanbox.dev/routers/flint";
+  const refusal = (over: Partial<UiEvent> = {}, key: unknown = "forge-imposter") =>
+    ev({
+      type: "identity_mismatch",
+      agent_id: flint,
+      run_id: null,
+      severity: "high",
+      data: { key_id: key, agent_id: flint, reason: "agent_id_not_allowed" },
+      ...over,
+    });
+
+  it("an_identity_refusal_names_the_key_and_the_claimed_agent", () => {
+    const rows = agg([refusal()]);
+    expect(rows).toHaveLength(1);
+    expect(incidentSubject(rows[0])).toBe("key:forge-imposter");
+    expect(rows[0].detail).toContain(`claimed ${flint} with key forge-imposter`);
+    // The subject slot is the key; the claim is a clause, never the lead.
+    expect(rows[0].detail.startsWith(flint)).toBe(false);
+  });
+
+  it("an_identity_refusal_with_no_key_names_no_agent", () => {
+    for (const key of [null, "", 42]) {
+      const rows = agg([refusal({ id: 7 }, key)]);
+      expect(incidentSubject(rows[0])).toBe("key:(none)");
+      expect(rows[0].detail).toContain(`claimed ${flint} with no key`);
+    }
+  });
+
+  it("identity_refusals_group_by_key_not_by_the_claimed_agent", () => {
+    const rows = agg([
+      refusal({ id: 1 }),
+      refusal({ id: 2, ts: "2026-08-26T10:01:00Z" }),
+      refusal({ id: 3 }, "other-key"),
+    ]);
+    // Two keys tried to be flint: two incidents, one per key, and the same
+    // key twice is one incident seen twice.
+    expect(rows).toHaveLength(2);
+    const byKey = new Map(rows.map((r) => [incidentSubject(r), r.occurrences]));
+    expect(byKey.get("key:forge-imposter")).toBe(2);
+    expect(byKey.get("key:other-key")).toBe(1);
+  });
+
+  it("an_identity_refusal_is_not_found_by_searching_for_the_claimed_agent_as_subject", () => {
+    // The search still finds it by the claim (the detail names it), so an
+    // operator investigating flint sees who tried to be flint.
+    const rows = agg([refusal()]);
+    expect(filterIncidents(rows, { query: "forge-imposter" })).toHaveLength(1);
+    expect(filterIncidents(rows, { query: "flint" })).toHaveLength(1);
+  });
+
+  it("every_other_bus_event_keeps_its_envelope_agent_as_subject", () => {
+    const rows = agg([ev({ data: { key_id: "some-key" } })]);
+    expect(incidentSubject(rows[0])).toBe("agent://acme.example/support/bot");
+  });
+});

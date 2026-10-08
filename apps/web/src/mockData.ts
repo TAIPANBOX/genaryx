@@ -89,6 +89,10 @@ const SEEDS: Seed[] = [
   { source: "qryx", v2: false, type: "crypto_finding", severity: "medium", agent: "translator", run: 19, delegated: false },
   { source: "wardryx", v2: true, type: "policy_deny", severity: "high", agent: "support-bot", run: 20, delegated: true },
   { source: "tokenfuse", v2: false, type: "breaker_tripped", severity: "medium", agent: "support-bot", run: 20, delegated: true },
+  // A key that may not speak as billing-bot tried to anyway. The envelope
+  // names the agent it CLAIMED; the console files the refusal under the key
+  // in `data.key_id` (`lib/attribution.ts`).
+  { source: "tokenfuse", v2: true, type: "identity_mismatch", severity: "high", agent: "billing-bot", run: 21, delegated: false },
 ];
 
 function seedData(type: string, run: number, agentId: string): unknown {
@@ -97,6 +101,8 @@ function seedData(type: string, run: number, agentId: string): unknown {
   const scenario = SCENARIOS[run % SCENARIOS.length];
 
   switch (type) {
+    case "identity_mismatch":
+      return { key_id: "forge-imposter", agent_id: agentId, reason: "agent_id_not_allowed" };
     case "budget_exhausted":
       return { budget_usd: 0.0012, spent_usd: 0.0028, reason: "budget_exceeded", policy_id: "default" };
     case "breaker_tripped":
