@@ -63,3 +63,18 @@ describe("the claimed agent's own feed in the demo", () => {
     }
   });
 });
+
+describe("the demo shows an incident with no run id", () => {
+  it("demo_bus_keeps_a_runless_incident_inside_the_incidents_tab_read", async () => {
+    // The Incidents tab reads 500 and keeps the first 500. The demo's one
+    // run-less bus incident (quality drift) used to sit after the seed and was
+    // cut there, so the demo could not show Incident 360's "no run id" state.
+    const events = (await mockInvoke<UiEvent[]>("recent_events", { limit: 500 })).slice(0, 500);
+    const rows = aggregateIncidents(
+      { moneyIncidents: [], identityAlerts: [], busEvents: events, postureFindings: [] },
+      { bands: TAB_BANDS },
+    );
+    const runless = rows.filter((r) => (r.source === "bus" || r.source === "verdryx") && !r.raw.run_id);
+    expect(runless.length).toBeGreaterThan(0);
+  });
+});
