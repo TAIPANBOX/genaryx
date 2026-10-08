@@ -929,9 +929,15 @@ an absent invariant.
     360 shows no agent card or owner for a key. `PER_AGENT_COST_QUERY` re-keys
     the trace row the same way (`decision = 'identity_mismatch'` and
     `key_id`, both in TokenFuse's trace read schema since before
-    `tool_calls`, which the query already needed). The demo's simulated bus
-    carries one such refusal and the demo Statistics a `key:forge-imposter`
-    row.
+    `tool_calls`, which the query already needed). The published demo shows
+    it: `mockPreview.ts`'s `recent_events` carries two refusals by the key
+    `forge-imposter` claiming budget-forecaster, ahead of the seeded stream
+    so the Incidents tab's 500-event read keeps them, and the demo
+    Statistics a `key:forge-imposter` row (`mockData.ts`, the no-backend
+    preview stream, carries one too). The first version of this invariant
+    put the refusal only in `mockData.ts`, which the demo build never reads;
+    `mockPreview.identity.test.ts` holds the demo half now, including the
+    cut at 500 that a refusal appended after the seed fell to.
     *(test: `crates/core/tests/it/store_test.rs`'s
     `an_identity_refusal_is_grouped_under_its_key_in_the_aggregate` (the
     aggregate and the profile, keys null, empty, a number, absent, SQL-shaped
