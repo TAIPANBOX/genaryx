@@ -966,12 +966,33 @@ an absent invariant.
     hand and caught: the incident group key, the incident subject and the
     claim sentence each put back on the envelope.
 
-    Where it says nothing: Agent 360's raw event list (`agent_events`) still
-    shows the refusal on the claimed agent's feed, as the bus line it is,
-    under its own type; the per-model cost row still counts the refused calls
-    as calls of the model they named; in TokenFuse's `warn` mode a mismatched
-    call is forwarded and its trace row says `allow` with the claimed id, so
-    nothing here can tell; and a key subject has no card of its own yet.)*
+    Three places the first version left out, closed 2026-10-08:
+    - Agent 360's event feed (`agent_events`, read by envelope) still lists
+      the refusal on the claimed agent's card, since an attempt to be this
+      agent is worth seeing there, but as "identity_mismatch: claimed by key
+      <key>, refused", muted and titled as not the agent's own activity
+      (`attribution.ts`'s `agentFeedLine`).
+    - The delegation graph, whose node `event_count` Agent 360 shows as an
+      agent's own events, counts the refusal for the key on both paths
+      (`DelegationGraph::add_event` through `filed_under`,
+      `Store::delegation_events` through `FILED_UNDER_SQL`); the key is a node
+      of kind `Other`, kept rather than dropped.
+    - `PER_MODEL_COST_QUERY` leaves refused rows out: a call refused before
+      routing never reached the model it named.
+    Held by `crates/core/src/graph.rs`'s
+    `an_identity_refusal_counts_as_the_keys_activity_in_the_graph`,
+    `crates/core/tests/it/store_test.rs`'s
+    `an_identity_refusal_counts_as_the_keys_activity_from_the_store`,
+    `crates/connectors/src/tokenfuse.rs`'s
+    `an_identity_refusal_is_not_a_call_of_the_model_it_named`,
+    `apps/web/src/lib/attribution.test.ts`'s two feed tests; three more
+    cargo cases in `scripts/gates-have-teeth.sh`; four more scenarios.
+
+    Where it says nothing: in TokenFuse's `warn` mode a mismatched call is
+    forwarded and its trace row says `allow` with the claimed id, so nothing
+    here can tell; a key subject has no card of its own yet; and the feed
+    still reads by envelope, so a refusal appears on the claimed agent's card
+    (as a claim) and on no key card.)*
 
 20. **Felyx counts a reasoning model's output the way the provider bills it.**
     `crates/copilot/src/provider/openai.rs` read `completion_tokens` alone.

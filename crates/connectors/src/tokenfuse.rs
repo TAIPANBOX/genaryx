@@ -180,7 +180,12 @@ pub struct CostPerActionReport {
 /// grounded against predates the column, so that branch is exercised by a
 /// hand-built fixture in this module's tests, not a live capture - see the
 /// test doc comments.
-const PER_MODEL_COST_QUERY: &str = "select coalesce(model,'') as model, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls group by model order by model";
+///
+/// A call the gateway refused for identity (`decision = 'identity_mismatch'`)
+/// is left out: it was refused before it was routed, so it never reached the
+/// model it named and is not a call of that model. It is still counted, under
+/// the key that made it, by [`PER_AGENT_COST_QUERY`] (invariant 19).
+const PER_MODEL_COST_QUERY: &str = "select coalesce(model,'') as model, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls where decision <> 'identity_mismatch' group by model order by model";
 
 /// The same aggregate as [`PER_MODEL_COST_QUERY`], grouped by who each call
 /// is FILED under instead of `model`.

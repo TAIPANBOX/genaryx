@@ -423,7 +423,7 @@ export function Incident360({
             "long before the incident somebody opened."
           }
         >
-          {timeline === null ? undefined : firstRefusal ? (
+          {!runId ? NO_RUN : timeline === null ? undefined : firstRefusal ? (
             <span>
               <span className="chip">{firstRefusal.event.source}</span>{" "}
               {firstRefusal.event.type.replace(/_/g, " ")} at{" "}
@@ -444,7 +444,7 @@ export function Incident360({
             "by accident."
           }
         >
-          {timeline === null ? undefined : timeline.length > 0 ? (
+          {!runId ? NO_RUN : timeline === null ? undefined : timeline.length > 0 ? (
             <div className="flex flex-col" style={{ gap: 3, marginTop: 4 }}>
               {timeline.map((e) => (
                 <div
@@ -530,6 +530,12 @@ export function Incident360({
  * `undefined` means still reading; `null` or empty means asked and absent.
  * Two different sentences, because a card that says "not recorded" while a
  * fetch is in flight is lying for as long as the fetch takes. */
+/** What the two run sections say when the event names no run. They read the
+ * run's own events, and without a run id there is no run to read, so waiting
+ * on it would leave both on "reading…" for good, a console still working on
+ * an answer it can never get. */
+const NO_RUN = "no run id on this event, so there is no run to read";
+
 function Q({ label, note, children }: { label: string; note?: string; children?: ReactNode }) {
   const reading = children === undefined;
   const empty = children === null || children === "";

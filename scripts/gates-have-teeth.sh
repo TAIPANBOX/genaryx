@@ -321,6 +321,21 @@ run_case "invariant 19: cost per action groups refused calls under the claim" fa
 	"$(py 'q = chr(39); edit("crates/connectors/src/tokenfuse.rs", "when decision = " + q + "identity_mismatch" + q, "when decision = " + q + "never" + q)')" \
 	"an_identity_refusal_is_filed_under_its_key_in_cost_per_action"
 
+run_case "invariant 19: the live graph counts a refusal as the claimed agent's activity" fail \
+	"$identity_gate" \
+	"$(py 'edit("crates/core/src/graph.rs", "let actor = crate::attribution::filed_under(&ev.event_type, &ev.agent_id, ev.data.as_ref());", "let actor = ev.agent_id.clone();")')" \
+	"an_identity_refusal_counts_as_the_keys_activity_in_the_graph"
+
+run_case "invariant 19: the stored graph counts a refusal as the claimed agent's activity" fail \
+	"$identity_gate" \
+	"$(py 'edit("crates/core/src/store.rs", "SELECT {} AS agent_id, on_behalf_of", "SELECT COALESCE(agent_id, {}) AS agent_id, on_behalf_of")')" \
+	"an_identity_refusal_counts_as_the_keys_activity_from_the_store"
+
+run_case "invariant 19: the per-model row counts refused calls again" fail \
+	"$identity_gate" \
+	"$(py 'q = chr(39); edit("crates/connectors/src/tokenfuse.rs", " where decision <> " + q + "identity_mismatch" + q, "")')" \
+	"an_identity_refusal_is_not_a_call_of_the_model_it_named"
+
 # The non-fault: the rule's prose reworded. A gate that fired on it would be
 # a gate on wording, which gets disabled the first week.
 run_case "invariant 19: the rule's own comment reworded" pass \

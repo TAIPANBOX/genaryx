@@ -73,3 +73,34 @@ Feature: An identity refusal is filed under the key that made the call, never th
     When they open the Incidents tab or the Statistics panel
     Then an identity refusal by the key forge-imposter claiming budget-forecaster is listed under key:forge-imposter
     And the incident says it claimed budget-forecaster with key forge-imposter
+
+  # @test:an_identity_refusal_on_the_claimed_agents_feed_reads_as_a_claim_by_the_key
+  # @test:every_other_event_on_the_feed_is_the_agents_own_and_reads_as_its_type
+  Scenario: The claimed agent's own event feed shows the attempt as a claim, not as its activity
+    Given the key forge-imposter was refused while claiming to be flint
+    When the operator opens flint's Agent 360 card
+    Then the event feed reads "claimed by key forge-imposter, refused" for that line
+    And it is marked as not flint's own activity
+
+  # @test:an_identity_refusal_counts_as_the_keys_activity_in_the_graph
+  # @test:an_identity_refusal_counts_as_the_keys_activity_from_the_store
+  Scenario: The graph counts the attempt as the key's activity
+    Given flint acted once and the key forge-imposter was refused once while claiming flint
+    When the console builds the delegation graph, live or from the store
+    Then flint's event count is one, its own
+    And the key forge-imposter carries the refused attempt
+
+  # @test:an_identity_refusal_is_not_a_call_of_the_model_it_named
+  Scenario: A refused call is not a call of the model it named
+    Given a model served two calls and was named by three calls the gateway refused for identity
+    When Felyx reads cost per action by model
+    Then the model shows two calls
+    And a model named only by refused calls does not appear at all
+
+  # @test:a_runless_incident_says_there_is_no_run_to_read_instead_of_reading_forever
+  # @test:an_incident_with_a_run_id_still_reads_its_run
+  Scenario: An incident with no run id says there is no run, instead of reading forever
+    Given a bus incident whose event carries no run id
+    When the operator opens it in Incident 360
+    Then "Where it was stopped" and "What led to it" both say there is no run id on this event, so there is no run to read
+    And an incident with a run id still reads its run

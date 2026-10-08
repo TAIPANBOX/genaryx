@@ -147,14 +147,20 @@ impl DelegationGraph {
     /// counted event (its natural key had not been seen), `false` if it was a
     /// duplicate (structure re-asserted, count not bumped).
     pub fn add_event(&mut self, ev: &AgentEvent) -> bool {
+        // Who acted is who the event is FILED under: an identity refusal's
+        // envelope names the agent its caller claimed to be, and counting it
+        // there made an impersonation attempt that agent's own activity
+        // (invariant 19, `crate::attribution`). The batch path reads the same
+        // rule from SQL, so both paths key the event the same way.
+        let actor = crate::attribution::filed_under(&ev.event_type, &ev.agent_id, ev.data.as_ref());
         let key = EventKey {
-            agent_id: ev.agent_id.clone(),
+            agent_id: actor.clone(),
             ts: ev.ts.clone(),
             source: ev.source.clone(),
             event_type: ev.event_type.clone(),
             run_id: ev.run_id.clone().unwrap_or_default(),
         };
-        self.ingest(&ev.agent_id, &ev.on_behalf_of, key, &ev.ts)
+        self.ingest(&actor, &ev.on_behalf_of, key, &ev.ts)
     }
 
     /// Core fold shared by the live and batch paths.
