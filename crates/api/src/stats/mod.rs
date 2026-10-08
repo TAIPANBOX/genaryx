@@ -1715,4 +1715,106 @@ mod tests {
         let over = serde_json::json!({ "budget_micros": 2_000_000, "spent_micros": 2_500_000 });
         assert_eq!(overshoot_of(&over), Some(500_000));
     }
+
+    /// TokenFuse's `identity_mismatch` carries the agent its caller CLAIMED on
+    /// the envelope and the credential that actually called in `data.key_id`
+    /// (its proxy, the strict-identity enforce path). Counting it by envelope
+    /// charged an impersonation attempt to its victim as a stop.
+    fn identity_refusal(claimed: &str, key: serde_json::Value, ts: &str) -> ConsoleEvent {
+        event(
+            claimed,
+            ts,
+            "identity_mismatch",
+            serde_json::json!({ "key_id": key, "agent_id": claimed, "reason": "agent_id_not_allowed" }),
+        )
+    }
+
+    #[test]
+    fn an_identity_refusal_is_counted_under_the_key_not_the_claimed_agent() {
+        let flint = "agent://taipanbox.dev/routers/flint";
+        let (state, dir) = seeded_state(
+            "identity-refusal-counts",
+            &[
+                event(
+                    flint,
+                    "2026-10-07T09:00:00Z",
+                    "policy_deny",
+                    serde_json::json!({}),
+                ),
+                identity_refusal(
+                    flint,
+                    serde_json::json!("forge-imposter"),
+                    "2026-10-07T10:00:00Z",
+                ),
+                identity_refusal(
+                    flint,
+                    serde_json::json!("forge-imposter"),
+                    "2026-10-07T10:01:00Z",
+                ),
+                identity_refusal(flint, serde_json::Value::Null, "2026-10-07T10:02:00Z"),
+            ],
+        );
+
+        let p = stats_counts(500, 0, &state);
+        let row = |id: &str| p.agents.iter().find(|a| a.agent_id == id);
+        let flint_row = row(flint).expect("flint's own stop keeps its row");
+        assert_eq!(
+            flint_row.blocked, 1,
+            "flint was stopped once, by its own policy; the two impersonation attempts are not its"
+        );
+        assert!(
+            !flint_row.by_type.contains_key("identity_mismatch"),
+            "an identity refusal sits in the claimed agent's row: {:?}",
+            flint_row.by_type
+        );
+        let key = row("key:forge-imposter").expect("the key that called has a row of its own");
+        assert_eq!(key.blocked, 2);
+        assert_eq!(key.by_type.get("identity_mismatch"), Some(&2));
+        let nobody = row("key:(none)").expect("a refusal with no key names no agent");
+        assert_eq!(nobody.blocked, 1);
+        assert_eq!(p.scanned, 4, "every event is still counted, once");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_identity_refusal_is_not_on_the_claimed_agents_stop_list() {
+        let flint = "agent://taipanbox.dev/routers/flint";
+        let (state, dir) = seeded_state(
+            "identity-refusal-stops",
+            &[
+                event(
+                    flint,
+                    "2026-10-07T09:00:00Z",
+                    "policy_deny",
+                    serde_json::json!({ "reason": "outside hours" }),
+                ),
+                identity_refusal(
+                    flint,
+                    serde_json::json!("forge-imposter"),
+                    "2026-10-07T10:00:00Z",
+                ),
+            ],
+        );
+
+        let victim = agent_stops(flint, 100, &state);
+        assert_eq!(
+            victim.total, 1,
+            "only flint's own stop is flint's: {:?}",
+            victim.entries
+        );
+        assert!(
+            victim
+                .entries
+                .iter()
+                .all(|e| e.type_ != "identity_mismatch"),
+            "the impersonation attempt was listed as a stop of the agent it impersonated"
+        );
+
+        let key = agent_stops("key:forge-imposter", 100, &state);
+        assert_eq!(key.total, 1, "the attempt is on the key's own list");
+        assert_eq!(key.entries[0].type_, "identity_mismatch");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

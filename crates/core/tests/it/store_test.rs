@@ -431,3 +431,113 @@ fn the_schema_holds_no_table_that_nothing_writes() {
         "a new table needs a writer and a line in this test, got {tables:?}"
     );
 }
+
+/// One stored event of `type_` about `agent`, carrying `data`. Built from the
+/// canonical fixture's first line so every envelope field a producer must set
+/// is set, and with `raw` unique per event, because the store's dedupe key
+/// hashes it.
+fn event_about(
+    agent: &str,
+    type_: &str,
+    data: serde_json::Value,
+    ts: &str,
+    n: u64,
+) -> ConsoleEvent {
+    let mut e = canonical_events()[0].clone();
+    e.event.event_type = type_.to_string();
+    e.event.agent_id = agent.to_string();
+    e.event.ts = ts.to_string();
+    e.event.data = Some(data.clone());
+    e.provenance.offset = Some(10_000 + n);
+    e.raw =
+        serde_json::json!({ "n": n, "type": type_, "agent_id": agent, "data": data }).to_string();
+    e
+}
+
+/// TokenFuse's `identity_mismatch` names the agent its caller CLAIMED on the
+/// envelope and the credential that actually called in `data.key_id`. The
+/// aggregate and the per-agent profile read must file it under that key, never
+/// under the impersonated agent, whatever shape the key arrives in.
+#[test]
+fn an_identity_refusal_is_grouped_under_its_key_in_the_aggregate() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+    let flint = "agent://taipanbox.dev/routers/flint";
+    let ts = "2026-10-07T10:00:00Z";
+    store
+        .insert_batch(&[
+            // flint's own refusal, which IS about flint.
+            event_about(flint, "policy_deny", serde_json::json!({}), ts, 1),
+            // Two attempts by somebody else's key, claiming to be flint.
+            event_about(
+                flint,
+                "identity_mismatch",
+                serde_json::json!({ "key_id": "forge-imposter", "agent_id": flint, "reason": "agent_id_not_allowed" }),
+                ts,
+                2,
+            ),
+            event_about(
+                flint,
+                "identity_mismatch",
+                serde_json::json!({ "key_id": "forge-imposter", "agent_id": flint, "reason": "agent_id_not_allowed" }),
+                "2026-10-07T10:01:00Z",
+                3,
+            ),
+            // No client keys on the gateway: no key to file it under.
+            event_about(flint, "identity_mismatch", serde_json::json!({ "key_id": null }), ts, 4),
+            event_about(flint, "identity_mismatch", serde_json::json!({ "key_id": "" }), ts, 5),
+            event_about(flint, "identity_mismatch", serde_json::json!({ "key_id": 42 }), ts, 6),
+            event_about(flint, "identity_mismatch", serde_json::json!({}), ts, 7),
+            // A key named like SQL, and one named like an agent.
+            event_about(flint, "identity_mismatch", serde_json::json!({ "key_id": "x' OR 1=1 --" }), ts, 8),
+            event_about(flint, "identity_mismatch", serde_json::json!({ "key_id": flint }), ts, 9),
+        ])
+        .expect("insert");
+
+    let counts = store.type_counts_since(None).expect("type_counts_since");
+    let count = |subject: &str, t: &str| {
+        counts
+            .iter()
+            .filter(|c| c.agent_id == subject && c.type_ == t)
+            .map(|c| c.count)
+            .sum::<u64>()
+    };
+    assert_eq!(
+        count(flint, "identity_mismatch"),
+        0,
+        "an identity refusal was counted under the agent it claimed: {counts:?}"
+    );
+    assert_eq!(
+        count(flint, "policy_deny"),
+        1,
+        "flint's own stop stays flint's"
+    );
+    assert_eq!(count("key:forge-imposter", "identity_mismatch"), 2);
+    assert_eq!(
+        count("key:(none)", "identity_mismatch"),
+        4,
+        "null, empty, a number and an absent key name no key"
+    );
+    assert_eq!(count("key:x' OR 1=1 --", "identity_mismatch"), 1);
+    assert_eq!(
+        count(&format!("key:{flint}"), "identity_mismatch"),
+        1,
+        "a key named like an agent is still a key, and not that agent"
+    );
+
+    // The per-agent profile reads the same rule.
+    let day = store
+        .daily_type_counts(flint, 0)
+        .expect("daily_type_counts");
+    assert!(
+        day.iter().all(|d| d.type_ != "identity_mismatch"),
+        "an identity refusal reached the claimed agent's profile: {day:?}"
+    );
+    let key_day = store
+        .daily_type_counts("key:forge-imposter", 0)
+        .expect("daily_type_counts");
+    assert_eq!(
+        key_day.iter().map(|d| d.count).sum::<u64>(),
+        2,
+        "the key's own profile holds its two attempts"
+    );
+}

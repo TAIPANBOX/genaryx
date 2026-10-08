@@ -922,4 +922,65 @@ mod tests {
             report.by_agent.len()
         );
     }
+
+    /// The trace row a refused identity writes (tokenfuse `proxy.rs`, the
+    /// strict-identity enforce path): `decision = 'identity_mismatch'`,
+    /// `agent_id` the agent the caller CLAIMED, `key_id` the credential that
+    /// called, cost zero. Run through the EXACT `PER_AGENT_COST_QUERY` text on
+    /// SQLite, because no `tokenfuse` binary is on a CI runner and the query's
+    /// grouping is the whole question. SQLite stands in for DataFusion here:
+    /// the query keeps to what both read the same way (a derived table,
+    /// `case`, `coalesce`, `nullif`, `||`).
+    #[test]
+    fn an_identity_refusal_is_filed_under_its_key_in_cost_per_action() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open");
+        conn.execute_batch(
+            "create table calls (model text, decision text, agent_id text, key_id text, \
+             cost_microusd integer, tool_calls integer);",
+        )
+        .expect("schema");
+        let flint = "agent://taipanbox.dev/routers/flint";
+        let rows = [
+            // flint's own two calls.
+            ("allow", flint, Some("flint-key"), 3000, Some(2)),
+            ("allow", flint, Some("flint-key"), 1000, Some(1)),
+            // Three calls by another key, claiming to be flint.
+            ("identity_mismatch", flint, Some("forge-imposter"), 0, None),
+            ("identity_mismatch", flint, Some("forge-imposter"), 0, None),
+            ("identity_mismatch", flint, Some("forge-imposter"), 0, None),
+            // No client keys on the gateway.
+            ("identity_mismatch", flint, Some(""), 0, None),
+            ("identity_mismatch", flint, None, 0, None),
+        ];
+        for (decision, agent, key, cost, tools) in rows {
+            conn.execute(
+                "insert into calls values ('m', ?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![decision, agent, key, cost, tools],
+            )
+            .expect("insert");
+        }
+
+        let mut stmt = conn
+            .prepare(PER_AGENT_COST_QUERY)
+            .expect("the query prepares on SQLite");
+        let got: Vec<(String, i64, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+
+        let calls_of = |label: &str| got.iter().find(|g| g.0 == label).map(|g| g.1);
+        assert_eq!(
+            calls_of(flint),
+            Some(2),
+            "the impersonation attempts were counted among flint's own calls: {got:?}"
+        );
+        assert_eq!(calls_of("key:forge-imposter"), Some(3), "{got:?}");
+        assert_eq!(calls_of("key:(none)"), Some(2), "{got:?}");
+        assert_eq!(
+            got.iter().find(|g| g.0 == flint).map(|g| g.2),
+            Some(4000),
+            "flint's own spend is unchanged"
+        );
+    }
 }

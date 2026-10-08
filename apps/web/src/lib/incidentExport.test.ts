@@ -212,3 +212,30 @@ describe("incidentExportName", () => {
     expect(a).not.toBe(b);
   });
 });
+
+describe("incidentLinkTarget for an identity refusal", () => {
+  it("an_identity_refusal_links_to_its_key_not_the_claimed_agent", () => {
+    const flint = "agent://taipanbox.dev/routers/flint";
+    const row = {
+      id: "bus:9",
+      source: "bus",
+      severity: "high",
+      title: "identity mismatch",
+      detail: "",
+      ackable: false,
+      explainable: false,
+      raw: {
+        id: 9,
+        env: "prod",
+        ts: "2026-10-07T10:00:00Z",
+        source: "tokenfuse",
+        type: "identity_mismatch",
+        agent_id: flint,
+        run_id: null,
+        severity: "high",
+        data: { key_id: "forge-imposter", agent_id: flint },
+      },
+    } as unknown as UnifiedIncident;
+    expect(incidentLinkTarget(row)).toBe("identity_mismatch:key:forge-imposter");
+  });
+});
