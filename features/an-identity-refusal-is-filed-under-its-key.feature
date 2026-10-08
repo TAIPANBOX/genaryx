@@ -68,11 +68,13 @@ Feature: An identity refusal is filed under the key that made the call, never th
 
   # @test:demo_bus_shows_an_identity_refusal_under_the_key_not_the_claimed_agent
   # @test:demo_statistics_count_the_refusal_under_the_key
+  # @test:demo_claimed_agents_feed_carries_the_refusal_as_a_claim_by_the_key
   Scenario: The public demo shows an identity refusal filed under the key
     Given a visitor opens the published demo
     When they open the Incidents tab or the Statistics panel
     Then an identity refusal by the key forge-imposter claiming budget-forecaster is listed under key:forge-imposter
     And the incident says it claimed budget-forecaster with key forge-imposter
+    And budget-forecaster's own feed reads it as claimed by key forge-imposter, refused
 
   # @test:an_identity_refusal_on_the_claimed_agents_feed_reads_as_a_claim_by_the_key
   # @test:every_other_event_on_the_feed_is_the_agents_own_and_reads_as_its_type

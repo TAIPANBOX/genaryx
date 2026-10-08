@@ -43,3 +43,23 @@ describe("the demo bus carries an identity refusal filed under its key", () => {
     expect(victim?.by_type.identity_mismatch ?? 0).toBe(0);
   });
 });
+
+describe("the claimed agent's own feed in the demo", () => {
+  it("demo_claimed_agents_feed_carries_the_refusal_as_a_claim_by_the_key", async () => {
+    const { agentFeedLine } = await import("./attribution");
+    const events = await mockInvoke<UiEvent[]>("recent_events", { limit: 60 });
+    const claimed = events.find((e) => e.type === "identity_mismatch")!.agent_id;
+    // Agent 360 reads `agent_events` by envelope, as the real backend does,
+    // so the refusals are on the claimed agent's own feed, and must read as a
+    // claim by the key there.
+    const feed = await mockInvoke<UiEvent[]>("agent_events", { agent_id: claimed, limit: 50 });
+    const refusals = feed.filter((e) => e.type === "identity_mismatch");
+    expect(refusals.length).toBeGreaterThan(0);
+    for (const e of refusals) {
+      expect(agentFeedLine(e, claimed)).toEqual({
+        text: "identity_mismatch: claimed by key forge-imposter, refused",
+        own: false,
+      });
+    }
+  });
+});
