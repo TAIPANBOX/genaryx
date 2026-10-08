@@ -633,3 +633,37 @@ fn an_identity_refusal_is_filed_the_same_way_in_sql_and_in_rust() {
         "the aggregate files a row somewhere the row read does not"
     );
 }
+
+/// The batch graph reads the store's delegation rows, and Agent 360 shows a
+/// node's `event_count` as the agent's own activity: an identity refusal
+/// claiming an agent is the key's activity, never the claimed agent's.
+#[test]
+fn an_identity_refusal_counts_as_the_keys_activity_from_the_store() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+    let flint = "agent://taipanbox.dev/routers/flint";
+    store
+        .insert_batch(&[
+            event_about(
+                flint,
+                "policy_deny",
+                serde_json::json!({}),
+                "2026-10-07T09:00:00Z",
+                31,
+            ),
+            event_about(
+                flint,
+                "identity_mismatch",
+                serde_json::json!({ "key_id": "forge-imposter", "agent_id": flint }),
+                "2026-10-07T10:00:00Z",
+                32,
+            ),
+        ])
+        .expect("insert");
+    let g = genaryx_core::DelegationGraph::from_store(&store).expect("from_store");
+    assert_eq!(
+        g.node(flint).map(|n| n.event_count),
+        Some(1),
+        "the impersonation attempt was counted as flint's own activity"
+    );
+    assert_eq!(g.node("key:forge-imposter").map(|n| n.event_count), Some(1));
+}

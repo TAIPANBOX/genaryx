@@ -147,14 +147,20 @@ impl DelegationGraph {
     /// counted event (its natural key had not been seen), `false` if it was a
     /// duplicate (structure re-asserted, count not bumped).
     pub fn add_event(&mut self, ev: &AgentEvent) -> bool {
+        // Who acted is who the event is FILED under: an identity refusal's
+        // envelope names the agent its caller claimed to be, and counting it
+        // there made an impersonation attempt that agent's own activity
+        // (invariant 19, `crate::attribution`). The batch path reads the same
+        // rule from SQL, so both paths key the event the same way.
+        let actor = crate::attribution::filed_under(&ev.event_type, &ev.agent_id, ev.data.as_ref());
         let key = EventKey {
-            agent_id: ev.agent_id.clone(),
+            agent_id: actor.clone(),
             ts: ev.ts.clone(),
             source: ev.source.clone(),
             event_type: ev.event_type.clone(),
             run_id: ev.run_id.clone().unwrap_or_default(),
         };
-        self.ingest(&ev.agent_id, &ev.on_behalf_of, key, &ev.ts)
+        self.ingest(&actor, &ev.on_behalf_of, key, &ev.ts)
     }
 
     /// Core fold shared by the live and batch paths.
@@ -292,6 +298,39 @@ mod tests {
     use super::*;
     use crate::event::AgentEvent;
     use serde_json::Map;
+
+    /// TokenFuse's `identity_mismatch`: the envelope names the agent the
+    /// caller CLAIMED, `data.key_id` the key that called (invariant 19). The
+    /// graph's per-node `event_count` is what Agent 360 shows as an agent's
+    /// own activity, so the refusal must count for the key, not the agent.
+    #[test]
+    fn an_identity_refusal_counts_as_the_keys_activity_in_the_graph() {
+        let mut g = DelegationGraph::new();
+        g.add_event(&ev(
+            "agent://acme/worker",
+            "2026-10-07T09:00:00Z",
+            &[],
+            Some("run-1"),
+        ));
+        let mut refusal = ev(
+            "agent://acme/worker",
+            "2026-10-07T10:00:00Z",
+            &[],
+            Some("probe-1"),
+        );
+        refusal.event_type = "identity_mismatch".into();
+        refusal.source = "tokenfuse".into();
+        refusal.data = Some(
+            serde_json::json!({ "key_id": "forge-imposter", "agent_id": "agent://acme/worker" }),
+        );
+        g.add_event(&refusal);
+        assert_eq!(
+            g.node("agent://acme/worker").map(|n| n.event_count),
+            Some(1),
+            "the impersonation attempt was counted as the claimed agent's own activity"
+        );
+        assert_eq!(g.node("key:forge-imposter").map(|n| n.event_count), Some(1));
+    }
 
     fn ev(agent_id: &str, ts: &str, obo: &[&str], run: Option<&str>) -> AgentEvent {
         AgentEvent {

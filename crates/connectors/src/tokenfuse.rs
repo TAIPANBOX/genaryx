@@ -180,7 +180,12 @@ pub struct CostPerActionReport {
 /// grounded against predates the column, so that branch is exercised by a
 /// hand-built fixture in this module's tests, not a live capture - see the
 /// test doc comments.
-const PER_MODEL_COST_QUERY: &str = "select coalesce(model,'') as model, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls group by model order by model";
+///
+/// A call the gateway refused for identity (`decision = 'identity_mismatch'`)
+/// is left out: it was refused before it was routed, so it never reached the
+/// model it named and is not a call of that model. It is still counted, under
+/// the key that made it, by [`PER_AGENT_COST_QUERY`] (invariant 19).
+const PER_MODEL_COST_QUERY: &str = "select coalesce(model,'') as model, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls where decision <> 'identity_mismatch' group by model order by model";
 
 /// The same aggregate as [`PER_MODEL_COST_QUERY`], grouped by who each call
 /// is FILED under instead of `model`.
@@ -998,6 +1003,46 @@ mod tests {
             got.iter().find(|g| g.0 == flint).map(|g| g.2),
             Some(4000),
             "flint's own spend is unchanged"
+        );
+    }
+
+    /// A call the gateway refused for identity never reached the model it
+    /// named, so it is not a call of that model. Run through the EXACT
+    /// `PER_MODEL_COST_QUERY` text on SQLite, as the per-agent test above is.
+    #[test]
+    fn an_identity_refusal_is_not_a_call_of_the_model_it_named() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open");
+        conn.execute_batch(
+            "create table calls (model text, decision text, agent_id text, key_id text, \
+             cost_microusd integer, tool_calls integer);",
+        )
+        .expect("schema");
+        let rows = [
+            ("m-real", "allow", 3000, Some(2)),
+            ("m-real", "allow", 1000, Some(1)),
+            ("m-real", "identity_mismatch", 0, None),
+            ("m-real", "identity_mismatch", 0, None),
+            ("m-only-refused", "identity_mismatch", 0, None),
+        ];
+        for (model, decision, cost, tools) in rows {
+            conn.execute(
+                "insert into calls values (?1, ?2, 'agent://a/b', 'k', ?3, ?4)",
+                rusqlite::params![model, decision, cost, tools],
+            )
+            .expect("insert");
+        }
+        let mut stmt = conn
+            .prepare(PER_MODEL_COST_QUERY)
+            .expect("the query prepares on SQLite");
+        let got: Vec<(String, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+        assert_eq!(
+            got,
+            vec![("m-real".to_string(), 2)],
+            "refused calls were counted as calls of the model they named: {got:?}"
         );
     }
 }

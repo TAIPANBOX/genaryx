@@ -65,3 +65,19 @@ export function claimSentence(e: EventLike): string | null {
   const claimed = e.agent_id || "no agent";
   return key === null ? `claimed ${claimed} with no key` : `claimed ${claimed} with key ${key}`;
 }
+
+/** How one bus event reads on an agent's own event feed (Agent 360).
+ *
+ * The feed is read by envelope `agent_id`, so an identity refusal that CLAIMED
+ * this agent lands on it. It stays, since somebody trying to be this agent is
+ * worth seeing on its card, but as a claim by the key that was refused, never
+ * as the agent's own activity: `own` is false and the text names the key.
+ * Every other event reads as its own type, as before. */
+export function agentFeedLine(e: EventLike, viewer: string): { text: string; own: boolean } {
+  if (isIdentityRefusal(e) && e.agent_id === viewer) {
+    const key = refusedKey(e);
+    const by = key === null ? "claimed with no key" : `claimed by key ${key}`;
+    return { text: `${e.type}: ${by}, refused`, own: false };
+  }
+  return { text: e.type, own: true };
+}

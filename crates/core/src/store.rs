@@ -573,8 +573,15 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT agent_id, on_behalf_of, ts, source, type, run_id \
-                 FROM events ORDER BY id ASC",
+                // The acting subject is who the event is FILED under, not the
+                // envelope: an identity refusal names the agent its caller
+                // claimed (invariant 19). `DelegationGraph::add_event` applies
+                // the same rule in Rust.
+                &format!(
+                    "SELECT {} AS agent_id, on_behalf_of, ts, source, type, run_id \
+                     FROM events ORDER BY id ASC",
+                    crate::attribution::FILED_UNDER_SQL
+                ),
             )
             .map_err(store_err)?;
         let mut rows = stmt.query([]).map_err(store_err)?;

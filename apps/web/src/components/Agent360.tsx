@@ -1,3 +1,4 @@
+import { agentFeedLine } from "../lib/attribution";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { AgentSlice } from "../graphTypes";
@@ -769,22 +770,31 @@ export function Agent360({
           <PlaneNote>no events for this agent yet.</PlaneNote>
         ) : (
           <div className="panel" style={{ background: "var(--panel)", overflow: "hidden" }}>
-            {events.slice(0, EVENTS_SHOWN).map((e) => (
-              <div
-                key={e.id}
-                className="grid items-center gap-3 px-3 py-1.5 bus-row"
-                style={{ gridTemplateColumns: "76px 92px 1fr 140px" }}
-              >
-                <SeverityBadge severity={e.severity} />
-                <SourceChip source={e.source} />
-                <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }} title={e.type}>
-                  {e.type}
-                </span>
-                <span className="mono tabular text-[10.5px] text-right" style={{ color: "var(--faint)" }}>
-                  {formatTimestamp(e.ts)}
-                </span>
-              </div>
-            ))}
+            {events.slice(0, EVENTS_SHOWN).map((e) => {
+              // An identity refusal that claimed this agent reads as a claim by
+              // the key, not as this agent's activity (invariant 19).
+              const line = agentFeedLine(e, agentId);
+              return (
+                <div
+                  key={e.id}
+                  className="grid items-center gap-3 px-3 py-1.5 bus-row"
+                  style={{ gridTemplateColumns: "76px 92px 1fr 140px", opacity: line.own ? undefined : 0.72 }}
+                >
+                  <SeverityBadge severity={e.severity} />
+                  <SourceChip source={e.source} />
+                  <span
+                    className="mono truncate text-[11.5px]"
+                    style={{ color: line.own ? "var(--fg)" : "var(--dim)" }}
+                    title={line.own ? e.type : `${line.text}: not this agent's own activity`}
+                  >
+                    {line.text}
+                  </span>
+                  <span className="mono tabular text-[10.5px] text-right" style={{ color: "var(--faint)" }}>
+                    {formatTimestamp(e.ts)}
+                  </span>
+                </div>
+              );
+            })}
             {events.length > EVENTS_SHOWN && (
               <div className="px-3 py-1.5 mono text-[10.5px]" style={{ color: "var(--faint)" }}>
                 + {events.length - EVENTS_SHOWN} more &middot; open the Bus Explorer for the full list
