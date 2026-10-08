@@ -3656,7 +3656,11 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       // Appended (oldest) so the live `base` events stay at the newest-first
       // head, while this agent's own Wardryx decisions still populate the
       // Policy section's `source === "wardryx"` filter for a governed agent.
-      return r([...drift, ...base, ...mockAgentPolicyEvents(id)]);
+      // The identity refusals that CLAIMED this agent are on its feed too,
+      // as the real backend returns them (it reads by envelope `agent_id`),
+      // so the card shows how a claim by a key reads there (invariant 19).
+      const claims = mockIdentityRefusalEvents().filter((e) => e.agent_id === id);
+      return r([...claims, ...drift, ...base, ...mockAgentPolicyEvents(id)]);
     }
     // The seeded quality_drift event is APPENDED after the freshly-generated
     // ones (see mockQualityDriftEvent's own doc comment for why order matters
