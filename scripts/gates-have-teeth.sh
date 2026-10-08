@@ -285,6 +285,13 @@ run_case "invariant 19: the rule's own comment reworded" pass \
 	"$identity_gate" \
 	"$(py 'edit("crates/core/src/attribution.rs", "/// The prefix of a subject that is a credential rather than an agent.", "/// The prefix every credential subject carries, and no agent id does.")')"
 
+# invariant 20: Felyx counts a reasoning model's billed output. The gate is
+# the parser's own tests; the mutant reads the completion count alone again.
+run_case "invariant 20: output read from completion_tokens alone again" fail \
+	'cargo test -q -p genaryx-copilot --lib provider::openai' \
+	"$(py 'edit("crates/copilot/src/provider/openai.rs", "Some(total) => completion.max(total.saturating_sub(prompt)),", "Some(_) => completion,")')" \
+	"a_reasoning_model_usage_counts_its_reasoning_as_output"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"
