@@ -1,6 +1,6 @@
 # Phase 1 — money + deploy
 
-Source: `itrat-console/09` Ф1. Builds on Phase 0 (core + both shells live over
+Source: `itrat-console/09` Phase 1. Builds on Phase 0 (core + both shells live over
 the shared core). Estimate: 2 sessions. Branch `phase-1-money`.
 
 **Exit gate (killer demo, 09 §6).** `taipan up` lays down a stack -> the console

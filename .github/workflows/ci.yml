@@ -125,3 +125,7 @@ jobs:
       # whole dependency tree again, on every test run, on every machine.
       - name: one integration-test binary per crate
         run: ./scripts/one-test-binary-per-crate.sh
+      # This repository is public: a decision is recorded as @decided and a
+      # paraphrase, never as the owner's own words or his name (invariant 21).
+      - name: no tracked file quotes or names the owner
+        run: ./scripts/no-owner-quotes.sh

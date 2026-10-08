@@ -21,7 +21,7 @@ be re-run on a fresh box and the numbers cited in the enterprise article.
 
 - **Ran:** 2026-07-17 (evening) into 2026-07-18.
 - **Box:** Hetzner **CPX62** (`ubuntu-32gb-fsn1-1`), IP `5.75.234.176`.
-- **Torn down:** 2026-07-18 by Yurii (standing rule: he provisions + deletes the box + key).
+- **Torn down:** 2026-07-18 by the operator (standing rule: the operator provisions and deletes the box and the key).
   The box is GONE; the app can no longer pair. Re-run from the runbook below on a fresh box.
 - **SSH key:** `~/.ssh/hetzner-genaryx-20260717` (ed25519, still on disk, NOT deleted).
   Pubkey: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHZxB6pqqbZ77F7HVZe6fAG3HT3rhRJ+S+fj78YHso4r genaryx-live-validation-20260717`
@@ -143,7 +143,7 @@ From tokenfuse cloud `crates/cloud/src/store.rs`:
 
 ## Reproduction runbook (fresh box)
 
-1. Yurii provisions a fresh Hetzner CPX62-class box with a fresh public SSH key,
+1. The operator provisions a fresh Hetzner CPX62-class box with a fresh public SSH key,
    hands me the IP; he tears it down after.
 2. On the box: run `gx_setup.sh` (Rust/Go/Python toolchains) then `gx_deploy.sh`
    (clones the public TAIPANBOX repos + `stack-up` builds + starts the stack:

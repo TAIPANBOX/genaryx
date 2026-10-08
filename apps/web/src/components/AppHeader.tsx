@@ -8,7 +8,7 @@ import { NAV_SECTIONS } from "../lib/views";
 import { PasskeySettings } from "./PasskeySettings";
 import { RemoteWgOperatorPopoverCard } from "./RemoteWgOperatorCard";
 
-/** Persisted, drag-resizable rail width (Yurii, 2026-07-24), alongside the
+/** Persisted, drag-resizable rail width (@decided 2026-07-24), alongside the
  * existing collapse/expand toggle - collapse is a binary owned by
  * `AppShell.tsx` (it also gates the rest of the layout), width is a plain
  * continuous value nothing outside this component reads, so it lives here
@@ -313,7 +313,7 @@ function RailResizeHandle({
 }
 
 /**
- * Persistent app chrome, a LEFT RAIL (Yurii, 2026-07-24: eighteen views no
+ * Persistent app chrome, a LEFT RAIL (@decided 2026-07-24: eighteen views no
  * longer fit across the top): brand mark and title at the top, the view nav
  * grouped by [`NAV_SECTIONS`] (Operate / Investigate / Assure / Set up, most
  * used first and rare setup last), then the signed-in session badge, the
@@ -330,8 +330,8 @@ function RailResizeHandle({
  * signed-in user, role and sign-in method. Renders nothing in any session
  * without a role, so this rail stays honest when there is no console session.
  *
- * `railCollapsed`/`onToggleRail` (Yurii, 2026-07-24: "collapse/expand
- * control"): collapsed state is owned by `AppShell.tsx` (persisted to
+ * `railCollapsed`/`onToggleRail` (@decided 2026-07-24: a control to
+ * collapse and expand it): collapsed state is owned by `AppShell.tsx` (persisted to
  * localStorage there), this component only renders it. Collapsed, the rail
  * narrows to a ~52px strip: brand glyph and the toggle stay, section labels
  * disappear, and each nav item shrinks to a small first-letter square (full
@@ -341,7 +341,7 @@ function RailResizeHandle({
  * legible way to show a role/username/action row in 52px); the theme toggle
  * stays as an icon-only button.
  *
- * `railWidth` (Yurii, 2026-07-24: "resizable in addition to collapsible"):
+ * `railWidth` (@decided 2026-07-24: resizable as well as collapsible):
  * unlike `railCollapsed`, this width is owned and persisted right here
  * (`genaryx.railWidth`, clamped [`RAIL_MIN_WIDTH`, `RAIL_MAX_WIDTH`]) rather
  * than threaded through `AppShell.tsx` - nothing outside this component reads
@@ -370,7 +370,7 @@ export function AppHeader({
   const [railWidth, setRailWidth] = useState<number>(() =>
     readStoredWidth(RAIL_WIDTH_KEY, RAIL_DEFAULT_WIDTH, RAIL_MIN_WIDTH, RAIL_MAX_WIDTH),
   );
-  // `dragging` (Yurii, 2026-07-24) suppresses the width transition below
+  // `dragging` (@decided 2026-07-24) suppresses the width transition below
   // while a drag is live, so the rail tracks the pointer 1:1 instead of
   // visibly lagging behind it through a 0.16s ease - real state (not a ref)
   // since the render itself reads it. The start point/width live in a plain

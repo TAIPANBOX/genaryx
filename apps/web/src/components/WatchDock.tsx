@@ -46,7 +46,7 @@ import { UserCard } from "./UserCard";
  * Data: agents reuse the exact `fetchRuns()` + `spendByAgent()` pair
  * `MoneyView.tsx`/`OverviewView.tsx` already read their own "spend by agent"
  * from (same fetch, same helper, same 20s refresh cadence) - no new data
- * path. Units reuse the SAME `runs` fetch too (Yurii, 2026-07-24:
+ * path. Units reuse the SAME `runs` fetch too (@decided 2026-07-24:
  * [`unitSpendFromRuns`]), grouped client-side by `agentTeam()` (the same
  * `agent://org/team/name` parse `spendByAgent`'s own `AgentSpend.team` field
  * already does) - this is the only unit-spend source that answers on a REAL
@@ -68,7 +68,7 @@ import { UserCard } from "./UserCard";
  * unit-level one) when at least one such run carries a budget - the bar
  * simply does not render otherwise, never against a fabricated ceiling.
  *
- * Lifecycle actions (Yurii, 2026-07-24): each row's controls come from the
+ * Lifecycle actions (@decided 2026-07-24): each row's controls come from the
  * shared `lib/lifecycle.tsx`, the SAME state-driven toggles + state badge the
  * Agent/Unit/User cards use, so the model reads and behaves identically in the
  * dock and in every card. An agent row gets `KillRunButton` (break-glass, the
@@ -96,7 +96,7 @@ import { UserCard } from "./UserCard";
  * mock every command mutates the one lifecycle store and every read reflects
  * it, so the demo works end to end the same way.
  *
- * Users (Yurii, 2026-07-24): the third pinnable kind, mirroring agents and
+ * Users (@decided 2026-07-24): the third pinnable kind, mirroring agents and
  * units end to end - same localStorage shape (`USERS_KEY`), same seed
  * tolerance, same `WatchToggleButton`/`WatchRow` machinery. `Run`
  * (`moneyTypes.ts`) carries no owner/on_behalf_of field at all, so unlike
@@ -120,7 +120,7 @@ import { UserCard } from "./UserCard";
  * either side is touched at module-evaluation time, only inside a render
  * or click handler.
  *
- * Per-section collapse (Yurii, 2026-07-24): each of the three groups above
+ * Per-section collapse (@decided 2026-07-24): each of the three groups above
  * (Agents/Units/Users) is independently collapsible via its own clickable
  * header (`WatchSectionHeader` - chevron, label, live count), not only the
  * dock as a whole. This is a different axis from the existing whole-dock
@@ -138,8 +138,8 @@ const USERS_KEY = "genaryx.watch.users";
 const DOCK_COLLAPSED_KEY = "genaryx.watchDock";
 const WATCH_CHANGED_EVENT = "genaryx:watch-changed";
 
-/** Per-SECTION collapse (Yurii, 2026-07-24: "each group collapsible on its
- * own, not just the whole dock"), one key per pinned kind, deliberately
+/** Per-SECTION collapse (@decided 2026-07-24: each group collapses on
+ * its own, not only the whole dock), one key per pinned kind, deliberately
  * separate from `DOCK_COLLAPSED_KEY` above - collapsing the Agents group
  * says nothing about Units or Users, and collapsing every section is still a
  * different state than collapsing the whole dock (the header/count stays
@@ -151,7 +151,7 @@ const AGENTS_SECTION_COLLAPSED_KEY = "genaryx.watch.collapsed.agents";
 const UNITS_SECTION_COLLAPSED_KEY = "genaryx.watch.collapsed.units";
 const USERS_SECTION_COLLAPSED_KEY = "genaryx.watch.collapsed.users";
 
-/** Drag-resizable dock width (Yurii, 2026-07-24), alongside the existing
+/** Drag-resizable dock width (@decided 2026-07-24), alongside the existing
  * collapse/expand toggle above - the mirror image of `AppHeader.tsx`'s own
  * `railWidth` on the opposite edge of the screen, same clamp-and-persist
  * shape and own localStorage key. */
@@ -185,7 +185,7 @@ function writeStoredWidth(key: string, value: number): void {
   }
 }
 
-/** Demo seed (Yurii, 2026-07-24): only applied the very first time this app
+/** Demo seed (@decided 2026-07-24): only applied the very first time this app
  * runs on a given browser profile, so a fresh screenshot never shows an
  * empty dock. These ids do not need to resolve against any particular
  * backend's fleet - an unresolved pin is an explicitly supported, honest
@@ -538,7 +538,7 @@ function MutedDash() {
 
 /** One pinned-kind group's own clickable header - the chevron + label + live
  * count row that toggles just THIS section's rows between shown and hidden
- * (Yurii, 2026-07-24: "each of the three groups collapsible on its own").
+ * (@decided 2026-07-24: each of the three groups collapses on its own).
  * Reuses the file's existing [`ChevronIcon`] rather than a second icon,
  * rotated 90deg for "expanded" instead of swapping to a visually different
  * glyph - `direction="right"` already points the way a collapsed section's
@@ -609,7 +609,7 @@ function WatchRow({
   spendText: string;
   hint: React.ReactNode;
   /** An optional third line under spend/hint - today only a unit row's
-   * [`UnitCapBar`] (Yurii, 2026-07-24), rendered only when a real cap number
+   * [`UnitCapBar`] (@decided 2026-07-24), rendered only when a real cap number
    * is known. `undefined` for every agent row (and any unit with no known
    * budget), which renders nothing extra - agent rows are pixel-identical to
    * before this existed. */
@@ -669,7 +669,7 @@ function WatchRow({
 }
 
 // The dock's per-row lifecycle controls now come from the shared
-// `lib/lifecycle.tsx` (Yurii, 2026-07-24: "consistent everywhere"): agent rows
+// `lib/lifecycle.tsx` (@decided 2026-07-24: the same controls everywhere): agent rows
 // get `KillRunButton` (break-glass) + `FreezeToggleButton` (plain confirm),
 // unit rows get `StopStartButton`, and user rows get `StopStartButton` too -
 // the exact same components the Agent/Unit/User cards use, so the model reads
@@ -717,8 +717,8 @@ export function WatchDock({
     });
   }, []);
 
-  // Per-section collapse (Yurii, 2026-07-24: "each of the three groups
-  // collapsible on its own"), independent of `collapsed`/`toggleCollapsed`
+  // Per-section collapse (@decided 2026-07-24: each of the three
+  // groups collapses on its own), independent of `collapsed`/`toggleCollapsed`
   // above - see [`useSectionCollapsed`]'s own doc comment for why this is
   // three calls to one small hook rather than three inlined copies of the
   // same state machine.
@@ -726,8 +726,8 @@ export function WatchDock({
   const [unitsSectionCollapsed, toggleUnitsSection] = useSectionCollapsed(UNITS_SECTION_COLLAPSED_KEY);
   const [usersSectionCollapsed, toggleUsersSection] = useSectionCollapsed(USERS_SECTION_COLLAPSED_KEY);
 
-  // Drag-resizable width (Yurii, 2026-07-24: "resizable in addition to
-  // collapsible"), the mirror image of `AppHeader.tsx`'s `railWidth` on the
+  // Drag-resizable width (@decided 2026-07-24: resizable as well as
+  // collapsible), the mirror image of `AppHeader.tsx`'s `railWidth` on the
   // opposite edge of the screen - same clamp-and-persist shape, own
   // localStorage key, only read/written here since nothing outside this
   // component needs the number. `dragging` suppresses the width transition
@@ -951,7 +951,7 @@ export function WatchDock({
   // The dock's own user Stop <-> Start: `blockUser`/`user_block`, mirroring
   // `handleToggleUnitStop` exactly (patch the affected handle's entry, honest
   // no-op on a null result). Users had no destructive action here before
-  // (Yurii, 2026-07-24: "consistent everywhere").
+  // (@decided 2026-07-24: the same controls everywhere).
   const handleToggleUserStop = useCallback(async (handle: string, stopped: boolean) => {
     const updated = await blockUser(handle, !stopped);
     if (updated) setUserRecords((prev) => new Map(prev).set(handle, updated));

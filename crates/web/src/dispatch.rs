@@ -721,7 +721,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 genaryx_api::money::commands::money_kill_run(a.run_id, a.reason, &ctx.money).await,
             ))
         }
-        // Lifecycle blocks (Yurii, 2026-07-24). Each of the three toggles
+        // Lifecycle blocks (@decided 2026-07-24). Each of the three toggles
         // enforces first (a deny-all wardryx policy per affected agent) and
         // only records the block in `ctx.lifecycle` once wardryx accepted it,
         // so the console never shows a block that did not actually take. The

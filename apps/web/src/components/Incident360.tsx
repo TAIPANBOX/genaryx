@@ -37,10 +37,9 @@ const BUS_FETCH_LIMIT = 500;
 /**
  * Incident 360: everything this console can say about one anomaly.
  *
- * `@yurii` 2026-08-26, after the first attempt opened an agent card instead:
- * "має бути така сама детальна картка аномалії чи інцидент 360. Також
- * максимально зі всіх боків має бути освітлено... а не просто, хто її зробив,
- * і наскільки це серйозно."
+ * @decided 2026-08-26, after the first attempt opened an agent card instead:
+ * an incident gets a detail card of its own, as full as Agent 360, lit from
+ * every side rather than only who caused it and how serious it is.
  *
  * The shape is Agent 360's, deliberately: a wide card in the overlay layer,
  * closable, section-headed, opening other cards beside itself rather than
@@ -177,8 +176,8 @@ export function Incident360({
 
   /** What THIS event says it cost, as opposed to what the run cost.
    *
-   * `@yurii` asked for the split: "на якій події вона була зупинена, і саме ця
-   * подія скільки забрала коштів". tokenfuse writes `spent_usd` and
+   * @decided: the split, which event stopped it and what that event itself
+   * cost. tokenfuse writes `spent_usd` and
    * `budget_usd` onto a refusal, so the answer is on the event itself and the
    * run total is a different number about a longer window. Showing only the
    * run total answered "what did this agent cost today" to somebody asking

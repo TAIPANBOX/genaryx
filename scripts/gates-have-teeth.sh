@@ -211,8 +211,50 @@ run_case "one-test-binary-per-crate: the allow-listed file is gone" fail \
 	"$(py 'import os; os.remove("crates/copilot/tests/residency_no_proxy_test.rs")')" \
 	"STALE"
 
+# invariant 21: no tracked file quotes the owner or names him as the one who
+# decided. The name and the Cyrillic are assembled at run time, so this file
+# is not itself one of the files the gate refuses.
+owner_py='N = "Y" + "urii"; U = "".join(chr(c) for c in (0x441, 0x43a, 0x430, 0x437, 0x430, 0x432))'
+
+run_case "no-owner-quotes: the old provenance marker returns" fail \
+	'./scripts/no-owner-quotes.sh' \
+	"$(py "$owner_py"'
+edit("crates/web/src/lifecycle.rs", "//! Operator lifecycle blocking", "//! @" + N.lower() + " 2026-07-24\n//! Operator lifecycle blocking")')" \
+	"the old provenance marker"
+
+run_case "no-owner-quotes: the owner named as the one who decided" fail \
+	'./scripts/no-owner-quotes.sh' \
+	"$(py "$owner_py"'
+edit("docs/PHASE6.md", "Name: **Felyx**", "Name: **Felyx** (" + N + " decided this).\n\nName: **Felyx**")')" \
+	"the owner named as the one who"
+
+run_case "no-owner-quotes: a quote in his language in a comment" fail \
+	'./scripts/no-owner-quotes.sh' \
+	"$(py "$owner_py"'
+edit("crates/web/src/lifecycle.rs", "//! Operator lifecycle blocking", "// \"" + U + "\"\n//! Operator lifecycle blocking")')" \
+	"Ukrainian prose"
+
+run_case "no-owner-quotes: a quoted phrase in his language in a doc" fail \
+	'./scripts/no-owner-quotes.sh' \
+	"$(py "$owner_py"'
+edit("docs/PHASE6.md", "Name: **Felyx**", chr(0xAB) + U + chr(0xBB) + "\n\nName: **Felyx**")')" \
+	"a quotation in guillemets"
+
 echo
 echo "=== and what they must NOT catch ==="
+
+# The owner as the holder of the copyright is not a quote and not a decision.
+run_case "no-owner-quotes: the owner as copyright holder" pass \
+	'./scripts/no-owner-quotes.sh' \
+	"$(py "$owner_py"'
+edit("README.md", "\n", "\n\nCopyright 2026 " + N + " K.\n")')"
+
+# Non-Latin text inside a string literal is test data, which hostile-input
+# tests need.
+run_case "no-owner-quotes: Cyrillic inside a Rust string literal" pass \
+	'./scripts/no-owner-quotes.sh' \
+	"$(py "$owner_py"'
+edit("crates/connectors/src/urlpath.rs", "\"run-%D0%B9\");", "\"run-%D0%B9\");\n        let _planted = \"" + U + "\";")')"
 
 # The one file allowed to import fixtures. A gate that flagged it would be
 # flagging the design it protects.

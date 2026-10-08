@@ -1,7 +1,7 @@
 /**
  * A small floating-window manager for the console.
  *
- * Yurii's model (2026-07-22): detail cards are not one-at-a-time popovers, they
+ * The model (@decided 2026-07-22): detail cards are not one-at-a-time popovers, they
  * are independent windows. You can open several at once, from different tabs,
  * and they all stay put and visible together (they live above the whole app, so
  * switching tabs never closes them). Each window can be dragged by its header,

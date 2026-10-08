@@ -1,4 +1,4 @@
-//! Phase-2 EXIT-GATE end-to-end acceptance test (task #28, 09 Ф2).
+//! Phase-2 EXIT-GATE end-to-end acceptance test (task #28, 09 Phase 2).
 //!
 //! This is DEFENSIVE self-verification: it proves an operator's own
 //! governance stack actually holds, grants, and re-checks one of the
@@ -8,7 +8,7 @@
 //! `wardryx_test.rs` proves `WardryxClient` against a bare `wardryx serve`
 //! (its own build, no `taipan`, no gateway in front of it).
 //! `killer_demo_test.rs` proves the Cloud auto-discovery + pairing path
-//! through a real `taipan up`. Neither proves the actual Ф2 product path:
+//! through a real `taipan up`. Neither proves the actual Phase 2 product path:
 //! an agent's costly action holds behind a live gateway wired to a live
 //! Wardryx, a console grants it exactly like the Policy panel's Approvals
 //! Inbox would (07 §4.3, docs/PHASE2.md Wave 2), and the SAME held request

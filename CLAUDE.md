@@ -49,6 +49,7 @@ the names change per build and stale ones are served forever otherwise.
 ./scripts/web-only-and-unpriced.sh
 ./scripts/features-are-bound.sh      # invariant 10
 ./scripts/one-test-binary-per-crate.sh  # invariant 18
+./scripts/no-owner-quotes.sh         # invariant 21
 ./scripts/readme-numbers.sh          # runs the whole suite; slow
 ./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
 ```
@@ -997,6 +998,44 @@ an absent invariant.
     shows the completion count alone; the Anthropic client is unchanged (its
     `output_tokens` already counts thinking); and this is the count Felyx
     shows and logs, not a charge: the gateway's settlement is the money.)*
+
+21. **No tracked file quotes the owner or names him as the one who said,
+    asked or decided something.** This repository is public. A decision is
+    still recorded, because a later reader must know it is a decision and not
+    something to re-derive: it is written as `@decided YYYY-MM-DD` followed by
+    a paraphrase in English, and never edited afterwards. What is not written
+    is his own wording, a provenance marker carrying his name, or his name as
+    the one who decided. The owner as copyright holder, author or maintainer
+    is not a quote and is allowed. `@decided 2026-10-08`: the estate's rule for
+    public repositories, applied here.
+
+    Until 2026-10-08 this tree carried 8 provenance markers with his first
+    name in 7 files, 71 lines naming him in 33 files (most as a name and a
+    date beside a decision), about 90 lines of Ukrainian prose (a whole
+    follow-up note under `live-campaign/docs/`, the Phase labels in
+    `docs/PHASE*.md` and in two test headers, and his quotes in web
+    comments), and nothing that would stop the next one. Each was rewritten:
+    a name and a date became `@decided` and the date, a quote became an
+    English paraphrase without quotation marks, an operational duty became
+    "the operator" or "the owner", the note was translated, and the Phase
+    labels were renamed. Git history keeps the old text; rewriting it is not
+    part of this.
+    *(gate: `scripts/no-owner-quotes.sh`, in CI's web-ui job, over every
+    tracked text file: the old marker, a guillemet beside Cyrillic, his first
+    name capitalised outside an authorship line, and Cyrillic outside a string
+    literal in a code file or anywhere in a prose file (a `testdata/` path is
+    exempt). Red first: 161 findings on the tree before this change, 0 after.
+    Six cases in `scripts/gates-have-teeth.sh`: the marker, the name as the
+    one who decided, a Ukrainian quote in a Rust comment and a guillemet
+    quote in a doc must each fail; the owner as copyright holder and Cyrillic
+    inside a Rust string literal must each pass.
+
+    Where it says nothing: an English quote of his words in ordinary
+    quotation marks, an attribution that does not use his name ("the owner
+    said"), and a paraphrase that is in fact a translation are prose a reader
+    judges, and nothing mechanical can; a quoted Ukrainian phrase in a comment
+    trailing code on the same line passes, since only a line that opens as a
+    comment is read as prose whole; and it reads only what git tracks.)*
 
 ## Decisions that have no gate yet
 

@@ -183,7 +183,7 @@ describe("incidentLinkTarget", () => {
 
 describe("incidentExportName", () => {
   it("names the agent and the moment, because that is how a file is found again", () => {
-    // `@yurii 2026-08-26`: the saved file should carry the agent and when the
+    // @decided 2026-08-26: the saved file should carry the agent and when the
     // save was made. A name built from the console's row id says nothing to
     // somebody looking at a folder a week later.
     const name = incidentExportName(

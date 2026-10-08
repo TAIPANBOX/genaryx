@@ -13,7 +13,7 @@ least-privilege pipe (viewer key), it cannot kill or mutate on its own (Cloud 40
 > ## AMENDMENT, 2026-07-20: the single-device rule is superseded
 >
 > **Everything below that says the relay accepts exactly ONE device is a historical
-> record of Ф5 as it shipped and PASSED. It is no longer how the relay behaves.**
+> record of Phase 5 as it shipped and PASSED. It is no longer how the relay behaves.**
 > Read this box before quoting any of it, and especially before writing anything
 > public from it.
 >
@@ -98,7 +98,7 @@ The only thing that genuinely needs the paid Apple account is real APNs remote-p
   passes relay verbatim -> Cloud verifies E2E -> run killed -> exception state flips. Single-device:
   a second pair attempt refuses until Disconnect. All on the simulator, no Apple account.
 
-## Exit gate (Ф5 sim)
+## Exit gate (Phase 5 sim)
 
 > **Status: PASSED (2026-07-18).** Full evidence in [PHASE5-W4-RESULTS.md](PHASE5-W4-RESULTS.md):
 > device-signed kill verified phone -> relay (verbatim) -> Cloud (viewer-key kill = 403, so only a

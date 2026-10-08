@@ -1,4 +1,4 @@
-//! Operator lifecycle blocking (Yurii, 2026-07-24): freeze an agent, stop a
+//! Operator lifecycle blocking (@decided 2026-07-24): freeze an agent, stop a
 //! business unit, stop a user. Two halves, both required:
 //!
 //! 1. ENFORCEMENT. A block writes a deny-all policy per affected agent into

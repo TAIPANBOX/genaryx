@@ -22,7 +22,7 @@ export type ViewId =
   | "copilot";
 
 /** The left rail is grouped by how an operator actually works, most-used at
- * the top and rare setup at the bottom (Yurii, 2026-07-24): Operate is the
+ * the top and rare setup at the bottom (@decided 2026-07-24): Operate is the
  * daily governance surface you land on; Investigate is where you go when
  * something looks off; Assure is the periodic compliance and drill work; Set
  * up is the rare one-time wiring (registering an agent, pointing at a box). */
@@ -38,7 +38,7 @@ export const NAV_SECTIONS: readonly {
       // depth. Overview's Incident Center is a ten-row summary and a capped
       // card is where an operator stops rather than where they start; this is
       // the whole stream, filterable, with every row opening the record behind
-      // it. `@yurii` 2026-08-26 asked for it as its own tab for exactly that.
+      // it. @decided 2026-08-26: its own tab, for exactly that.
       //
       // Labelled Incidents, not Anomalies, though the id keeps the older word
       // (`stats`/`Statistics` is the same shape). Two reasons, and the second
@@ -97,7 +97,7 @@ export const VIEWS: readonly { id: ViewId; label: string }[] = NAV_SECTIONS.flat
 );
 
 /** Business-unit slug -> display name, for the ten units the post-reseed
- * console actually carries (Yurii, 2026-07-24). Every reader of a raw unit
+ * console actually carries (@decided 2026-07-24). Every reader of a raw unit
  * id (`WatchDock.tsx`'s pinned units, `UnitCard.tsx`/`AgentDetailCard.tsx`'s
  * "business unit" field, the OverviewView/UserCard team labels, ...) routes
  * its DISPLAYED text through this - the raw slug stays the value/key

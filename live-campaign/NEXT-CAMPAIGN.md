@@ -16,13 +16,13 @@ The 2026-07-19 capture set is already published on the public site (`it-rat.com/
 2. **Shots were taken against more than one dataset**, so the numbers on one surface do not add up
    against the numbers on another. There was no shared data flow behind them.
 
-Yurii's requirement for the re-run: **every screenshot must be maximally filled with real data, and
+The requirement for the re-run (@decided): **every screenshot must be maximally filled with real data, and
 the data flow must be one coherent story across the console tabs, so a viewer can follow what was
 done, where it was verified, and how it looks.**
 
 ---
 
-## 2. What Yurii provides (and what only he can do)
+## 2. What the owner provides (and what only the owner can do)
 
 - **The box.** He provisions a Hetzner **CPX62-class** (16 vCPU / 32 GB, Ubuntu) with the public key
   below added *at create time*, gives the IP, and **tears the box down himself afterwards**.
@@ -105,7 +105,7 @@ New scripts to add next to the existing ones in `scripts/`: `gx_quality.py`, `gx
   `Articles for Tania/01-General/Screenshots`, `Articles for Tania/10-Enterprise/Screenshots`,
   `Briefs for Tania/Screenshots`, `Explainers for Tania/Screenshots`
 - **Public site**: `~/Development/it-rat/assets/shots/enterprise/*.webp`, the `gx-*` set the Genaryx
-  page renders. Deploy is a push to `it-rat/it-rat.github.io`, **only on Yurii's explicit go**.
+  page renders. Deploy is a push to `it-rat/it-rat.github.io`, **only on the owner's explicit go**.
 - **Campaign archive**: `~/Development/genaryx/live-campaign/` - new `shots/<date>/`,
   `enterprise-article-images/`, updated `RESULTS.md`, and the new seeder scripts.
 
@@ -123,7 +123,7 @@ from the one shared dataset, so the same figure reads the same on every tab.
 
 - **No long em dashes** anywhere (chat, docs, code comments, commit messages). Reword, or use a comma,
   colon or short hyphen.
-- Ukrainian in conversation with Yurii; wiki content in English.
+- Conversation in the owner's language; wiki content in English.
 - **Never embed app screenshots inside Tania's documents.** They ship as a separate folder next to the
   HTML+PDF, each with its index. (He stated this twice.)
 - Bold the stack service names in Ukrainian deliverables (**TokenFuse**, **Engram**, **Idryx**, **Qryx**,

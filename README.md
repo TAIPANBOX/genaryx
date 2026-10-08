@@ -403,4 +403,4 @@ Architect (Fable 5 / Opus) writes specs and reviews every diff; implementation
 by Sonnet 5 subagents against self-contained specs. A feature exists only when
 it lands in the core and in the console within the same phase.
 
-**Do not push without explicit sign-off. No publicity until Yurii's explicit call.**
+**Do not push without explicit sign-off. No publicity until the owner's explicit call.**

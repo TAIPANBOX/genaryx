@@ -1,4 +1,4 @@
-//! Phase-3 exit gate (09 Ф3, PHASE3.md W4): the cross-plane Agent 360 join,
+//! Phase-3 exit gate (09 Phase 3, PHASE3.md W4): the cross-plane Agent 360 join,
 //! proven end to end against a REAL `idryx serve`. The acceptance criterion the
 //! phase promises is "click a flagged agent, from anywhere, and its full 360
 //! card resolves". This test proves the load-bearing half of that a shell

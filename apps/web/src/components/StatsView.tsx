@@ -168,8 +168,8 @@ const MONEY_COLUMN_LEGEND = (
  * # THE HISTORY THIS ENCODES, BECAUSE THE FUNCTION IS ONLY SENSIBLE WITH IT
  *
  * tokenfuse #197 taught `/v1/runs` a window and the console was wired to it.
- * The demo then showed 24h $8,151, 7d $15,024, 30d $31,856. Yurii read that in
- * seconds and said it could not be right: a day at $8,151 is $57,000 a week.
+ * The demo then showed 24h $8,151, 7d $15,024, 30d $31,856. A reading of it
+ * found in seconds that it could not be right: a day at $8,151 is $57,000 a week.
  *
  * The quantity was never spend per period. That filter selects runs last SEEN
  * in the window and each brings its LIFETIME total, because the Cloud folded

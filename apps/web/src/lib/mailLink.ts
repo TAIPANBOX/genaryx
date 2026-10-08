@@ -131,7 +131,7 @@ const VIEW_BY_TYPE: Readonly<Record<string, ViewId>> = {
  * team; `on_behalf_of` carries `user://` principals and says who the agent is
  * acting for right now. Often the same human, not always, and the difference is
  * a different blast radius for a stop. `/o/` is the OWNER, which is who you
- * call (Yurii, 2026-08-02).
+ * call (@decided 2026-08-02).
  */
 const MAIL_LINK_PREFIX = "/i/";
 const AGENT_LINK_PREFIX = "/a/";

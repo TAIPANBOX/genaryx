@@ -12,7 +12,7 @@ import type { Run } from "../moneyTypes";
  * buttons, so the model reads and behaves identically everywhere instead of
  * being re-implemented per panel.
  *
- * Product model (Yurii): a state-driven toggle that shows the OPPOSITE of the
+ * Product model (@decided): a state-driven toggle that shows the OPPOSITE of the
  * current state (a running thing offers Stop/Freeze; a halted one offers
  * Start/Unfreeze), plus a small LIVE/STOPPED/FROZEN/KILLED badge on the entity.
  * Confirmation reuses the existing `ConfirmButton`: its plain inline confirm

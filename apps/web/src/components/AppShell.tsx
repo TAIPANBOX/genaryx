@@ -53,7 +53,7 @@ const FOCUS_HIGHLIGHT_MS = 6_000;
  * threshold, not derived from the 720px card width itself. */
 const COMPARE_MIN_WIDTH = 1200;
 
-/** Left-rail collapse state (Yurii, 2026-07-24): persisted so a reload keeps
+/** Left-rail collapse state (@decided 2026-07-24): persisted so a reload keeps
  * the operator's own choice rather than always reopening at full width. */
 const RAIL_COLLAPSED_KEY = "genaryx.railCollapsed";
 
@@ -118,7 +118,7 @@ export function AppShell() {
   const [view, setView] = useState<ViewId>("overview");
   const { open } = usePopover();
 
-  // Left rail collapse/expand (Yurii, 2026-07-24): lives here (not inside
+  // Left rail collapse/expand (@decided 2026-07-24): lives here (not inside
   // `AppHeader.tsx` itself) for the same reason `focusedAgentIds` does -
   // persisted, whole-app chrome state, not a view's own concern.
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readStoredFlag(RAIL_COLLAPSED_KEY));
@@ -162,7 +162,7 @@ export function AppShell() {
     //
     // The mail that sends an operator here says "(freeze, kill)" beside the
     // link, so the old behaviour ended a two-in-the-morning path at a screen
-    // that could not do the thing the mail had just named. Reported by Yurii,
+    // that could not do the thing the mail had just named. Reported
     // 2026-08-03, from the sample on it-rat.com.
     //
     // Centred rather than anchored: there is no click and so no rect to sit
@@ -176,7 +176,7 @@ export function AppShell() {
     // card (`UserCard.tsx`, every agent they own with what those agents spend),
     // not the whole Identity panel the link used to stop at. The panel is
     // still what it lands ON, so the card has its context behind it.
-    // Reported by Yurii, 2026-08-03, alongside the agent link.
+    // Reported 2026-08-03, alongside the agent link.
     if (link.kind === "owner") {
       open(<UserCard handle={link.subject} onOpenFullAgent={onOpenAgent} />);
     }
@@ -419,7 +419,7 @@ export function AppShell() {
   // agents it names beside itself.
   const [focusedIncident, setFocusedIncident] = useState<UnifiedIncident | null>(null);
 
-  // Watch dock (Yurii, 2026-07-24): a pinned unit's row opens the SAME
+  // Watch dock (@decided 2026-07-24): a pinned unit's row opens the SAME
   // `UnitCard` every other unit link in the app opens (`AgentDetailCard`'s
   // own "business unit" field, `Agent360.tsx`'s eventual equivalent), via
   // this shell's own `usePopover()` - centered (no anchor rect) since the
