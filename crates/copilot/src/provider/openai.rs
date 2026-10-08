@@ -255,22 +255,50 @@ fn parse_openai_response(text: &str) -> Result<ChatTurn, ProviderError> {
         }
     }
 
-    let usage = Usage {
-        prompt_tokens: v
-            .pointer("/usage/prompt_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
-        completion_tokens: v
-            .pointer("/usage/completion_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
-    };
+    let usage = usage_from(&v);
 
     Ok(ChatTurn {
         content,
         tool_calls,
         usage,
     })
+}
+
+/// The token usage of one OpenAI-shaped answer, output counted the way the
+/// provider bills it.
+///
+/// Output is the larger of `completion_tokens` and `total_tokens` less
+/// `prompt_tokens`. Google's OpenAI-compatible endpoint leaves a thinking
+/// model's reasoning out of `completion_tokens` and bills it at the output
+/// rate (measured 2026-10-07 on Vertex AI, `gemini-2.5-flash`: prompt 14,
+/// completion 59, reasoning 560, total 633), so reading the completion count
+/// alone showed about a tenth of the output a gateway in front now charges.
+/// OpenAI's completion count already holds its reasoning, so there the gap
+/// equals the completion count and nothing changes; the reasoning detail is
+/// never added on top, which would count it twice. A total short of the sum
+/// never lowers the output below the completion count, and a total with no
+/// prompt count is output whole. The rule is TokenFuse's own (its invariant
+/// 80) and CostCrew's, so the three read one answer the same way.
+///
+/// Counts arrive as JSON numbers and are kept in `u32`: a figure past it
+/// saturates rather than wrapping into a small, plausible number, and a
+/// field that is not a non-negative integer reads as absent.
+fn usage_from(v: &Value) -> Usage {
+    let count = |field: &str| {
+        v.pointer(&format!("/usage/{field}"))
+            .and_then(Value::as_u64)
+    };
+    let prompt = count("prompt_tokens").unwrap_or(0);
+    let completion = count("completion_tokens").unwrap_or(0);
+    let output = match count("total_tokens") {
+        Some(total) => completion.max(total.saturating_sub(prompt)),
+        None => completion,
+    };
+    let clamp = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
+    Usage {
+        prompt_tokens: clamp(prompt),
+        completion_tokens: clamp(output),
+    }
 }
 
 /// Tool-call arguments arrive as a JSON-encoded string in the OpenAI wire

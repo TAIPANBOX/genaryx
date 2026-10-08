@@ -966,6 +966,38 @@ an absent invariant.
     call is forwarded and its trace row says `allow` with the claimed id, so
     nothing here can tell; and a key subject has no card of its own yet.)*
 
+20. **Felyx counts a reasoning model's output the way the provider bills it.**
+    `crates/copilot/src/provider/openai.rs` read `completion_tokens` alone.
+    Google's OpenAI-compatible endpoint leaves a thinking model's reasoning
+    out of that count and bills it at the output rate (measured 2026-10-07 on
+    Vertex AI, `gemini-2.5-flash`: prompt 14, completion 59, reasoning 560,
+    total 633), so Felyx showed about a tenth of the output a TokenFuse
+    gateway in front now charges. `@decided 2026-10-08`: output is the larger
+    of `completion_tokens` and `total_tokens` less `prompt_tokens`
+    (`usage_from`), the rule of TokenFuse's invariant 80 and CostCrew's #110.
+    OpenAI's completion count already holds its reasoning, so there nothing
+    changes and the reasoning detail is never added on top; a short total
+    never lowers the output below the completion count; a total with no
+    prompt count is output whole. Counts past `u32` saturate instead of
+    wrapping (they wrapped before, a huge count reading as a small one).
+    *(test: `crates/copilot/src/provider/openai.rs`'s
+    `a_reasoning_model_usage_counts_its_reasoning_as_output`,
+    `an_openai_shaped_usage_is_read_unchanged`,
+    `a_short_total_never_lowers_the_output_below_the_completion_count`,
+    `a_total_with_no_prompt_count_is_shown_as_output`,
+    `hostile_usage_figures_saturate_and_never_wrap` (a 200-seed sweep against
+    an independent statement of the rule). Red first in CI on the test-only
+    commit of genaryx#94: three failed (59 against 619; 5 against 40; a
+    wrapped 1 against a saturated limit), the two controls green by design.
+    Scenarios: `features/felyx-shows-the-output-a-provider-bills.feature`,
+    four, each bound; one case in `scripts/gates-have-teeth.sh` reads the
+    completion count alone again and requires the Vertex test to fail.
+
+    Where it says nothing: a Google-shaped usage with no `total_tokens` still
+    shows the completion count alone; the Anthropic client is unchanged (its
+    `output_tokens` already counts thinking); and this is the count Felyx
+    shows and logs, not a charge: the gateway's settlement is the money.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
