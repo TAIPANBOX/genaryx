@@ -3662,20 +3662,18 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       const claims = mockIdentityRefusalEvents().filter((e) => e.agent_id === id);
       return r([...claims, ...drift, ...base, ...mockAgentPolicyEvents(id)]);
     }
-    // The seeded quality_drift event is APPENDED after the freshly-generated
-    // ones (see mockQualityDriftEvent's own doc comment for why order matters
-    // here), so `res.events[0]` (newest-first) is still whichever real event
-    // `seedEvents` itself produced most recently. `recentCommandEvents` (an
-    // operator's own kill/budget/ack/decide, newest-first already) goes in
-    // front of all of it: a just-issued console_command is genuinely the
-    // newest thing on the bus.
+    // `recentCommandEvents` (an operator's own kill/budget/ack/decide,
+    // newest-first already) goes in front of all of it: a just-issued
+    // console_command is genuinely the newest thing on the bus.
     case "money_owners": return r(mockOwners());
     case "stats_counts": return r(mockStatsCounts(Number(args?.window_days ?? 0)));
     case "egress_recent": return r(mockEgress());
-    // The refusals go ahead of the seed: a reader asking for N events keeps
-    // the first N, and the Incidents tab asks for exactly as many as the seed
-    // makes, so anything appended after it is cut before it is ever seen.
-    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), ...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
+    // The refusals and the quality_drift event go ahead of the seed: a reader
+    // asking for N events keeps the first N, and the Incidents tab asks for
+    // exactly as many as the seed makes, so anything appended after it is cut
+    // before it is ever seen. The drift event was appended, and so the demo's
+    // one bus incident with no run id never reached Incident 360.
+    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...seedEvents(Number(args?.limit ?? 60))]);
     case "run_events": return r(seedEvents(20));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });
