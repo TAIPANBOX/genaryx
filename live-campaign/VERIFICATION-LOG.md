@@ -5,7 +5,7 @@ and the article can quote them without anyone recalling from memory. Every entry
 is a command that was run and the output it produced.
 
 Box: Hetzner CPX62 `5.75.234.176` (`ubuntu-32gb-fsn1-1`), Ubuntu 26.04, 16 vCPU / 30 GB.
-Provisioned 2026-07-20 by Yurii, torn down by him afterwards.
+Provisioned 2026-07-20 by the operator, torn down by the operator afterwards.
 SSH key `~/.ssh/hetzner-genaryx-20260720` (never delete on my own initiative).
 
 ---
@@ -235,7 +235,7 @@ Verified after: the cloud is unreachable from outside (connection refused /
 timeout), SSH still works, and the stack answers normally over loopback on the
 box. The dataset was not touched.
 
-**Why this is in the record and not just fixed quietly.** Ф4's exit gate in the
+**Why this is in the record and not just fixed quietly.** Phase 4's exit gate in the
 previous campaign explicitly included "control plane closed to the internet
 (ufw)". This fresh box never got that step, because provisioning went straight
 from toolchains to deploying the stack. Any future run of `gx_setup.sh` should

@@ -5,7 +5,7 @@
 //! console. It NEVER creates, resizes, or deletes a Hetzner resource: there is
 //! no POST/PUT/DELETE method on this type at all, by construction, so the
 //! console (and I) cannot mutate or tear down infrastructure through it - the
-//! teardown of any box is Yurii's, never the console's ([[never-delete-keys-on-own-initiative]]).
+//! teardown of any box is the operator's, never the console's ([[never-delete-keys-on-own-initiative]]).
 //!
 //! Talks to the public Hetzner Cloud API (`https://api.hetzner.cloud/v1`) with a
 //! read-scoped API token as a `Bearer`. The token is the client's only

@@ -348,7 +348,7 @@ function AccessSectionBody({
           identity and policy data, so it owns neither panel, and putting one
           link for each here is how this card ended up offering three ways to
           Identity and two to Policy. Each link now lives once, at the end of
-          the section that owns it. (Yurii counted them, 2026-08-11.) */}
+          the section that owns it. (Counted 2026-08-11.) */}
     </div>
   );
 }
@@ -681,7 +681,7 @@ export function Agent360({
               // `items-baseline`, not the default stretch: every `Field` is
               // baseline-aligned inside itself, so a chip beside them was
               // centred against the ROW box and sat visibly low against the
-              // text (Yurii, 2026-08-11, "трохи нижча"). Aligning the row on
+              // text (found 2026-08-11: it read slightly low). Aligning the row on
               // the text baseline puts the chip's label on the same line as
               // `KIND agent`, which is what it is a continuation of.
               <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1.5">
@@ -689,7 +689,7 @@ export function Agent360({
                 <Field label="last seen" value={slice.node?.last_ts ? formatTimestamp(slice.node.last_ts) : "-"} />
                 <Field label="kind" value={slice.node?.kind ?? "(chain-only)"} />
                 {/* The way BACK, and it sits HERE rather than up in the header
-                    (Yurii, 2026-08-10) because it belongs to this line: the
+                    (@decided 2026-08-10) because it belongs to this line: the
                     header is the panel's own controls (watch, freeze, kill,
                     close), and this is one more thing to open about the agent,
                     the same shape and the same affordance as the delegation

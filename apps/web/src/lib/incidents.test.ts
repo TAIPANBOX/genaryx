@@ -296,7 +296,7 @@ describe("what the tab may see that the card may not", () => {
     // `medium` on purpose, because paging at `taint_block`'s band during the
     // week an operator was told to watch quietly is how they learn to mute
     // the sender. Fixed at `medium`, it could not reach the console AT ALL,
-    // so the one surface Yurii actually looks at would have shown nothing
+    // so the one surface the operator actually looks at would have shown nothing
     // from a subsystem built to be looked at.
     const rows = aggregateIncidents(
       {

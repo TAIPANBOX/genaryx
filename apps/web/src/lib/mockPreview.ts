@@ -227,9 +227,9 @@ function pseudo(s: string): number {
  *
  * Until 2026-08-11 an agent's whole life was `150 + pseudo * 2300` calls,
  * spread over an age of 60 to 430 days. That is about **five calls a day**, and
- * the fleet's entire spend came to roughly $600. Yurii read the demo and said
- * the money looked far too small for that many agents over a year, and the
- * arithmetic agrees with him: 42 agents at 5 calls a day is not a governed
+ * the fleet's entire spend came to roughly $600. A reading of the demo found
+ * the money far too small for that many agents over a year, and the
+ * arithmetic agrees: 42 agents at 5 calls a day is not a governed
  * estate, it is 42 agents that do nothing.
  *
  * The per-call PRICES were never the problem. `PER_CALL_USD` is close to real
@@ -291,8 +291,8 @@ function genHistory(a: { team: string; name: string; owner: string }): Lifecycle
  * This was `u.users[i % u.users.length]`, a strict round-robin, and the result
  * was that every person in the company ran exactly the same number of agents.
  * On the Owner grouping that produced a column of identical 2s, which reads as
- * a placeholder rather than as an estate (Yurii, 2026-08-10: "щоб не було всіх
- * по два").
+ * a placeholder rather than as an estate (@decided 2026-08-10: owners must
+ * not all hold two each).
  *
  * Real teams are not flat. Someone owns the four agents that matter and
  * somebody else owns one they inherited, because the work is not the same size.
@@ -479,7 +479,7 @@ const ackedIncidentIds = new Set<string>();
 const decidedApprovals = new Map<string, { decision: "grant" | "deny"; decidedAt: number }>();
 
 // ---------------------------------------------------------------------------
-// Manual lifecycle store (Yurii, 2026-07-24): the ONE source of truth for the
+// Manual lifecycle store (@decided 2026-07-24): the ONE source of truth for the
 // console's operator-driven lifecycle actions, so a Stop/Freeze/Kill reads
 // app-wide (Overview spend-by-agent, Money runs, the Graph, the Agent/Unit/User
 // cards, the watch dock), not only where it was clicked. Every read DTO below

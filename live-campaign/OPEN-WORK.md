@@ -12,7 +12,7 @@ survive; this file is the durable copy.
 
 ## 1. stack-up must light up wave 1 AND wave 2, not just the daemons [#17]
 
-**Asked for by Yurii, 2026-07-20:** one command brings up every wave-1 and
+**@decided 2026-07-20:** one command brings up every wave-1 and
 wave-2 service. Genaryx itself and the `taipan` deploy CLI are explicitly out of
 scope: they are not started by that command.
 
@@ -107,7 +107,7 @@ skew is diagnosable at a glance.
 
 ## 2. Provisioning must install and configure WireGuard on the box [#18]
 
-**Asked for by Yurii, 2026-07-20:** if Genaryx connects to remote
+**@decided 2026-07-20:** if Genaryx connects to remote
 infrastructure, WireGuard has to be installed and configured on that
 infrastructure as part of provisioning it. Not afterwards, not by hand.
 
@@ -192,7 +192,7 @@ onto `model.Location.IsTest` by the WALKER, not by each detector, so no detector
 can forget. The split happens ONCE, in the shared tail of `cmd/qryx/main.go`,
 before the graph, `--save`, `--events`, the policy gate, the verdict and every
 `--format` read the findings, so none of them can disagree about what
-production means. Excluded by default (Yurii's call, 2026-07-21);
+production means. Excluded by default (@decided 2026-07-21);
 `--include-tests` restores the old behaviour; one stderr line always reports how
 much was set aside and how many assets exist only there, leaving stdout clean.
 

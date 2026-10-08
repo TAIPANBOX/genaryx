@@ -307,9 +307,9 @@ export function OverviewView({
   // `cursor: pointer`), and it navigates to the owning PANEL.
   //
   // The ROW opens the incident itself, which is a different question and was
-  // not answerable here until 2026-08-26. `@yurii`, on finding it: "я не можу
-  // натиснути на сам інцидент і зайти подивитись, в чому справа. Тільки коли
-  // є з боку якийсь explain". He was exactly right, and the reason was a
+  // not answerable here until 2026-08-26, when it was found that an incident
+  // itself could not be clicked to see what was wrong, only an explain beside
+  // it. That was exactly right, and the reason was a
   // reasonable-sounding one written down in this comment: only money rows had
   // an obvious drill target, so the row carried no click at all rather than
   // carrying one conditionally. The effect was that the panel telling an

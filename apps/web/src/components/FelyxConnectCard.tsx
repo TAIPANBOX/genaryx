@@ -6,8 +6,8 @@ import { useWindowControls, PopoverHeader } from "../lib/popover";
  * Connect Felyx to a model.
  *
  * The Copilot tab used to show only a chat box and a "no provider configured"
- * line, with nowhere to actually pick a provider or enter a key (Yurii's
- * complaint, 2026-07-22). This is that missing form: choose one of the
+ * line, with nowhere to actually pick a provider or enter a key (reported
+ * 2026-07-22). This is that missing form: choose one of the
  * providers the backend already models (Anthropic, OpenAI-compatible,
  * OpenRouter, Ollama, LM Studio), give a key for the cloud ones, set a daily
  * spend cap, and save.

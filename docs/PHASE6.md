@@ -5,7 +5,7 @@ truth: `~/Development/itrat-console/13-mobile-relay-copilot-decision.md` (D13.1-
 This file is the wave plan + the exact reuse map + the sim-first deltas for **C0**, the
 credible first cut. C1-C3 are outlined at the end, not built here.
 
-Name: **Felyx** (resolved with Yurii, 2026-07-18).
+Name: **Felyx** (@decided 2026-07-18).
 
 ## What C0 is (D13.7)
 

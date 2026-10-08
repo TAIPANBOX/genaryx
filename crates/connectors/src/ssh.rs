@@ -33,7 +33,7 @@
 //! already-existing identity (private-key) file path to authenticate with and
 //! an already-known pinned HOST key to trust, and writes only a private,
 //! `0600`, temp known_hosts holding that pinned host key (removed on drop).
-//! Handing Yurii a fresh PUBLIC key for a campaign, and all teardown, happen
+//! Handing the operator a fresh PUBLIC key for a campaign, and all teardown, happen
 //! entirely outside this code ([[never-delete-keys-on-own-initiative]],
 //! [[hetzner-vps-provisioning]]).
 //!

@@ -1,8 +1,8 @@
-# Phase 4 - distance + the remaining planes (Ф4 "Дистанція")
+# Phase 4 - distance + the remaining planes (Phase 4 "Distance")
 
-Source: `itrat-console/09` Ф4 + `07 §4.5-4.9, §6-8` + `08 §4` + deployment-decision **D11** ([[decision-genaryx-deployment-and-security]]). Builds on Phases 0-3 (both shells over the shared core; money, policy, identity, Agent 360, Run Replay, Posture full). Branch `phase-4-distance`.
+Source: `itrat-console/09` Phase 4 + `07 §4.5-4.9, §6-8` + `08 §4` + deployment-decision **D11** ([[decision-genaryx-deployment-and-security]]). Builds on Phases 0-3 (both shells over the shared core; money, policy, identity, Agent 360, Run Replay, Posture full). Branch `phase-4-distance`.
 
-**Exit gate (09 Ф4).** The full killer-demo runs against a genuinely REMOTE, client-hosted stack: manage a remote environment on a Hetzner box from the laptop - the console reaches a client-hosted Cloud not over localhost but through the Genaryx-managed transport, sees every plane (money/policy/identity/quality/crypto/memory/drills), and can act (a hardware-signed kill), with the control plane never exposed to the internet. Verified by a **live validation campaign our standard way** (see "Live validation + key/infra hygiene" below).
+**Exit gate (09 Phase 4).** The full killer-demo runs against a genuinely REMOTE, client-hosted stack: manage a remote environment on a Hetzner box from the laptop - the console reaches a client-hosted Cloud not over localhost but through the Genaryx-managed transport, sees every plane (money/policy/identity/quality/crypto/memory/drills), and can act (a hardware-signed kill), with the control plane never exposed to the internet. Verified by a **live validation campaign our standard way** (see "Live validation + key/infra hygiene" below).
 
 ## Architecture positions (decided; do not re-litigate)
 
@@ -13,11 +13,11 @@ Source: `itrat-console/09` Ф4 + `07 §4.5-4.9, §6-8` + `08 §4` + deployment-d
 
 ## Live validation + key/infra hygiene (HARD RULE - read before any remote work)
 
-The Ф4 acceptance is a live campaign on a real Hetzner box, run our standard way ([[hetzner-vps-provisioning]]). **The teardown is Yurii's, not the console's / not mine:**
-- I generate a FRESH ephemeral SSH keypair and hand Yurii the PUBLIC key only. Never reuse old keys; never share the private key.
-- Yurii creates a CPX62-class box with that key at create time, and supplies a fresh short-lived Anthropic key for any real-model run.
+The Phase 4 acceptance is a live campaign on a real Hetzner box, run our standard way ([[hetzner-vps-provisioning]]). **The teardown is the operator's, not the console's / not mine:**
+- I generate a FRESH ephemeral SSH keypair and hand the operator the PUBLIC key only. Never reuse old keys; never share the private key.
+- The operator creates a CPX62-class box with that key at create time, and supplies a fresh short-lived Anthropic key for any real-model run.
 - I connect with the matching private key, do the work, and when the campaign is done I SIGNAL that the box can go.
-- **Yurii deletes BOTH the key and the server himself. I NEVER delete/destroy/tear-down any key, credential, or infrastructure on my own initiative** ([[never-delete-keys-on-own-initiative]], updated 2026-07-17). "Clean up" / "we're done" never includes deleting a key or a box. Kill only processes I launched (never a ps/lsof-discovered PID, [[process-kill-classifier-restriction]]).
+- **The operator deletes BOTH the key and the server. I NEVER delete/destroy/tear-down any key, credential, or infrastructure on my own initiative** ([[never-delete-keys-on-own-initiative]], updated 2026-07-17). "Clean up" / "we're done" never includes deleting a key or a box. Kill only processes I launched (never a ps/lsof-discovered PID, [[process-kill-classifier-restriction]]).
 - SSH connector code carries this as a guardrail: host-key pinning, no key generation/deletion in the connector itself beyond handing over a public key, and no Hetzner mutation.
 
 Most Phase 4 code is buildable + testable LOCALLY without Hetzner: the plane panels (local CLIs), Evidence Center (local Cloud/Qryx), the SSH connector (against a localhost sshd), and WireGuard (wireguard-go loopback). The Hetzner box is needed ONLY for the final remote-validation campaign. I will flag it explicitly when that step arrives.
@@ -33,7 +33,7 @@ Most Phase 4 code is buildable + testable LOCALLY without Hetzner: the plane pan
 
    **Bug the campaign found + fixed (`crates/connectors/src/wg.rs`):** `set_addr` on macOS ran `ifconfig utunN inet LOCAL PEER alias`, which returns success but silently leaves the utun WITHOUT an inet address (no data path, reachability never completes). Fixed to `... netmask 255.255.255.255` (the form that actually assigns the address on a macOS point-to-point utun), test updated, connectors 98/98 green. **Follow-up (feature gap, not blocking):** the app fixes its money/plane descriptor at launch, so a single running instance cannot re-point money onto the WG address without a restart (which would tear down the tunnel it is holding); during the campaign this was bridged with a loopback->WG forward. A future "re-point planes onto an active tunnel without restart" is the clean fix.
 
-**Deferred / gated (a separate track, NOT in the W1-W4 flow):** auto-update (dual-sign) + macOS notarization (needs an Apple Developer account - Yurii's action), and the hidden it-rat download page (goes live only on Yurii's explicit go-signal, [[decision-no-publicity-until-ready]] + D8). I build the packaging plumbing when the Apple account exists; I do NOT touch the site download page without the go-signal.
+**Deferred / gated (a separate track, NOT in the W1-W4 flow):** auto-update (dual-sign) + macOS notarization (needs an Apple Developer account - the owner's action), and the hidden it-rat download page (goes live only on the owner's explicit go-signal, [[decision-no-publicity-until-ready]] + D8). I build the packaging plumbing when the Apple account exists; I do NOT touch the site download page without the go-signal.
 
 ## Grounded contracts (filled from the code, 2026-07-17)
 
@@ -81,6 +81,6 @@ The pack assembles ONE zip from six artifacts, each already reachable or a thin 
 
 **Guards:** a missing source is an explicit "artifact NOT included (source unavailable)" line in the manifest, never a silently-partial pack passed off as complete (the pack states exactly what it contains). Signing failure fails closed - no unsigned pack labeled signed. `zip` is a new `genaryx-core` dep (deterministic archive; pin + justify like every prior dep add).
 
-## Review discipline (unchanged from Ф0-Ф3)
+## Review discipline (unchanged from Phase 0-3)
 
-Opus reviews the REAL diff, re-runs ALL CI gates (`fmt`, `clippy --workspace --all-targets -D warnings`, `cargo test --workspace`, src-tauri `cargo build`+`cargo test`, `pnpm tsc --noEmit`+`pnpm build`, `apps/macos/build-ffi.sh`+`swift build`). The two recurring bug-class guards hold: (1) a key/decision from the FULL set of defining fields (a ToolRunner cache keyed on the full arg set; an evidence pack keyed on its full source set); (2) no silent fail-open on empty/odd input in a privileged path - a fire-drill "gap" (mockryx exit 1) must never be swallowed and shown as "guardrails held", and a WireGuard/SSH tunnel that failed to come up must fail closed, never fall back to an unencrypted or internet-exposed path. Security-critical code (the WireGuard channel bring-up, the SSH host-key pinning, anything touching keys) is hand-written by the orchestrator, never delegated. No key or infrastructure is ever deleted by the console or by me. Fable 5 only by Yurii's explicit per-case permission.
+Opus reviews the REAL diff, re-runs ALL CI gates (`fmt`, `clippy --workspace --all-targets -D warnings`, `cargo test --workspace`, src-tauri `cargo build`+`cargo test`, `pnpm tsc --noEmit`+`pnpm build`, `apps/macos/build-ffi.sh`+`swift build`). The two recurring bug-class guards hold: (1) a key/decision from the FULL set of defining fields (a ToolRunner cache keyed on the full arg set; an evidence pack keyed on its full source set); (2) no silent fail-open on empty/odd input in a privileged path - a fire-drill "gap" (mockryx exit 1) must never be swallowed and shown as "guardrails held", and a WireGuard/SSH tunnel that failed to come up must fail closed, never fall back to an unencrypted or internet-exposed path. Security-critical code (the WireGuard channel bring-up, the SSH host-key pinning, anything touching keys) is hand-written by the orchestrator, never delegated. No key or infrastructure is ever deleted by the console or by me. Fable 5 only by the owner's explicit per-case permission.

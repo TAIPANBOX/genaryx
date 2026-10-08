@@ -1,10 +1,10 @@
-# Phase 2 — policies + hands (Ф2)
+# Phase 2 — policies + hands (Phase 2)
 
-Source: `itrat-console/09` Ф2 + `07 §4.3` + `08 §Policy`. Builds on Phase 1
+Source: `itrat-console/09` Phase 2 + `07 §4.3` + `08 §Policy`. Builds on Phase 1
 (Cloud connector, CommandBroker, Money panels, `taipan up`). Branch
 `phase-2-policies`.
 
-**Exit gate (09 §Ф2).** The full human-in-the-loop cycle: an agent action
+**Exit gate (09 §Phase 2).** The full human-in-the-loop cycle: an agent action
 holds on a Wardryx policy -> the console's **Approvals Inbox** shows it -> the
 operator grants it with a local hardware confirmation (Touch ID) and a
 cost-bound `approval_token` is minted -> the agent proceeds (a re-`decide` with
@@ -184,7 +184,7 @@ the fail-closed privileged-path precheck (a privileged mutation consults Wardryx
 requires an approval, a missing approval secret refuses rather than proceeds).
 Pairs with the `taipan` gateway->wardryx wiring in #29.
 
-## Wave 4 - exit gate (Ф2 acceptance, task #28, DONE)
+## Wave 4 - exit gate (Phase 2 acceptance, task #28, DONE)
 
 Task #29 first closed the two `taipan` gaps that had blocked this wave (the
 "Two `taipan` gaps" callout near the top of this doc): `taipan up --with
@@ -193,7 +193,7 @@ wardryx` now mints a `WARDRYX_APPROVAL_SECRET`, seeds a demo policy scoped to
 `deny_tool: [shell_exec]`), and wires the gateway to wardryx as its PDP
 (`TOKENFUSE_WARDRYX_MODE=enforce/_URL/_KEY`) - all taipan-side config, nothing
 in `tokenfuse` or `wardryx` itself changed. `crates/connectors/tests/
-exit_gate_test.rs` then proves the full 09 §Ф2 cycle live, end to end, through
+exit_gate_test.rs` then proves the full 09 §Phase 2 cycle live, end to end, through
 the real binaries:
 
 1. **`taipan up --name p2exit --with wardryx`** - builds/spawns the real

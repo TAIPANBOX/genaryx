@@ -210,8 +210,7 @@ export const INCIDENT_BANDS: ReadonlySet<string> = new Set(["critical", "high"])
  * The two surfaces differ here on purpose, and the purpose has a name. The
  * card answers "is anything on fire" in ten rows, so a band below the fire
  * costs it the rows that are. The tab answers "show me all of it", which is
- * the question `@yurii` asked it for on 2026-08-26: "було б подивитись все,
- * як воно є".
+ * the question it was made for (@decided 2026-08-26: see everything, as it is).
  *
  * The case that forced it, the same day: tokenfuse's `taint_shadow` is the
  * ENTIRE output of a firewall shadow week, and it is fixed at `medium` for a

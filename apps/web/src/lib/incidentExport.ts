@@ -117,7 +117,7 @@ export function incidentExportMeta(
 /**
  * A filename a person can find again in a folder a week later.
  *
- * `@yurii 2026-08-26`: it names the AGENT and the MOMENT of the save. The
+ * @decided 2026-08-26: it names the AGENT and the MOMENT of the save. The
  * first version used the console's row id and a date, and a row id
  * (`money:inc-1`) says nothing to anybody outside this console, while a date
  * alone collides with every other save made that day.

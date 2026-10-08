@@ -553,7 +553,7 @@ function ProposalCard({
 }
 
 /** Felyx's answer lifted out of the chat into a floating card, so it can sit
- * beside the tab it is about while you read it (Yurii's ask: the answer as a
+ * beside the tab it is about while you read it (@decided: the answer as a
  * movable widget, not only a chat line). Same window chrome as every card. */
 function FelyxAnswerCard({ message }: { message: ChatMessage }) {
   return (

@@ -9,7 +9,7 @@ import { SourceChip } from "./SourceChip";
 /**
  * Pin one row out of a moving feed.
  *
- * Yurii's interaction (2026-07-22): tapping a row in a live stream lifts THAT
+ * The interaction (@decided 2026-07-22): tapping a row in a live stream lifts THAT
  * row above the flow and freezes it exactly where it was tapped, with a shadow,
  * while new rows keep arriving and scrolling underneath it, and a detail window
  * opens beside it above everything. This renders that: a transparent full-screen

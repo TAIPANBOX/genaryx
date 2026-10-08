@@ -1,85 +1,85 @@
-# Ф4 дозапуск 2026-07-18: WG-транспорт через застосунок + підписаний kill
+# Phase 4 follow-up run 2026-07-18: WireGuard transport through the app, and a signed kill
 
-Мета: закрити дві "зірочки" кампанії 2026-07-17, де канал був ручний `ssh -L`, а не
-WG-транспорт самого застосунку, і не було задокументованого підписаного kill по
-віддаленому Cloud.
+Goal: close the two asterisks left by the 2026-07-17 campaign, where the channel
+was a manual `ssh -L` rather than the app's own WireGuard transport, and where
+no signed kill against the remote Cloud had been documented.
 
-## РЕЗУЛЬТАТ: EXIT-GATE PASSED (2026-07-18)
+## RESULT: EXIT GATE PASSED (2026-07-18)
 
-- WG-тунель піднято САМИМ застосунком (native SwiftUI під root): keypair -> обмін ключами з боксом -> `wireguard-go` -> handshake -> ~28 MB через `utun6`. Не `ssh -L`.
-- Усі 3 плани досяжні ТІЛЬКИ через тунель (`10.9.0.1:8080/8090/8081`): money $4,314, policy 6, identity 29.
-- Control plane закритий з інтернету (`ufw`: публічно лише `:22`+`:51820/udp`; `:8080` ззовні timeout).
-- Hardware-signed kill (Touch ID + ES256 break-glass + причина оператора) runaway `cashflow-forecaster-0217` пройшов ЧЕРЕЗ WG-тунель -> `killed=true` на боксі, ACTIVE RUNS 9,289 -> 9,288.
-- Обидві "зірочки" 2026-07-17 закриті (канал = WG-транспорт застосунку; підписаний kill через цей тунель).
-- **Баг знайдено + фікшено:** `wg.rs set_addr` на macOS використовував `ifconfig ... alias` (тихо не призначає IP на utun) -> замінено на `netmask 255.255.255.255`; тест оновлено; connectors 98/98.
-- **Feature gap (не блокує):** застосунок фіксує money-дескриптор при старті; переключення планів на активний тунель без рестарту = майбутній чистий фікс (у кампанії обійдено loopback->WG форвардом).
+- The WireGuard tunnel was brought up BY THE APP ITSELF (native SwiftUI, run as root): keypair -> key exchange with the box -> `wireguard-go` -> handshake -> about 28 MB through `utun6`. Not `ssh -L`.
+- All three planes reachable ONLY through the tunnel (`10.9.0.1:8080/8090/8081`): money $4,314, policy 6, identity 29.
+- Control plane closed to the internet (`ufw`: only `:22` and `:51820/udp` public; `:8080` times out from outside).
+- A hardware-signed kill (Touch ID + ES256 break-glass + an operator reason) of the runaway `cashflow-forecaster-0217` went THROUGH the WireGuard tunnel -> `killed=true` on the box, ACTIVE RUNS 9,289 -> 9,288.
+- Both asterisks of 2026-07-17 are closed (the channel is the app's WireGuard transport; the signed kill went through that tunnel).
+- **Bug found and fixed:** `wg.rs set_addr` on macOS used `ifconfig ... alias`, which silently assigns no IP on a utun -> replaced with `netmask 255.255.255.255`; test updated; connectors 98/98.
+- **Feature gap (not blocking):** the app fixes the money descriptor at startup; switching planes to the active tunnel without a restart is a future clean fix (worked around in the campaign with a loopback -> WireGuard forward).
 
-## Стан бокса (готово, зроблено автономно)
+## Box state (ready, done autonomously)
 
-- Бокс: Hetzner CPX62, `5.75.234.176` (Hetzner перевидав той самий IP, що 07-17; хост-ключ
-  запінено в новий файл `~/.ssh/known_hosts_genaryx_followup_20260718`).
-- SSH-ключ (свіжий): `~/.ssh/hetzner-genaryx-20260718` (старий 07-17 не чіпав).
-- Стек через `stack-up`: Cloud `0.0.0.0:8080`, wardryx/idryx/gateway на `127.0.0.1`.
-- Плани засіяні (числа детерміновано збігаються з 07-17):
+- Box: Hetzner CPX62, `5.75.234.176` (Hetzner reissued the same IP as on 07-17; the host key
+  is pinned in a new file, `~/.ssh/known_hosts_genaryx_followup_20260718`).
+- SSH key (fresh): `~/.ssh/hetzner-genaryx-20260718` (the 07-17 key was left untouched).
+- Stack via `stack-up`: Cloud `0.0.0.0:8080`, wardryx/idryx/gateway on `127.0.0.1`.
+- Planes seeded (the figures match 07-17 deterministically):
   - money: $4,314.54 spent, $2,370.40 prevented, $2,992.70 saved, 180 breaks, 9,289 runs, 34,834 calls, 176 incidents.
-  - policy: 6 політик + 5 pending approvals.
-  - identity: meridian idryx на `127.0.0.1:8082`, 29 identities, 44 alerts.
+  - policy: 6 policies + 5 pending approvals.
+  - identity: meridian idryx on `127.0.0.1:8082`, 29 identities, 44 alerts.
 
-## WG-сервер (kernel wg-quick на боксі)
+## WireGuard server (kernel wg-quick on the box)
 
 - `wg0` up: server addr `10.9.0.1/24`, listen `:51820`.
 - Server pubkey: `4OhTOyJS92ml7CTrXxio1ziAPc+9m5CtpPPtHYOog2U=`
 - Endpoint: `5.75.234.176:51820`
-- socat-форварди на wg0 (бо сервіси localhost-only): `10.9.0.1:8090 -> 127.0.0.1:8090`,
+- socat forwards on wg0 (the services are localhost-only): `10.9.0.1:8090 -> 127.0.0.1:8090`,
   `10.9.0.1:8081 -> 127.0.0.1:8082` (meridian idryx), `10.9.0.1:4100 -> 127.0.0.1:4100`.
-  Cloud уже на `0.0.0.0`, тож видно на `10.9.0.1:8080` через тунель.
-- ufw: публічно ТІЛЬКИ `22/tcp` + `51820/udp`; весь control plane закритий ззовні
-  (перевірено: `5.75.234.176:8080` дає timeout). Це і є вимога D11 "not exposed to internet".
+  The Cloud is already on `0.0.0.0`, so it is visible on `10.9.0.1:8080` through the tunnel.
+- ufw: ONLY `22/tcp` + `51820/udp` public; the whole control plane is closed from outside
+  (checked: `5.75.234.176:8080` times out). This is D11's "not exposed to internet" requirement.
 
-## Значення для Remote-панелі застосунку (Mac-клієнт)
+## Values for the app's Remote panel (Mac client)
 
-- WG peer pubkey (server): `4OhTOyJS92ml7CTrXxio1ziAPc+9m5CtpPPtHYOog2U=`
-- WG endpoint: `5.75.234.176:51820`
-- allowed-ips (що маршрутизувати в тунель): `10.9.0.0/24`
+- WireGuard peer pubkey (server): `4OhTOyJS92ml7CTrXxio1ziAPc+9m5CtpPPtHYOog2U=`
+- WireGuard endpoint: `5.75.234.176:51820`
+- allowed-ips (what to route into the tunnel): `10.9.0.0/24`
 - local (tunnel) address: `10.9.0.2/32`
 - peer (tunnel) address: `10.9.0.1`
 - keepalive: `25`
-- wireguard-go bin: `~/.taipan/bin/wireguard-go` (встановлено локально, конектор знайде сам)
+- wireguard-go bin: `~/.taipan/bin/wireguard-go` (installed locally; the connector finds it itself)
 
-Дескриптор сервісів (через тунель): cloud `http://10.9.0.1:8080`, wardryx `http://10.9.0.1:8090`,
+Service descriptor (through the tunnel): cloud `http://10.9.0.1:8080`, wardryx `http://10.9.0.1:8090`,
 idryx `http://10.9.0.1:8081`, gateway `http://10.9.0.1:4100` (enforce).
 
-## Крок, що потребує оператора (root на Mac)
+## The step that needs the operator (root on the Mac)
 
-Підняття utun на macOS потребує root. У застосунку `WgTunnel::bring_up` спавнить
-`wireguard-go`, якому для tun-девайса потрібні привілеї. Варіанти для Юрія:
-1. Запустити застосунок з-під `sudo` (одноразово, для демо), або
-2. Заздалегідь дати `wireguard-go` право створювати utun, або
-3. У терміналі один раз ввести пароль sudo, коли застосунок його запросить.
+Bringing up a utun on macOS needs root. In the app, `WgTunnel::bring_up` spawns
+`wireguard-go`, which needs privileges for the tun device. Options for the operator:
+1. Run the app under `sudo` (once, for the demo), or
+2. Grant `wireguard-go` the right to create a utun in advance, or
+3. Enter the sudo password once in the terminal when the app asks for it.
 
-Після того, як застосунок згенерує console keypair і покаже console pubkey, додати його
-як peer на боксі (я зроблю сам, щойно матиму pubkey):
+Once the app generates the console keypair and shows the console pubkey, add it
+as a peer on the box (done by the agent as soon as it has the pubkey):
 
 ```
 ssh -i ~/.ssh/hetzner-genaryx-20260718 -o UserKnownHostsFile=~/.ssh/known_hosts_genaryx_followup_20260718 \
   root@5.75.234.176 'wg set wg0 peer <CONSOLE_PUBKEY> allowed-ips 10.9.0.2/32 && wg show wg0'
 ```
 
-## Стан на кінець автономної сесії (2026-07-18)
+## State at the end of the autonomous session (2026-07-18)
 
-Зроблено самостійно:
-- Бокс піднято, 3 плани засіяно (числа збігаються), WG-сервер + socat-форварди + ufw (control plane закритий ззовні, перевірено).
-- UI-редизайн: усі 14 вкладок обох шелів на дашборд-форму + `FreshBadge` (LIVE/AUTO/SNAPSHOT/ON-DEMAND/WINDOW/PAUSED). Гейти особисто перезапущені й зелені: Tauri `tsc --noEmit` + `pnpm build`, SwiftUI `swift build` (усі 45 файлів). Моделі мутацій (kill/budget/grant/deny/forget) НЕ змінені, тільки View-шари; Touch ID на місці; Identity 20s-loop прибраний (parity fix). Робота НЕ закомічена.
-- Для перегляду вигляду з реальними даними: підняті persistent SSH-форварди (8080/8090/8081->8082/4100, root не треба) і перезапущено нативний `Genaryx.app` (pid підхоплює дані через форвард). Це showcase вигляду, НЕ WG exit-gate.
+Done autonomously:
+- Box up, three planes seeded (figures match), WireGuard server + socat forwards + ufw (control plane closed from outside, checked).
+- UI redesign: all 14 tabs of both shells moved to the dashboard form + `FreshBadge` (LIVE/AUTO/SNAPSHOT/ON-DEMAND/WINDOW/PAUSED). Gates re-run in person and green: Tauri `tsc --noEmit` + `pnpm build`, SwiftUI `swift build` (all 45 files). The mutation models (kill/budget/grant/deny/forget) were NOT changed, only the view layers; Touch ID in place; the Identity 20s loop removed (parity fix). The work was NOT committed.
+- To review the look with real data: persistent SSH forwards were brought up (8080/8090/8081->8082/4100, no root needed) and the native `Genaryx.app` restarted (the process picks the data up through the forward). This is a showcase of the look, NOT the WireGuard exit gate.
 
-Чекає оператора (root/присутність):
-- computer-use до Genaryx відхилено (`user_denied`), тож нативні скріншоти нових вкладок автономно не зробити.
-- WG-тунель через Remote-панель + підписаний kill: підняття utun на Mac потребує root (пароль sudo), вводити який агенту заборонено.
+Waiting on the operator (root / presence):
+- computer-use access to Genaryx was declined (`user_denied`), so native screenshots of the new tabs could not be taken autonomously.
+- WireGuard tunnel through the Remote panel + signed kill: bringing up a utun on the Mac needs root (the sudo password), which the agent is not allowed to enter.
 
-## Підписаний kill (exit-gate)
+## Signed kill (exit gate)
 
-Кандидат: живий ран `cashflow-forecaster-0217` (~$5.85, найбільший незабитий на момент
-перевірки). Через застосунок: Money -> рядок рану -> Kill -> break-glass причина
-(SwiftUI: + Touch ID) -> ES256-підписаний `money_kill_run` іде В ТУНЕЛІ на `10.9.0.1:8080`.
-Це закриває "hardware-signed kill проти віддаленого client-hosted Cloud через
-Genaryx-транспорт". Далі verify, що ран killed, і скрін.
+Candidate: the live run `cashflow-forecaster-0217` (about $5.85, the largest unkilled one at the time
+of the check). Through the app: Money -> the run's row -> Kill -> break-glass reason
+(SwiftUI: + Touch ID) -> an ES256-signed `money_kill_run` goes IN THE TUNNEL to `10.9.0.1:8080`.
+This closes "a hardware-signed kill against a remote client-hosted Cloud through the
+Genaryx transport". Then verify the run is killed, and take a screenshot.

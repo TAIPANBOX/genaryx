@@ -44,8 +44,8 @@ const SEVERITY_CHIPS = ["critical", "high", "medium", "low", "info"] as const;
  * could not answer at all: the card is capped, and a capped card is where an
  * operator stops rather than where they start.
  *
- * `@yurii` 2026-08-26, asking for it: "має бути вкладка, куди можна зайти,
- * було б подивитись все, як воно є. Не тільки на цій картці, на Овервью."
+ * @decided 2026-08-26: a tab of its own where the whole stream can be seen
+ * as it is, not only the card on the Overview.
  *
  * Everything here is a read some other view already performs, aggregated by
  * `lib/incidents.ts` exactly as the card does, and drilled by

@@ -73,4 +73,4 @@ deterministic floor + soft digest work regardless.
 
 ## Phase 6 (D13 Felyx) is now complete: C0 → C3
 Read (C0) → triage + explain (C1) → propose-and-confirm (C2) → the intelligent pager (C3).
-On Yurii's go, `phase-6-complete` can tag the finished copilot.
+On the owner's go, `phase-6-complete` can tag the finished copilot.

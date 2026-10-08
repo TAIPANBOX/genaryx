@@ -1,6 +1,6 @@
 # Phase 0 — skeleton and spikes
 
-Source: `itrat-console/09-roadmap-and-process.md` (Ф0). Estimate: 2 sessions.
+Source: `itrat-console/09-roadmap-and-process.md` (Phase 0). Estimate: 2 sessions.
 
 **Exit gate.** Both apps open and show the same live event stream from the shared
 core; all six spikes have written verdicts; parity checklist v0 is enforced in CI;
@@ -13,7 +13,7 @@ real Store from `demo` + a feeder and emits `bus:event`; SwiftUI (d471747) drive
 with change). Parity v0 + both-shell build smoke in CI. 14 commits, workspace
 green (61 tests, fmt + clippy `-D warnings` clean); both shells build against the
 live core. Findings F-01..F-06 recorded below. Next: Phase 1 (money + `taipan up`
-+ killer demo, see `itrat-console/09` Ф1). Residual: task #10 (FileTail offset
++ killer demo, see `itrat-console/09` Phase 1). Residual: task #10 (FileTail offset
 byte-exactness) in the backlog; full UI-driver smoke deferred to F1 (spike #5).
 
 ## Scope
