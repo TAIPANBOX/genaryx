@@ -182,9 +182,26 @@ pub struct CostPerActionReport {
 /// test doc comments.
 const PER_MODEL_COST_QUERY: &str = "select coalesce(model,'') as model, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls group by model order by model";
 
-/// The same aggregate as [`PER_MODEL_COST_QUERY`], grouped by `agent_id`
-/// instead of `model`.
-const PER_AGENT_COST_QUERY: &str = "select coalesce(agent_id,'') as agent_id, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from calls group by agent_id order by agent_id";
+/// The same aggregate as [`PER_MODEL_COST_QUERY`], grouped by who each call
+/// is FILED under instead of `model`.
+///
+/// That is the row's `agent_id`, except on a call the gateway refused for
+/// identity (`decision = 'identity_mismatch'`): there `agent_id` is the agent
+/// the caller CLAIMED and `key_id` the credential that actually called, so the
+/// row is filed under `key:<key_id>`, or `key:(none)` when the gateway ran
+/// without client keys. Grouping by `agent_id` alone counted every
+/// impersonation attempt among its victim's own calls. The rule is
+/// `genaryx_core::attribution::filed_under`, the one the console applies to
+/// the bus, and TokenFuse's own for its FOCUS export (its invariant 81).
+///
+/// `key_id` is in the trace's read schema since 2026-07-21 (tokenfuse
+/// `e3bd5df`), before `tool_calls`, which this query already needed, so it
+/// asks nothing of the binary the existing query did not. The derived table is
+/// there so the label is computed once and grouped and ordered by name, a
+/// shape both DataFusion and SQLite read the same way;
+/// `an_identity_refusal_is_filed_under_its_key_in_cost_per_action` runs this
+/// exact text on SQLite.
+const PER_AGENT_COST_QUERY: &str = "select filed_under as agent_id, count(*) as calls, cast(sum(cost_microusd) as bigint) as total_cost_microusd, cast(sum(coalesce(tool_calls,0)) as bigint) as total_tool_calls, cast(count(tool_calls) as bigint) as tool_calls_known_rows from (select case when decision = 'identity_mismatch' then 'key:' || coalesce(nullif(key_id,''),'(none)') else coalesce(agent_id,'') end as filed_under, cost_microusd, tool_calls from calls) as t group by filed_under order by filed_under";
 
 // ---- client ----------------------------------------------------------------
 

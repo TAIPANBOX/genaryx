@@ -241,10 +241,49 @@ run_case "features-are-bound: a scenario with nothing behind it" fail \
 	"$(py 'edit("features/the-bus-store-lands-where-the-console-can-write.feature", "  # @test:an_explicit_state_dir_wins_over_a_writable_taipan_home\n", "")')" \
 	"UNBOUND"
 
+# A web test binds by its exact title. A renamed title must leave the scenario
+# dangling, or a web binding is a pointer nothing checks.
+run_case "features-are-bound: a web binding names a test that is gone" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'edit("apps/web/src/lib/incidents.test.ts", "it(\"an_identity_refusal_names_the_key_and_the_claimed_agent\"", "it(\"an_identity_refusal_names_the_key_renamed\"")')" \
+	"DANGLING"
+
 run_case "features-are-bound: the scenarios taken away entirely" fail \
 	'./scripts/features-are-bound.sh' \
 	"$(py 'import shutil; shutil.rmtree("features")')" \
 	"not a pass"
+
+# invariant 19: an identity refusal is filed under its key. These mutate the
+# PRODUCT, not a gate script, and the gate is the tests that hold it: each
+# mutant puts one of the four places back on the claimed agent, and the named
+# test must go red for it. One cargo command for all five, so one baseline.
+identity_gate='cargo test -q --no-fail-fast -p genaryx-core -p genaryx-api -p genaryx-connectors identity_refusal'
+
+run_case "invariant 19: the aggregate groups by the envelope again" fail \
+	"$identity_gate" \
+	"$(py 'edit("crates/core/src/store.rs", "let subject_sql = crate::attribution::FILED_UNDER_SQL;", "let subject_sql = \"agent_id\";")')" \
+	"an_identity_refusal_is_grouped_under_its_key_in_the_aggregate"
+
+run_case "invariant 19: the stop list reads the envelope again" fail \
+	"$identity_gate" \
+	"$(py 'edit("crates/api/src/stats/mod.rs", "e.filed_under == agent_id", "e.agent_id == agent_id")')" \
+	"an_identity_refusal_is_not_on_the_claimed_agents_stop_list"
+
+run_case "invariant 19: a refusal with no key falls back to the claim" fail \
+	"$identity_gate" \
+	"$(py 'edit("crates/core/src/attribution.rs", "None => NO_KEY.to_string(),", "None => agent_id.to_string(),")')" \
+	"an_identity_refusal_with_no_readable_key_names_no_agent"
+
+run_case "invariant 19: cost per action groups refused calls under the claim" fail \
+	"$identity_gate" \
+	"$(py 'q = chr(39); edit("crates/connectors/src/tokenfuse.rs", "when decision = " + q + "identity_mismatch" + q, "when decision = " + q + "never" + q)')" \
+	"an_identity_refusal_is_filed_under_its_key_in_cost_per_action"
+
+# The non-fault: the rule's prose reworded. A gate that fired on it would be
+# a gate on wording, which gets disabled the first week.
+run_case "invariant 19: the rule's own comment reworded" pass \
+	"$identity_gate" \
+	"$(py 'edit("crates/core/src/attribution.rs", "/// The prefix of a subject that is a credential rather than an agent.", "/// The prefix every credential subject carries, and no agent id does.")')"
 
 echo
 echo "=== and the one this estate learned the hard way ==="

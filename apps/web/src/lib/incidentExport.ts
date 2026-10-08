@@ -27,6 +27,7 @@
  * differently, and only the first is honest about the console having asked.
  */
 
+import { filedUnder } from "./attribution";
 import type { ExportMeta } from "./download";
 import type { UnifiedIncident } from "./incidents";
 
@@ -270,10 +271,15 @@ export function incidentLinkTarget(row: UnifiedIncident): string | null {
       break;
     }
     default: {
-      // bus and verdryx both carry the agent-event envelope.
-      const raw = row.raw as { type?: string; run_id?: string | null; agent_id?: string | null };
+      // bus and verdryx both carry the agent-event envelope. The subject is
+      // who the event is FILED under: an identity refusal's envelope names
+      // the agent its caller claimed to be, and a link to that agent would
+      // point at the victim (`attribution.ts`).
+      const raw = row.raw as { type?: string; run_id?: string | null; agent_id?: string | null; data?: unknown };
       type = raw.type;
-      subject = raw.run_id ?? raw.agent_id;
+      subject =
+        raw.run_id ??
+        (raw.agent_id == null ? raw.agent_id : filedUnder({ type: raw.type ?? "", agent_id: raw.agent_id, data: raw.data }));
       break;
     }
   }

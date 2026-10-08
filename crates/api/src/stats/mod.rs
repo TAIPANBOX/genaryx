@@ -68,6 +68,9 @@ const BLOCKED_TYPES: &[&str] = &[
     "dlp_block",
     "taint_block",
     "mcp_drift",
+    // Counted, but under the KEY that made the call, never the agent it
+    // claimed: the store files it there (`genaryx_core::attribution`), so the
+    // stop lands on `key:<key_id>` and not on the impersonated agent.
     "identity_mismatch",
     "run_killed",
     "unit_cap_exceeded",
@@ -499,10 +502,13 @@ pub fn agent_stops(agent_id: &str, limit: usize, state: &AppState) -> StopsPanel
     for e in rows {
         let t = e.type_.as_str();
         let data = e.data.as_ref();
+        // `filed_under`, not the envelope: an identity refusal names the agent
+        // its caller CLAIMED to be, and listing it here put an impersonation
+        // attempt on its victim's own stop list. See `genaryx_core::attribution`.
         let mine = if t == CONSOLE_COMMAND {
             agents_halted_by(data).iter().any(|a| a == agent_id)
         } else {
-            e.agent_id == agent_id
+            e.filed_under == agent_id
         };
         if !mine {
             continue;
@@ -675,10 +681,12 @@ pub fn stats_counts(detail_scan: usize, window_days: u32, state: &AppState) -> S
     let detail_scanned = rows.len();
     for e in rows {
         let t = e.type_.as_str();
+        // The same subject pass one counted the row under, so a description
+        // never lands on a different row from its count.
         let entry = by_agent
-            .entry(e.agent_id.clone())
+            .entry(e.filed_under.clone())
             .or_insert_with(|| AgentStats {
-                agent_id: e.agent_id.clone(),
+                agent_id: e.filed_under.clone(),
                 ..Default::default()
             });
 

@@ -21,6 +21,20 @@ use std::path::Path;
 /// themselves stay safe to rerun regardless.
 const SCHEMA_VERSION: i64 = 7;
 
+/// "This event is filed under `?1`", for the per-subject reads.
+///
+/// Two halves rather than `FILED_UNDER_SQL = ?1` alone, so the common case
+/// keeps its index: every event but an identity refusal is filed under its own
+/// `agent_id` (`idx_events_agent_ts_ms`), and an identity refusal is found by
+/// its type (`idx_events_type_ts`) and then by the key it names. Built from
+/// [`crate::attribution::FILED_UNDER_SQL`] rather than restating it, so there
+/// is one spelling of the rule in SQL.
+fn subject_is() -> String {
+    let t = crate::attribution::IDENTITY_MISMATCH;
+    let filed = crate::attribution::FILED_UNDER_SQL;
+    format!("((agent_id = ?1 AND type <> '{t}') OR (type = '{t}' AND {filed} = ?1))")
+}
+
 /// Phase-0 schema (06 §2 subset): events, the per-file read-offset journal,
 /// the quarantine table for malformed/non-conforming lines, and the spend
 /// rollup table.
@@ -252,7 +266,14 @@ pub struct EventDetail {
     /// per-agent stop list, which is a LIST and so needs a when; the thing
     /// worth leaving out of this row was always `raw`, not two short strings.
     pub ts: String,
+    /// The envelope's own `agent_id`, unchanged. For an identity refusal this
+    /// is the agent the caller CLAIMED, not the one that called.
     pub agent_id: String,
+    /// Who this event is filed under: [`crate::attribution::filed_under`],
+    /// computed by SQLite with [`crate::attribution::FILED_UNDER_SQL`] so the
+    /// aggregate and this row cannot disagree about it. Equal to `agent_id`
+    /// for every type but `identity_mismatch`.
+    pub filed_under: String,
     pub type_: String,
     pub source: String,
     pub data: Option<serde_json::Value>,
@@ -329,6 +350,10 @@ fn excerpt(s: &str, max: usize) -> String {
 /// string in that group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTypeCount {
+    /// Who the events are FILED under ([`crate::attribution::filed_under`]),
+    /// which is the envelope `agent_id` for every type but an identity
+    /// refusal. Named `agent_id` because that is what it is for every other
+    /// row, and every caller folds it as one.
     pub agent_id: String,
     pub type_: String,
     pub count: u64,
@@ -624,20 +649,26 @@ impl Store {
     /// An aggregate has no cap to hit. SQLite counts the rows and hands back
     /// one per (agent, type), which is tens of rows where the scan was hundreds
     /// of thousands, and the count is the whole window every time.
+    ///
+    /// Grouped by who each event is FILED under, not by its envelope
+    /// `agent_id`: an identity refusal names the agent its caller claimed to
+    /// be, and counting it there charged the attempt to its victim. See
+    /// [`crate::attribution`].
     pub fn type_counts_since(&self, cutoff_ms: Option<i64>) -> Result<Vec<AgentTypeCount>> {
+        let subject_sql = crate::attribution::FILED_UNDER_SQL;
         let sql = match cutoff_ms {
-            Some(_) => {
-                "SELECT agent_id, type, COUNT(*), MAX(ts) FROM events \
-                 WHERE ts_ms IS NOT NULL AND ts_ms >= ?1 GROUP BY agent_id, type"
-            }
+            Some(_) => format!(
+                "SELECT {subject_sql} AS subject, type, COUNT(*), MAX(ts) FROM events \
+                 WHERE ts_ms IS NOT NULL AND ts_ms >= ?1 GROUP BY subject, type"
+            ),
             // `?1` is still bound, to one query shape rather than two: the
             // predicate is a constant true and SQLite drops it.
-            None => {
-                "SELECT agent_id, type, COUNT(*), MAX(ts) FROM events \
-                 WHERE ?1 IS NULL GROUP BY agent_id, type"
-            }
+            None => format!(
+                "SELECT {subject_sql} AS subject, type, COUNT(*), MAX(ts) FROM events \
+                 WHERE ?1 IS NULL GROUP BY subject, type"
+            ),
         };
-        let mut stmt = self.conn.prepare(sql).map_err(store_err)?;
+        let mut stmt = self.conn.prepare(&sql).map_err(store_err)?;
         let mut rows = stmt.query(params![cutoff_ms]).map_err(store_err)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().map_err(store_err)? {
@@ -726,9 +757,10 @@ impl Store {
         let lim = binds.len();
 
         let sql = format!(
-            "SELECT ts, agent_id, type, source, data FROM events WHERE ({}) \
+            "SELECT ts, agent_id, type, source, data, {} FROM events WHERE ({}) \
              AND (?{cutoff} IS NULL OR (ts_ms IS NOT NULL AND ts_ms >= ?{cutoff})) \
              ORDER BY id DESC LIMIT ?{lim}",
+            crate::attribution::FILED_UNDER_SQL,
             wants.join(" OR ")
         );
 
@@ -741,6 +773,7 @@ impl Store {
             out.push(EventDetail {
                 ts: row.get(0).map_err(store_err)?,
                 agent_id: row.get(1).map_err(store_err)?,
+                filed_under: row.get(5).map_err(store_err)?,
                 type_: row.get(2).map_err(store_err)?,
                 source: row.get(3).map_err(store_err)?,
                 data: data_json
@@ -763,15 +796,19 @@ impl Store {
     /// the caller has to fill them: a median taken over only the days an agent
     /// was busy is a median of its busy days, which is exactly the number that
     /// makes a quiet agent's first bad day look normal.
+    ///
+    /// "One agent's" means the events FILED under it ([`subject_is`]), so an
+    /// identity refusal that claimed this agent is not in its profile.
     pub fn daily_type_counts(&self, agent_id: &str, since_ms: i64) -> Result<Vec<DayTypeCount>> {
         let mut stmt = self
             .conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT ts_ms / 86400000 AS day, type, COUNT(*) \
                  FROM events \
-                 WHERE agent_id = ?1 AND ts_ms IS NOT NULL AND ts_ms >= ?2 \
+                 WHERE {} AND ts_ms IS NOT NULL AND ts_ms >= ?2 \
                  GROUP BY day, type ORDER BY day ASC",
-            )
+                subject_is()
+            ))
             .map_err(store_err)?;
         let mut rows = stmt.query(params![agent_id, since_ms]).map_err(store_err)?;
         let mut out = Vec::new();
@@ -793,8 +830,11 @@ impl Store {
         let day: Option<i64> = self
             .conn
             .query_row(
-                "SELECT MIN(ts_ms) / 86400000 FROM events \
-                 WHERE agent_id = ?1 AND ts_ms IS NOT NULL",
+                &format!(
+                    "SELECT MIN(ts_ms) / 86400000 FROM events \
+                     WHERE {} AND ts_ms IS NOT NULL",
+                    subject_is()
+                ),
                 params![agent_id],
                 |row| row.get(0),
             )

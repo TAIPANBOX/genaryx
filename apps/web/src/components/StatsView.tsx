@@ -1,3 +1,4 @@
+import { isKeySubject } from "../lib/attribution";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchStats,
@@ -795,7 +796,10 @@ export function StatsView({
                     // owner and no unit behind it, only the agents that lacked
                     // one. A control that looked clickable and did nothing
                     // would suggest the console knows something it does not.
-                    r.unattributed
+                    // A `key:` row is a credential an identity refusal was
+                    // filed under (`lib/attribution.ts`), not an agent: it has
+                    // no Agent 360 card to open.
+                    r.unattributed || (group === "agent" && isKeySubject(r.key))
                       ? undefined
                       : group === "agent"
                         ? () => onOpenAgent(r.key)

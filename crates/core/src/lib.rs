@@ -10,6 +10,7 @@
 //! ingest path). [`store`], [`ingest`], and [`demo`] are scaffolded stubs with
 //! stable signatures, delegated to Sonnet tracks (see `../../docs/PHASE0.md`).
 
+pub mod attribution;
 pub mod bus;
 pub mod command;
 pub mod conform;
