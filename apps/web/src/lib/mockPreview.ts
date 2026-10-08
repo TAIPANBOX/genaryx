@@ -2299,6 +2299,35 @@ function mockQualityBaselines() {
 // prepended) wherever it is spliced into `recent_events` below, so it never
 // outranks a genuinely fresher live-generated event as the bus's "newest"
 // (which would wrongly read as a stale bus to the `bus_stale` zond).
+/** Two identity refusals on the demo bus: a key that may not speak as
+ * budget-forecaster tried to, twice, and the gateway refused both. The
+ * envelope names the agent the caller CLAIMED and `data.key_id` the key that
+ * called, exactly as TokenFuse writes them; the console files the incident
+ * and the Statistics row under the key, never under the claimed agent
+ * (invariant 19, `lib/attribution.ts`). */
+const IDENTITY_DEMO_CLAIMED_ID = `agent://${ORG}/finops/budget-forecaster`;
+
+function mockIdentityRefusalEvents(): UiEvent[] {
+  return [9 * 60_000, 6 * 60_000].map((back, i) => ({
+    id: 900_101 + i,
+    env: "live",
+    ts: ago(back),
+    source: "tokenfuse",
+    type: "identity_mismatch",
+    agent_id: IDENTITY_DEMO_CLAIMED_ID,
+    // TokenFuse carries the run id the caller sent; the probe used its own.
+    run_id: "forge-probe-01",
+    severity: "high",
+    schema: "taipanbox.dev/agent-event/v0.2",
+    on_behalf_of: [],
+    data: { key_id: "forge-imposter", agent_id: IDENTITY_DEMO_CLAIMED_ID, reason: "agent_id_not_allowed" },
+    prev_hash: null,
+    raw: "",
+    file: "/root/.stack-up/events/tokenfuse.ndjson",
+    off: 900_101 + i,
+  }));
+}
+
 function mockQualityDriftEvent(): UiEvent {
   return {
     id: 900_001,
@@ -3639,7 +3668,10 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "money_owners": return r(mockOwners());
     case "stats_counts": return r(mockStatsCounts(Number(args?.window_days ?? 0)));
     case "egress_recent": return r(mockEgress());
-    case "recent_events": return r([...recentCommandEvents, ...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
+    // The refusals go ahead of the seed: a reader asking for N events keeps
+    // the first N, and the Incidents tab asks for exactly as many as the seed
+    // makes, so anything appended after it is cut before it is ever seen.
+    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), ...seedEvents(Number(args?.limit ?? 60)), mockQualityDriftEvent()]);
     case "run_events": return r(seedEvents(20));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });

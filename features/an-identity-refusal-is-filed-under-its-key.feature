@@ -65,3 +65,11 @@ Feature: An identity refusal is filed under the key that made the call, never th
     When Felyx reads cost per action by agent
     Then flint shows its two calls and its own spend
     And key:forge-imposter shows the three refused calls
+
+  # @test:demo_bus_shows_an_identity_refusal_under_the_key_not_the_claimed_agent
+  # @test:demo_statistics_count_the_refusal_under_the_key
+  Scenario: The public demo shows an identity refusal filed under the key
+    Given a visitor opens the published demo
+    When they open the Incidents tab or the Statistics panel
+    Then an identity refusal by the key forge-imposter claiming budget-forecaster is listed under key:forge-imposter
+    And the incident says it claimed budget-forecaster with key forge-imposter
