@@ -403,7 +403,7 @@ mod tests {
     // ==========================================================================
     // Same gated, hermetic, single-test-function shape as
     // `crates/connectors/tests/it/cloud_rest_test.rs` (builds `tokenfuse-cloud`
-    // from `~/Development/tokenfuse` with `TOKENFUSE_CLOUD_ALLOW_DEVKEY=1` on
+    // from `~/Development/tokenfuse` with an explicit admin key in `TOKENFUSE_CLOUD_KEYS` on
     // a fresh ephemeral port, torn down after), reused here rather than
     // reimplemented from scratch. `env::discover` itself is already fully
     // covered by `env.rs`'s own fixture-based tests (no live server needed
@@ -460,7 +460,7 @@ mod tests {
             return None;
         }
         Command::new(&binary)
-            .env("TOKENFUSE_CLOUD_ALLOW_DEVKEY", "1")
+            .env("TOKENFUSE_CLOUD_KEYS", "live-test-admin:default:admin")
             .env("PORT", port.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -513,19 +513,19 @@ mod tests {
         };
 
         // ---- connect(): this module's own pairing ceremony, against a real
-        // Cloud, using the devkey fallback (org "default") exactly the way
+        // Cloud, using an explicit admin key for org "default", exactly the way
         // `env::discover_env_fallback` would resolve a locally-started Cloud. ----
         let resolved = ResolvedEnv {
             source: EnvSource::EnvFallback,
             cloud_url: base.clone(),
-            admin_bearer: "devkey".to_string(),
+            admin_bearer: "live-test-admin".to_string(),
         };
         let (client, org_domain, sig_fpr) = connect(&resolved)
             .await
             .expect("connect() must pair against a live Cloud");
         assert_eq!(
             org_domain, "default",
-            "devkey fallback resolves org=default (unsanitized already-safe)"
+            "the explicit admin key resolves org=default (unsanitized already-safe)"
         );
         assert_eq!(sig_fpr, "software-signed");
         assert!(client.has_device());
