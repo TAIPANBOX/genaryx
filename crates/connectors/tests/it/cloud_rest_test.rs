@@ -1,7 +1,7 @@
 //! Integration proof for `CloudClient` (Phase-1 wave 1, docs/PHASE1.md)
 //! against a real running `tokenfuse-cloud`, standing it up locally exactly
 //! as Phase-0 spike #2 did (`crates/signing/examples/pair_ack.rs`): built +
-//! run from `~/Development/tokenfuse` with `TOKENFUSE_CLOUD_ALLOW_DEVKEY=1`
+//! run from `~/Development/tokenfuse` with an explicit admin key in `TOKENFUSE_CLOUD_KEYS`
 //! on a fresh ephemeral port, torn down after.
 //!
 //! Gated: if `~/Development/tokenfuse` isn't present, doesn't build, or never
@@ -97,7 +97,7 @@ fn build_and_spawn(repo: &Path, port: u16) -> Option<Child> {
     }
 
     match Command::new(&binary)
-        .env("TOKENFUSE_CLOUD_ALLOW_DEVKEY", "1")
+        .env("TOKENFUSE_CLOUD_KEYS", "live-test-admin:default:admin")
         .env("PORT", port.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -168,9 +168,9 @@ async fn pair_read_signed_mutations_and_tamper_reject_against_live_cloud() {
     // ---- pair_new alone: mint a code and stop, no redeem, so the mint half
     // is proven against the live Cloud independently of pair()'s single-shot
     // mint-then-redeem below. ----
-    let mut client = CloudClient::new(&base, "devkey").expect("build CloudClient");
+    let mut client = CloudClient::new(&base, "live-test-admin").expect("build CloudClient");
     let minted = client
-        .pair_new("devkey")
+        .pair_new("live-test-admin")
         .await
         .expect("pair_new against the live cloud");
     assert_eq!(
@@ -192,12 +192,12 @@ async fn pair_read_signed_mutations_and_tamper_reject_against_live_cloud() {
     // ---- pair a portable SoftwareSigner (CI-safe: no Secure Enclave needed) ----
     let signer = SoftwareSigner::generate().expect("generate a software P-256 key");
     let paired = client
-        .pair("devkey", &signer)
+        .pair("live-test-admin", &signer)
         .await
         .expect("pair a device against the live cloud");
     assert_eq!(
         paired.org, "default",
-        "TOKENFUSE_CLOUD_ALLOW_DEVKEY's devkey fallback resolves org=default"
+        "the explicit admin key resolves org=default"
     );
     assert_eq!(paired.role, "admin");
     assert!(!paired.device_id.is_empty());
