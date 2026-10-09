@@ -75,7 +75,14 @@ qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 # B3 part 1 (docs/CONSOLE-IDP.md): offline OIDC/JWT verification for the web
 # console's IdP login. Static JWKS only, no network fetch - the exact crate
 # and posture tokenfuse-cloud's oidc.rs uses, so this adds no new auth stack.
-jsonwebtoken = "9"
+# 10.3.0 is the first release that rejects a string `exp`/`nbf` instead of
+# skipping the check (GHSA-h395-gr6q-cpjc). From 10.0.0 the crypto backend is a
+# feature and EXACTLY ONE of `rust_crypto` / `aws_lc_rs` must be on (none or both
+# panics on first use, it is not a compile error). `aws_lc_rs` is the provider
+# rustls and reqwest already use here, so this adds no second crypto library and
+# takes `ring` out of the build graph (it stays in Cargo.lock only as an unused
+# optional edge of rustls-webpki). Default features (`use_pem`) are kept.
+jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }
 # Phase-6 (D13 Felyx, crates/copilot): the copilot's LlmProvider + Tool traits
 # are dyn-dispatched (a swappable provider incl. the test MockProvider, a fixed
 # registry of read tools), so their async methods need `async-trait` to stay
