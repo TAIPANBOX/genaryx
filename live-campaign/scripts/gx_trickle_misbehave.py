@@ -14,10 +14,17 @@ using its own documented thresholds (store.rs::IncidentConfig defaults):
 Nothing here fakes an incident: every one is produced by feeding the plane the
 evidence its detectors look for, exactly as a gateway would.
 """
-import json, random, sys, time, urllib.request
+import json, os, random, sys, time, urllib.request
 
 CLOUD = "http://127.0.0.1:8083"
-BEARER = "devkey"
+# The cloud's admin key. There is no fixed key any more: tokenfuse#380 removed
+# the `devkey` fallback, and the stand mints a key per run. This script talks
+# to stand.sh's cloud on :8083: export the key stand.sh printed as
+# "cloud admin key:".
+BEARER = os.environ.get("TOKENFUSE_CLOUD_ADMIN_KEY", "").strip()
+if not BEARER:
+    sys.exit("TOKENFUSE_CLOUD_ADMIN_KEY is not set: export the cloud's admin key. "
+             "stand.sh prints it as 'cloud admin key:' (this script talks to its cloud on :8083).")
 ORG = "meridian.example"
 random.seed(20260721)
 

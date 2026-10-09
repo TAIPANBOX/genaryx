@@ -114,8 +114,11 @@ From tokenfuse cloud `crates/cloud/src/store.rs`:
 - `cache_saved` = `saved_microusd` on `cache_hit` rows; `router_saved` =
   `saved_microusd` on `allow` rows. Wire DTO is `CallRecord`.
 - Caps: `MAX_RUNS_PER_ORG = 50,000`, `MAX_INCIDENTS_PER_ORG = 10,000`.
-- Cloud accepts `devkey` because it was started with `TOKENFUSE_CLOUD_ALLOW_DEVKEY=1`
+- Cloud accepted `devkey` in this run because it was started with `TOKENFUSE_CLOUD_ALLOW_DEVKEY=1`
   (org resolves to `default`; `meridian.example` lives only inside the agent_id strings).
+  That fallback is gone (tokenfuse#380): stack-up now starts the cloud with one key
+  minted per run as `<key>:default:admin`, the same org and role the `devkey`
+  principal had.
 
 ## Scripts (`scripts/`)
 
@@ -148,7 +151,10 @@ From tokenfuse cloud `crates/cloud/src/store.rs`:
 2. On the box: run `gx_setup.sh` (Rust/Go/Python toolchains) then `gx_deploy.sh`
    (clones the public TAIPANBOX repos + `stack-up` builds + starts the stack:
    gateway :4100, cloud :8080, wardryx :8090, idryx :8081, dashboard :3000).
-3. Seed:
+3. Seed. First export the cloud's admin key, which stack-up mints per run and prints
+   in `/root/stack.log` as `cloud key:` (or start `up.sh` with your own
+   `STACK_UP_CLOUD_KEY`): `export TOKENFUSE_CLOUD_ADMIN_KEY=<that key>`. The money
+   scripts and `gx_verify.sh` read it from there.
    - Money: `python3 gx_fleet_v2.py` (injects to cloud `/v1/ingest`).
    - Identity: `python3 gx_idryx.py` -> NDJSON, then a SEPARATE
      `idryx serve --addr 127.0.0.1:8082 --load tokenfuse:<ndjson>` (do NOT kill the
@@ -159,7 +165,9 @@ From tokenfuse cloud `crates/cloud/src/store.rs`:
    `ssh -N -L 8080:127.0.0.1:8080 -L 8090:127.0.0.1:8090 -L 8081:127.0.0.1:8082 -L 4100:127.0.0.1:4100 root@<box>`
    (note 8081 -> box 8082 = the meridian idryx).
 5. `~/.taipan/environments/genaryx-live.json` (see `scripts/genaryx-live.descriptor.json`)
-   + `genaryx-live.keys.json` `{ "secrets": { "cloud_admin": "devkey", "wardryx_admin": "devkey" } }` (chmod 600).
+   + `genaryx-live.keys.json` `{ "secrets": { "cloud_admin": "<the cloud key from step 3>", "wardryx_admin": "devkey" } }` (chmod 600).
+   `wardryx_admin` stays `devkey`: wardryx on stack-up runs in its own dev-key mode,
+   which is a separate setting from the cloud's.
 6. Build + run Genaryx (native shell): `cd apps/macos && bash build-ffi.sh && swift build`,
    then run. It reads the descriptor and shows the live data.
 

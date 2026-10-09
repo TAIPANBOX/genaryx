@@ -1,6 +1,13 @@
-import json, random, time, urllib.request
+import json, os, random, sys, time, urllib.request
 random.seed(20260717)
-CLOUD="http://127.0.0.1:8080/v1/ingest"; BEARER="devkey"; ORG="meridian.example"
+CLOUD="http://127.0.0.1:8080/v1/ingest"; ORG="meridian.example"
+# The cloud's admin key. There is no fixed key any more: tokenfuse#380 removed
+# the `devkey` fallback, and the stand mints a key per run. Export the one
+# stack-up's up.sh ("cloud key:") or stand.sh ("cloud admin key:") printed.
+BEARER = os.environ.get("TOKENFUSE_CLOUD_ADMIN_KEY", "").strip()
+if not BEARER:
+    sys.exit("TOKENFUSE_CLOUD_ADMIN_KEY is not set: export the cloud's admin key. "
+             "stack-up's up.sh prints it as 'cloud key:' (or uses the STACK_UP_CLOUD_KEY you gave it); stand.sh prints it as 'cloud admin key:'.")
 now=int(time.time()*1000); DAY=8*3600*1000; start=now-DAY
 # enterprise per-call cost (microusd): haiku cheap high-volume; sonnet mid+tools; gpt-4o big-context/reasoning
 FLEET=[

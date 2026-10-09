@@ -41,7 +41,13 @@ import time
 import urllib.request
 
 CLOUD = "http://127.0.0.1:8080"
-BEARER = "devkey"
+# The cloud's admin key. There is no fixed key any more: tokenfuse#380 removed
+# the `devkey` fallback, and the stand mints a key per run. Export the one
+# stack-up's up.sh ("cloud key:") or stand.sh ("cloud admin key:") printed.
+BEARER = os.environ.get("TOKENFUSE_CLOUD_ADMIN_KEY", "").strip()
+if not BEARER:
+    sys.exit("TOKENFUSE_CLOUD_ADMIN_KEY is not set: export the cloud's admin key. "
+             "stack-up's up.sh prints it as 'cloud key:' (or uses the STACK_UP_CLOUD_KEY you gave it); stand.sh prints it as 'cloud admin key:'.")
 SHOTS = pathlib.Path(__file__).resolve().parent.parent / "shots" / "2026-07-20"
 EPOCHS = SHOTS / "epochs.jsonl"
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-A=(-H "Authorization: Bearer devkey"); B=http://127.0.0.1:8080
+# The cloud's admin key: no fixed key any more (tokenfuse#380 removed the devkey
+# fallback). Export the one stack-up's up.sh printed as "cloud key:".
+: "${TOKENFUSE_CLOUD_ADMIN_KEY:?export the cloud key stack-up printed as 'cloud key:' (or the STACK_UP_CLOUD_KEY you gave it)}"
+A=(-H "Authorization: Bearer $TOKENFUSE_CLOUD_ADMIN_KEY"); B=http://127.0.0.1:8080
 echo "=== SUMMARY ==="; curl -s "${A[@]}" $B/v1/summary | jq .
 echo "=== SAVINGS ==="; curl -s "${A[@]}" $B/v1/savings | jq .
 echo "=== one raw agent (field check) ==="; curl -s "${A[@]}" $B/v1/agents | jq '.[0]'

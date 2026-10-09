@@ -33,12 +33,19 @@
 #   cache_saved_us   = sum saved_microusd on cache_hit rows
 #   router_saved_us  = sum saved_microusd on allow rows
 # dlp_blocked / taint_blocked carry cost 0 (security, not dollars) - excluded from $ savings.
-import json, random, time, urllib.request, urllib.error
+import json, os, random, sys, time, urllib.request, urllib.error
 
 random.seed(20260720)
 BASE = "http://127.0.0.1:8080"
 CLOUD = f"{BASE}/v1/ingest"
-BEARER = "devkey"          # admin key: ingest + budgets. The RELAY uses relayviewer.
+# Admin key: ingest + budgets. The relay uses its own viewer key.
+# The cloud's admin key. There is no fixed key any more: tokenfuse#380 removed
+# the `devkey` fallback, and the stand mints a key per run. Export the one
+# stack-up's up.sh ("cloud key:") or stand.sh ("cloud admin key:") printed.
+BEARER = os.environ.get("TOKENFUSE_CLOUD_ADMIN_KEY", "").strip()
+if not BEARER:
+    sys.exit("TOKENFUSE_CLOUD_ADMIN_KEY is not set: export the cloud's admin key. "
+             "stack-up's up.sh prints it as 'cloud key:' (or uses the STACK_UP_CLOUD_KEY you gave it); stand.sh prints it as 'cloud admin key:'.")
 ORG = "meridian.example"
 now = int(time.time() * 1000); HOURS = 10 * 3600 * 1000; start = now - HOURS
 BUDGET_PROT = {"budget_exceeded", "loop_detected", "policy_violation", "wasm_policy", "killed"}
