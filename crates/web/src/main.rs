@@ -155,7 +155,15 @@ async fn main() {
                 std::process::exit(2);
             }
             match auth::set_operator(&path, &username, pw.trim_end_matches(['\r', '\n'])) {
-                Ok(()) => println!("operator '{username}' set in {}", path.display()),
+                Ok(()) => {
+                    println!("operator '{username}' set in {}", path.display());
+                    // On stderr, so stdout stays the one line scripts may read.
+                    eprintln!(
+                        "a console already running with no operator picks this account up at \
+                         its next sign-in; one that already holds an operator keeps the \
+                         previous password until it is restarted"
+                    );
+                }
                 Err(e) => {
                     eprintln!("genaryx-web: {e}");
                     std::process::exit(1);
@@ -256,7 +264,8 @@ async fn serve(cfg: Config) {
         tracing::warn!(
             file = %cfg.operator_file().display(),
             "no operator account yet: run `genaryx-web set-password --username <name>` \
-             (password on stdin). Until then every sign-in is refused."
+             (password on stdin). Every sign-in is refused until it has run; after that \
+             the next one picks the account up, with no restart."
         );
     }
 
@@ -376,7 +385,7 @@ struct Credentials {
 /// password you do not know, and the operator standing in front of it needs
 /// to be told which.
 async fn session(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response {
-    let configured = ctx.operator.read().expect("operator lock").is_some();
+    let configured = ctx.operator().is_some();
     let info = jar
         .get(auth::COOKIE)
         .and_then(|c| ctx.sessions.touch(c.value()));
@@ -423,8 +432,7 @@ async fn login(
             }
         }
     } else {
-        let op = ctx.operator.read().expect("operator lock").clone();
-        let Some(op) = op else {
+        let Some(op) = ctx.operator() else {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": "no operator account on this box yet"})),
@@ -927,8 +935,7 @@ async fn webauthn_remove(
 /// name (an OIDC `sub`, say) happens to match the local account's.
 #[allow(clippy::result_large_err)]
 fn operator_password_ok(ctx: &Arc<Ctx>, password: &str) -> Result<(), Response> {
-    let op = ctx.operator.read().expect("operator lock").clone();
-    let Some(op) = op else {
+    let Some(op) = ctx.operator() else {
         return Err((
             StatusCode::FORBIDDEN,
             Json(json!({
@@ -1623,11 +1630,11 @@ mod tests {
 
     /// Give this box the local operator account whose password is the
     /// break-glass factor for the passkey lifecycle (first enrollment, last
-    /// removal). Written through the real `auth::set_operator`, then loaded
-    /// into the live `Ctx` exactly as `serve` would at startup.
+    /// removal). Written through the real `auth::set_operator` and nothing
+    /// else: the console picks it up from disk on its next read, as a running
+    /// console does after `genaryx-web set-password` (invariant 23).
     fn set_test_operator(ctx: &Arc<Ctx>, password: &str) {
         auth::set_operator(&ctx.cfg.operator_file(), "ops", password).unwrap();
-        *ctx.operator.write().expect("operator lock") = auth::load(&ctx.cfg.operator_file());
     }
 
     fn enrolled_ids(ctx: &Arc<Ctx>, user: &str) -> Vec<String> {

@@ -95,9 +95,11 @@ pub struct Ctx {
     pub remote: RemoteState,
     pub copilot: CopilotState,
     pub sessions: Sessions,
-    /// The operator record, re-readable at runtime so setting a password does
-    /// not need a restart.
-    pub operator: RwLock<Option<Operator>>,
+    /// The operator record, once one is known. Private so that every reader
+    /// goes through [`Ctx::operator`], which reads `operator.json` again while
+    /// this is empty: a handler reading the startup copy directly is the
+    /// defect that method exists to close, and the compiler now refuses it.
+    operator: RwLock<Option<Operator>>,
     /// WebAuthn relying-party identity (docs/CONSOLE-IDP.md, B3/2), resolved
     /// once from `GENARYX_WEB_RP_ID`/`GENARYX_WEB_ORIGIN` with loopback
     /// defaults.
@@ -166,6 +168,41 @@ impl Ctx {
             remote_tail: broadcast::channel(512).0,
             cfg,
         }
+    }
+
+    /// The operator record, read from disk again for as long as there is none.
+    ///
+    /// [`Self::bootstrap`] reads `operator.json` once. A console started before
+    /// its operator existed therefore answered every sign-in with 503 until it
+    /// was restarted, however many times `genaryx-web set-password` reported
+    /// success (stack-k8s GOTCHAS 50: on Kubernetes the console is always
+    /// running before set-password can run inside its pod). So while nothing
+    /// is held, every call reads the file once more and keeps what it finds.
+    /// On a box with no operator that costs one failed open per call; on a box
+    /// with one it costs nothing.
+    ///
+    /// A file read while set-password is still writing it is not valid JSON
+    /// (the record's last byte is what closes it), so it counts as no operator
+    /// and the next call reads it again.
+    ///
+    /// Once a record is held it is never read again: a password changed on a
+    /// running console still takes a restart, as it always has. That is a
+    /// separate question from this one and is deliberately left alone.
+    pub fn operator(&self) -> Option<Operator> {
+        let held = self.operator.read().expect("operator lock").clone();
+        if held.is_some() {
+            return held;
+        }
+        let found = crate::auth::load(&self.cfg.operator_file())?;
+        // Two first sign-ins can both get here. The first record stored wins
+        // and both answer from it, so the two never disagree.
+        Some(
+            self.operator
+                .write()
+                .expect("operator lock")
+                .get_or_insert(found)
+                .clone(),
+        )
     }
 
     /// Kick off the per-plane resolution. Split from [`Self::bootstrap`] so
