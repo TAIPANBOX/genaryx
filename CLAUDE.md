@@ -1134,9 +1134,15 @@ an absent invariant.
     `features/the-console-closes-a-retained-reservation.feature`, ten, each
     bound; gate: `scripts/features-are-bound.sh`.
 
-    Where it says nothing: no live TokenFuse gateway has verified a token
-    this console minted; the shared test vector is the only cross-check, and
-    the stub gateway is this repository's own. Clock skew between the console
+    A live gateway has verified a token this console minted: @measured
+    `stack-k8s evidence/closure-e2e/run.sh` (console v1.1.34, tokenfuse v1.9.0,
+    Docker Compose) 2026-10-12, 29 of 29 twice, a token signed with another
+    secret refused `closure_token_invalid`; and once by hand the same day, a
+    person closed a reservation after a Touch ID assertion bound to
+    `money_close_retained`, journaled `sig_alg: webauthn-es256`
+    (stack-k8s `evidence/closure-verified.md`). Where it says nothing: in this
+    repository the shared test vector is still the only cross-check, and the
+    stub gateway is its own. Clock skew between the console
     and the gateway shortens or lengthens the two minutes, and is not
     measured. The secret file is trusted as the operator placed it. A closure
     is not on the agent-event stream (TokenFuse D10), so the console journal
