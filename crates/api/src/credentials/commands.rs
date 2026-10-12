@@ -85,6 +85,10 @@ impl From<GatewayError> for CredentialsError {
                 status: Some(status),
                 message: body,
             },
+            GatewayError::ResponseTooLarge { limit } => CredentialsError::Gateway {
+                status: None,
+                message: format!("the gateway's response exceeded {limit} bytes"),
+            },
         }
     }
 }

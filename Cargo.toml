@@ -60,6 +60,7 @@ p256 = "0.13.2"
 # wireguard-go's, never ours.
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 sha2 = "0.10.9"
+hmac = "0.12.1"
 # Phase-4 wave 3 (docs/PHASE4.md W3): the Evidence Center assembles the pack
 # into one zip (`genaryx_core::evidence`). No compression is needed for
 # integrity (the signed manifest + each artifact's sha256 provide it), so this

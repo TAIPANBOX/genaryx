@@ -54,6 +54,12 @@ pub struct Config {
     /// reaches this struct at all: `main.rs`'s `Cmd::Serve` refuses to start
     /// first. See `genaryx_api::delegation::env`'s module doc.
     pub delegation: genaryx_api::delegation::env::RevokeConfig,
+    /// Whether `money_close_retained` can mint a closure token (D8), resolved
+    /// ONCE at startup from `GENARYX_CLOSURE_SECRET_FILE`. A secret file that
+    /// cannot be read, or holds fewer than 32 bytes, never reaches this
+    /// struct: `main.rs`'s `Cmd::Serve` refuses to start first. See
+    /// `genaryx_api::money::closure`'s module doc.
+    pub closure: genaryx_api::money::closure::ClosureConfig,
 }
 
 impl Config {
@@ -167,6 +173,7 @@ mod tests {
             secure_cookies: false,
             require_passkey: false,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
+            closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
         }
     }
 

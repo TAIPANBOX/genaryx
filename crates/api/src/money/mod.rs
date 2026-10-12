@@ -14,9 +14,14 @@
 //!   views call: typed reads, plus three ES256-signed mutations that each
 //!   journal a `console_command` onto the same live-wire bus the Bus
 //!   Explorer already tails (`crate::bus`), via `genaryx_core::command::record`.
+//! - [`closure`] and [`retained`] are D8: list the gateway's retained
+//!   reservations and close one with evidence, by minting a short-lived token
+//!   the gateway verifies (`GENARYX_CLOSURE_SECRET_FILE`).
 
+pub mod closure;
 pub mod commands;
 pub mod env;
+pub mod retained;
 pub mod state;
 
 pub use state::{MoneyState, bootstrap};

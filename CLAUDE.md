@@ -77,10 +77,11 @@ an absent invariant.
    the same decision arriving under another name.)*
 2. **A sensitive command requires a per-action ceremony.** Kill, budget
    change, approval, the two operator WireGuard commands (issue a peer,
-   revoke a peer), and revoking a delegation, each need a fresh passkey
-   confirmation. Six, not three: `crates/web/src/main.rs`'s
-   `SENSITIVE_COMMANDS` is the list, and this file said three until
-   2026-08-05, five until 2026-09-24. Not a session, not a role check alone:
+   revoke a peer), revoking a delegation, and closing a retained
+   reservation, each need a fresh passkey confirmation. Seven, not three:
+   `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS` is the list, and this
+   file said three until 2026-08-05, five until 2026-09-24, six until
+   2026-10-12. Not a session, not a role check alone:
    the ceremony is per action, because the whole point is that a stolen
    session cannot pull the switch.
    *(partly gated: router-level tests in `crates/web/src/main.rs` drive the
@@ -88,7 +89,7 @@ an absent invariant.
    caller is refused without an assertion, that the command and argument
    bindings are enforced, that enrolling and removing a passkey each need a
    factor the session does not carry, and that with
-   `GENARYX_WEB_REQUIRE_PASSKEY=1` all six are refused when nobody is
+   `GENARYX_WEB_REQUIRE_PASSKEY=1` all seven are refused when nobody is
    enrolled. What is NOT held is the default configuration: with the setting
    off and no passkey enrolled, a sensitive command still runs and is
    journaled software-signed. So the invariant holds on a box that enrolled a
@@ -1063,6 +1064,86 @@ an absent invariant.
     judges, and nothing mechanical can; a quoted Ukrainian phrase in a comment
     trailing code on the same line passes, since only a line that opens as a
     comment is read as prose whole; and it reads only what git tracks.)*
+
+22. **Closing a retained reservation is a person's act: admin, passkey, a
+    token the gateway verifies, and one journal entry per attempt.**
+    `@decided 2026-10-11` (D8, shared with TokenFuse's `closure.rs`): a person
+    closes one retained reservation with evidence, observed (the cost the
+    evidence shows) or no-charge (nothing was billed), after a passkey
+    assertion in this console; the console mints a short-lived token bound to
+    that reservation id and its revision, and the gateway verifies it with a
+    secret the two share. Nothing here releases a reservation on a timer or
+    takes an administrative adjustment, and Felyx cannot sign.
+
+    `money_list_retained` (a viewer read) is the gateway's `GET /v1/retained`
+    through the Credentials plane's `GatewayClient` and its admin key, the
+    same client `GET /v1/runs` is read with. `money_close_retained`
+    (`crates/api/src/money/retained.rs`) is in `SENSITIVE_COMMANDS` with
+    `money_set_budget`'s role (admin). It validates the evidence by the
+    gateway's own rules (16 lowercase hex revision, a 1 to 512 byte reference
+    with no control characters, an amount for observed and none for
+    no-charge), generates the operation id (`genaryx-<32 hex>`), mints
+    `v1.ID.REVISION.EXPIRY_MS.SIG` (`crates/api/src/money/closure.rs`; SIG the
+    lowercase hex HMAC-SHA256 of `tokenfuse-closure-v1\nID\nREVISION\nEXPIRY_MS`),
+    living 120 s, held at or under the gateway's 300 s by a compile-time
+    assertion, and posts `POST /v1/retained/close` with the admin key as the
+    bearer and the token in `x-fuse-closure-token`. Only a body carrying
+    `"closed":true` is a closure; any other 2xx is `Unconfirmed`. A bare 404
+    is the gateway's closure route being off, never an empty list.
+
+    `GENARYX_CLOSURE_SECRET_FILE` is resolved once at startup: unset answers
+    `not_configured` and calls nobody; a file that cannot be read, is empty,
+    or holds fewer than 32 bytes (after trimming surrounding whitespace)
+    refuses to start. Every attempt, refused here or by the gateway,
+    unconfirmed, unreachable or closed, journals one `console.close_retained`
+    record into the console's own chain, with the acting principal
+    (`console_actor::operator_or`), the passkey that confirmed it, the
+    gateway's real status (0 for no answer), and the evidence and operation
+    id in `params`; never the secret, never the token. The minting lives in
+    `genaryx-api`, which `genaryx-copilot` does not depend on.
+    *(test: `crates/api/tests/it/retained_close_test.rs`, twenty, on a
+    hand-rolled stub gateway, among them
+    `the_closure_token_matches_the_gateway_test_vector`,
+    `closing_posts_the_evidence_with_a_fresh_token_bound_to_the_reservation`,
+    `a_closure_is_journaled_with_the_acting_principal_and_its_result`,
+    `a_200_that_does_not_confirm_the_closure_is_never_success`,
+    `the_secret_and_the_token_never_appear_in_the_journal_or_the_answer` and
+    `the_copilot_crate_cannot_reach_the_closure_secret_or_mint_a_token`;
+    `crates/api/src/money/closure.rs`'s four and `retained.rs`'s five,
+    including a 200-seed sweep of each; `crates/web/src/main.rs`'s
+    `money_close_retained_without_an_assertion_is_428`,
+    `money_close_retained_with_a_valid_assertion_reaches_the_command`,
+    `a_viewer_or_approver_is_refused_by_the_role_gate_on_money_close_retained`,
+    `a_viewer_may_list_retained_reservations`; `roles.rs`'s
+    `closing_a_retained_reservation_is_admin_and_listing_is_a_read`;
+    `apps/web/src/lib/retainedClosure.test.ts` and
+    `apps/web/src/components/RetainedClosures.test.ts`. Red first on main: the
+    api tests failed to compile (no `money::closure`, no `money::retained`),
+    four web tests failed on assertions (404 where 428 was required, a viewer
+    refused the list with 403, the assertion refused at `action/start` with
+    400, no role for `money_list_retained`), the viewer-refused test passed by
+    fail-closed design, and the two web UI suites failed to import. Twelve
+    mutants planted by hand in product code, each caught and restored: dropped
+    from `SENSITIVE_COMMANDS`, the role moved to a viewer read, the MAC domain
+    changed, a ten-minute lifetime (a compile error, by the assertion), a 200
+    alone counted as closed, validation skipped, a refusal not journaled, the
+    principal not taken from the session, the token signed with the admin
+    key, an unconfigured console still calling the gateway, a short secret
+    accepted, the token written into the journal. Three of them and one
+    non-fault are cases in `scripts/gates-have-teeth.sh`. Scenarios:
+    `features/the-console-closes-a-retained-reservation.feature`, ten, each
+    bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no live TokenFuse gateway has verified a token
+    this console minted; the shared test vector is the only cross-check, and
+    the stub gateway is this repository's own. Clock skew between the console
+    and the gateway shortens or lengthens the two minutes, and is not
+    measured. The secret file is trusted as the operator placed it. A closure
+    is not on the agent-event stream (TokenFuse D10), so the console journal
+    and the gateway's own retained journal are the record. The demo build has
+    no gateway: its list is a fixture in `mockPreview.ts`, and a Close there
+    answers "not shown as closed". No launcher sets
+    `GENARYX_CLOSURE_SECRET_FILE` yet.)*
 
 ## Decisions that have no gate yet
 

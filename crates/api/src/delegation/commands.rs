@@ -390,8 +390,9 @@ async fn call_vouchryx(
 /// never panics, and never blocks the caller from learning vouchryx's own
 /// verdict). Mirrors `money::commands::journal` exactly, with the
 /// org-domain/host defaults `journal::record_console_action` uses, since
-/// this module has no long-lived plane client to carry them on.
-fn journal(
+/// this module has no long-lived plane client to carry them on. Also the
+/// journal `money::retained`'s closure attempts are written through.
+pub(crate) fn journal(
     bus: Option<&BusHandle>,
     org_domain: &str,
     rec: &CommandRecord,

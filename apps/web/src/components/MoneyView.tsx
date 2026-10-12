@@ -22,6 +22,7 @@ import {
 import type { Incident, MoneyError, MutationOutcome, Run, Savings } from "../moneyTypes";
 import { MoneyEmptyState } from "./MoneyEmptyState";
 import { RetainedReservationsSection } from "./RetainedReservations";
+import { RetainedClosuresSection } from "./RetainedClosures";
 import { RunsBoard } from "./RunsBoard";
 import { DashMain, Section, Composition, Feed } from "./dash";
 import type { CompItem, FeedItem } from "./dash";
@@ -322,6 +323,7 @@ export function MoneyView({
             <>
               {savings && <GovernedSavingsSection savings={savings} />}
               <RetainedReservationsSection />
+              <RetainedClosuresSection />
               <Section title="Incidents" right="worst first">
                 <Feed items={incidentFeed} empty="no incidents" />
               </Section>

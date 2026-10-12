@@ -222,6 +222,10 @@ impl From<GatewayError> for AdmissionError {
                 status: Some(status),
                 message: body,
             },
+            GatewayError::ResponseTooLarge { limit } => AdmissionError::Gateway {
+                status: None,
+                message: format!("the gateway's response exceeded {limit} bytes"),
+            },
         }
     }
 }

@@ -950,6 +950,7 @@ dependencies = [
  "genaryx-core",
  "genaryx-signing",
  "getrandom 0.2.17",
+ "hmac",
  "qrcode",
  "reqwest",
  "rusqlite",

@@ -51,6 +51,9 @@ const ADMIN_COMMANDS: &[&str] = &[
     "money_kill_run",
     "money_set_budget",
     "money_ack_incident",
+    // D8: closing a retained reservation settles money on the gateway, the
+    // same floor as a budget change. Listing them is a read, below.
+    "money_close_retained",
     // Lifecycle: freezing an agent, or stopping a whole unit or user, writes
     // deny-all wardryx policies and records the block. A real enforcement
     // change on the fleet - admin only. Reading the blocks back
@@ -162,6 +165,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "memory_status",
     "memory_why",
     "money_incidents",
+    // D8: the gateway's retained reservations, read-only.
+    "money_list_retained",
     "money_overview",
     "money_owners",
     "money_runs",

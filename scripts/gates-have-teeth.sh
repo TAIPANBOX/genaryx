@@ -349,6 +349,30 @@ run_case "invariant 20: output read from completion_tokens alone again" fail \
 	"$(py 'edit("crates/copilot/src/provider/openai.rs", "Some(total) => completion.max(total.saturating_sub(prompt)),", "Some(_) => completion,")')" \
 	"a_reasoning_model_usage_counts_its_reasoning_as_output"
 
+# invariant 22: closing a retained reservation (D8). Product mutants; the gate
+# is the tests that hold the ceremony, the token format, and the rule that a
+# 200 alone is not a closure.
+run_case "invariant 22: money_close_retained dropped from the ceremony list" fail \
+	'cargo test -q -p genaryx-web --bin genaryx-web money_close_retained' \
+	"$(py 'edit("crates/web/src/main.rs", "    \"money_close_retained\",\n];", "];")')" \
+	"money_close_retained_without_an_assertion_is_428"
+
+retained_gate='cargo test -q -p genaryx-api --test it retained_close_test'
+
+run_case "invariant 22: the token is signed over another message" fail \
+	"$retained_gate" \
+	"$(py 'edit("crates/api/src/money/closure.rs", "const MAC_DOMAIN: &str = \"tokenfuse-closure-v1\";", "const MAC_DOMAIN: &str = \"tokenfuse-closure-v2\";")')" \
+	"the_closure_token_matches_the_gateway_test_vector"
+
+run_case "invariant 22: a 200 alone counts as closed" fail \
+	"$retained_gate" \
+	"$(py 'edit("crates/api/src/money/retained.rs", "let confirmed = answer.body.get(\"closed\").and_then(|v| v.as_bool()) == Some(true);", "let confirmed = true;")')" \
+	"a_200_that_does_not_confirm_the_closure_is_never_success"
+
+run_case "invariant 22: the closure module's own comment reworded" pass \
+	"$retained_gate" \
+	"$(py 'edit("crates/api/src/money/closure.rs", "/// The shortest secret accepted: 32 bytes, the HMAC-SHA256 output size, and", "/// The shortest secret this console accepts: 32 bytes, the HMAC-SHA256 output size, and")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"

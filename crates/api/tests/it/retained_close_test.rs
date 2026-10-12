@@ -498,7 +498,10 @@ async fn a_closure_is_journaled_with_the_acting_principal_and_its_result() {
     assert_eq!(line["data"]["http_status"], 200);
     assert_eq!(line["data"]["verify_result"], "closed");
     let who = line["on_behalf_of"][0].as_str().expect("a principal");
-    assert!(who.ends_with("/alice"), "the chain names who closed it: {who}");
+    assert!(
+        who.ends_with("/alice"),
+        "the chain names who closed it: {who}"
+    );
 
     let (operator, action, target, params, status, verify) = journaled_row(&bus);
     assert!(operator.ends_with("/alice"), "{operator}");
@@ -542,7 +545,11 @@ async fn a_stale_revision_is_refused_and_journaled_as_the_gateways_real_409() {
 
 #[tokio::test]
 async fn a_200_that_does_not_confirm_the_closure_is_never_success() {
-    for body in [json!({}), json!({"closed": false}), json!("<html>ok</html>")] {
+    for body in [
+        json!({}),
+        json!({"closed": false}),
+        json!("<html>ok</html>"),
+    ] {
         let stub = spawn_stub(200, body.clone());
         let bus = scratch_bus("unconfirmed");
         let err = money_close_retained(

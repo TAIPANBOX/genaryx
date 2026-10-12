@@ -224,6 +224,17 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
+            // The closure secret the same way, and for the same reason: a
+            // secret nobody could rely on (unreadable, empty, or under 32
+            // bytes) stops the console rather than signing with it. Unset is
+            // a normal box that answers "not configured" when asked to close.
+            let closure = match genaryx_api::money::closure::ClosureConfig::resolve_from_env() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("genaryx-web: {e}");
+                    std::process::exit(1);
+                }
+            };
             let cfg = Config {
                 bind,
                 state_dir: state_dir.unwrap_or_else(Config::default_state_dir),
@@ -231,6 +242,7 @@ async fn main() {
                 secure_cookies,
                 require_passkey: Config::require_passkey_from_env(),
                 delegation,
+                closure,
             };
             serve(cfg).await;
         }
@@ -488,7 +500,8 @@ fn guard(ctx: &Arc<Ctx>, jar: &CookieJar) -> Result<auth::SessionInfo, Response>
 /// The commands whose dispatch REQUIRES a fresh per-action assertion once the
 /// caller has a passkey enrolled: the kill and the budget mutation (the two
 /// break-glass carriers), the approval grant/deny, the two operator
-/// WireGuard commands, and revoking a delegation. The policy PUT/DELETE
+/// WireGuard commands, revoking a delegation, and closing a retained
+/// reservation. The policy PUT/DELETE
 /// editor joins this list the day it becomes routable (it is "v1, not built"
 /// today); an unknown name is already fail-closed to admin by the role gate.
 const SENSITIVE_COMMANDS: &[&str] = &[
@@ -506,6 +519,10 @@ const SENSITIVE_COMMANDS: &[&str] = &[
     // same class of act as a kill (it takes something away mid-incident, and
     // a stolen session must not be able to pull this switch alone).
     "delegation_revoke",
+    // D8: closing a retained reservation settles money on the gateway, and
+    // the console mints the token that lets it only after a person confirmed
+    // this exact closure. A stolen session must not be able to settle money.
+    "money_close_retained",
 ];
 
 /// The two ceremony names that are NOT dispatchable commands: each names an
@@ -1350,6 +1367,7 @@ mod tests {
             secure_cookies: false,
             require_passkey,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
+            closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
