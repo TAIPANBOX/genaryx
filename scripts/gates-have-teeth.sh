@@ -373,6 +373,27 @@ run_case "invariant 22: the closure module's own comment reworded" pass \
 	"$retained_gate" \
 	"$(py 'edit("crates/api/src/money/closure.rs", "/// The shortest secret accepted: 32 bytes, the HMAC-SHA256 output size, and", "/// The shortest secret this console accepts: 32 bytes, the HMAC-SHA256 output size, and")')"
 
+# invariant 23: an operator set while the console runs signs in with no
+# restart, and one already held is not read again. Product mutants; the gate is
+# the router-level tests. Every test name the filter matches carries
+# `operator_`, the five of invariant 23 and the passkey ones that lean on it.
+operator_gate='cargo test -q -p genaryx-web --bin genaryx-web operator_'
+
+run_case "invariant 23: the operator is read once at startup again" fail \
+	"$operator_gate" \
+	"$(py 'edit("crates/web/src/ctx.rs", "let found = crate::auth::load(&self.cfg.operator_file())?;", "let found = held?;")')" \
+	"an_operator_set_after_start_signs_in_without_a_restart"
+
+run_case "invariant 23: a held operator is read again on every call" fail \
+	"$operator_gate" \
+	"$(py 'edit("crates/web/src/ctx.rs", "if held.is_some() {", "if held.is_some() && false {")
+edit("crates/web/src/ctx.rs", ".get_or_insert(found)", ".insert(found)")')" \
+	"an_operator_loaded_at_startup_is_not_reread_from_disk"
+
+run_case "invariant 23: the accessor's own comment reworded" pass \
+	"$operator_gate" \
+	"$(py 'edit("crates/web/src/ctx.rs", "/// The operator record, read from disk again for as long as there is none.", "/// The operator record, read from disk again while none is held.")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"

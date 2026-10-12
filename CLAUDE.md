@@ -1145,6 +1145,70 @@ an absent invariant.
     answers "not shown as closed". No launcher sets
     `GENARYX_CLOSURE_SECRET_FILE` yet.)*
 
+23. **An operator set while the console runs signs in at the next attempt,
+    with no restart, and an operator already held is not read again.**
+    `@decided 2026-10-12`: while the console holds no operator record, the
+    local sign-in, the session answer and the operator-password check read
+    `operator.json` again and keep the first record they find; once one is
+    held it is never read again, so a password changed on a running console
+    still takes a restart, as before. `Ctx::bootstrap` read the file once and
+    nothing read it again, so `genaryx-web set-password` against a running
+    console reported success and wrote the file while every sign-in kept
+    answering `503 no operator account on this box yet` until a restart. That
+    is stack-k8s GOTCHAS 50: on Kubernetes the console always starts before
+    set-password can run inside its pod, so every fresh cluster met it, and
+    the launchers restart the console after set-password to get round it.
+    Measured 2026-10-12 on Docker Compose with genaryx-console v1.1.34
+    (stack-k8s `evidence/closure-e2e/`): set-password succeeded,
+    `/api/auth/login` answered 503, and after `docker compose restart console`
+    the same password signed in.
+
+    The record lives in a private field of `Ctx` and is read only through
+    `Ctx::operator`, so no handler can read the startup copy around the
+    reload; the compiler refuses it. While nothing is held each call costs one
+    failed open of a missing file. A file read while set-password is still
+    writing it is not valid JSON (its last byte closes the record), so it
+    counts as no operator and the next call reads it again. `serve`'s startup
+    warning says the next sign-in picks the account up; `set-password` says on
+    stderr that a console already holding an operator keeps the previous
+    password until restarted.
+    *(test: `crates/web/src/main.rs`'s
+    `an_operator_set_after_start_signs_in_without_a_restart`,
+    `the_session_route_says_configured_once_an_operator_is_set_after_start`,
+    `a_first_enrollment_takes_an_operator_password_set_after_start`,
+    `a_half_written_operator_file_is_never_picked_up` (every strict prefix of
+    a real record, then the whole one) and
+    `an_operator_loaded_at_startup_is_not_reread_from_disk`, each through the
+    real router, with the record written by `auth::set_operator`, the call the
+    CLI makes, and the context's copy never touched.
+    Red first on the test-only commit `ad7b6e6`, in a Claude Code cloud
+    session (Linux VM): four failed, 503 where 401 was required after
+    set-password, `configured: false`, 403 `no_operator_account` on the first
+    enrollment, and 503 at the complete record after every prefix had passed;
+    the control passed by design. Three mutants planted by hand in product
+    code, each caught and restored: the reload removed (six of the eight tests
+    the `operator_` filter selects went red, among them
+    `an_operator_set_after_start_signs_in_without_a_restart`), a held record
+    re-read on every call (caught by
+    `an_operator_loaded_at_startup_is_not_reread_from_disk`, 200 where 401 was
+    required, and by the first test's tail), and the session answer fixed at
+    false (caught by
+    `the_session_route_says_configured_once_an_operator_is_set_after_start`).
+    The first two and a reworded comment that must pass are cases in
+    `scripts/gates-have-teeth.sh`.
+    Scenarios: `features/the-console-picks-up-an-operator-set-after-start.feature`,
+    five, each bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: a password changed on a running console that
+    already holds an operator is still not picked up, and a deleted
+    `operator.json` does not unconfigure one; both are as they were. No
+    running console or container was exercised, only the router in a test.
+    Two first sign-ins racing to store the record is handled by keeping the
+    first, and is not itself exercised by a test. The launchers' restart
+    after set-password (stack-k8s deploy scripts, stack-single#107) still
+    runs; for a console at or after this change it is redundant, and removing
+    it is theirs.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

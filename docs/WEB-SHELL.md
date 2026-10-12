@@ -30,6 +30,12 @@ echo 'a-long-passphrase' | ./target/release/genaryx-web \
   --ui apps/web/dist
 ```
 
+The order does not matter for the first account. A console that is already
+serving with no operator, the usual case in a container, picks the account up
+at the next sign-in, with no restart. Changing the password of an account a
+running console already holds is different: the console keeps the previous
+password until it is restarted.
+
 ### Where to bind
 
 The default is loopback, and that is a security decision rather than a
