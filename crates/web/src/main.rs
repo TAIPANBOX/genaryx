@@ -224,6 +224,17 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
+            // The closure secret the same way, and for the same reason: a
+            // secret nobody could rely on (unreadable, empty, or under 32
+            // bytes) stops the console rather than signing with it. Unset is
+            // a normal box that answers "not configured" when asked to close.
+            let closure = match genaryx_api::money::closure::ClosureConfig::resolve_from_env() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("genaryx-web: {e}");
+                    std::process::exit(1);
+                }
+            };
             let cfg = Config {
                 bind,
                 state_dir: state_dir.unwrap_or_else(Config::default_state_dir),
@@ -231,6 +242,7 @@ async fn main() {
                 secure_cookies,
                 require_passkey: Config::require_passkey_from_env(),
                 delegation,
+                closure,
             };
             serve(cfg).await;
         }
@@ -488,7 +500,8 @@ fn guard(ctx: &Arc<Ctx>, jar: &CookieJar) -> Result<auth::SessionInfo, Response>
 /// The commands whose dispatch REQUIRES a fresh per-action assertion once the
 /// caller has a passkey enrolled: the kill and the budget mutation (the two
 /// break-glass carriers), the approval grant/deny, the two operator
-/// WireGuard commands, and revoking a delegation. The policy PUT/DELETE
+/// WireGuard commands, revoking a delegation, and closing a retained
+/// reservation. The policy PUT/DELETE
 /// editor joins this list the day it becomes routable (it is "v1, not built"
 /// today); an unknown name is already fail-closed to admin by the role gate.
 const SENSITIVE_COMMANDS: &[&str] = &[
@@ -506,6 +519,10 @@ const SENSITIVE_COMMANDS: &[&str] = &[
     // same class of act as a kill (it takes something away mid-incident, and
     // a stolen session must not be able to pull this switch alone).
     "delegation_revoke",
+    // D8: closing a retained reservation settles money on the gateway, and
+    // the console mints the token that lets it only after a person confirmed
+    // this exact closure. A stolen session must not be able to settle money.
+    "money_close_retained",
 ];
 
 /// The two ceremony names that are NOT dispatchable commands: each names an
@@ -1350,6 +1367,7 @@ mod tests {
             secure_cookies: false,
             require_passkey,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
+            closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
@@ -2137,6 +2155,93 @@ mod tests {
         assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
         assert_ne!(status, StatusCode::FORBIDDEN);
         assert_ne!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    // -- money_close_retained (D8): role gate and ceremony gate ---------------
+    //
+    // Bound in features/the-console-closes-a-retained-reservation.feature.
+    // Same shape as the delegation_revoke tests above: closing a retained
+    // reservation settles money on the gateway, the same class of act as a
+    // budget change, so it takes money_set_budget's role and the ceremony.
+
+    fn close_args() -> String {
+        json!({
+            "reservation_id": 7,
+            "expected_revision": "0011223344556677",
+            "evidence_kind": "observed",
+            "observed_microusd": 4210,
+            "evidence_ref": "invoice INV-2026-10 line 14"
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_viewer_or_approver_is_refused_by_the_role_gate_on_money_close_retained() {
+        let ctx = test_ctx();
+        for (who, role) in [("carol", Role::Viewer), ("dave", Role::Approver)] {
+            let sid = ctx.sessions.create(who, role, Method::Oidc);
+            let (status, body) = post_api(
+                &ctx,
+                "/api/command/money_close_retained",
+                &sid,
+                None,
+                json!({}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{who}: {body}");
+            assert_eq!(body["error"], "role admin required");
+        }
+    }
+
+    #[tokio::test]
+    async fn money_close_retained_without_an_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_eq!(
+            post_command_with(&ctx, "money_close_retained", &sid, None, &close_args()).await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn money_close_retained_with_a_valid_assertion_reaches_the_command() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = close_args();
+        let challenge = start_action(&ctx, &sid, "money_close_retained", &args).await;
+        let header = assertion_header(&ctx, &challenge);
+        // This Ctx holds no closure secret, so the COMMAND answers its own
+        // 422 not_configured: proof the gate let the assertion through.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_close_retained",
+            &sid,
+            Some(&header),
+            serde_json::from_str(&args).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "not_configured", "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_viewer_may_list_retained_reservations() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("carol", Role::Viewer, Method::Oidc);
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_list_retained",
+            &sid,
+            None,
+            json!({}),
+        )
+        .await;
+        // The plane is pending in this Ctx, so the command answers its own
+        // "bootstrapping" refusal; what matters is that no gate refused.
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "bootstrapping", "{body}");
     }
 
     #[tokio::test]

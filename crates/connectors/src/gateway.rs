@@ -80,6 +80,11 @@ pub enum GatewayError {
     /// Any other non-2xx response: the status and raw body text (UTF-8 lossy).
     #[error("gateway returned HTTP {status}: {body}")]
     Api { status: u16, body: String },
+
+    /// A response body larger than the caller is willing to hold, refused
+    /// part way rather than buffered whole ([`GatewayClient::close_retained`]).
+    #[error("the gateway's response exceeded {limit} bytes; refused to read further")]
+    ResponseTooLarge { limit: usize },
 }
 
 // ---- DTOs (GET /v1/runs, exact shape of tokenfuse's own gateway obs.rs) ----
@@ -112,6 +117,56 @@ pub struct GatewayRunView {
     /// The sum of `retained`'s reservations, in USD.
     pub retained_usd: f64,
 }
+
+// ---- DTOs (D8, exact shape of tokenfuse's crates/gateway/src/closure.rs) --
+
+/// One row of the gateway's `GET /v1/retained` (`RetainedView` in tokenfuse's
+/// `closure.rs`): a retained reservation a person may close with evidence.
+/// `revision` is the 16 lowercase hex digits a closure token must bind; a
+/// closure naming any other revision is refused as stale.
+///
+/// The route exists only when the gateway runs with
+/// `TOKENFUSE_CLOSURE_SECRET`; without it the gateway answers a bare 404,
+/// which [`GatewayClient::get_retained`] reports as
+/// [`GatewayError::Api`] with status 404, never as an empty list.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct GatewayRetainedReservation {
+    pub reservation_id: u64,
+    pub revision: String,
+    pub run_id: String,
+    #[serde(default)]
+    pub chain: Vec<String>,
+    pub amount_microusd: i64,
+    #[serde(default)]
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub model: String,
+    pub retained_at_millis: i64,
+}
+
+/// What `POST /v1/retained/close` answered: its real status and its body,
+/// parsed as JSON when it is JSON and kept as a string when it is not. A
+/// non-2xx is an ANSWER here, not an error: the caller
+/// (`genaryx_api::money::retained`) reads the gateway's own refusal kind out
+/// of the body and journals the real status.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GatewayCloseAnswer {
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
+/// The request header that carries a closure token (tokenfuse
+/// `closure.rs`'s `TOKEN_HEADER`). Not `Authorization`: the admin gate reads
+/// that one for its own bearer key, and both ride on the same request.
+pub const CLOSURE_TOKEN_HEADER: &str = "x-fuse-closure-token";
+
+/// The most a closure answer could reasonably be (a handful of fields). A
+/// gateway URL that points at something else must not make the console
+/// buffer an arbitrary amount reading whatever answered.
+const MAX_CLOSE_RESPONSE_BYTES: usize = 64 * 1024;
+
+/// How long a closure waits for the gateway. Short: an operator is watching.
+const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 // ---- DTOs (exact wire shape, docs/22-key-lifecycle.md in tokenfuse) --------
 
@@ -302,6 +357,66 @@ impl GatewayClient {
         }
         let resp = req.send().await?;
         parse_response(resp).await
+    }
+
+    /// `GET /v1/retained` -> every retained reservation the gateway lists,
+    /// by id, with the revision a closure token must bind (D8). Behind the
+    /// same admin gate as [`get_runs`](Self::get_runs).
+    pub async fn get_retained(&self) -> Result<Vec<GatewayRetainedReservation>, GatewayError> {
+        let url = format!("{}/v1/retained", self.base_url);
+        let mut req = self.http.get(&url);
+        if let Some(key) = &self.admin_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req.send().await?;
+        parse_response(resp).await
+    }
+
+    /// `POST /v1/retained/close` with `body` and the closure `token` in
+    /// [`CLOSURE_TOKEN_HEADER`], the admin key (when attached) as the bearer.
+    ///
+    /// Sent on its own client that follows no redirect: a `Location` would
+    /// carry the token header to wherever it named, and no proxy-shaped
+    /// answer from the gateway is a reason to send a credential elsewhere.
+    /// The body is read incrementally and refused past
+    /// [`MAX_CLOSE_RESPONSE_BYTES`]. Only a request that got no usable answer
+    /// is an `Err`; every status the gateway sends comes back as itself.
+    pub async fn close_retained(
+        &self,
+        body: &serde_json::Value,
+        token: &str,
+    ) -> Result<GatewayCloseAnswer, GatewayError> {
+        let http = reqwest::Client::builder()
+            .timeout(CLOSE_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let url = format!("{}/v1/retained/close", self.base_url);
+        let mut req = http
+            .post(&url)
+            .header(CLOSURE_TOKEN_HEADER, token)
+            .json(body);
+        if let Some(key) = &self.admin_key {
+            req = req.bearer_auth(key);
+        }
+        let mut resp = req.send().await?;
+        let status = resp.status().as_u16();
+        let mut raw = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            if raw.len() + chunk.len() > MAX_CLOSE_RESPONSE_BYTES {
+                return Err(GatewayError::ResponseTooLarge {
+                    limit: MAX_CLOSE_RESPONSE_BYTES,
+                });
+            }
+            raw.extend_from_slice(&chunk);
+        }
+        let body = if raw.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&raw).unwrap_or_else(|_| {
+                serde_json::Value::String(String::from_utf8_lossy(&raw).into_owned())
+            })
+        };
+        Ok(GatewayCloseAnswer { status, body })
     }
 }
 

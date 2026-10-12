@@ -48,6 +48,9 @@
         "listen_default": "127.0.0.1:7420",
         "health_path": "/healthz",
         "env": {
+          "GENARYX_CLOSURE_SECRET_FILE": {
+            "required": false
+          },
           "GENARYX_COPILOT_AGENT_ID": {
             "required": false
           },
@@ -169,6 +172,10 @@
         "doctor_is_the_other_half": {
           "value": "genaryx-web doctor",
           "why": "The same binary, run by a person to check a box rather than to serve it. No launcher schedules it, so it is a subcommand here and not a component of its own."
+        },
+        "the_closure_secret_refuses_to_start_when_weak": {
+          "value": "GENARYX_CLOSURE_SECRET_FILE",
+          "why": "Optional: unset, money_close_retained answers not_configured and the console signs nothing. Set, it names a file whose trimmed content is the secret the TokenFuse gateway reads from TOKENFUSE_CLOSURE_SECRET, and a file that cannot be read, is empty, or holds fewer than 32 bytes refuses to start (crates/api/src/money/closure.rs). required=false cannot express that, so it is recorded here."
         },
         "the_revoke_pair_is_all_or_nothing": {
           "value": "GENARYX_VOUCHRYX_URL + GENARYX_VOUCHRYX_REVOKE_KEY_FILE",

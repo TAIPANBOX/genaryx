@@ -51,6 +51,9 @@ const ADMIN_COMMANDS: &[&str] = &[
     "money_kill_run",
     "money_set_budget",
     "money_ack_incident",
+    // D8: closing a retained reservation settles money on the gateway, the
+    // same floor as a budget change. Listing them is a read, below.
+    "money_close_retained",
     // Lifecycle: freezing an agent, or stopping a whole unit or user, writes
     // deny-all wardryx policies and records the block. A real enforcement
     // change on the fleet - admin only. Reading the blocks back
@@ -162,6 +165,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "memory_status",
     "memory_why",
     "money_incidents",
+    // D8: the gateway's retained reservations, read-only.
+    "money_list_retained",
     "money_overview",
     "money_owners",
     "money_runs",
@@ -307,6 +312,18 @@ mod tests {
         assert_eq!(required_role("money_kill_run"), Role::Admin);
         assert_eq!(required_role("onboard_write_passport"), Role::Admin);
         assert_eq!(required_role("delegation_revoke"), Role::Admin);
+    }
+
+    /// D8: listing retained reservations is a read; closing one settles
+    /// money on the gateway, the same floor as `money_set_budget`.
+    #[test]
+    fn closing_a_retained_reservation_is_admin_and_listing_is_a_read() {
+        assert_eq!(required_role("money_list_retained"), Role::Viewer);
+        assert_eq!(
+            required_role("money_close_retained"),
+            required_role("money_set_budget")
+        );
+        assert_eq!(required_role("money_close_retained"), Role::Admin);
     }
 
     /// A command that takes a live cloud API token in its request body is not

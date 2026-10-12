@@ -116,8 +116,9 @@ pub use engram::{
 };
 pub use evidence::{EvidenceBuildError, EvidenceInputs, EvidencePack, build_evidence_pack};
 pub use gateway::{
-    GatewayClient, GatewayError, GatewayKeyEntry, GatewayKeyStats, GatewayKeysReport,
-    GatewayRunView, GatewayUnauthorized,
+    CLOSURE_TOKEN_HEADER, GatewayClient, GatewayCloseAnswer, GatewayError, GatewayKeyEntry,
+    GatewayKeyStats, GatewayKeysReport, GatewayRetainedReservation, GatewayRunView,
+    GatewayUnauthorized,
 };
 pub use hetzner::{HetznerClient, HetznerError, HetznerServer};
 pub use idryx::{

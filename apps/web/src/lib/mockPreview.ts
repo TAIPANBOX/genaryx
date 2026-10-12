@@ -3094,6 +3094,19 @@ function mockGatewayRetained() {
   };
 }
 
+/** The demo box's `money_list_retained` (D8, the gateway's `GET /v1/retained`):
+ * one row per reservation `mockGatewayRetained` counts, so the two Money-rail
+ * cards agree. Closing is not mocked: the demo has no gateway and no secret,
+ * so a Close there answers the transport's "no answer", like any command
+ * without a mock handler. */
+function mockRetainedReservations() {
+  return [
+    { reservation_id: 41, revision: "00000000000a41f2", run_id: "run-finance-217", chain: ["run-finance-217"], amount_microusd: 20_000, unit: "finance", model: "claude-sonnet-5-5", retained_at_millis: now - 47 * 60_000 },
+    { reservation_id: 58, revision: "00000000000b58c0", run_id: "run-outbound-901", chain: ["run-outbound-901"], amount_microusd: 7_500, unit: "sales", model: "claude-haiku-5-5", retained_at_millis: now - 22 * 60_000 },
+    { reservation_id: 59, revision: "00000000000b5901", run_id: "run-outbound-901", chain: ["run-outbound-901"], amount_microusd: 7_500, unit: "sales", model: "claude-haiku-5-5", retained_at_millis: now - 9 * 60_000 },
+  ];
+}
+
 function mockCredentialsKeys() {
   return {
     strict_mode: "enforce",
@@ -3556,6 +3569,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // Explicit, not left to the catch-all below: its `_runs` rule answers
     // `[]`, the wrong shape for this object, and blanked the Money tab.
     case "credentials_gateway_retained_runs": return r(mockGatewayRetained());
+    case "money_list_retained": return r(mockRetainedReservations());
     case "admission_check": return r(mockAdmissionCheck(String(args?.key_id ?? ""), String(args?.agent_id ?? "")));
     case "admission_baseline": return r(mockAdmissionBaseline(String(args?.agent_id ?? "")));
 

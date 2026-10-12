@@ -1,11 +1,12 @@
 //! WebAuthn per-action ceremony (D15 B3 part 2, docs/CONSOLE-IDP.md).
 //!
 //! A signed-in session gets you the console; it does not get you the kill.
-//! The six privileged commands additionally require a fresh, per-action
-//! WebAuthn assertion, and they are exactly the six names in `main.rs`'s
+//! The seven privileged commands additionally require a fresh, per-action
+//! WebAuthn assertion, and they are exactly the seven names in `main.rs`'s
 //! `SENSITIVE_COMMANDS`: `money_kill_run`, `money_set_budget`,
 //! `policy_decide_approval`, `remote_operator_wg_config`,
-//! `remote_operator_wg_revoke` and `delegation_revoke`. (This list used to
+//! `remote_operator_wg_revoke`, `delegation_revoke` and
+//! `money_close_retained`. (This list used to
 //! say "policy write", which is not a dispatchable command at all; the
 //! policy editor joins the list the day it becomes routable.) The operator's
 //! passkey (Touch ID, Windows Hello, a roaming key) signs a challenge this

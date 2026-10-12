@@ -709,6 +709,28 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "money_incidents" => Ok(reply(
             genaryx_api::money::commands::money_incidents(&ctx.money).await,
         )),
+        // D8: the gateway's retained reservations, through the same gateway
+        // client and admin key the Credentials plane reads GET /v1/runs with.
+        // A read, and classified as one in roles.rs.
+        "money_list_retained" => Ok(reply(
+            genaryx_api::money::retained::money_list_retained(&ctx.credentials).await,
+        )),
+        // D8: close one retained reservation with evidence. Admin only and
+        // ceremony-gated (`main.rs`'s `SENSITIVE_COMMANDS`): the console
+        // mints the gateway's closure token only once that gate has passed,
+        // and journals every attempt into the console's own chain.
+        "money_close_retained" => {
+            let a: genaryx_api::money::retained::CloseRetainedArgs = decode(args)?;
+            Ok(reply(
+                genaryx_api::money::retained::money_close_retained(
+                    a,
+                    &ctx.cfg.closure,
+                    &ctx.credentials,
+                    wg_journal(ctx).as_ref(),
+                )
+                .await,
+            ))
+        }
         "money_kill_run" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

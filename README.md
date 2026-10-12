@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-963-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-997-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -272,10 +272,10 @@ box; these frames are not it, and say so here rather than in a footnote.
   instead of the box's OS account. The local account stays the break-glass
   admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
-- **Per-action WebAuthn ceremony (D15/B3 part 2).** The six privileged
+- **Per-action WebAuthn ceremony (D15/B3 part 2).** The seven privileged
   commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
   `remote_operator_wg_config`, `remote_operator_wg_revoke`,
-  `delegation_revoke`) additionally require a fresh, per-action passkey
+  `delegation_revoke`, `money_close_retained`) additionally require a fresh, per-action passkey
   assertion once the operator has enrolled one: a challenge minted for that
   exact command and its arguments,
   verified server-side (ES256, attestation "none", no `webauthn-rs`/OpenSSL
@@ -301,6 +301,22 @@ box; these frames are not it, and say so here rather than in a footnote.
   refused, not-durable, or unreachable answer from vouchryx is reported as
   itself, never as success. `crates/api/src/delegation` + a "Revoke
   delegation" button on the agent detail card in the web shell.
+- **Closing a retained reservation (D8, 2026-10-12, invariant 22).** The
+  Money panel lists the reservations the TokenFuse gateway holds after a call
+  whose outcome it never learned (`money_list_retained`, the gateway's
+  `GET /v1/retained` with the gateway admin key) and closes one with
+  evidence: observed (the cost an invoice line or the provider's usage
+  shows, in micro-USD) or no-charge. `money_close_retained` is admin-only and
+  needs a fresh passkey assertion; only then does the console generate the
+  operation id, mint a two-minute token bound to that reservation and its
+  revision, and post `POST /v1/retained/close` with the token in
+  `x-fuse-closure-token`. Configured with `GENARYX_CLOSURE_SECRET_FILE` (a
+  path; its trimmed content is the secret the gateway reads from
+  `TOKENFUSE_CLOSURE_SECRET`): unset answers "not configured", and a secret
+  under 32 bytes refuses to start. Every attempt is journaled into the
+  console's chain with who made it and what the gateway answered. Felyx
+  cannot sign. Verified against a stub gateway and the token test vector
+  shared with TokenFuse, not yet against a live gateway.
 - **Money runs table reads the Cloud's budgets (2026-10-05, invariant 17).**
   The table takes each run's budget from the Cloud's `GET /v1/budgets`, not
   from `alerts`, which lists a run only once it is near or over its limit, so
