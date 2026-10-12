@@ -2139,6 +2139,93 @@ mod tests {
         assert_ne!(status, StatusCode::UNAUTHORIZED);
     }
 
+    // -- money_close_retained (D8): role gate and ceremony gate ---------------
+    //
+    // Bound in features/the-console-closes-a-retained-reservation.feature.
+    // Same shape as the delegation_revoke tests above: closing a retained
+    // reservation settles money on the gateway, the same class of act as a
+    // budget change, so it takes money_set_budget's role and the ceremony.
+
+    fn close_args() -> String {
+        json!({
+            "reservation_id": 7,
+            "expected_revision": "0011223344556677",
+            "evidence_kind": "observed",
+            "observed_microusd": 4210,
+            "evidence_ref": "invoice INV-2026-10 line 14"
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_viewer_or_approver_is_refused_by_the_role_gate_on_money_close_retained() {
+        let ctx = test_ctx();
+        for (who, role) in [("carol", Role::Viewer), ("dave", Role::Approver)] {
+            let sid = ctx.sessions.create(who, role, Method::Oidc);
+            let (status, body) = post_api(
+                &ctx,
+                "/api/command/money_close_retained",
+                &sid,
+                None,
+                json!({}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{who}: {body}");
+            assert_eq!(body["error"], "role admin required");
+        }
+    }
+
+    #[tokio::test]
+    async fn money_close_retained_without_an_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_eq!(
+            post_command_with(&ctx, "money_close_retained", &sid, None, &close_args()).await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn money_close_retained_with_a_valid_assertion_reaches_the_command() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = close_args();
+        let challenge = start_action(&ctx, &sid, "money_close_retained", &args).await;
+        let header = assertion_header(&ctx, &challenge);
+        // This Ctx holds no closure secret, so the COMMAND answers its own
+        // 422 not_configured: proof the gate let the assertion through.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_close_retained",
+            &sid,
+            Some(&header),
+            serde_json::from_str(&args).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "not_configured", "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_viewer_may_list_retained_reservations() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("carol", Role::Viewer, Method::Oidc);
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_list_retained",
+            &sid,
+            None,
+            json!({}),
+        )
+        .await;
+        // The plane is pending in this Ctx, so the command answers its own
+        // "bootstrapping" refusal; what matters is that no gate refused.
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "bootstrapping", "{body}");
+    }
+
     #[tokio::test]
     async fn an_assertion_bound_to_another_command_or_args_is_refused() {
         let ctx = test_ctx();

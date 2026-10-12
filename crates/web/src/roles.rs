@@ -309,6 +309,18 @@ mod tests {
         assert_eq!(required_role("delegation_revoke"), Role::Admin);
     }
 
+    /// D8: listing retained reservations is a read; closing one settles
+    /// money on the gateway, the same floor as `money_set_budget`.
+    #[test]
+    fn closing_a_retained_reservation_is_admin_and_listing_is_a_read() {
+        assert_eq!(required_role("money_list_retained"), Role::Viewer);
+        assert_eq!(
+            required_role("money_close_retained"),
+            required_role("money_set_budget")
+        );
+        assert_eq!(required_role("money_close_retained"), Role::Admin);
+    }
+
     /// A command that takes a live cloud API token in its request body is not
     /// a viewer read, whatever the upstream HTTP verb is. Its sibling, which
     /// spawns the operator's own already-authenticated CLI and never sees a
