@@ -34,8 +34,8 @@ pub use action::{ActionKind, CopilotAnnotation, ProposedAction};
 pub use agent::{Answer, CopilotError, Felyx, ToolInvocation};
 pub use config::{ConfigError, CopilotConfig, ProviderKind, SecretRef};
 pub use provider::{
-    ChatRequest, ChatTurn, LlmProvider, Message, ProviderDescriptor, ProviderError, Role, ToolCall,
-    ToolSpec, Usage, build_provider,
+    ChatRequest, ChatTurn, FUSE_KEY_HEADER, FUSE_KEY_REDACTED, FuseKey, LlmProvider, Message,
+    ProviderDescriptor, ProviderError, Role, ToolCall, ToolSpec, Usage, build_provider,
 };
 pub use service::CopilotService;
 pub use tools::{Clients, TokenfuseTraces, ToolError, ToolRegistry};

@@ -10,7 +10,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::provider::ProviderError;
+use crate::provider::{FuseKey, ProviderError};
 
 /// Which provider wire to speak. `Ollama`/`LmStudio`/`OpenAiCompat`/`OpenRouter`
 /// all use the one OpenAI-compatible client; `Anthropic` uses the Messages
@@ -98,6 +98,13 @@ pub struct CopilotConfig {
     /// carrying no agent identity. `None` (or empty after trimming) resolves to
     /// a default rather than disabling anything; see [`Self::resolved_agent_id`].
     pub agent_id: Option<String>,
+    /// `GENARYX_COPILOT_FUSE_KEY_REF` (invariant 24): `"env:VAR"` or
+    /// `"file:/abs/path"`, pointing at the gateway client key Felyx sends as
+    /// `x-fuse-key`, the way `api_key_ref` points at the provider key. Only
+    /// the reference lives here, never the key. `None`, empty, or a reference
+    /// whose value is empty sends no such header; see
+    /// [`Self::resolve_fuse_key`].
+    pub fuse_key_ref: Option<String>,
 }
 
 impl Default for CopilotConfig {
@@ -114,6 +121,7 @@ impl Default for CopilotConfig {
             max_tokens: 1024,
             run_id: "genaryx-copilot".to_string(),
             agent_id: None,
+            fuse_key_ref: None,
         }
     }
 }
@@ -226,6 +234,52 @@ impl CopilotConfig {
             _ => Ok(format!("agent://{}/genaryx/felyx", org_domain())),
         }
     }
+
+    /// `fuse_key_ref` resolved to the gateway client key Felyx sends as
+    /// `x-fuse-key` (invariant 24), or `None`.
+    ///
+    /// Unset, empty, or a reference whose value is empty after trimming:
+    /// `None`, and Felyx sends no such header, exactly as before. So a
+    /// launcher can always pass `env:<NAME>` and leave `<NAME>` empty until
+    /// an operator fills it. A reference that is neither `env:VAR` nor
+    /// `file:/path`, a variable that is not set, a file that cannot be read,
+    /// or a key [`FuseKey::new`] refuses is an error, so Felyx reports itself
+    /// disabled with the reason instead of asking a keyed gateway that would
+    /// answer `401` to every question. No error repeats the key, the variable
+    /// name or the path: an operator may have put the key itself where the
+    /// reference belongs.
+    pub fn resolve_fuse_key(&self) -> Result<Option<FuseKey>, ConfigError> {
+        let Some(reference) = self
+            .fuse_key_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        else {
+            return Ok(None);
+        };
+        let value = match SecretRef::parse(reference).map_err(|_| ConfigError::BadFuseKeyRef)? {
+            SecretRef::Env(var) => std::env::var(&var).map_err(|e| {
+                ConfigError::FuseKeyUnavailable(match e {
+                    std::env::VarError::NotPresent => {
+                        "names an environment variable that is not set".to_string()
+                    }
+                    std::env::VarError::NotUnicode(_) => {
+                        "names an environment variable that is not valid UTF-8".to_string()
+                    }
+                })
+            })?,
+            SecretRef::File(path) => std::fs::read_to_string(Path::new(&path)).map_err(|e| {
+                ConfigError::FuseKeyUnavailable(format!("names a file that cannot be read ({e})"))
+            })?,
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        FuseKey::new(value)
+            .map(Some)
+            .map_err(ConfigError::BadFuseKey)
+    }
 }
 
 /// A pointer to a secret, resolved at use, never stored in the config value.
@@ -279,6 +333,15 @@ pub enum ConfigError {
          `agent://<domain>/<path>` (agent-passport SPEC section 3)"
     )]
     BadAgentId(String),
+    #[error(
+        "GENARYX_COPILOT_FUSE_KEY_REF must be `env:VAR` or `file:/path`; what it holds is \
+         not repeated here, since it may be the key itself"
+    )]
+    BadFuseKeyRef,
+    #[error("GENARYX_COPILOT_FUSE_KEY_REF {0}")]
+    FuseKeyUnavailable(String),
+    #[error("the gateway client key GENARYX_COPILOT_FUSE_KEY_REF points at is refused: {0}")]
+    BadFuseKey(&'static str),
     #[error(transparent)]
     Provider(ProviderError),
 }
@@ -437,5 +500,208 @@ mod tests {
             ..Default::default()
         };
         assert!(no_path.resolved_agent_id().is_err());
+    }
+
+    /// A scratch file per case, under a directory this test binary owns.
+    fn fuse_key_file(name: &str, bytes: &[u8]) -> String {
+        let dir = std::env::temp_dir().join(format!("genaryx-fuse-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        format!("file:{}", path.display())
+    }
+
+    fn with_ref(reference: &str) -> CopilotConfig {
+        CopilotConfig {
+            fuse_key_ref: Some(reference.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn sent(key: Option<FuseKey>) -> Option<String> {
+        key.map(|k| k.header_value().to_str().unwrap().to_string())
+    }
+
+    /// Invariant 24, the whole resolution surface in one sequential test,
+    /// because two of its cases set a process environment variable (the same
+    /// discipline as `resolved_agent_id_defaults_explicit_empty_and_malformed`).
+    /// Empty in every spelling sends nothing; a key is trimmed and sent as
+    /// given; every refusal names the setting and repeats neither the key nor
+    /// the reference.
+    #[test]
+    fn resolve_fuse_key_unset_empty_file_env_and_refusals() {
+        // Unset, empty, blank: no header, exactly as before.
+        assert!(
+            CopilotConfig::default()
+                .resolve_fuse_key()
+                .unwrap()
+                .is_none()
+        );
+        assert!(with_ref("").resolve_fuse_key().unwrap().is_none());
+        assert!(with_ref("   ").resolve_fuse_key().unwrap().is_none());
+
+        // A file: trimmed of surrounding whitespace, sent byte for byte.
+        let r = fuse_key_file("ok", b"  sk-felyx-abc123:x~y=  \n");
+        assert_eq!(
+            sent(with_ref(&r).resolve_fuse_key().unwrap()).as_deref(),
+            Some("sk-felyx-abc123:x~y=")
+        );
+        // A file holding nothing but a newline is no key, not a refusal.
+        let r = fuse_key_file("blank", b"\n");
+        assert!(with_ref(&r).resolve_fuse_key().unwrap().is_none());
+
+        // An environment variable: empty is no key (a launcher passes the
+        // reference always and leaves the variable empty), set is the key.
+        // SAFETY: single-threaded within this test; no other test in this
+        // binary reads or writes these two names.
+        unsafe {
+            std::env::set_var("GENARYX_COPILOT_TEST_FUSE_KEY", "");
+            std::env::remove_var("GENARYX_COPILOT_TEST_FUSE_KEY_UNSET");
+        }
+        let env_ref = with_ref("env:GENARYX_COPILOT_TEST_FUSE_KEY");
+        assert!(env_ref.resolve_fuse_key().unwrap().is_none());
+        unsafe {
+            std::env::set_var("GENARYX_COPILOT_TEST_FUSE_KEY", " sk-from-the-env \n");
+        }
+        assert_eq!(
+            sent(env_ref.resolve_fuse_key().unwrap()).as_deref(),
+            Some("sk-from-the-env")
+        );
+
+        // A variable that is not set: refused, naming neither the variable
+        // nor anything else from the reference.
+        let err = with_ref("env:GENARYX_COPILOT_TEST_FUSE_KEY_UNSET")
+            .resolve_fuse_key()
+            .unwrap_err();
+        assert!(matches!(err, ConfigError::FuseKeyUnavailable(_)), "{err:?}");
+        assert!(err.to_string().contains("GENARYX_COPILOT_FUSE_KEY_REF"));
+        assert!(!err.to_string().contains("FUSE_KEY_UNSET"), "{err}");
+
+        // A file that is not there: refused, without the path.
+        let missing = std::env::temp_dir().join("genaryx-fuse-key-no-such-file-planted");
+        let err = with_ref(&format!("file:{}", missing.display()))
+            .resolve_fuse_key()
+            .unwrap_err();
+        assert!(matches!(err, ConfigError::FuseKeyUnavailable(_)), "{err:?}");
+        assert!(!err.to_string().contains("no-such-file-planted"), "{err}");
+
+        // The key pasted where the reference belongs: refused, not repeated.
+        let pasted = "sk-live-pasted-in-the-wrong-place-0123";
+        let err = with_ref(pasted).resolve_fuse_key().unwrap_err();
+        assert!(matches!(err, ConfigError::BadFuseKeyRef), "{err:?}");
+        assert!(!err.to_string().contains(pasted), "{err}");
+        assert!(!format!("{err:?}").contains(pasted));
+
+        // Keys no gateway could match as a header: refused, not repeated.
+        let long = "k".repeat(crate::provider::MAX_FUSE_KEY_BYTES + 1);
+        for (name, bad) in [
+            ("space", "sk with a space"),
+            ("control", "sk-bell\u{7}here"),
+            ("non-ascii", "sk-\u{e9}t\u{e9}-key"),
+            ("long", long.as_str()),
+        ] {
+            let r = fuse_key_file(name, bad.as_bytes());
+            let err = with_ref(&r).resolve_fuse_key().unwrap_err();
+            assert!(matches!(err, ConfigError::BadFuseKey(_)), "{name}: {err:?}");
+            assert!(!err.to_string().contains(bad), "{name}: {err}");
+        }
+        let r = fuse_key_file(
+            "max",
+            "k".repeat(crate::provider::MAX_FUSE_KEY_BYTES).as_bytes(),
+        );
+        assert!(with_ref(&r).resolve_fuse_key().unwrap().is_some());
+
+        // The config holds the reference, never the key, so printing it is safe.
+        let r = fuse_key_file("printed", b"sk-never-in-a-debug-line-42");
+        let cfg = with_ref(&r);
+        let key = cfg.resolve_fuse_key().unwrap().unwrap();
+        assert!(!format!("{cfg:?}").contains("sk-never-in-a-debug-line-42"));
+        assert!(!format!("{key:?}").contains("sk-never-in-a-debug-line-42"));
+
+        unsafe {
+            std::env::remove_var("GENARYX_COPILOT_TEST_FUSE_KEY");
+        }
+    }
+
+    /// Invariant 24, hostile key files: 200 seeds of printable keys, keys
+    /// with spaces, control characters, non-ASCII text, bytes that are not
+    /// UTF-8, and lengths either side of the limit. Each key carries a
+    /// marker no message could hold by chance. Whatever the file holds, the
+    /// resolution never panics, sends exactly the trimmed bytes when it
+    /// accepts, and never puts the marker into an error or a `Debug` line.
+    #[test]
+    fn two_hundred_seeds_of_hostile_fuse_key_files_never_leak_the_key() {
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let max = crate::provider::MAX_FUSE_KEY_BYTES;
+        let (mut accepted, mut refused) = (0, 0);
+        for seed in 0..200u64 {
+            let marker = format!("FUSEMARK{seed:04}Q");
+            let mut bytes: Vec<u8> = Vec::new();
+            if next() % 3 == 0 {
+                bytes.extend_from_slice(b" \t\n");
+            }
+            bytes.extend_from_slice(marker.as_bytes());
+            let tail_len = match next() % 4 {
+                0 => (next() % 16) as usize,
+                1 => (next() % 64) as usize,
+                2 => max - marker.len() - 2 + (next() % 5) as usize,
+                _ => (next() % 300) as usize,
+            };
+            // A third of the seeds carry a tail of printable ASCII only, so
+            // the accepting branch is exercised as often as the refusing one.
+            let clean = next() % 3 == 0;
+            for _ in 0..tail_len {
+                let r = next();
+                if clean {
+                    bytes.push(0x21 + (r % 94) as u8);
+                    continue;
+                }
+                match r % 10 {
+                    0 => bytes.push(b' '),
+                    1 => bytes.push(((r >> 8) % 0x20) as u8),
+                    2 => bytes.extend_from_slice("\u{e9}".as_bytes()),
+                    3 => bytes.push(0xff),
+                    _ => bytes.push(0x21 + ((r >> 8) % 94) as u8),
+                }
+            }
+            if next() % 3 == 0 {
+                bytes.extend_from_slice(b"\r\n");
+            }
+
+            let r = fuse_key_file(&format!("seed-{seed}"), &bytes);
+            let text = String::from_utf8(bytes.clone()).ok();
+            let trimmed = text.as_deref().map(str::trim);
+            match with_ref(&r).resolve_fuse_key() {
+                Ok(Some(key)) => {
+                    accepted += 1;
+                    let t = trimmed.expect("only UTF-8 is accepted");
+                    assert!(t.len() <= max && t.bytes().all(|b| b.is_ascii_graphic()));
+                    assert_eq!(key.header_value().to_str().unwrap(), t, "seed {seed}");
+                    assert!(!format!("{key:?}").contains(&marker), "seed {seed}");
+                }
+                Ok(None) => panic!("seed {seed}: a key carrying a marker read as no key"),
+                Err(e) => {
+                    refused += 1;
+                    if let Some(t) = trimmed {
+                        assert!(
+                            t.len() > max || !t.bytes().all(|b| b.is_ascii_graphic()),
+                            "seed {seed}: a sendable key was refused: {e}"
+                        );
+                    }
+                    assert!(!e.to_string().contains(&marker), "seed {seed}: {e}");
+                    assert!(!format!("{e:?}").contains(&marker), "seed {seed}");
+                }
+            }
+        }
+        assert!(
+            accepted > 20 && refused > 20,
+            "{accepted} accepted, {refused} refused"
+        );
     }
 }

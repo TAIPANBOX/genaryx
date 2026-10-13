@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::{
-    ChatRequest, ChatTurn, LlmProvider, Message, ProviderDescriptor, ProviderError, Role, ToolCall,
-    Usage, check_residency, residency_client, system_lookup,
+    ChatRequest, ChatTurn, FUSE_KEY_HEADER, FuseKey, LlmProvider, Message, ProviderDescriptor,
+    ProviderError, Role, ToolCall, Usage, check_residency, residency_client, system_lookup,
 };
 use crate::resolver::HostnameLookup;
 
@@ -33,6 +33,10 @@ pub struct AnthropicMessages {
     /// `agent://<org_domain>/genaryx/felyx` default), never logged above
     /// `debug` and never alongside `api_key`.
     agent_id: String,
+    /// Invariant 24: the gateway client key, sent as `x-fuse-key` when set,
+    /// so a TokenFuse gateway with client keys on admits Felyx instead of
+    /// answering `401`. `None` sends no such header, exactly as before.
+    fuse_key: Option<FuseKey>,
     http: reqwest::Client,
 }
 
@@ -91,18 +95,24 @@ impl AnthropicMessages {
             local,
             run_id,
             agent_id,
+            fuse_key: None,
             http,
         })
+    }
+
+    /// The gateway client key to present as `x-fuse-key` (invariant 24);
+    /// `None` keeps the client exactly as it was.
+    #[must_use]
+    pub fn with_fuse_key(mut self, fuse_key: Option<FuseKey>) -> Self {
+        self.fuse_key = fuse_key;
+        self
     }
 
     fn endpoint(&self) -> String {
         format!("{}/v1/messages", self.base_url.trim_end_matches('/'))
     }
-}
 
-#[async_trait]
-impl LlmProvider for AnthropicMessages {
-    async fn chat(&self, req: ChatRequest) -> Result<ChatTurn, ProviderError> {
+    async fn exchange(&self, req: ChatRequest) -> Result<ChatTurn, ProviderError> {
         let mut body = json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
@@ -126,13 +136,17 @@ impl LlmProvider for AnthropicMessages {
             body["tools"] = Value::Array(tools);
         }
 
-        let resp = self
+        let mut request = self
             .http
             .post(self.endpoint())
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("x-fuse-run-id", &self.run_id)
-            .header("x-fuse-agent-id", &self.agent_id)
+            .header("x-fuse-agent-id", &self.agent_id);
+        if let Some(key) = &self.fuse_key {
+            request = request.header(FUSE_KEY_HEADER, key.header_value());
+        }
+        let resp = request
             .json(&body)
             .send()
             .await
@@ -149,6 +163,15 @@ impl LlmProvider for AnthropicMessages {
             });
         }
         parse_anthropic_response(&text)
+    }
+}
+
+#[async_trait]
+impl LlmProvider for AnthropicMessages {
+    async fn chat(&self, req: ChatRequest) -> Result<ChatTurn, ProviderError> {
+        self.exchange(req)
+            .await
+            .map_err(|e| e.without_fuse_key(self.fuse_key.as_ref()))
     }
 
     fn descriptor(&self) -> ProviderDescriptor {

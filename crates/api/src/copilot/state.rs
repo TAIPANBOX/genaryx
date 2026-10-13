@@ -158,6 +158,11 @@ fn config_from_env() -> CopilotConfig {
         // is fine: `CopilotConfig::resolved_agent_id` derives a default from
         // `GENARYX_ORG_DOMAIN` rather than treating this as required.
         agent_id: std::env::var("GENARYX_COPILOT_AGENT_ID").ok(),
+        // Invariant 24: a REFERENCE to the gateway client key Felyx sends as
+        // `x-fuse-key` (`env:VAR` or `file:/path`, like the API key's), read
+        // verbatim. Unset or empty sends no such header;
+        // `CopilotConfig::resolve_fuse_key` decides everything past that.
+        fuse_key_ref: std::env::var("GENARYX_COPILOT_FUSE_KEY_REF").ok(),
         ..CopilotConfig::default()
     }
 }
@@ -364,6 +369,7 @@ mod tests {
             std::env::set_var("GENARYX_COPILOT_MODEL", "qwen2.5:3b");
             std::env::remove_var("GENARYX_COPILOT_ALLOW_REMOTE");
             std::env::remove_var("GENARYX_COPILOT_AGENT_ID");
+            std::env::remove_var("GENARYX_COPILOT_FUSE_KEY_REF");
             let cfg = config_from_env();
             assert_eq!(cfg.provider, ProviderKind::Ollama);
             assert_eq!(cfg.base_url.as_deref(), Some("http://127.0.0.1:11434/v1"));
@@ -377,6 +383,9 @@ mod tests {
             // config type at all, so `CopilotConfig::resolved_agent_id`'s own
             // default derivation is what runs, not this shell.
             assert_eq!(cfg.agent_id, None);
+            // Unset (invariant 24): no client key reference, so Felyx sends no
+            // x-fuse-key at all.
+            assert_eq!(cfg.fuse_key_ref, None);
 
             // The BYO-cloud opt-in is the literal "1", nothing looser.
             std::env::set_var("GENARYX_COPILOT_ALLOW_REMOTE", "true");
@@ -396,6 +405,18 @@ mod tests {
             assert_eq!(
                 config_from_env().agent_id.as_deref(),
                 Some("agent://acme.example/genaryx/felyx")
+            );
+
+            // GENARYX_COPILOT_FUSE_KEY_REF (invariant 24): the reference
+            // reaches the config verbatim; the key it points at is read only
+            // by `CopilotConfig::resolve_fuse_key`, never here.
+            std::env::set_var(
+                "GENARYX_COPILOT_FUSE_KEY_REF",
+                "file:/run/felyx/gateway-client-key",
+            );
+            assert_eq!(
+                config_from_env().fuse_key_ref.as_deref(),
+                Some("file:/run/felyx/gateway-client-key")
             );
 
             // GENARYX_COPILOT_LOCAL_HOSTNAMES (2026-09-27, invariant 14):
@@ -421,6 +442,7 @@ mod tests {
                 "GENARYX_COPILOT_ALLOW_REMOTE",
                 "GENARYX_COPILOT_AGENT_ID",
                 "GENARYX_COPILOT_LOCAL_HOSTNAMES",
+                "GENARYX_COPILOT_FUSE_KEY_REF",
             ] {
                 std::env::remove_var(var);
             }

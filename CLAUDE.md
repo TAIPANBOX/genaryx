@@ -1215,6 +1215,89 @@ an absent invariant.
     runs; for a console at or after this change it is redundant, and removing
     it is theirs.)*
 
+24. **Felyx presents a gateway client key of its own when the operator gives
+    it one, and shows that key nowhere.** A TokenFuse gateway with client
+    keys on (`TOKENFUSE_CLIENT_KEYS`) refuses every metered call that carries
+    no known `x-fuse-key` with a `401`, before anything else about the call
+    is read (tokenfuse v1.11.0, `crates/gateway/src/proxy.rs`,
+    `resolve_client_key`). stack-single#115 lets its installer turn client
+    keys on, and Felyx, which calls that same gateway, sent no such header
+    anywhere, so with keys on every question would be refused.
+    `@decided 2026-10-13`: an optional console setting names a key Felyx
+    sends as `x-fuse-key` on its gateway calls; the key is never logged or
+    shown, and an empty setting changes nothing.
+
+    `GENARYX_COPILOT_FUSE_KEY_REF` is a reference, `env:<NAME>` or
+    `file:<path>`, the same form as `GENARYX_COPILOT_API_KEY_REF`
+    (`@claude 2026-10-13`: chosen over a variable holding the key, so
+    `CopilotConfig` and its `Debug` hold where the key is and never the key,
+    and a launcher can mount it as a file). `CopilotConfig::resolve_fuse_key`
+    (`crates/copilot/src/config.rs`): unset, empty, or a reference whose
+    value trims to empty is no key, and both provider clients then send
+    exactly what they sent before, so a launcher can always pass
+    `env:<NAME>` and leave the variable empty. A reference in neither form, a
+    variable that is not set, a file that cannot be read, or a key
+    `FuseKey::new` refuses (empty, over 1024 bytes, or anything but printable
+    ASCII, none of which a gateway could match as a header) fails
+    construction, so Felyx reports itself disabled with the reason and the
+    console keeps serving its other panels. No reason repeats the key, the
+    variable name or the path, because an operator may have pasted the key
+    where the reference belongs. The key is trimmed, as tokenfuse trims the
+    header it is presented.
+
+    `FuseKey` (`crates/copilot/src/provider/mod.rs`) prints as
+    `FuseKey(<redacted>)` and becomes a header value marked sensitive, so
+    `http`'s own `Debug` prints `Sensitive`. Both clients pass every error out
+    of `chat` through `ProviderError::without_fuse_key`, which replaces the
+    key with `[x-fuse-key redacted]` in the text of every variant: a gateway,
+    or something posing as one, that echoes request headers into its error
+    body cannot put the key on the operator's screen or into the answer
+    `copilot_ask` returns. Nothing on the provider error path writes a log
+    line (`@claude 2026-10-13`, by search of `crates/copilot`,
+    `crates/api/src/copilot` and `crates/web/src/dispatch.rs`).
+    *(test: `crates/copilot/tests/it/fuse_key_header_test.rs`'s seven, on a
+    hand-rolled stub: `anthropic_request_carries_the_configured_x_fuse_key_header`,
+    `openai_compat_request_carries_the_configured_x_fuse_key_header`,
+    `no_fuse_key_configured_sends_no_x_fuse_key_header`,
+    `a_gateway_that_echoes_the_fuse_key_never_gets_it_into_felyxs_error`,
+    `felyx_reads_its_fuse_key_file_and_sends_it_through_the_service` (the
+    seam from configuration to the wire, through `CopilotService`),
+    `a_keyed_gateway_refusal_reaches_the_operator_without_the_fuse_key` (the
+    text `copilot_ask` returns) and
+    `a_fuse_key_felyx_cannot_send_disables_it_without_repeating_the_key`;
+    `crates/copilot/src/config.rs`'s
+    `resolve_fuse_key_unset_empty_file_env_and_refusals` and
+    `two_hundred_seeds_of_hostile_fuse_key_files_never_leak_the_key` (keys
+    with spaces, control characters, non-ASCII text, bytes that are not
+    UTF-8 and lengths either side of the limit, each carrying a marker no
+    error or `Debug` line may hold); `crates/copilot/src/provider/mod.rs`'s
+    `a_fuse_key_is_sensitive_and_never_printed`,
+    `an_error_that_quotes_the_fuse_key_is_redacted_in_every_variant` and
+    `a_fuse_key_that_cannot_be_a_header_is_refused_without_repeating_it`;
+    `crates/api/src/copilot/state.rs`'s
+    `config_from_env_reads_the_provider_surface`, extended. Red first in CI
+    on the test-only commit `5634d7a` of genaryx#108: nothing compiled, 34 errors in `genaryx-copilot`'s unit tests, 11 in its
+    integration binary and 2 in `genaryx-api`'s, each naming what did not
+    exist yet (`FuseKey`, `fuse_key_ref`, `resolve_fuse_key`,
+    `with_fuse_key`, `without_fuse_key`, `MAX_FUSE_KEY_BYTES`,
+    `FUSE_KEY_REDACTED`); the assertions themselves go red through the
+    mutants below.
+    Seven product mutants and one non-fault are cases in
+    `scripts/gates-have-teeth.sh`: either client's header renamed, the
+    resolved key dropped, an empty value refused, the redaction reversed, a
+    key with a space accepted, the sensitive mark removed, and the marker's
+    comment reworded, which must pass. Scenarios:
+    `features/felyx-presents-a-gateway-client-key.feature`, six, each bound;
+    gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: the key goes to whatever
+    `GENARYX_COPILOT_BASE_URL` names, so pointed straight at a provider with
+    a key set, the provider receives it; a fragment of the key echoed back
+    is not recognised; the provider API key gets none of this, and a
+    `GENARYX_COPILOT_API_KEY_REF` holding a pasted key is still repeated in
+    its own error; no live gateway has admitted Felyx with a key, the stub
+    is this repository's own; no launcher sets the variable yet.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

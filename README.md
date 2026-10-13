@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1002-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1014-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -227,7 +227,14 @@ box; these frames are not it, and say so here rather than in a footnote.
   naming it. The check also covers over claims: a run called over budget
   that the tools returned under its budget, or an agent named as over budget
   when none of its runs is at or over, is sent back the same way, and the
-  revision request asks for a fresh answer rather than an apology.
+  revision request asks for a fresh answer rather than an apology. Since
+  2026-10-13 (invariant 24) Felyx can present a gateway client key of its
+  own: `GENARYX_COPILOT_FUSE_KEY_REF` (`env:<NAME>` or `file:<path>`, like
+  the provider key's reference) names it, Felyx sends it as `x-fuse-key`,
+  and a TokenFuse gateway with client keys on admits its questions instead
+  of answering 401. Left empty, nothing is sent; the key appears in no log,
+  error message or debug line, and a gateway that echoes it back has it
+  replaced by a marker before the operator sees the refusal.
 - **The web shell** (`genaryx-web` + `genaryx-api`). `genaryx-api` holds the
   command layer the browser console calls, so every privileged action goes
   through one chokepoint. Operator auth is one account per box, Argon2id,

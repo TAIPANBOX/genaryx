@@ -63,6 +63,9 @@
           "GENARYX_COPILOT_BASE_URL": {
             "required": false
           },
+          "GENARYX_COPILOT_FUSE_KEY_REF": {
+            "required": false
+          },
           "GENARYX_COPILOT_LOCAL_HOSTNAMES": {
             "required": false
           },
@@ -164,6 +167,10 @@
         "the_secret_is_read_by_reference": {
           "value": "GENARYX_COPILOT_API_KEY_REF=env:<NAME>",
           "why": "The copilot's key is not read from a variable this repository names. It reads the REFERENCE and then the variable the reference points at, so the name is the deployment's choice. stack-k8s picks GENARYX_COPILOT_KEY. Nothing here can check a name it never sees."
+        },
+        "the_gateway_client_key_is_read_by_reference_too": {
+          "value": "GENARYX_COPILOT_FUSE_KEY_REF=env:<NAME> or file:<path>",
+          "why": "The key Felyx presents to a TokenFuse gateway as x-fuse-key (invariant 24) is read the same way as the provider key: the reference, then whatever variable or file it names, so that name is the deployment's choice too. Empty in every spelling sends no x-fuse-key."
         },
         "the_ui_is_a_directory_it_is_given": {
           "value": "--ui <dir>",
