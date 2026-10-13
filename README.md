@@ -19,9 +19,9 @@ before you read further.
   as they were written rather than quietly edited, because they record how the
   thing was built and when each decision was made. Read them as history; the
   code is the present tense.
-- **The history is here, minus five media files.** Everything up to the flip is
-  preserved. Two screenshots carrying a pairing QR (a torn-down address and two
-  one-time codes that expired in 274 seconds on 2026-07-20) and three screen
+- **The history is here, minus some media files.** Everything up to the flip is
+  preserved. Screenshots carrying a pairing QR (a torn-down address and two
+  one-time codes that expired in 274 seconds on 2026-07-20) and screen
   recordings from the same session were removed before publication. Nothing
   else was rewritten, and no credential, key or certificate has ever been
   committed here; that was verified across every commit before publication.
@@ -62,7 +62,7 @@ control plane never faces the internet, and Felyx holds no signing key.</sub>
 Genaryx is the console plane of the TAIPANBOX agent-governance stack, and it is
 the operator's way IN: the counterpart to heraldyx, which is the stack's way out
 to a mailbox and is explicitly a view that never acts. This one acts, which is
-why every write it makes is a signed command rather than a store edit.
+why every write it makes is a command, signed or bearer-keyed, rather than a store edit.
 
 ```mermaid
 flowchart TB
@@ -97,7 +97,7 @@ flowchart TB
   HX -->|"one mail, a view and never an action"| OPS["your mailbox"]
   HX ==>|"alert_sent"| HJ[("heraldyx's own hash-chained journal, not this bus")]
   YOU(["you, in a browser over your own tunnel"]) --> GX[["Genaryx: the console over all of it"]]
-  GX -->|"signed commands: the kill, an approval, a policy"| CL
+  GX -->|"commands: the kill, an approval, a policy"| CL
   GX -->|"signed commands"| WX
   GX ==>|"console_command"| BUS
   GX -.->|"reads it"| IDX
@@ -136,8 +136,9 @@ flowchart TB
   traffic, an admission baseline) and the read-only planes (Identity, Quality,
   Memory) write nothing, each saying so in its own module. About the planes it
   reads it emits nothing at all: it is a surface, not a plane that emits. What it
-  writes outward are signed commands: the kill, an approval decision, a policy
-  put or delete.
+  writes outward are signed commands (the kill, an approval decision) and, through
+  the lifecycle block and unblock, a policy put or delete at Wardryx, sent with a
+  bearer key rather than a signature.
 - **Talks to**: everything above, and the rule that shapes all of it is that
   **the console never writes another service's store.** It mutates planes only
   through signed commands to Cloud and Wardryx, never by touching a database
@@ -150,7 +151,7 @@ Run the whole open stack locally with one command via [**stack-up**](https://git
 
 <div align="center">
 
-<img src="docs/console.png" alt="genaryx console: it reads each plane the way that plane exposes itself, writes only signed commands confirmed by a passkey, emits its own console_command onto the shared bus, and groups twenty tabs by how an operator works" width="960">
+<img src="docs/console.png" alt="genaryx console: it reads each plane the way that plane exposes itself, writes only signed or bearer-keyed commands, with a passkey confirming a sensitive one wherever the operator has enrolled one, emits its own console_command onto the shared bus, and groups twenty tabs by how an operator works" width="960">
 
 <sub>How the console is put together, next to the four tabs below.</sub>
 
@@ -188,7 +189,7 @@ box; these frames are not it, and say so here rather than in a footnote.
 - **Phases 0-4: the console itself.** One shared Rust core (`genaryx-core`:
   ingest, store, reducers, commands, signing ceremonies, alerts, evidence,
   ToolRunner, MCP), environment connectors (FS, SSH, Cloud SSE, cloud
-  inventory), and **all 17 tabs redesigned** (shared dash kit + FreshBadge).
+  inventory), and **every tab redesigned** (shared dash kit + FreshBadge).
   Phase-4 live exit gate **passed 2026-07-18**: the console raised its own
   WireGuard tunnel from the Remote panel to a Hetzner box whose control plane
   was closed to the internet (ufw), and sent a hardware-signed ES256 kill
