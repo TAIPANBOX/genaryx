@@ -170,7 +170,7 @@
         },
         "the_gateway_client_key_is_read_by_reference_too": {
           "value": "GENARYX_COPILOT_FUSE_KEY_REF=env:<NAME> or file:<path>",
-          "why": "The key Felyx presents to a TokenFuse gateway as x-fuse-key (invariant 24) is read the same way as the provider key: the reference, then whatever variable or file it names, so that name is the deployment's choice too. Empty in every spelling sends no x-fuse-key."
+          "why": "The key Felyx presents to a TokenFuse gateway as x-fuse-key (invariant 24) is read the same way as the provider key: the reference, then whatever variable or file it names, so that name is the deployment's choice too. stack-single picks GENARYX_COPILOT_FUSE_KEY. Empty in every spelling sends no x-fuse-key."
         },
         "the_ui_is_a_directory_it_is_given": {
           "value": "--ui <dir>",
