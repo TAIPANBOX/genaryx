@@ -18,6 +18,7 @@
 
 mod agent_id_header_test;
 mod felyx_reads_budgets_test;
+mod fuse_key_header_test;
 mod money_reaches_the_model_as_usd_test;
 mod no_signer;
 mod residency_hostname_test;

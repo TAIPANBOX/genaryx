@@ -356,3 +356,111 @@ pub(crate) fn map_send_error(url: &str, e: reqwest::Error) -> ProviderError {
     }
     ProviderError::Transport(e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Invariant 24: the key is a secret wherever a value can be printed.
+    /// `Debug` on the key, on the header value it becomes, and on a provider
+    /// holding it shows no part of it, and the header is marked sensitive so
+    /// `http`'s own formatting hides it too.
+    #[test]
+    fn a_fuse_key_is_sensitive_and_never_printed() {
+        let given = "sk-felyx-0123456789abcdef:x~y";
+        let key = FuseKey::new(given).expect("printable ASCII is a key");
+        assert_eq!(format!("{key:?}"), "FuseKey(<redacted>)");
+        let header = key.header_value();
+        assert!(
+            header.is_sensitive(),
+            "the header value must be marked sensitive"
+        );
+        assert_eq!(format!("{header:?}"), "Sensitive");
+        assert_eq!(
+            header.to_str().unwrap(),
+            given,
+            "the bytes sent are the key"
+        );
+
+        let provider = OpenAiCompat::new(
+            ProviderKind::Ollama,
+            "http://127.0.0.1:11434/v1".into(),
+            "qwen3:8b".into(),
+            None,
+            false,
+            Vec::new(),
+            "genaryx-copilot".into(),
+            "agent://local/genaryx/felyx".into(),
+        )
+        .unwrap()
+        .with_fuse_key(Some(key));
+        let printed = format!("{provider:?}");
+        assert!(
+            !printed.contains(given),
+            "a provider's Debug must not carry the key: {printed}"
+        );
+    }
+
+    /// Every variant of [`ProviderError`] that carries text has the key
+    /// replaced, and with no key configured nothing is touched.
+    #[test]
+    fn an_error_that_quotes_the_fuse_key_is_redacted_in_every_variant() {
+        let given = "sk-felyx-echoed-back-0123456789";
+        let key = FuseKey::new(given).unwrap();
+        let quoting = |s: &str| format!("before {s} middle {s} after");
+        let errors = [
+            ProviderError::NonLocalEndpointRefused {
+                url: quoting(given),
+            },
+            ProviderError::Config(quoting(given)),
+            ProviderError::Transport(quoting(given)),
+            ProviderError::Http {
+                status: 401,
+                body: quoting(given),
+            },
+            ProviderError::Decode(quoting(given)),
+        ];
+        for error in errors {
+            let raw = error.to_string();
+            assert!(raw.contains(given), "the fixture must quote the key: {raw}");
+            let clean = error.without_fuse_key(Some(&key));
+            let shown = clean.to_string();
+            assert!(!shown.contains(given), "the key survived: {shown}");
+            assert!(!format!("{clean:?}").contains(given), "Debug kept the key");
+            assert_eq!(
+                shown.matches(FUSE_KEY_REDACTED).count(),
+                2,
+                "every occurrence is replaced: {shown}"
+            );
+        }
+
+        let untouched = ProviderError::Transport(quoting(given)).without_fuse_key(None);
+        assert!(
+            untouched.to_string().contains(given),
+            "no key configured, nothing to redact"
+        );
+    }
+
+    /// What [`FuseKey::new`] refuses, and that no reason repeats the value.
+    #[test]
+    fn a_fuse_key_that_cannot_be_a_header_is_refused_without_repeating_it() {
+        let long = "k".repeat(MAX_FUSE_KEY_BYTES + 1);
+        for bad in [
+            "",
+            "sk with a space",
+            "sk-tab\there",
+            "sk-newline\nhere",
+            "sk-bell\u{7}",
+            "sk-del\u{7f}",
+            "sk-\u{e9}t\u{e9}",
+            long.as_str(),
+        ] {
+            let reason = FuseKey::new(bad).expect_err("refused");
+            if !bad.is_empty() {
+                assert!(!reason.contains(bad), "the reason repeats the value");
+            }
+        }
+        assert!(FuseKey::new(&"k".repeat(MAX_FUSE_KEY_BYTES)).is_ok());
+        assert!(FuseKey::new("!#$%&'()*+,-./0123456789:;<=>?@AZ[]^_`az{|}~").is_ok());
+    }
+}
