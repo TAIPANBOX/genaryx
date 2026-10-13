@@ -212,7 +212,10 @@ impl CopilotConfig {
     pub fn resolve_api_key(&self) -> Result<Option<String>, ConfigError> {
         match &self.api_key_ref {
             None => Ok(None),
-            Some(reference) => SecretRef::parse(reference)?.resolve().map(Some),
+            Some(reference) => SecretRef::parse(reference)
+                .map_err(|_| ConfigError::BadApiKeyRef)?
+                .resolve()
+                .map(Some),
         }
     }
 
@@ -290,19 +293,22 @@ pub enum SecretRef {
 }
 
 impl SecretRef {
+    /// Refuses without keeping what it was given: a reference that is not
+    /// `env:VAR` or `file:/path` may be the secret itself, pasted in the wrong
+    /// place, and an error must not repeat it (invariant 24).
     pub fn parse(reference: &str) -> Result<Self, ConfigError> {
         if let Some(var) = reference.strip_prefix("env:") {
             if var.is_empty() {
-                return Err(ConfigError::BadSecretRef(reference.to_string()));
+                return Err(ConfigError::BadSecretRef);
             }
             Ok(SecretRef::Env(var.to_string()))
         } else if let Some(path) = reference.strip_prefix("file:") {
             if path.is_empty() {
-                return Err(ConfigError::BadSecretRef(reference.to_string()));
+                return Err(ConfigError::BadSecretRef);
             }
             Ok(SecretRef::File(path.to_string()))
         } else {
-            Err(ConfigError::BadSecretRef(reference.to_string()))
+            Err(ConfigError::BadSecretRef)
         }
     }
 
@@ -324,8 +330,16 @@ pub enum ConfigError {
     Toml(String),
     #[error("copilot config is missing required field `{0}`")]
     MissingField(&'static str),
-    #[error("api_key_ref must be `env:VAR` or `file:/path`, got `{0}`")]
-    BadSecretRef(String),
+    #[error(
+        "a secret reference must be `env:VAR` or `file:/path`; what it holds is not repeated \
+         here, since it may be the key itself"
+    )]
+    BadSecretRef,
+    #[error(
+        "GENARYX_COPILOT_API_KEY_REF (api_key_ref) must be `env:VAR` or `file:/path`; what it \
+         holds is not repeated here, since it may be the key itself"
+    )]
+    BadApiKeyRef,
     #[error("copilot secret unavailable: {0}")]
     SecretUnavailable(String),
     #[error(
@@ -703,5 +717,39 @@ mod tests {
             accepted > 20 && refused > 20,
             "{accepted} accepted, {refused} refused"
         );
+    }
+
+    /// The provider key pasted where `GENARYX_COPILOT_API_KEY_REF` belongs
+    /// (`api_key_ref`, which takes `env:VAR` or `file:/path`). Felyx's
+    /// disabled reason is the construction error's Display, and the console
+    /// shows it to any signed-in viewer, so neither the Display nor the Debug
+    /// line may hold the key, and the reason names the setting and the two
+    /// accepted forms, the way the fuse key's refusal does (invariant 24).
+    #[test]
+    fn an_api_key_ref_that_holds_the_key_is_refused_without_repeating_it() {
+        use crate::service::CopilotService;
+        use crate::tools::Clients;
+
+        let pasted = "sk-ant-api03-pasted-where-the-reference-belongs-0123";
+        let cfg = CopilotConfig {
+            provider: ProviderKind::Ollama,
+            base_url: Some("http://127.0.0.1:11434/v1".into()),
+            model: Some("qwen2.5:3b".into()),
+            api_key_ref: Some(pasted.to_string()),
+            ..Default::default()
+        };
+
+        let err = cfg.resolve_api_key().unwrap_err();
+        assert!(!err.to_string().contains(pasted), "{err}");
+        assert!(!format!("{err:?}").contains(pasted), "{err:?}");
+
+        let reason = match CopilotService::from_config_and_clients(&cfg, Clients::default()) {
+            Ok(_) => panic!("Felyx was built from a reference it cannot read"),
+            Err(e) => e.to_string(),
+        };
+        assert!(!reason.contains(pasted), "{reason}");
+        assert!(reason.contains("GENARYX_COPILOT_API_KEY_REF"), "{reason}");
+        assert!(reason.contains("env:VAR"), "{reason}");
+        assert!(reason.contains("file:/path"), "{reason}");
     }
 }

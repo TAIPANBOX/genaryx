@@ -1293,10 +1293,26 @@ an absent invariant.
     Where it says nothing: the key goes to whatever
     `GENARYX_COPILOT_BASE_URL` names, so pointed straight at a provider with
     a key set, the provider receives it; a fragment of the key echoed back
-    is not recognised; the provider API key gets none of this, and a
-    `GENARYX_COPILOT_API_KEY_REF` holding a pasted key is still repeated in
-    its own error; no live gateway has admitted Felyx with a key, the stub
+    is not recognised; the provider API key gets none of the client-key
+    handling (its own pasted-key refusal is in the paragraph after this
+    marker); no live gateway has admitted Felyx with a key, the stub
     is this repository's own; no launcher sets the variable yet.)*
+
+    The provider key's own reference, `GENARYX_COPILOT_API_KEY_REF`
+    (`api_key_ref`), gets the same refusal.
+    `@decided 2026-10-13`: a value in neither `env:` nor `file:` form fails
+    when Felyx is built, with a reason that names the setting and the two
+    accepted forms and repeats neither the reference nor what it holds,
+    since such a value is often the key itself pasted in the wrong place.
+    That reason is the one the console shows as Felyx's disabled reason.
+    *(test: `crates/copilot/src/config.rs`'s
+    `an_api_key_ref_that_holds_the_key_is_refused_without_repeating_it`;
+    scenarios: `features/a-provider-key-pasted-as-its-reference-is-not-repeated.feature`,
+    1, bound; gate: `scripts/gates-have-teeth.sh`, a case that puts the echo
+    back through the refusal and requires the named test to fail, and a
+    non-fault rewording of the comment beside it. Not held: a `file:` value
+    that is itself the key still shows in the unreadable-file message,
+    because that message names the path, as every real reference's does.)*
 
 ## Decisions that have no gate yet
 
