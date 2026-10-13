@@ -212,7 +212,10 @@ impl CopilotConfig {
     pub fn resolve_api_key(&self) -> Result<Option<String>, ConfigError> {
         match &self.api_key_ref {
             None => Ok(None),
-            Some(reference) => SecretRef::parse(reference)?.resolve().map(Some),
+            Some(reference) => SecretRef::parse(reference)
+                .map_err(|_| ConfigError::BadApiKeyRef)?
+                .resolve()
+                .map(Some),
         }
     }
 
@@ -290,19 +293,22 @@ pub enum SecretRef {
 }
 
 impl SecretRef {
+    /// Refuses without keeping what it was given: a reference that is not
+    /// `env:VAR` or `file:/path` may be the secret itself, pasted in the wrong
+    /// place, and an error must not repeat it (invariant 24).
     pub fn parse(reference: &str) -> Result<Self, ConfigError> {
         if let Some(var) = reference.strip_prefix("env:") {
             if var.is_empty() {
-                return Err(ConfigError::BadSecretRef(reference.to_string()));
+                return Err(ConfigError::BadSecretRef);
             }
             Ok(SecretRef::Env(var.to_string()))
         } else if let Some(path) = reference.strip_prefix("file:") {
             if path.is_empty() {
-                return Err(ConfigError::BadSecretRef(reference.to_string()));
+                return Err(ConfigError::BadSecretRef);
             }
             Ok(SecretRef::File(path.to_string()))
         } else {
-            Err(ConfigError::BadSecretRef(reference.to_string()))
+            Err(ConfigError::BadSecretRef)
         }
     }
 
@@ -324,8 +330,16 @@ pub enum ConfigError {
     Toml(String),
     #[error("copilot config is missing required field `{0}`")]
     MissingField(&'static str),
-    #[error("api_key_ref must be `env:VAR` or `file:/path`, got `{0}`")]
-    BadSecretRef(String),
+    #[error(
+        "a secret reference must be `env:VAR` or `file:/path`; what it holds is not repeated \
+         here, since it may be the key itself"
+    )]
+    BadSecretRef,
+    #[error(
+        "GENARYX_COPILOT_API_KEY_REF (api_key_ref) must be `env:VAR` or `file:/path`; what it \
+         holds is not repeated here, since it may be the key itself"
+    )]
+    BadApiKeyRef,
     #[error("copilot secret unavailable: {0}")]
     SecretUnavailable(String),
     #[error(

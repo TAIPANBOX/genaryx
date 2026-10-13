@@ -438,6 +438,21 @@ run_case "invariant 24: the redaction marker's own comment reworded" pass \
 	"$fuse_key_gate" \
 	"$(py 'edit("crates/copilot/src/provider/mod.rs", "/// What stands in for the client key wherever error text would carry it.", "/// The text that replaces the client key wherever an error would carry it.")')"
 
+# invariant 24, the provider key's own reference: a key pasted where
+# GENARYX_COPILOT_API_KEY_REF belongs is refused without being repeated. The
+# mutant puts the echo back by routing the refusal through an error that already
+# carries text, so it compiles and the named test must go red.
+api_key_ref_gate='cargo test -q --no-fail-fast -p genaryx-copilot an_api_key_ref_that_holds'
+
+run_case "api_key_ref: the pasted key echoed back into the refusal" fail \
+	"$api_key_ref_gate" \
+	"$(py 'edit("crates/copilot/src/config.rs", ".map_err(|_| ConfigError::BadApiKeyRef)?", ".map_err(|_| ConfigError::SecretUnavailable(format!(\"api_key_ref must be env:VAR or file:/path, got {reference}\")))?")')" \
+	"an_api_key_ref_that_holds_the_key_is_refused_without_repeating_it"
+
+run_case "api_key_ref: the resolution's own comment reworded" pass \
+	"$api_key_ref_gate" \
+	"$(py 'edit("crates/copilot/src/config.rs", "/// Resolve `api_key_ref` to the secret value, or `None` if unset. Never logs", "/// Resolve `api_key_ref` to the secret value, or `None` when it is unset. Never logs")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"
