@@ -394,6 +394,50 @@ run_case "invariant 23: the accessor's own comment reworded" pass \
 	"$operator_gate" \
 	"$(py 'edit("crates/web/src/ctx.rs", "/// The operator record, read from disk again for as long as there is none.", "/// The operator record, read from disk again while none is held.")')"
 
+# invariant 24: Felyx presents its own gateway client key as x-fuse-key, an
+# empty setting sends none, and the key is never shown. Product mutants; the
+# gate is the tests that hold it, each of them named with `fuse_key`.
+fuse_key_gate='cargo test -q --no-fail-fast -p genaryx-copilot fuse_key'
+
+run_case "invariant 24: the Anthropic client sends no x-fuse-key" fail \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/provider/anthropic.rs", "request = request.header(FUSE_KEY_HEADER, key.header_value());", "request = request.header(\"x-fuse-key-planted\", key.header_value());")')" \
+	"anthropic_request_carries_the_configured_x_fuse_key_header"
+
+run_case "invariant 24: the OpenAI-compatible client sends no x-fuse-key" fail \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/provider/openai.rs", "request = request.header(FUSE_KEY_HEADER, key.header_value());", "request = request.header(\"x-fuse-key-planted\", key.header_value());")')" \
+	"openai_compat_request_carries_the_configured_x_fuse_key_header"
+
+run_case "invariant 24: the configured key is read and then dropped" fail \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/config.rs", "FuseKey::new(value)\n            .map(Some)", "FuseKey::new(value)\n            .map(|_| None)")')" \
+	"felyx_reads_its_fuse_key_file_and_sends_it_through_the_service"
+
+run_case "invariant 24: an empty key is refused instead of sending nothing" fail \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/config.rs", "            return Ok(None);\n        }\n        FuseKey::new(value)", "            return Err(ConfigError::BadFuseKey(\"it is empty\"));\n        }\n        FuseKey::new(value)")')" \
+	"resolve_fuse_key_unset_empty_file_env_and_refusals"
+
+run_case "invariant 24: an echoed key reaches the error unredacted" fail \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/provider/mod.rs", "text.replace(key.as_str(), FUSE_KEY_REDACTED)", "text.replace(FUSE_KEY_REDACTED, key.as_str())")')" \
+	"a_gateway_that_echoes_the_fuse_key_never_gets_it_into_felyxs_error"
+
+run_case "invariant 24: a key with a space is accepted" fail \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/provider/mod.rs", "if !value.bytes().all(|b| b.is_ascii_graphic()) {", "if value.bytes().any(|b| b == 0) {")')" \
+	"a_fuse_key_that_cannot_be_a_header_is_refused_without_repeating_it"
+
+run_case "invariant 24: the header value is not marked sensitive" fail \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/provider/mod.rs", "header.set_sensitive(true);", "header.set_sensitive(false);")')" \
+	"a_fuse_key_is_sensitive_and_never_printed"
+
+run_case "invariant 24: the redaction marker's own comment reworded" pass \
+	"$fuse_key_gate" \
+	"$(py 'edit("crates/copilot/src/provider/mod.rs", "/// What stands in for the client key wherever error text would carry it.", "/// The text that replaces the client key wherever an error would carry it.")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"

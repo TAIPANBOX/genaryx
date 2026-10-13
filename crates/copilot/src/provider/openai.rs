@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::{
-    ChatRequest, ChatTurn, LlmProvider, Message, ProviderDescriptor, ProviderError, Role, ToolCall,
-    Usage, check_residency, residency_client, system_lookup,
+    ChatRequest, ChatTurn, FUSE_KEY_HEADER, FuseKey, LlmProvider, Message, ProviderDescriptor,
+    ProviderError, Role, ToolCall, Usage, check_residency, residency_client, system_lookup,
 };
 use crate::config::ProviderKind;
 use crate::resolver::HostnameLookup;
@@ -33,6 +33,10 @@ pub struct OpenAiCompat {
     /// `agent://<org_domain>/genaryx/felyx` default), never logged above
     /// `debug` and never alongside `api_key`.
     agent_id: String,
+    /// Invariant 24: the gateway client key, sent as `x-fuse-key` when set,
+    /// so a TokenFuse gateway with client keys on admits Felyx instead of
+    /// answering `401`. `None` sends no such header, exactly as before.
+    fuse_key: Option<FuseKey>,
     http: reqwest::Client,
 }
 
@@ -96,18 +100,24 @@ impl OpenAiCompat {
             local,
             run_id,
             agent_id,
+            fuse_key: None,
             http,
         })
+    }
+
+    /// The gateway client key to present as `x-fuse-key` (invariant 24);
+    /// `None` keeps the client exactly as it was.
+    #[must_use]
+    pub fn with_fuse_key(mut self, fuse_key: Option<FuseKey>) -> Self {
+        self.fuse_key = fuse_key;
+        self
     }
 
     fn endpoint(&self) -> String {
         format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
     }
-}
 
-#[async_trait]
-impl LlmProvider for OpenAiCompat {
-    async fn chat(&self, req: ChatRequest) -> Result<ChatTurn, ProviderError> {
+    async fn exchange(&self, req: ChatRequest) -> Result<ChatTurn, ProviderError> {
         let mut messages: Vec<Value> = Vec::with_capacity(req.messages.len() + 1);
         if !req.system.is_empty() {
             messages.push(json!({"role": "system", "content": req.system}));
@@ -148,6 +158,9 @@ impl LlmProvider for OpenAiCompat {
             .header("x-fuse-run-id", &self.run_id)
             .header("x-fuse-agent-id", &self.agent_id)
             .json(&body);
+        if let Some(key) = &self.fuse_key {
+            request = request.header(FUSE_KEY_HEADER, key.header_value());
+        }
         if let Some(key) = &self.api_key {
             request = request.bearer_auth(key);
         }
@@ -167,6 +180,15 @@ impl LlmProvider for OpenAiCompat {
             });
         }
         parse_openai_response(&text)
+    }
+}
+
+#[async_trait]
+impl LlmProvider for OpenAiCompat {
+    async fn chat(&self, req: ChatRequest) -> Result<ChatTurn, ProviderError> {
+        self.exchange(req)
+            .await
+            .map_err(|e| e.without_fuse_key(self.fuse_key.as_ref()))
     }
 
     fn descriptor(&self) -> ProviderDescriptor {

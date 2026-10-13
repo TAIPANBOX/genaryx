@@ -10,7 +10,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::provider::ProviderError;
+use crate::provider::{FuseKey, ProviderError};
 
 /// Which provider wire to speak. `Ollama`/`LmStudio`/`OpenAiCompat`/`OpenRouter`
 /// all use the one OpenAI-compatible client; `Anthropic` uses the Messages
@@ -98,6 +98,13 @@ pub struct CopilotConfig {
     /// carrying no agent identity. `None` (or empty after trimming) resolves to
     /// a default rather than disabling anything; see [`Self::resolved_agent_id`].
     pub agent_id: Option<String>,
+    /// `GENARYX_COPILOT_FUSE_KEY_REF` (invariant 24): `"env:VAR"` or
+    /// `"file:/abs/path"`, pointing at the gateway client key Felyx sends as
+    /// `x-fuse-key`, the way `api_key_ref` points at the provider key. Only
+    /// the reference lives here, never the key. `None`, empty, or a reference
+    /// whose value is empty sends no such header; see
+    /// [`Self::resolve_fuse_key`].
+    pub fuse_key_ref: Option<String>,
 }
 
 impl Default for CopilotConfig {
@@ -114,6 +121,7 @@ impl Default for CopilotConfig {
             max_tokens: 1024,
             run_id: "genaryx-copilot".to_string(),
             agent_id: None,
+            fuse_key_ref: None,
         }
     }
 }
@@ -226,6 +234,52 @@ impl CopilotConfig {
             _ => Ok(format!("agent://{}/genaryx/felyx", org_domain())),
         }
     }
+
+    /// `fuse_key_ref` resolved to the gateway client key Felyx sends as
+    /// `x-fuse-key` (invariant 24), or `None`.
+    ///
+    /// Unset, empty, or a reference whose value is empty after trimming:
+    /// `None`, and Felyx sends no such header, exactly as before. So a
+    /// launcher can always pass `env:<NAME>` and leave `<NAME>` empty until
+    /// an operator fills it. A reference that is neither `env:VAR` nor
+    /// `file:/path`, a variable that is not set, a file that cannot be read,
+    /// or a key [`FuseKey::new`] refuses is an error, so Felyx reports itself
+    /// disabled with the reason instead of asking a keyed gateway that would
+    /// answer `401` to every question. No error repeats the key, the variable
+    /// name or the path: an operator may have put the key itself where the
+    /// reference belongs.
+    pub fn resolve_fuse_key(&self) -> Result<Option<FuseKey>, ConfigError> {
+        let Some(reference) = self
+            .fuse_key_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        else {
+            return Ok(None);
+        };
+        let value = match SecretRef::parse(reference).map_err(|_| ConfigError::BadFuseKeyRef)? {
+            SecretRef::Env(var) => std::env::var(&var).map_err(|e| {
+                ConfigError::FuseKeyUnavailable(match e {
+                    std::env::VarError::NotPresent => {
+                        "names an environment variable that is not set".to_string()
+                    }
+                    std::env::VarError::NotUnicode(_) => {
+                        "names an environment variable that is not valid UTF-8".to_string()
+                    }
+                })
+            })?,
+            SecretRef::File(path) => std::fs::read_to_string(Path::new(&path)).map_err(|e| {
+                ConfigError::FuseKeyUnavailable(format!("names a file that cannot be read ({e})"))
+            })?,
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        FuseKey::new(value)
+            .map(Some)
+            .map_err(ConfigError::BadFuseKey)
+    }
 }
 
 /// A pointer to a secret, resolved at use, never stored in the config value.
@@ -279,6 +333,15 @@ pub enum ConfigError {
          `agent://<domain>/<path>` (agent-passport SPEC section 3)"
     )]
     BadAgentId(String),
+    #[error(
+        "GENARYX_COPILOT_FUSE_KEY_REF must be `env:VAR` or `file:/path`; what it holds is \
+         not repeated here, since it may be the key itself"
+    )]
+    BadFuseKeyRef,
+    #[error("GENARYX_COPILOT_FUSE_KEY_REF {0}")]
+    FuseKeyUnavailable(String),
+    #[error("the gateway client key GENARYX_COPILOT_FUSE_KEY_REF points at is refused: {0}")]
+    BadFuseKey(&'static str),
     #[error(transparent)]
     Provider(ProviderError),
 }

@@ -163,6 +163,103 @@ pub enum ProviderError {
     Decode(String),
 }
 
+impl ProviderError {
+    /// The same error with the client key replaced wherever its text carries
+    /// it (invariant 24). Every real provider passes each error out of `chat`
+    /// through this, so a gateway that echoes the request's headers into its
+    /// error body, or a transport error that quotes them, cannot hand the key
+    /// to the operator's screen, the `copilot_ask` answer or a log.
+    pub(crate) fn without_fuse_key(self, key: Option<&FuseKey>) -> Self {
+        let Some(key) = key else {
+            return self;
+        };
+        let clean = |text: String| redact_fuse_key(text, key);
+        match self {
+            ProviderError::NonLocalEndpointRefused { url } => {
+                ProviderError::NonLocalEndpointRefused { url: clean(url) }
+            }
+            ProviderError::Config(text) => ProviderError::Config(clean(text)),
+            ProviderError::Transport(text) => ProviderError::Transport(clean(text)),
+            ProviderError::Http { status, body } => ProviderError::Http {
+                status,
+                body: clean(body),
+            },
+            ProviderError::Decode(text) => ProviderError::Decode(clean(text)),
+        }
+    }
+}
+
+/// The header a TokenFuse gateway reads a client key from (tokenfuse
+/// `crates/gateway/src/clientkeys.rs`, `CLIENT_KEY_HEADER`).
+pub const FUSE_KEY_HEADER: &str = "x-fuse-key";
+
+/// What stands in for the client key wherever error text would carry it.
+pub const FUSE_KEY_REDACTED: &str = "[x-fuse-key redacted]";
+
+/// The longest client key accepted. tokenfuse sets no limit of its own; this
+/// one only keeps a file named by mistake from becoming a request header.
+pub const MAX_FUSE_KEY_BYTES: usize = 1024;
+
+/// The gateway client key Felyx presents as `x-fuse-key` (invariant 24).
+///
+/// A TokenFuse gateway with client keys on refuses every metered call that
+/// carries no known key, with a `401`, before anything else about the call is
+/// read, so Felyx pointed at such a gateway needs a key of its own. The value
+/// is a secret: `Debug` prints no part of it, the header value is marked
+/// sensitive (so `http`'s own `Debug` prints `Sensitive`), and the providers
+/// pass every error through [`ProviderError::without_fuse_key`].
+#[derive(Clone)]
+pub struct FuseKey(reqwest::header::HeaderValue);
+
+impl FuseKey {
+    /// Accept a key exactly as given; the caller trims it. Refused, with a
+    /// reason that never repeats the value: an empty key, one longer than
+    /// [`MAX_FUSE_KEY_BYTES`], or one holding anything but printable ASCII
+    /// (a space, a control character, a non-ASCII byte), none of which can be
+    /// a header value a gateway would match.
+    pub fn new(value: &str) -> Result<Self, &'static str> {
+        if value.is_empty() {
+            return Err("it is empty");
+        }
+        if value.len() > MAX_FUSE_KEY_BYTES {
+            return Err("it is longer than 1024 bytes");
+        }
+        if !value.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(
+                "it holds a character other than printable ASCII (a space, a control \
+                 character or a non-ASCII byte)",
+            );
+        }
+        let mut header = reqwest::header::HeaderValue::from_str(value)
+            .map_err(|_| "it is not a valid HTTP header value")?;
+        header.set_sensitive(true);
+        Ok(Self(header))
+    }
+
+    /// The header value, still marked sensitive.
+    pub(crate) fn header_value(&self) -> reqwest::header::HeaderValue {
+        self.0.clone()
+    }
+
+    fn as_str(&self) -> &str {
+        // Printable ASCII by construction, so this never falls back.
+        self.0.to_str().unwrap_or_default()
+    }
+}
+
+impl std::fmt::Debug for FuseKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FuseKey(<redacted>)")
+    }
+}
+
+/// `text` with every occurrence of the key replaced by [`FUSE_KEY_REDACTED`].
+/// A fragment of the key (a gateway that echoed only part of it) is not
+/// recognised.
+fn redact_fuse_key(text: String, key: &FuseKey) -> String {
+    text.replace(key.as_str(), FUSE_KEY_REDACTED)
+}
+
 /// The provider contract. Object-safe via `async_trait` so the agent can hold a
 /// `Box<dyn LlmProvider>` (a real client, or the test `MockProvider`).
 #[async_trait]
@@ -186,6 +283,7 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
             let model = config.require_model()?;
             let api_key = config.resolve_api_key()?; // Option: local runtimes need none
             let agent_id = config.resolved_agent_id()?;
+            let fuse_key = config.resolve_fuse_key()?;
             let provider = OpenAiCompat::new(
                 config.provider,
                 base_url,
@@ -196,7 +294,8 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
                 config.run_id.clone(),
                 agent_id,
             )
-            .map_err(ConfigError::Provider)?;
+            .map_err(ConfigError::Provider)?
+            .with_fuse_key(fuse_key);
             Ok(Some(Box::new(provider)))
         }
         ProviderKind::Anthropic => {
@@ -206,6 +305,7 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
                 "api_key_ref (Anthropic requires a key)",
             ))?;
             let agent_id = config.resolved_agent_id()?;
+            let fuse_key = config.resolve_fuse_key()?;
             let provider = AnthropicMessages::new(
                 base_url,
                 model,
@@ -215,7 +315,8 @@ pub fn build_provider(config: &CopilotConfig) -> Result<Option<Box<dyn LlmProvid
                 config.run_id.clone(),
                 agent_id,
             )
-            .map_err(ConfigError::Provider)?;
+            .map_err(ConfigError::Provider)?
+            .with_fuse_key(fuse_key);
             Ok(Some(Box::new(provider)))
         }
     }

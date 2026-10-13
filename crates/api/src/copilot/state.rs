@@ -158,6 +158,11 @@ fn config_from_env() -> CopilotConfig {
         // is fine: `CopilotConfig::resolved_agent_id` derives a default from
         // `GENARYX_ORG_DOMAIN` rather than treating this as required.
         agent_id: std::env::var("GENARYX_COPILOT_AGENT_ID").ok(),
+        // Invariant 24: a REFERENCE to the gateway client key Felyx sends as
+        // `x-fuse-key` (`env:VAR` or `file:/path`, like the API key's), read
+        // verbatim. Unset or empty sends no such header;
+        // `CopilotConfig::resolve_fuse_key` decides everything past that.
+        fuse_key_ref: std::env::var("GENARYX_COPILOT_FUSE_KEY_REF").ok(),
         ..CopilotConfig::default()
     }
 }
