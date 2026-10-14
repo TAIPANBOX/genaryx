@@ -1403,7 +1403,8 @@ an absent invariant.
     `crates/web/src/main.rs`'s four router tests (viewer and approver
     refused, 428 without an assertion, a valid assertion reaches the
     command, a viewer may read); `apps/web/src/components/UnitCaps.test.ts`'s
-    seven. Red first: on the test-only commit the workspace did not compile
+    eleven, four of them driving the load and cap-change actions with fakes.
+    Red first: on the test-only commit the workspace did not compile
     (no `set_unit_budget`, no `money::units`), and the web suite failed to
     import `./UnitCaps`. Four product mutants and one non-fault are cases in
     `scripts/gates-have-teeth.sh`: dropped from the ceremony list, moved to

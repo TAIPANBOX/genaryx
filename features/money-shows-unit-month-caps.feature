@@ -63,11 +63,13 @@ Feature: The Money panel shows each business unit against its month cap
     Then the cap reads "$0.00 · refuses every call"
 
   # @test:setting_a_unit_cap_posts_a_signed_budget_to_the_cloud
+  # @test:a_cap_change_says_what_the_cloud_answered_and_reloads_the_section
   Scenario: Setting a unit cap posts a signed change to the Cloud
     Given an admin with a paired console device
     When they set unit w2x's month cap to USD 0.007168 with a reason
     Then the Cloud receives a device-signed POST /v1/units/w2x/budget with that amount
     And the attempt is journaled with what the Cloud answered
+    And the section says what the Cloud answered and shows the new cap
 
   # @test:money_set_unit_budget_without_an_assertion_is_428
   # @test:a_viewer_or_approver_is_refused_by_the_role_gate_on_money_set_unit_budget

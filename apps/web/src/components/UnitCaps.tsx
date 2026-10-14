@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { describeMoneyError, fetchUnitCaps, setUnitBudget } from "../lib/money";
 import { useMoneyStatus } from "../lib/useMoneyStatus";
 import { notifyConsoleStateChanged } from "../lib/consoleState";
@@ -107,6 +107,41 @@ export function UnitCapsBody({
   );
 }
 
+/** What the section does when it loads and when an operator sets a cap,
+ * apart from React so it can be driven with fakes: `load` reads the caps and
+ * reports data or error; `setCap` sends the change, says the Cloud's summary
+ * or the refusal, tells the other panels, reloads, and rethrows a refusal so
+ * the break-glass dialog stays open. */
+export function unitCapActions(deps: {
+  fetch: () => Promise<UnitCaps>;
+  set: (unit: string, budgetUsd: number, reason: string) => Promise<{ summary: string }>;
+  notify: () => void;
+  onData: (data: UnitCaps) => void;
+  onError: (error: MoneyError | null) => void;
+  onNotice: (notice: string) => void;
+}) {
+  const load = async () => {
+    try {
+      deps.onData(await deps.fetch());
+      deps.onError(null);
+    } catch (err) {
+      deps.onError(err as MoneyError);
+    }
+  };
+  const setCap = async (unit: string, budgetUsd: number, reason: string) => {
+    try {
+      const outcome = await deps.set(unit, budgetUsd, reason);
+      deps.onNotice(outcome.summary);
+      deps.notify();
+      await load();
+    } catch (err) {
+      deps.onNotice(describeMoneyError(err as MoneyError));
+      throw err;
+    }
+  };
+  return { load, setCap };
+}
+
 /** The Money tab's unit caps section: reads `money_units` every 20 s and sets
  * a cap through the passkey ceremony. */
 export function UnitCapsSection() {
@@ -115,37 +150,25 @@ export function UnitCapsSection() {
   const [data, setData] = useState<UnitCaps | null>(null);
   const [error, setError] = useState<MoneyError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setData(await fetchUnitCaps());
-      setError(null);
-    } catch (err) {
-      setError(err as MoneyError);
-    }
-  }, []);
+  const actions = useMemo(
+    () =>
+      unitCapActions({
+        fetch: fetchUnitCaps,
+        set: setUnitBudget,
+        notify: notifyConsoleStateChanged,
+        onData: setData,
+        onError: setError,
+        onNotice: setNotice,
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!ready) return;
-    void load();
-    const id = window.setInterval(() => void load(), REFRESH_INTERVAL_MS);
+    void actions.load();
+    const id = window.setInterval(() => void actions.load(), REFRESH_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [ready, load]);
-
-  const onSetCap = useCallback(
-    async (unit: string, budgetUsd: number, reason: string) => {
-      try {
-        const outcome = await setUnitBudget(unit, budgetUsd, reason);
-        setNotice(outcome.summary);
-        notifyConsoleStateChanged();
-        await load();
-      } catch (err) {
-        setNotice(describeMoneyError(err as MoneyError));
-        throw err;
-      }
-    },
-    [load],
-  );
+  }, [ready, actions]);
 
   return (
     <Section title="Unit month caps" right={data ? unitCapsCaption(data) : undefined}>
@@ -154,7 +177,7 @@ export function UnitCapsSection() {
           {notice}
         </div>
       )}
-      <UnitCapsBody data={data} error={error} onSetCap={onSetCap} />
+      <UnitCapsBody data={data} error={error} onSetCap={actions.setCap} />
     </Section>
   );
 }

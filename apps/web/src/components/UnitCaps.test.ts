@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { UnitCapsBody } from "./UnitCaps";
+import { UnitCapsBody, UnitCapsSection, unitCapActions } from "./UnitCaps";
 import { capLabel, capUsd, monthSpentLabel, unitCapsCaption } from "../lib/unitCaps";
 import type { MoneyError, UnitCap, UnitCaps } from "../moneyTypes";
 
@@ -109,5 +109,63 @@ describe("the Money tab's unit month caps", () => {
     expect(capUsd(12)).toBe("$12.00");
     expect(capUsd(0)).toBe("$0.00");
     expect(monthSpentLabel(row({ month_spent_usd: 0 }))).toBe("$0.00");
+  });
+});
+
+describe("loading the section and setting a cap", () => {
+  function harness(over: Partial<Parameters<typeof unitCapActions>[0]> = {}) {
+    const seen = { data: [] as UnitCaps[], errors: [] as (MoneyError | null)[], notices: [] as string[], notified: 0 };
+    const actions = unitCapActions({
+      fetch: async () => FORGE,
+      set: async (unit, usd) => ({ summary: `unit ${unit} month cap set to $${usd.toFixed(4)}` }),
+      notify: () => {
+        seen.notified += 1;
+      },
+      onData: (d) => seen.data.push(d),
+      onError: (e) => seen.errors.push(e),
+      onNotice: (n) => seen.notices.push(n),
+      ...over,
+    });
+    return { actions, seen };
+  }
+
+  it("a_cap_change_says_what_the_cloud_answered_and_reloads_the_section", async () => {
+    const { actions, seen } = harness();
+    await actions.setCap("w2x", 0.007168, "B12 lab cap");
+    expect(seen.notices).toEqual(["unit w2x month cap set to $0.0072"]);
+    expect(seen.notified).toBe(1);
+    expect(seen.data).toEqual([FORGE]);
+    expect(seen.errors).toEqual([null]);
+  });
+
+  it("a refused cap change says why and stays refused for the dialog", async () => {
+    const refusal: MoneyError = { kind: "invalid_argument", message: "a unit cap needs a unit id" };
+    const { actions, seen } = harness({
+      set: async () => {
+        throw refusal;
+      },
+    });
+    await expect(actions.setCap("", 1, "r")).rejects.toBe(refusal);
+    expect(seen.notices).toEqual(["Not sent: a unit cap needs a unit id"]);
+    expect(seen.notified).toBe(0);
+    expect(seen.data).toEqual([]);
+  });
+
+  it("a read that fails is shown as the error, not as an empty section", async () => {
+    const boom: MoneyError = { kind: "cloud", status: 500, message: "boom" };
+    const { actions, seen } = harness({
+      fetch: async () => {
+        throw boom;
+      },
+    });
+    await actions.load();
+    expect(seen.errors).toEqual([boom]);
+    expect(seen.data).toEqual([]);
+  });
+
+  it("the section renders its title and the reading state before the first answer", () => {
+    const html = renderToStaticMarkup(createElement(UnitCapsSection));
+    expect(html).toContain("Unit month caps");
+    expect(html).toContain("reading unit caps");
   });
 });
