@@ -98,7 +98,7 @@ export function IdentityAlerts({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 px-5">
         <SeverityFilterChips active={activeSeverities} onToggle={toggleSeverity} />
         <select
           className="mono"
@@ -124,11 +124,11 @@ export function IdentityAlerts({
       </div>
 
       {alerts.length === 0 ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no alerts in this snapshot.
         </div>
       ) : rows.length === 0 ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no alerts match the selected filters.
         </div>
       ) : (

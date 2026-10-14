@@ -122,7 +122,7 @@ function TypeFilterChips({
   onToggle: (t: string) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by identity type">
+    <div className="flex flex-wrap items-center gap-1.5 px-5" role="group" aria-label="Filter by identity type">
       {IDENTITY_TYPES.map((t) => {
         const on = active.has(t);
         return (
@@ -189,17 +189,17 @@ export function IdentityList({
     <div className="flex flex-col gap-2">
       <TypeFilterChips active={activeTypes} onToggle={toggleType} />
 
-      <span className="text-[11px]" style={{ color: "var(--faint)" }}>
+      <span className="text-[11px] px-5" style={{ color: "var(--faint)" }}>
         A dash is a field idryx sent empty, which means it recorded no value. An empty "last used" is not the same
         claim as never used.
       </span>
 
       {identities.length === 0 ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no identities in this snapshot.
         </div>
       ) : rows.length === 0 ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no identities match the selected type filter.
         </div>
       ) : (

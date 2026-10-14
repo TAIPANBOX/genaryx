@@ -257,7 +257,7 @@ export function AnomaliesView({
           </span>
         }
       >
-        <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
+        <div className="flex items-center gap-2 flex-wrap px-5" style={{ marginBottom: 10 }}>
           {available.map((plane) => (
             <button
               key={plane}

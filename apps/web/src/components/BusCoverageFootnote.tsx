@@ -9,7 +9,7 @@ import type { BusCoverage } from "../lib/incidents";
  */
 export function BusCoverageFootnote({ coverage, extra }: { coverage: BusCoverage; extra?: string }) {
   return (
-    <div className="mono" style={{ fontSize: 10, color: "var(--faint)", marginTop: 8 }}>
+    <div className="mono px-5" style={{ fontSize: 10, color: "var(--faint)", marginTop: 8 }}>
       {coverage.read === 0
         ? "no events read off the bus, so no plane is accounted for here"
         : `${coverage.incidentRows} of ${coverage.read} bus event(s) are incidents` +

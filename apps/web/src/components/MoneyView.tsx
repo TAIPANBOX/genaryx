@@ -75,7 +75,7 @@ export function RunsToolbar({
   exportButtons: ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2" style={{ paddingBottom: 8 }}>
+    <div className="flex items-center gap-2 px-5" style={{ paddingBottom: 8 }}>
       <SortBar options={RUN_SORTS} active={sort.key} dir={sort.dir} onChange={onSort} />
       <span className="flex-1" />
       {exportButtons}
