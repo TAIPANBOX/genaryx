@@ -865,6 +865,10 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         )),
         // Unit month caps: a read, and the signed cap change (admin, in
         // SENSITIVE_COMMANDS, journaled like money_set_budget).
+        // Which gateways the Cloud still hears from: a read.
+        "money_gateways" => Ok(reply(
+            genaryx_api::money::gateways::money_gateways(&ctx.money).await,
+        )),
         "money_units" => Ok(reply(
             genaryx_api::money::units::money_units(&ctx.money).await,
         )),

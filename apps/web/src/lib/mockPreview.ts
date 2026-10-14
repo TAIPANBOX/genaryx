@@ -1009,6 +1009,35 @@ function mockUnitCaps() {
   };
 }
 
+/** `money_gateways`: the preview's three sites. `edge-openai` stopped pushing
+ * 47 minutes ago (its runs still show, frozen where it left them), the other
+ * two heartbeat every 30 s. */
+function mockGateways() {
+  const now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const site = (name: string, ageSecs: number, calls: number, spentUsd: number) => ({
+    site: name,
+    state: ageSecs > 300 ? "silent" : "reporting",
+    last_push: iso(now - ageSecs * 1000),
+    last_push_age_secs: ageSecs,
+    last_record: iso(now - (ageSecs + 4) * 1000),
+    first_push: iso(now - 41 * DAY),
+    pushes: Math.round((41 * DAY) / 30_000),
+    calls,
+    spent_usd: spentUsd,
+  });
+  return {
+    reported: true,
+    silent_after_secs: 300,
+    checked_at: iso(now),
+    gateways: [
+      site("edge-openai", 47 * 60, 118, 0.42),
+      site("hq-gateway", 12, 1_204_331, 14_210.55),
+      site("edge-eu", 21, 912_470, 9_877.02),
+    ],
+  };
+}
+
 function mockOverview() {
   const runs = mockRuns();
   const spent = runs.reduce((s, r) => s + r.spent_usd, 0);
@@ -3641,6 +3670,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       });
     }
     case "money_units": return r(mockUnitCaps());
+    case "money_gateways": return r(mockGateways());
     case "money_set_unit_budget": {
       const unit = String(args?.unit ?? "");
       const budgetUsd = Number(args?.budget_usd ?? Number.NaN);

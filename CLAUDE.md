@@ -1419,6 +1419,42 @@ an absent invariant.
     central cap; no live console has set a cap on a real Cloud with this
     build.)*
 
+27. **The Overview shows a gateway that stopped reporting.** Every gateway
+    with a Cloud sink pushes its calls and an empty heartbeat every 30 s by
+    default (tokenfuse invariant 66), and the Cloud keeps, per site, when it
+    last heard from it (`GET /v1/gateways`, by the Cloud's clock). Nothing
+    here read it, so a gateway that crashed or lost its network or key was
+    invisible: its runs, spend and kills just stopped moving.
+    `@decided 2026-10-14`: the dashboards show what the product does today;
+    the console reads the Cloud's gateways and shows a silent one.
+
+    `money_gateways` (`crates/api/src/money/gateways.rs`): a site is
+    `silent` when the Cloud has not heard from it for more than five minutes
+    (`SILENT_AFTER_MS`, the threshold TokenFuse's own dashboard uses, ten
+    missed heartbeats), or never; silent sites lead. A Cloud without the
+    route is `reported: false` and the section says it cannot tell, never
+    that none stopped. The Overview's Gateways section
+    (`apps/web/src/components/GatewaysSection.tsx`) leads with a silent site
+    in red and names the caveats. The five minutes and the placement on the
+    Overview are `@claude` design choices, open to reversal.
+    *(test: `crates/api/src/money/gateways.rs`'s three, one at the exact
+    boundary; `crates/api/tests/it/money_gateways_test.rs`'s three on a stub
+    Cloud; `crates/connectors/src/cloud_rest.rs`'s
+    `gateway_agg_deserializes_the_clouds_shape`; `crates/web/src/roles.rs`'s
+    `reading_which_gateways_report_is_a_viewer_read`;
+    `apps/web/src/components/GatewaysSection.test.ts`'s six. Red first: the
+    test-only commit did not compile (no `GatewayAgg`, no
+    `money::gateways`), and the web suite failed to import
+    `./GatewaysSection`. Scenarios:
+    `features/the-overview-shows-a-silent-gateway.feature`, five, bound;
+    gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: a gateway run with heartbeats off pushes only when
+    it has calls, so it reads silent whenever it is idle; ages are this
+    console's clock against the Cloud's, so skew moves them; a gateway with
+    no Cloud sink at all never appears; no incident or mail is raised for a
+    silent gateway, the section shows it only while someone looks.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

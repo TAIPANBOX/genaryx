@@ -9,6 +9,7 @@ import type {
   Overview,
   Owner,
   Run,
+  Gateways,
   Savings,
   UnitCaps,
 } from "../moneyTypes";
@@ -152,6 +153,9 @@ export const killRun = (runId: string, reason: string): Promise<MutationOutcome>
 
 export const setBudget = (runId: string, budgetUsd: number, reason: string): Promise<MutationOutcome> =>
   callWithCeremony<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd, reason });
+
+/** Which gateways the Cloud still hears from (`GET /v1/gateways`). */
+export const fetchGateways = (): Promise<Gateways> => call<Gateways>("money_gateways");
 
 /** Every business unit with its central month cap and this month's spend
  * (`GET /v1/units` joined with `GET /v1/unit-budgets`). */

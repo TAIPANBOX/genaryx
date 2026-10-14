@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1040-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1048-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -372,6 +372,17 @@ box; these frames are not it, and say so here rather than in a footnote.
   so it is not shown here, and the Cloud has no route that removes a central
   cap. Verified against a recording stub Cloud with the forge lab's figures
   (`crates/api/tests/it/money_units_test.rs`), not yet against a live Cloud.
+- **Silent gateways (2026-10-14, invariant 27).** The Overview has a
+  Gateways section over the Cloud's `GET /v1/gateways`: every site the Cloud
+  hears from, when it last heard from it, its calls and spend. A gateway the
+  Cloud has not heard from for more than five minutes (no calls and no
+  30-second heartbeat) leads the section in red as `silent 47 min`; its runs,
+  spend and kills are not moving through the Cloud. A Cloud without the
+  route says it cannot show this, never that no gateway stopped. A gateway
+  run with heartbeats off reads silent whenever it is idle, and the ages are
+  the console's clock against the Cloud's; the section says both. Verified
+  against a stub Cloud (`crates/api/tests/it/money_gateways_test.rs`), not
+  yet against a live one.
 
 ## Being written to, not just watched
 

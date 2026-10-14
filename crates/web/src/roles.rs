@@ -177,6 +177,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "money_savings",
     // Unit month caps and spend, read-only.
     "money_units",
+    // Which gateways the Cloud still hears from, read-only.
+    "money_gateways",
     "egress_recent",
     "money_status",
     "onboard_status",
@@ -342,6 +344,13 @@ mod tests {
             required_role("money_set_budget")
         );
         assert_eq!(required_role("money_set_unit_budget"), Role::Admin);
+    }
+
+    /// Which gateways the Cloud still hears from is a read any operator may
+    /// make: a silent gateway must be visible to whoever is watching.
+    #[test]
+    fn reading_which_gateways_report_is_a_viewer_read() {
+        assert_eq!(required_role("money_gateways"), Role::Viewer);
     }
 
     /// A command that takes a live cloud API token in its request body is not

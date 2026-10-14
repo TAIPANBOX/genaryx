@@ -385,7 +385,7 @@ pub(super) fn micros_to_usd(micros: i64) -> f64 {
     micros as f64 / 1_000_000.0
 }
 
-fn millis_to_iso(millis: i64) -> String {
+pub(super) fn millis_to_iso(millis: i64) -> String {
     chrono::DateTime::from_timestamp_millis(millis)
         .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         .unwrap_or_else(|| millis.to_string())

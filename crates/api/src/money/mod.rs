@@ -21,6 +21,7 @@
 pub mod closure;
 pub mod commands;
 pub mod env;
+pub mod gateways;
 pub mod retained;
 pub mod state;
 pub mod units;
