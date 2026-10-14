@@ -15,7 +15,11 @@ describe("the demo bus carries an identity refusal filed under its key", () => {
     // The Incidents tab asks for 500 and keeps the first 500; a refusal placed
     // after the seed was cut there, so the read here does the same.
     const events = (await mockInvoke<UiEvent[]>("recent_events", { limit: 500 })).slice(0, 500);
-    const refusals = events.filter((e) => e.type === "identity_mismatch");
+    // The key forge-imposter's refusals; the demo also carries a call refused
+    // for having no client key, which is its own incident.
+    const refusals = events.filter(
+      (e) => e.type === "identity_mismatch" && (e.data as Record<string, unknown> | null)?.key_id === "forge-imposter",
+    );
     expect(refusals.length).toBeGreaterThan(0);
     const claimed = refusals[0].agent_id;
 

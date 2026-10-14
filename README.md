@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1067-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1070-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -408,6 +408,18 @@ box; these frames are not it, and say so here rather than in a footnote.
   whatever the gateway sends. Verified against a stub gateway
   (`crates/api/tests/it/gateway_posture_test.rs`); no gateway ships the
   settings route yet.
+- **Refused client keys and PII findings (2026-10-14, invariant 30).** When
+  TokenFuse reports a call refused for its client key (an `identity_mismatch`
+  with `reason: missing_key` or `unknown_key`), the incident centre reads it
+  as "client key refused: none presented" or "unknown key", naming the
+  claimed agent, the key's fingerprint (never the key) and how many more the
+  gateway's rate limit held back; two unknown keys are two incidents. A PII
+  finding the gateway forwarded in shadow mode (`dlp_shadow`) reaches the
+  Anomalies tab as "personal data found (shadow)" with its kinds and counts,
+  a run with such calls carries a `pii ×N` pill, and the Overview's model
+  calls tile says how many calls carried personal data, by kind. All of it is
+  optional: a gateway or Cloud older than these changes reports none of it,
+  and the console then says nothing about it rather than zero.
 
 ## Being written to, not just watched
 

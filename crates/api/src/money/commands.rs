@@ -71,6 +71,10 @@ pub struct OverviewDto {
     pub open_incidents: u64,
     pub total_incidents: u64,
     pub total_saved_usd: f64,
+    /// Calls in which the gateway's PII check found personal data, all
+    /// time, and by kind; `None` when the Cloud does not report them.
+    pub pii_calls: Option<u64>,
+    pub pii_kinds: Option<Vec<PiiKind>>,
 }
 
 impl OverviewDto {
@@ -91,6 +95,8 @@ impl OverviewDto {
             open_incidents,
             total_incidents: incidents.len() as u64,
             total_saved_usd: micros_to_usd(savings.total_saved_microusd),
+            pii_calls: summary.pii_calls,
+            pii_kinds: summary.pii_kinds.clone(),
         }
     }
 }
@@ -160,6 +166,9 @@ pub struct RunDto {
     pub models: Option<Vec<RunModelDto>>,
     /// Times the run's admitted calls changed model, when reported.
     pub model_switches: Option<u64>,
+    /// Calls on this run in which the gateway's PII check found personal
+    /// data, when reported.
+    pub pii_calls: Option<u64>,
 }
 
 /// One model a run used, with its calls and spend.
@@ -706,6 +715,7 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
                     .collect()
             }),
             model_switches: r.model_switches,
+            pii_calls: r.pii_calls,
         })
         .collect())
 }

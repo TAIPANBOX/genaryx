@@ -146,6 +146,9 @@ export interface RunExportRow {
    * call's, is known). */
   models: string | null;
   model_switches: number | null;
+  /** Calls on the run in which the gateway's PII check found personal data;
+   * `null` when the Cloud does not report it. */
+  pii_calls: number | null;
 }
 
 export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: string }[] = [
@@ -172,6 +175,7 @@ export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: st
   { key: "last_identity_reason", header: "last_identity_reason" },
   { key: "models", header: "models" },
   { key: "model_switches", header: "model_switches" },
+  { key: "pii_calls", header: "pii_calls" },
 ];
 
 function orNull(value: string | null | undefined): string | null {
@@ -221,6 +225,7 @@ export function runsExportRows(runs: Run[]): RunExportRow[] {
     last_identity_reason: reportedOrNull(r.last_identity_reason),
     models: Array.isArray(r.models) ? r.models.map((m) => `${m.model}:${m.calls}:${m.spent_usd}`).join(";") : null,
     model_switches: numberOrNull(r.model_switches),
+    pii_calls: numberOrNull(r.pii_calls),
   }));
 }
 
@@ -253,6 +258,7 @@ export function runsExportMeta(opts: {
       "An empty cache_hits means the field never arrived. A cache_hits of 0 means the money plane counted no cache hit for that run. They are different statements and this file keeps them apart.",
       "An empty blocked, last_decision, fallback_calls, basis_unreported_calls, identity_warned, last_identity_reason or site means this Cloud does not report that field (site needs TokenFuse Cloud v1.2.0, the rest v1.8.0), never zero. A blocked of 0 is a count. last_decision is the latest call's decision: allow or cache_hit admitted it, anything else is the reason the gateway refused it.",
       "fallback_calls counts admitted calls the gateway charged at the fallback rate (15/75 USD per million tokens) because its price book had no row for the model id: their spend is a gateway estimate, not a provider bill. basis_unreported_calls counts calls from a gateway that named no price basis at all. identity_warned counts calls forwarded although the identity check would have refused them (warn mode); they are spent and filed under the agent id they claimed.",
+      "pii_calls counts the run's calls in which the gateway's PII check found personal data (in shadow mode forwarded unchanged); an empty pii_calls means this Cloud does not report it, never that none was found.",
       "killed is the money plane's own flag. A run an operator froze or stopped through this console shows its lifecycle on screen, and that state is this console's, not a column of GET /v1/runs.",
     ],
   };

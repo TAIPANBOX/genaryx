@@ -37,7 +37,7 @@ import type { IdryxAlert } from "../identityTypes";
 import type { Incident } from "../moneyTypes";
 import type { PostureFinding } from "./posture";
 import type { UiEvent } from "../types";
-import { claimSentence, filedUnder } from "./attribution";
+import { claimSentence, filedUnder, keyRefusal } from "./attribution";
 import type { ViewId } from "./views";
 import { sevRank } from "./dashData";
 import type { Severity } from "../types";
@@ -313,13 +313,14 @@ function fromBus(
       const value = dataString(newest.data, key);
       if (value !== null) parts.push(`${key} ${value}`);
     }
+    parts.push(...busExtraDetail(newest));
     return {
       // The NEWEST event's id, so the row's React key changes when the group
       // grows and the count on screen cannot go stale against its own row.
       id: `bus:${newest.id}`,
       source: "bus" as const,
       severity: normalizeSeverity(newest.severity),
-      title: newest.type.replace(/_/g, " "),
+      title: busTitle(newest),
       detail: parts.join(" · "),
       ts: newest.ts,
       occurrences: count,
@@ -350,8 +351,57 @@ function fromBus(
 function busGroupKey(e: UiEvent): string {
   // Who the event is FILED under, not its envelope: two keys that both tried
   // to be one agent are two incidents, one per key, and neither is that
-  // agent's.
-  return `${e.source}|${e.type}|${filedUnder(e)}|${e.run_id ?? ""}`;
+  // agent's. A refused client key files under `key:(none)` like any refusal
+  // with no key id, so its cause and fingerprint join the key: two unknown
+  // keys are two incidents, and a missing key is not an unknown one.
+  const refusal = keyRefusal(e);
+  const cause = refusal ? `|${refusal.reason}|${refusal.fingerprint ?? ""}` : "";
+  return `${e.source}|${e.type}|${filedUnder(e)}|${e.run_id ?? ""}${cause}`;
+}
+
+/** The type a PII finding the gateway let through (or masked) is written as:
+ * `dlp_shadow` (medium), data `{summary, counts: {kind: n}, mode, unit}`,
+ * kinds and counts only, never the matched text. Optional: a gateway older
+ * than it writes none, and a medium event reaches the Anomalies tab by band,
+ * not by this name. */
+export const DLP_SHADOW = "dlp_shadow";
+
+/** The title a bus row leads with: the producer's type with its underscores
+ * opened out, except for the two whose type alone misleads. A refused client
+ * key is written as `identity_mismatch`, and "identity mismatch" would say an
+ * agent claimed another's id; a PII finding in shadow reads better as what it
+ * found. */
+export function busTitle(e: UiEvent): string {
+  const refusal = keyRefusal(e);
+  if (refusal) return refusal.reason === "missing_key" ? "client key refused: none presented" : "client key refused: unknown key";
+  if (e.type === DLP_SHADOW) {
+    const mode = dataString(e.data, "mode");
+    return mode === "mask" ? "personal data masked" : "personal data found (shadow)";
+  }
+  return e.type.replace(/_/g, " ");
+}
+
+/** The extra clauses a refused key or a PII finding adds to the detail line:
+ * what the rate limit held back, and which kinds were found how often. */
+export function busExtraDetail(e: UiEvent): string[] {
+  const out: string[] = [];
+  const refusal = keyRefusal(e);
+  if (refusal && refusal.heldBack !== null && refusal.heldBack > 0) {
+    out.push(`${refusal.heldBack} more held back by the rate limit`);
+  }
+  if (e.type === DLP_SHADOW) {
+    const counts = e.data && typeof e.data === "object" ? (e.data as Record<string, unknown>).counts : null;
+    if (counts && typeof counts === "object" && !Array.isArray(counts)) {
+      const parts = Object.entries(counts as Record<string, unknown>)
+        .filter(([, n]) => typeof n === "number" && Number.isFinite(n))
+        .slice(0, 8)
+        .map(([kind, n]) => `${kind.slice(0, 32)} ${n}`);
+      if (parts.length > 0) out.push(parts.join(", "));
+    }
+    const unit = dataString(e.data, "unit");
+    if (unit) out.push(`unit ${unit.slice(0, 64)}`);
+  }
+  return out;
 }
 
 /** `data` members worth putting in a one-line detail, in the order they read.

@@ -2542,6 +2542,48 @@ function mockIdentityRefusalEvents(): UiEvent[] {
   }));
 }
 
+/** A call refused for its client key and a PII finding in shadow, as
+ * TokenFuse writes them since tokenfuse#432 and #433: the refusal as
+ * `identity_mismatch` with `reason: missing_key` (no key presented, nothing
+ * to fingerprint), and the finding as `dlp_shadow` (medium, kinds and counts
+ * only). The demo shows how the console reads each. */
+function mockRefusedKeyAndPiiEvents(): UiEvent[] {
+  const claimed = `agent://${ORG}/data/pipeline-monitor`;
+  const base = {
+    env: "live",
+    source: "tokenfuse",
+    schema: "taipanbox.dev/agent-event/v0.2",
+    on_behalf_of: [],
+    prev_hash: null,
+    raw: "",
+    file: "/root/.stack-up/events/tokenfuse.ndjson",
+  };
+  return [
+    {
+      ...base,
+      id: 900_201,
+      ts: ago(4 * 60_000),
+      type: "identity_mismatch",
+      agent_id: claimed,
+      run_id: null,
+      severity: "high",
+      data: { reason: "missing_key", key_fingerprint: null, agent_id: claimed, unreported_since_last: 7 },
+      off: 900_201,
+    },
+    {
+      ...base,
+      id: 900_202,
+      ts: ago(3 * 60_000),
+      type: "dlp_shadow",
+      agent_id: `agent://${ORG}/finops/invoice-reconciler`,
+      run_id: "invoice-reconciler-live",
+      severity: "medium",
+      data: { summary: "personal data found in the request", counts: { pii_card: 1, pii_email: 2 }, mode: "shadow", unit: "finops" },
+      off: 900_202,
+    },
+  ] as UiEvent[];
+}
+
 function mockQualityDriftEvent(): UiEvent {
   return {
     id: 900_001,
@@ -3922,7 +3964,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // exactly as many as the seed makes, so anything appended after it is cut
     // before it is ever seen. The drift event was appended, and so the demo's
     // one bus incident with no run id never reached Incident 360.
-    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...seedEvents(Number(args?.limit ?? 60))]);
+    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...seedEvents(Number(args?.limit ?? 60))]);
     case "run_events": return r(seedEvents(20));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });

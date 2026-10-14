@@ -52,6 +52,10 @@ export interface Overview {
   open_incidents: number;
   total_incidents: number;
   total_saved_usd: number;
+  /** Calls in which the gateway's PII check found personal data, all time,
+   * and by kind; absent or `null` when the Cloud does not report them. */
+  pii_calls?: number | null;
+  pii_kinds?: { kind: string; calls: number }[] | null;
 }
 
 /** Mirrors `money::commands::RunDto`.
@@ -125,6 +129,9 @@ export interface Run {
   models?: { model: string; calls: number; spent_usd: number }[] | null;
   /** Times the run's admitted calls changed model, when reported. */
   model_switches?: number | null;
+  /** Calls on this run in which the gateway's PII check found personal data
+   * (tokenfuse#433), when reported. */
+  pii_calls?: number | null;
 }
 
 /** Mirrors `money::units::UnitCapState`: where a unit stands against its

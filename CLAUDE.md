@@ -1554,6 +1554,57 @@ an absent invariant.
     name would be shown; a second gateway (the OpenAI door) is not read, the
     console holds one gateway descriptor.)*
 
+30. **A refused client key and a PII finding read as what they are, and
+    both are optional.** A gateway with client keys answered a call with no
+    or an unknown `x-fuse-key` with a 401 and wrote no event, and its PII
+    check in shadow mode left a finding only on the answer. TokenFuse now
+    writes a refused key as `identity_mismatch` with `data.reason`
+    `missing_key` or `unknown_key`, `data.key_fingerprint` (`sha256:` and
+    16 hex digits, never the key), the claimed agent and
+    `unreported_since_last` (tokenfuse#432), and a PII finding as
+    `pii_calls` on each `GET /v1/runs` row, `pii_calls` and `pii_kinds` on
+    `GET /v1/summary`, and a `dlp_shadow` event at medium with kinds and
+    counts only (tokenfuse#433).
+    `@decided 2026-10-14`: these appear in the console once TokenFuse emits
+    them, on the incident timeline it already reads, as optional types.
+
+    The refused key is filed like any identity refusal with no key id
+    (`key:(none)`, invariant 19's one rule, unchanged in Rust, SQL and
+    TypeScript); `apps/web/src/lib/attribution.ts`'s `keyRefusal` reads the
+    cause, accepts a fingerprint only in its `sha256:<hex>` shape (anything
+    else is never printed), and the claim sentence, the incident title
+    (`client key refused: none presented` / `unknown key`), the grouping
+    (cause and fingerprint join the key, so two unknown keys are two
+    incidents) and Agent 360's feed line name it.
+    `apps/web/src/lib/incidents.ts` titles `dlp_shadow` "personal data
+    found (shadow)" (or "masked") with its numeric counts and unit, bounded;
+    at medium it reaches the Anomalies tab, not the fire card. `RunAgg`,
+    `Summary`, `RunDto` and `OverviewDto` carry the PII counts as optional,
+    lenient fields; the runs board shows `pii ×N`, Incident 360 says it, the
+    export appends `pii_calls`, and the Overview's model calls tile says how
+    many calls carried personal data, by kind, only when the Cloud reports
+    it. The words are `@claude` design choices, open to reversal.
+    *(test: `apps/web/src/lib/refusedKeyAndPii.test.ts`'s nine;
+    `crates/connectors/src/cloud_rest.rs`'s
+    `pii_findings_are_read_when_the_cloud_reports_them_and_unknown_when_not`;
+    `crates/api/src/money/commands.rs`'s
+    `the_overview_carries_pii_counts_only_when_the_cloud_reports_them`;
+    `crates/api/tests/it/money_runs_status_test.rs`'s
+    `the_calls_a_run_carried_personal_data_in_reach_the_runs_table_when_reported`.
+    Red first: eight of the nine web cases failed against the unfixed code
+    (the real identity mismatch is the control); the Rust tests did not
+    compile on the test-only commit (no `pii_calls`, no `PiiKind`).
+    Scenarios:
+    `features/a-refused-key-and-a-pii-finding-read-as-what-they-are.feature`,
+    five, bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: neither TokenFuse change is merged, so no live
+    gateway has sent either event to this build; the Statistics panel counts
+    a refused key under `key:(none)` with every other keyless refusal, not
+    per fingerprint; a call that claimed no agent is skipped by the gateway
+    and never reaches the bus; no notification is raised by this console for
+    either.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

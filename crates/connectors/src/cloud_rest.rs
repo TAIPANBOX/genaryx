@@ -631,6 +631,22 @@ pub struct Summary {
     pub runs: u64,
     pub calls: u64,
     pub spent_microusd: i64,
+    /// Calls in which the gateway's PII check found personal data, all time
+    /// (tokenfuse#433). `None` from a Cloud that does not report it.
+    #[serde(default, deserialize_with = "lenient")]
+    pub pii_calls: Option<u64>,
+    /// Those calls by kind (`pii_card`, `pii_email`, ...), at most 16 kinds
+    /// plus `(other kinds)`. `None` when not reported.
+    #[serde(default, deserialize_with = "lenient")]
+    pub pii_kinds: Option<Vec<PiiKind>>,
+}
+
+/// One kind of personal data the gateway's PII check found, and in how many
+/// calls. Kinds and counts only: the Cloud never holds the matched text.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PiiKind {
+    pub kind: String,
+    pub calls: u64,
 }
 
 /// One element of `GET /v1/runs`. Exact shape of `store.rs::RunAgg` -
@@ -759,6 +775,11 @@ pub struct RunAgg {
     /// `None` when not reported.
     #[serde(default, deserialize_with = "lenient")]
     pub model_switches: Option<u64>,
+    /// Calls on this run in which the gateway's PII check found personal
+    /// data (tokenfuse#433; in shadow mode forwarded unchanged). `None` when
+    /// not reported.
+    #[serde(default, deserialize_with = "lenient")]
+    pub pii_calls: Option<u64>,
 }
 
 /// One model a run used, as `RunAgg::models` lists it.
