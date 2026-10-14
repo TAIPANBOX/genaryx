@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(today["models"], json!(null), "unknown, never one model");
         assert_eq!(last_model_named(json!({"x": 1})), json!({"x": 1}));
         let tool = ListRuns;
-        assert!(tool.description().contains("last call only"));
+        assert!(tool.description().contains("LAST call only"));
     }
 
     #[test]
