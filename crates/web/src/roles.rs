@@ -344,6 +344,13 @@ mod tests {
         assert_eq!(required_role("money_set_unit_budget"), Role::Admin);
     }
 
+    /// Which gateways the Cloud still hears from is a read any operator may
+    /// make: a silent gateway must be visible to whoever is watching.
+    #[test]
+    fn reading_which_gateways_report_is_a_viewer_read() {
+        assert_eq!(required_role("money_gateways"), Role::Viewer);
+    }
+
     /// A command that takes a live cloud API token in its request body is not
     /// a viewer read, whatever the upstream HTTP verb is. Its sibling, which
     /// spawns the operator's own already-authenticated CLI and never sees a

@@ -1118,6 +1118,22 @@ mod tests {
     }
 
     #[test]
+    fn gateway_agg_deserializes_the_clouds_shape() {
+        let gws: Vec<GatewayAgg> = serde_json::from_str(
+            r#"[{"site":"forge","spent_microusd":5168,"calls":12,"tool_calls":0,
+                 "pushes":930,"first_push_millis":1791900000000,
+                 "last_push_millis":1791985800000,"last_record_millis":1791985790000}]"#,
+        )
+        .expect("valid GatewayAgg json");
+        assert_eq!(gws[0].site, "forge");
+        assert_eq!(gws[0].pushes, 930);
+        assert_eq!(gws[0].last_push_millis, 1_791_985_800_000);
+        // `last_push_millis` is the one field liveness rests on: a row
+        // without it is not a gateway this console can judge.
+        assert!(serde_json::from_str::<Vec<GatewayAgg>>(r#"[{"site":"x"}]"#).is_err());
+    }
+
+    #[test]
     fn agent_agg_deserializes() {
         let agents: Vec<AgentAgg> = serde_json::from_str(
             r#"[{"agent_id":"planner","spent_microusd":5000,"calls":2,"runs":1,
