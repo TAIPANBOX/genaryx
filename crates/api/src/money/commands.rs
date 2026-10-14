@@ -39,7 +39,7 @@
 use super::env::EnvSource;
 use super::state::{MoneyClient, MoneyInner, MoneyState};
 use genaryx_connectors::{
-    ConnectorError, Incident, OwnerAgg, RunAgg, SavingsSummary, Severity, Summary,
+    ConnectorError, Incident, OwnerAgg, PiiKind, RunAgg, SavingsSummary, Severity, Summary,
 };
 use genaryx_core::{CommandRecord, command};
 use serde::Serialize;
@@ -935,6 +935,24 @@ mod tests {
         // not.
         let broken = millis_to_iso(i64::MAX);
         assert_eq!(broken, i64::MAX.to_string());
+    }
+
+    #[test]
+    fn the_overview_carries_pii_counts_only_when_the_cloud_reports_them() {
+        let savings = SavingsSummary::default();
+        let reported = Summary {
+            pii_calls: Some(4),
+            pii_kinds: Some(vec![PiiKind {
+                kind: "pii_email".to_string(),
+                calls: 3,
+            }]),
+            ..Default::default()
+        };
+        let o = OverviewDto::build(&reported, &[], &[], &savings);
+        assert_eq!(o.pii_calls, Some(4));
+        assert_eq!(o.pii_kinds.as_ref().map(Vec::len), Some(1));
+        let o = OverviewDto::build(&Summary::default(), &[], &[], &savings);
+        assert_eq!((o.pii_calls, o.pii_kinds), (None, None));
     }
 
     #[test]

@@ -242,6 +242,7 @@ mod tests {
             runs: 16,
             calls: 91,
             spent_microusd: 167_964,
+            ..Default::default()
         };
         let shaped = dollarize(to_result("money_summary", summary).unwrap());
         assert_eq!(shaped["spent_usd"], json!(0.167_964));

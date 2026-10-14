@@ -1067,6 +1067,31 @@ mod tests {
     // if this module's structs ever drift from the real wire contract.
 
     #[test]
+    fn pii_findings_are_read_when_the_cloud_reports_them_and_unknown_when_not() {
+        let s: Summary = serde_json::from_str(
+            r#"{"runs":3,"calls":42,"spent_microusd":150000,"pii_calls":4,
+                "pii_kinds":[{"kind":"pii_email","calls":3},{"kind":"pii_card","calls":1}]}"#,
+        )
+        .expect("a summary with PII counts");
+        assert_eq!(s.pii_calls, Some(4));
+        assert_eq!(
+            s.pii_kinds.as_deref().map(|k| k[0].kind.as_str()),
+            Some("pii_email")
+        );
+        let old: Summary = serde_json::from_str(
+            r#"{"runs":3,"calls":42,"spent_microusd":150000,"pii_kinds":"x"}"#,
+        )
+        .expect("an older summary");
+        assert_eq!((old.pii_calls, old.pii_kinds), (None, None));
+        let runs: Vec<RunAgg> = serde_json::from_str(
+            r#"[{"run_id":"r","model":"m","agent_id":"","spent_microusd":1,"calls":1,
+                 "cache_hits":0,"steps":1,"last_seen_millis":1,"killed":false,"pii_calls":2}]"#,
+        )
+        .expect("a run with PII calls");
+        assert_eq!(runs[0].pii_calls, Some(2));
+    }
+
+    #[test]
     fn summary_deserializes() {
         let s: Summary = serde_json::from_str(r#"{"runs":3,"calls":42,"spent_microusd":150000}"#)
             .expect("valid Summary json");

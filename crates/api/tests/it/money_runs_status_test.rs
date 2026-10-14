@@ -282,3 +282,19 @@ async fn the_models_a_run_used_reach_the_runs_table_only_when_the_cloud_reports_
     assert!(t.models.is_none(), "not reported is not one model");
     assert_eq!(t.model_switches, None);
 }
+
+/// PII found on a run (tokenfuse#433, the forge lab's B6 shadow run of
+/// 2026-10-14: card, email and phone found and forwarded), carried as a
+/// count when the Cloud reports it and unknown when it does not.
+#[tokio::test]
+async fn the_calls_a_run_carried_personal_data_in_reach_the_runs_table_when_reported() {
+    let found = v18_run("w2-b6-pii", json!({"pii_calls": 3}));
+    let older = v18_run("w2-b1", json!({}));
+    let rows = rows_for(json!([found, older]).to_string()).await;
+    assert_eq!(row(&rows, "w2-b6-pii").pii_calls, Some(3));
+    assert_eq!(
+        row(&rows, "w2-b1").pii_calls,
+        None,
+        "not reported is not zero"
+    );
+}
