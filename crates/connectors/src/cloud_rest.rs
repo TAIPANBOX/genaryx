@@ -758,7 +758,7 @@ pub struct RunAgg {
     /// How many times the run's admitted calls changed model, in call order;
     /// `None` when not reported.
     #[serde(default, deserialize_with = "lenient")]
-    pub model_switches: Option<u32>,
+    pub model_switches: Option<u64>,
 }
 
 /// One model a run used, as `RunAgg::models` lists it.

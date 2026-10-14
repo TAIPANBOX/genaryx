@@ -159,7 +159,7 @@ pub struct RunDto {
     /// LAST call, never "the model that priced the run".
     pub models: Option<Vec<RunModelDto>>,
     /// Times the run's admitted calls changed model, when reported.
-    pub model_switches: Option<u32>,
+    pub model_switches: Option<u64>,
 }
 
 /// One model a run used, with its calls and spend.
