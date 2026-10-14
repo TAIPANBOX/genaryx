@@ -192,18 +192,18 @@ const UNITS: UnitDef[] = [
     label: "SRE",
     users: ["j.carter", "m.bennett", "s.dawson", "r.walsh", "p.novak"],
     kinds: [
-      { suffix: "incident-triage-copilot", model: "claude-sonnet-4-5", allowed: ["pagerduty_read", "logs_read", "summarize only", "no writes"] },
-      { suffix: "alert-correlator", model: "claude-haiku-4-5", allowed: ["metrics_read", "dedupe alerts"] },
-      { suffix: "runbook-executor", model: "claude-sonnet-4-5", allowed: ["run approved runbooks", "human approval above sev2", "no prod delete"] },
-      { suffix: "log-analyzer", model: "gpt-4o-mini", allowed: ["logs_read", "grep + summarize"] },
-      { suffix: "postmortem-writer", model: "claude-sonnet-4-5", allowed: ["incident_read", "draft docs, no publish"] },
-      { suffix: "oncall-summarizer", model: "claude-haiku-4-5", allowed: ["shift_read", "summarize handoff"] },
-      { suffix: "slo-watchdog", model: "gpt-4o-mini", allowed: ["slo_read", "alert on burn"] },
-      { suffix: "capacity-forecaster", model: "gpt-4o", allowed: ["metrics_read", "forecast only"] },
-      { suffix: "rca-copilot", model: "claude-opus-4-5", allowed: ["traces_read", "correlate", "max 12 steps"] },
-      { suffix: "deploy-guard", model: "claude-sonnet-4-5", allowed: ["deploy_read", "block risky deploys", "human approve override"] },
-      { suffix: "toil-automator", model: "claude-haiku-4-5", allowed: ["ticket_read", "propose automation"] },
-      { suffix: "synthetic-monitor", model: "gpt-4o-mini", allowed: ["probe endpoints", "no writes"] },
+      { suffix: "incident-triage-copilot", model: "claude-sonnet-5-5", allowed: ["pagerduty_read", "logs_read", "summarize only", "no writes"] },
+      { suffix: "alert-correlator", model: "claude-haiku-5-5", allowed: ["metrics_read", "dedupe alerts"] },
+      { suffix: "runbook-executor", model: "claude-sonnet-5-5", allowed: ["run approved runbooks", "human approval above sev2", "no prod delete"] },
+      { suffix: "log-analyzer", model: "gpt-5.4-mini", allowed: ["logs_read", "grep + summarize"] },
+      { suffix: "postmortem-writer", model: "claude-sonnet-5-5", allowed: ["incident_read", "draft docs, no publish"] },
+      { suffix: "oncall-summarizer", model: "claude-haiku-5-5", allowed: ["shift_read", "summarize handoff"] },
+      { suffix: "slo-watchdog", model: "gpt-5.4-mini", allowed: ["slo_read", "alert on burn"] },
+      { suffix: "capacity-forecaster", model: "gpt-5.4", allowed: ["metrics_read", "forecast only"] },
+      { suffix: "rca-copilot", model: "claude-opus-5-5", allowed: ["traces_read", "correlate", "max 12 steps"] },
+      { suffix: "deploy-guard", model: "claude-sonnet-5-5", allowed: ["deploy_read", "block risky deploys", "human approve override"] },
+      { suffix: "toil-automator", model: "claude-haiku-5-5", allowed: ["ticket_read", "propose automation"] },
+      { suffix: "synthetic-monitor", model: "gpt-5.4-mini", allowed: ["probe endpoints", "no writes"] },
     ],
   },
   {
@@ -211,18 +211,18 @@ const UNITS: UnitDef[] = [
     label: "Platform",
     users: ["a.klein", "t.osei", "l.moreau", "d.singh", "e.rossi", "k.abbott"],
     kinds: [
-      { suffix: "ci-optimizer", model: "claude-haiku-4-5", allowed: ["pipeline_read", "suggest caching"] },
-      { suffix: "iac-reviewer", model: "claude-sonnet-4-5", allowed: ["terraform_read", "comment only, no apply"] },
-      { suffix: "dependency-upgrader", model: "gpt-4o-mini", allowed: ["deps_read", "open PRs", "human merge"] },
-      { suffix: "k8s-config-linter", model: "claude-haiku-4-5", allowed: ["manifests_read", "lint"] },
-      { suffix: "service-scaffolder", model: "claude-sonnet-4-5", allowed: ["template_read", "scaffold in sandbox"] },
-      { suffix: "api-gateway-tuner", model: "gpt-4o", allowed: ["gateway_read", "propose limits", "human apply"] },
-      { suffix: "build-cost-analyzer", model: "gpt-4o-mini", allowed: ["ci_metrics_read"] },
-      { suffix: "flaky-test-hunter", model: "claude-haiku-4-5", allowed: ["test_history_read", "quarantine propose"] },
-      { suffix: "terraform-drift-detector", model: "claude-sonnet-4-5", allowed: ["state_read", "report drift"] },
-      { suffix: "image-slimmer", model: "gpt-4o-mini", allowed: ["dockerfile_read", "suggest layers"] },
-      { suffix: "secret-scanner", model: "claude-sonnet-4-5", allowed: ["repo_read", "dlp on", "no external send"] },
-      { suffix: "release-notes-writer", model: "claude-haiku-4-5", allowed: ["pr_read", "draft notes"] },
+      { suffix: "ci-optimizer", model: "claude-haiku-5-5", allowed: ["pipeline_read", "suggest caching"] },
+      { suffix: "iac-reviewer", model: "claude-sonnet-5-5", allowed: ["terraform_read", "comment only, no apply"] },
+      { suffix: "dependency-upgrader", model: "gpt-5.4-mini", allowed: ["deps_read", "open PRs", "human merge"] },
+      { suffix: "k8s-config-linter", model: "claude-haiku-5-5", allowed: ["manifests_read", "lint"] },
+      { suffix: "service-scaffolder", model: "claude-sonnet-5-5", allowed: ["template_read", "scaffold in sandbox"] },
+      { suffix: "api-gateway-tuner", model: "gpt-5.4", allowed: ["gateway_read", "propose limits", "human apply"] },
+      { suffix: "build-cost-analyzer", model: "gpt-5.4-mini", allowed: ["ci_metrics_read"] },
+      { suffix: "flaky-test-hunter", model: "claude-haiku-5-5", allowed: ["test_history_read", "quarantine propose"] },
+      { suffix: "terraform-drift-detector", model: "claude-sonnet-5-5", allowed: ["state_read", "report drift"] },
+      { suffix: "image-slimmer", model: "gpt-5.4-mini", allowed: ["dockerfile_read", "suggest layers"] },
+      { suffix: "secret-scanner", model: "claude-sonnet-5-5", allowed: ["repo_read", "dlp on", "no external send"] },
+      { suffix: "release-notes-writer", model: "claude-haiku-5-5", allowed: ["pr_read", "draft notes"] },
     ],
   },
   {
@@ -230,16 +230,16 @@ const UNITS: UnitDef[] = [
     label: "FinOps",
     users: ["n.foster", "c.ibarra", "w.zhang", "b.oconnor", "h.mueller"],
     kinds: [
-      { suffix: "cost-anomaly-detector", model: "claude-sonnet-4-5", allowed: ["billing_read", "alert on spike"] },
-      { suffix: "rightsizing-advisor", model: "gpt-4o", allowed: ["usage_read", "recommend only"] },
-      { suffix: "budget-forecaster", model: "gpt-4o", allowed: ["spend_read", "forecast"] },
-      { suffix: "commitment-planner", model: "claude-sonnet-4-5", allowed: ["usage_read", "propose commitments", "human approve"] },
-      { suffix: "chargeback-reporter", model: "claude-haiku-4-5", allowed: ["tags_read", "generate reports"] },
-      { suffix: "invoice-reconciler", model: "gpt-4o-mini", allowed: ["invoice_read", "match line items"] },
-      { suffix: "idle-resource-sweeper", model: "claude-haiku-4-5", allowed: ["inventory_read", "propose stop", "human approve"] },
-      { suffix: "unit-economics-analyst", model: "claude-opus-4-5", allowed: ["metrics_read", "model unit cost"] },
-      { suffix: "savings-plan-optimizer", model: "gpt-4o", allowed: ["usage_read", "recommend plans"] },
-      { suffix: "tag-compliance-auditor", model: "gpt-4o-mini", allowed: ["tags_read", "flag untagged"] },
+      { suffix: "cost-anomaly-detector", model: "claude-sonnet-5-5", allowed: ["billing_read", "alert on spike"] },
+      { suffix: "rightsizing-advisor", model: "gpt-5.4", allowed: ["usage_read", "recommend only"] },
+      { suffix: "budget-forecaster", model: "gpt-5.4", allowed: ["spend_read", "forecast"] },
+      { suffix: "commitment-planner", model: "claude-sonnet-5-5", allowed: ["usage_read", "propose commitments", "human approve"] },
+      { suffix: "chargeback-reporter", model: "claude-haiku-5-5", allowed: ["tags_read", "generate reports"] },
+      { suffix: "invoice-reconciler", model: "gpt-5.4-mini", allowed: ["invoice_read", "match line items"] },
+      { suffix: "idle-resource-sweeper", model: "claude-haiku-5-5", allowed: ["inventory_read", "propose stop", "human approve"] },
+      { suffix: "unit-economics-analyst", model: "claude-opus-5-5", allowed: ["metrics_read", "model unit cost"] },
+      { suffix: "savings-plan-optimizer", model: "gpt-5.4", allowed: ["usage_read", "recommend plans"] },
+      { suffix: "tag-compliance-auditor", model: "gpt-5.4-mini", allowed: ["tags_read", "flag untagged"] },
     ],
   },
   {
@@ -247,14 +247,14 @@ const UNITS: UnitDef[] = [
     label: "Data Platform",
     users: ["g.harper", "s.malik", "o.lindqvist", "f.romano"],
     kinds: [
-      { suffix: "pipeline-monitor", model: "claude-haiku-4-5", allowed: ["airflow_read", "alert on failure"] },
-      { suffix: "schema-drift-detector", model: "claude-sonnet-4-5", allowed: ["catalog_read", "report drift"] },
-      { suffix: "query-cost-optimizer", model: "gpt-4o", allowed: ["warehouse_read", "suggest rewrites"] },
-      { suffix: "data-quality-checker", model: "claude-haiku-4-5", allowed: ["table_read", "run checks"] },
-      { suffix: "dbt-model-reviewer", model: "claude-sonnet-4-5", allowed: ["dbt_read", "comment on PRs"] },
-      { suffix: "backfill-planner", model: "gpt-4o-mini", allowed: ["job_read", "plan backfills"] },
-      { suffix: "pii-scanner", model: "claude-sonnet-4-5", allowed: ["column_read", "dlp on", "attestation required"] },
-      { suffix: "lineage-mapper", model: "gpt-4o-mini", allowed: ["lineage_read", "map only"] },
+      { suffix: "pipeline-monitor", model: "claude-haiku-5-5", allowed: ["airflow_read", "alert on failure"] },
+      { suffix: "schema-drift-detector", model: "claude-sonnet-5-5", allowed: ["catalog_read", "report drift"] },
+      { suffix: "query-cost-optimizer", model: "gpt-5.4", allowed: ["warehouse_read", "suggest rewrites"] },
+      { suffix: "data-quality-checker", model: "claude-haiku-5-5", allowed: ["table_read", "run checks"] },
+      { suffix: "dbt-model-reviewer", model: "claude-sonnet-5-5", allowed: ["dbt_read", "comment on PRs"] },
+      { suffix: "backfill-planner", model: "gpt-5.4-mini", allowed: ["job_read", "plan backfills"] },
+      { suffix: "pii-scanner", model: "claude-sonnet-5-5", allowed: ["column_read", "dlp on", "attestation required"] },
+      { suffix: "lineage-mapper", model: "gpt-5.4-mini", allowed: ["lineage_read", "map only"] },
     ],
   },
 ];
@@ -302,12 +302,16 @@ const PROTAGONIST_RUN_BUDGET_USD = 18;
 const CALLS_PER_AGENT_DAY_FLOOR = 120;
 const CALLS_PER_AGENT_DAY_SPREAD = 680;
 
+// USD per tool call for each model id the demo names. The 5.5 Claude rows are
+// the old 4.5 rows scaled by the list-rate ratio the gateway price book gives
+// the same tier: Haiku 5.5 is a tenth of Haiku 4.5, Sonnet 5.5 two thirds of
+// Sonnet 4.6, Opus 5.5 four fifths of Opus 5.
 const PER_CALL_USD: Record<string, number> = {
-  "claude-haiku-4-5": 0.0032,
-  "claude-sonnet-4-5": 0.011,
-  "claude-opus-4-5": 0.024,
-  "gpt-4o": 0.0085,
-  "gpt-4o-mini": 0.0007,
+  "claude-haiku-5-5": 0.0003,
+  "claude-sonnet-5-5": 0.0073,
+  "claude-opus-5-5": 0.0192,
+  "gpt-5.4": 0.0085,
+  "gpt-5.4-mini": 0.0007,
 };
 
 const RUNAWAY_TEAM = "sre";
@@ -851,15 +855,16 @@ function mockDecisionFields(a: FleetAgent, killed: boolean) {
 }
 
 /** One run through the OpenAI-wire door over a multi-vendor upstream, whose
- * model id has no row in the gateway's price book: the measured forge case of
- * 2026-10-14 (`openai/gpt-4.1-mini`), charged at the fallback rate. */
+ * model id has no row in the gateway's price book, so it is charged at the
+ * fallback rate. The id is a Gemini preview model, which the price book names
+ * as not priced. */
 function mockFallbackRun() {
   const a = FLEET.find((x) => x.name === "query-cost-optimizer");
   if (!a) return [];
   return [
     {
       run_id: "query-cost-optimizer-openrouter-1",
-      model: "openai/gpt-4.1-mini",
+      model: "google/gemini-3-flash-preview",
       agent_id: agentId(a),
       unit: unitForTeam(a.team),
       spent_usd: 0.42,
@@ -878,10 +883,10 @@ function mockFallbackRun() {
     // lists it: the board shows the last one and "+1", the hover both.
     {
       run_id: "query-cost-optimizer-switch-1",
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-5-5",
       agent_id: agentId(a),
       unit: unitForTeam(a.team),
-      spent_usd: 0.31,
+      spent_usd: 0.06,
       budget_usd: 2,
       budgets_read: true,
       calls: 9,
@@ -891,8 +896,8 @@ function mockFallbackRun() {
       killed: false,
       ...mockDecisionFields(a, false),
       models: [
-        { model: "claude-opus-4-5", calls: 3, spent_usd: 0.27 },
-        { model: "claude-haiku-4-5", calls: 6, spent_usd: 0.04 },
+        { model: "claude-opus-5-5", calls: 3, spent_usd: 0.06 },
+        { model: "claude-haiku-5-5", calls: 6, spent_usd: 0.002 },
       ],
       model_switches: 1,
     },
@@ -1002,12 +1007,12 @@ function runFor(a: FleetAgent) {
  * gently-rising spend trend - nothing dramatic, this agent's story is the
  * quality regression below, not a cost incident. */
 function mockDriftAgentRunHistory() {
-  const model = "claude-haiku-4-5";
+  const model = "claude-haiku-5-5";
   const points = [
-    { agoMs: 10 * DAY, spentUsd: 1.12, calls: 210 },
-    { agoMs: 7 * DAY, spentUsd: 1.38, calls: 236 },
-    { agoMs: 4 * DAY, spentUsd: 1.61, calls: 258 },
-    { agoMs: 1 * DAY, spentUsd: 2.27, calls: 301 },
+    { agoMs: 10 * DAY, spentUsd: 0.06, calls: 210 },
+    { agoMs: 7 * DAY, spentUsd: 0.07, calls: 236 },
+    { agoMs: 4 * DAY, spentUsd: 0.08, calls: 258 },
+    { agoMs: 1 * DAY, spentUsd: 0.09, calls: 301 },
   ];
   return points.map((p, i) => ({
     run_id: `data-quality-checker-hist-${i + 1}`,
@@ -1143,16 +1148,16 @@ function mockGatewayPosture() {
       unauthorized_attempts: 3,
     },
     price_book: {
-      rows: 61,
+      rows: 60,
       built_in_rows: 60,
       operator_file: true,
       overridden_models: [],
-      added_models: ["openai/gpt-4.1-mini"],
+      added_models: [],
       fallback_input_per_mtok_usd: 15,
       fallback_output_per_mtok_usd: 75,
       tiers: [{ model: "gpt-6-astra", above_prompt_tokens: 200000, input_per_mtok_usd: 4, output_per_mtok_usd: 18 }],
       tiers_dropped_models: [],
-      fallback_models_seen: ["openai/gpt-4.1-nano"],
+      fallback_models_seen: ["google/gemini-3-flash-preview"],
       fallback_models_seen_total: 1,
     },
     notes: [],
@@ -2514,16 +2519,28 @@ function fakeSha(seed: string): string {
 }
 
 // --- Quality (Verdryx) ---
+// Blended USD per million tokens for each eval model: the price book's list
+// rates at three input tokens to one output token. A run costs what its model
+// charges, so a Haiku run is the cheapest row and an Opus run is above it.
+const QUALITY_USD_PER_MTOK: Record<string, number> = {
+  "claude-opus-5-5": 8,
+  "claude-sonnet-5-5": 4,
+  "claude-haiku-5-5": 0.2,
+  "gpt-5.4": 5.63,
+  "gpt-5.4-mini": 1.69,
+};
+
+const QUALITY_RUN_DEFS = [
+  { model: "claude-opus-5-5", cases: 30, mean: 0.95 },
+  { model: "claude-sonnet-5-5", cases: 48, mean: 0.93 },
+  { model: "claude-sonnet-5-5", cases: 44, mean: 0.91 },
+  { model: "gpt-5.4", cases: 42, mean: 0.9 },
+  { model: "claude-haiku-5-5", cases: 60, mean: 0.87 },
+  { model: "gpt-5.4-mini", cases: 55, mean: 0.82 },
+];
+
 function mockQualityRuns() {
-  const defs = [
-    { model: "claude-opus-4-5", cases: 30, mean: 0.95 },
-    { model: "claude-sonnet-4-5", cases: 48, mean: 0.93 },
-    { model: "claude-sonnet-4-5", cases: 44, mean: 0.91 },
-    { model: "gpt-4o", cases: 42, mean: 0.9 },
-    { model: "claude-haiku-4-5", cases: 60, mean: 0.87 },
-    { model: "gpt-4o-mini", cases: 55, mean: 0.82 },
-  ];
-  return defs.map((d, i) => {
+  return QUALITY_RUN_DEFS.map((d, i) => {
     const startMs = (i + 1) * 6 * 3600 * 1000;
     const tokens = d.cases * (2000 + i * 350);
     return {
@@ -2531,20 +2548,23 @@ function mockQualityRuns() {
       case_count: d.cases,
       mean_score: d.mean,
       total_tokens: tokens,
-      total_cost_usd: Number(((tokens / 1e6) * 6).toFixed(2)),
+      total_cost_usd: Number(((tokens / 1e6) * QUALITY_USD_PER_MTOK[d.model]).toFixed(2)),
     };
   });
 }
 function mockQualityScores(runId: string) {
+  const model = mockQualityRuns().find((r) => r.run.id === runId)?.run.model ?? "";
+  const rate = QUALITY_USD_PER_MTOK[model] ?? 6;
   const out = [];
   for (let i = 0; i < 12; i++) {
+    const tokens = 1400 + Math.floor(pseudo(runId + "t" + i) * 4200);
     out.push({
       id: i + 1,
       run_id: runId,
       case_id: `case-${String(i + 1).padStart(2, "0")}`,
       value: Number((0.68 + pseudo(runId + "v" + i) * 0.31).toFixed(2)),
-      tokens: 1400 + Math.floor(pseudo(runId + "t" + i) * 4200),
-      cost_usd: Number((pseudo(runId + "c" + i) * 0.05).toFixed(4)),
+      tokens,
+      cost_usd: Number(((tokens / 1e6) * rate).toFixed(4)),
     });
   }
   return out;
@@ -2967,7 +2987,7 @@ function mockOnboardGenerate(args?: Record<string, unknown>) {
           return { provider: String(decl.provider ?? ""), ...(model ? { model } : {}), ...(endpoint ? { endpoint } : {}) };
         })
       : [
-          { provider: "anthropic", model: "claude-sonnet-4-5", endpoint: "api.anthropic.com" },
+          { provider: "anthropic", model: "claude-sonnet-5-5", endpoint: "api.anthropic.com" },
           { provider: "openai" },
         ];
 
@@ -3054,13 +3074,13 @@ function mockCopilotAnswer(question: string) {
   if (/optimi[sz]e|optimization|savings breakdown|cost per (tool call|action)|reduce (my |the )?(cost|spend)/.test(q)) {
     return {
       text:
-        `From the local TokenFuse trace: budget protection blocked $${W().blockedUsd} of runaway spend across ${W().budgetBreaks} budget breaks, the semantic cache served $${W().cacheUsd} for free, and the model router saved $${W().routerUsd} by downgrading eligible calls. By model, claude-opus-4-5 runs about $${(PER_CALL_USD["claude-opus-4-5"] * 26).toFixed(2)} per tool call, versus $${PER_CALL_USD["claude-haiku-4-5"].toFixed(4)} for claude-haiku - opus is spending a lot for comparatively little tool-calling work. By agent, finops/unit-economics-analyst accounts for most of that opus cost. I can't turn on more caching or re-route models myself (the console has no such control, and cache/router tuning is gateway config I cannot touch) - but I can propose tightening that agent's budget so the pattern is bounded.`,
+        `From the local TokenFuse trace: budget protection blocked $${W().blockedUsd} of runaway spend across ${W().budgetBreaks} budget breaks, the semantic cache served $${W().cacheUsd} for free, and the model router saved $${W().routerUsd} by downgrading eligible calls. By model, claude-opus-5-5 runs about $${(PER_CALL_USD["claude-opus-5-5"] * 26).toFixed(2)} per tool call, versus $${PER_CALL_USD["claude-haiku-5-5"].toFixed(4)} for claude-haiku - opus is spending a lot for comparatively little tool-calling work. By agent, finops/unit-economics-analyst accounts for most of that opus cost. I can't turn on more caching or re-route models myself (the console has no such control, and cache/router tuning is gateway config I cannot touch) - but I can propose tightening that agent's budget so the pattern is bounded.`,
       tool_trace: [
         { name: "savings_breakdown", ok: true, result_preview: `blocked $${W().blockedUsd}, cache $${W().cacheUsd}, router $${W().routerUsd}, ${W().budgetBreaks} budget breaks` },
-        { name: "cost_per_action", ok: true, result_preview: `claude-opus-4-5 $${(PER_CALL_USD["claude-opus-4-5"] * 26).toFixed(2)}/tool-call; claude-haiku $${PER_CALL_USD["claude-haiku-4-5"].toFixed(4)}/tool-call` },
+        { name: "cost_per_action", ok: true, result_preview: `claude-opus-5-5 $${(PER_CALL_USD["claude-opus-5-5"] * 26).toFixed(2)}/tool-call; claude-haiku $${PER_CALL_USD["claude-haiku-5-5"].toFixed(4)}/tool-call` },
       ],
       proposals: [
-        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: `Opus cost per tool call here is far above the fleet average and this agent has no cap today; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.`, confidence: 0.68, evidence_refs: ["cost_per_action:claude-opus-4-5"], policy_context: ["finops-spend-cap"] },
+        { kind: "budget", target: "unit-economics-analyst-live", params: { usd_cap: Math.round(Number(W().topSpendUsd) * 0.8) }, rationale: `Opus cost per tool call here is far above the fleet average and this agent has no cap today; $${Math.round(Number(W().topSpendUsd) * 0.8)}/day bounds it without blocking its weekly unit-cost run.`, confidence: 0.68, evidence_refs: ["cost_per_action:claude-opus-5-5"], policy_context: ["finops-spend-cap"] },
       ],
       usage: { prompt_tokens: 850 + question.length * 3, completion_tokens: 175 },
     };
