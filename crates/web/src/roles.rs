@@ -150,6 +150,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "copilot_status",
     "credentials_gateway_retained_runs",
     "credentials_keys",
+    // The gateway's settings, keys summary and price book, read-only.
+    "credentials_posture",
     "credentials_status",
     "crypto_scan_cbom",
     "crypto_scan_evidence",
@@ -344,6 +346,13 @@ mod tests {
             required_role("money_set_budget")
         );
         assert_eq!(required_role("money_set_unit_budget"), Role::Admin);
+    }
+
+    /// The gateway's posture (its switches, keys summary and price book) is a
+    /// read: it carries no secret and changes nothing.
+    #[test]
+    fn reading_the_gateway_posture_is_a_viewer_read() {
+        assert_eq!(required_role("credentials_posture"), Role::Viewer);
     }
 
     /// Which gateways the Cloud still hears from is a read any operator may

@@ -420,9 +420,121 @@ impl GatewayClient {
     }
 }
 
+// ---- posture reads -----------------------------------------------------------
+
+/// `GET /v1/price-book` (tokenfuse invariant 85): which book this gateway
+/// prices calls with. Every field defaulted, so a gateway older than one of
+/// them (`long_context` arrived after the route) still parses, and a field
+/// it never sent is empty rather than a parse failure.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+pub struct GatewayPriceBook {
+    #[serde(default)]
+    pub rows: u64,
+    #[serde(default)]
+    pub built_in_rows: u64,
+    #[serde(default)]
+    pub operator_file: bool,
+    #[serde(default)]
+    pub overridden_models: Vec<String>,
+    #[serde(default)]
+    pub added_models: Vec<String>,
+    #[serde(default)]
+    pub fallback: Option<GatewayRates>,
+    /// `None` from a gateway older than prompt-length tiers (invariant 99).
+    #[serde(default)]
+    pub long_context: Option<Vec<GatewayLongContextRow>>,
+    #[serde(default)]
+    pub long_context_dropped_models: Vec<String>,
+    #[serde(default)]
+    pub fallback_models_seen: Vec<String>,
+    #[serde(default)]
+    pub fallback_models_seen_total: u64,
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// One rate row in micro-USD per million tokens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct GatewayRates {
+    #[serde(default)]
+    pub input_per_mtok_microusd: i64,
+    #[serde(default)]
+    pub output_per_mtok_microusd: i64,
+}
+
+/// One long-prompt tier: a call to `model` above `above_prompt_tokens` of
+/// prompt pays these rates.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct GatewayLongContextRow {
+    pub model: String,
+    pub above_prompt_tokens: u64,
+    #[serde(default)]
+    pub input_per_mtok_microusd: i64,
+    #[serde(default)]
+    pub output_per_mtok_microusd: i64,
+}
+
+impl GatewayClient {
+    /// A GET behind the admin gate whose route an older gateway may not
+    /// have: a 404 is `Ok(None)`, kept apart from any answer.
+    async fn get_optional<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Option<T>, GatewayError> {
+        let url = format!("{}{path}", self.base_url);
+        let mut req = self.http.get(&url);
+        if let Some(key) = &self.admin_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req.send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        parse_response(resp).await.map(Some)
+    }
+
+    /// `GET /v1/settings` -> the switches in force, as the gateway reports
+    /// them (no secrets, by the gateway's contract). Kept as raw JSON: the
+    /// route is newer than this client and its fields are read one by one,
+    /// leniently, by `genaryx_api::credentials::posture`. `Ok(None)` from a
+    /// gateway without the route.
+    pub async fn get_settings(&self) -> Result<Option<serde_json::Value>, GatewayError> {
+        self.get_optional("/v1/settings").await
+    }
+
+    /// `GET /v1/price-book`; `Ok(None)` from a gateway without the route.
+    pub async fn get_price_book(&self) -> Result<Option<GatewayPriceBook>, GatewayError> {
+        self.get_optional("/v1/price-book").await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_price_book_parses_with_and_without_its_newer_fields() {
+        let full: GatewayPriceBook = serde_json::from_str(
+            r#"{"rows":61,"built_in_rows":60,"operator_file":true,"overridden":1,"added":1,
+                "overridden_models":["claude-sonnet-5-5"],"added_models":["openai/gpt-4.1-mini"],
+                "fallback":{"input_per_mtok_microusd":15000000,"output_per_mtok_microusd":75000000,
+                            "cache_read_per_mtok_microusd":0},
+                "long_context":[{"model":"gpt-6-astra","above_prompt_tokens":200000,
+                                 "input_per_mtok_microusd":4000000,"output_per_mtok_microusd":18000000}],
+                "long_context_dropped_models":[],"fallback_models_seen":["anthropic/claude-x"],
+                "fallback_models_seen_total":1,"detail":"61 rows"}"#,
+        )
+        .expect("a v1.13 price book");
+        assert_eq!(full.added_models, ["openai/gpt-4.1-mini"]);
+        assert_eq!(full.long_context.as_ref().map(Vec::len), Some(1));
+        assert_eq!(
+            full.fallback.map(|f| f.output_per_mtok_microusd),
+            Some(75_000_000)
+        );
+        let old: GatewayPriceBook =
+            serde_json::from_str(r#"{"rows":60,"built_in_rows":60}"#).expect("an older book");
+        assert_eq!(old.long_context, None, "no tiers reported is not no tiers");
+    }
 
     // The exact shape docs/22-key-lifecycle.md describes, parsed offline (no
     // live gateway). A live read against a real gateway is a review-stage

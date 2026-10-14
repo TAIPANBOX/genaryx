@@ -1509,6 +1509,102 @@ an absent invariant.
     nickname ("Haiku") is not matched to its id; Felyx's `cost_per_action`
     per-model figures still group the whole trace, never by run.)*
 
+29. **The Posture view shows the switches the gateway runs with, as the
+    gateway reports them, and never a secret.** The firewall mode, the PII
+    mode, the run budget ceiling and the wire were environment variables
+    visible only on the box, and the gateway's price book was never read.
+    `@decided 2026-10-14`: the dashboards show what the product does today:
+    firewall mode, PII mode, run-budget ceiling, wire, client keys, identity
+    map, price book and tiers, read from the gateway's own settings report
+    when present, and "not reported by this gateway version" otherwise.
+
+    `credentials_posture` (`crates/api/src/credentials/posture.rs`) makes
+    three independent reads with the credentials plane's gateway client and
+    admin key: `GET /v1/settings` (newer than this console; a 404 is
+    `reported: false`, never off; fields read one by one, a known switch
+    missing from a reported body is `null`, an unknown one listed under its
+    own name, at most 32), `GET /v1/keys` (identity check, identity map,
+    configured keys, refused attempts) and `GET /v1/price-book` (rows,
+    operator overrides and additions, the fallback rate, the tiers, the ids
+    charged at the fallback). A value under a name that suggests a
+    credential (`secret`, `token`, `password`, `api_key`, a name ending in
+    `key`, except `client_keys`) is withheld whatever the gateway sent;
+    values are bounded at 120 characters and arrays or objects summarised.
+    One failed read costs its own part, with a note; all three failing is
+    an error. The Posture view's "Gateway settings" section
+    (`apps/web/src/components/GatewayPosture.tsx`) shows it. The setting
+    names follow the proposal for the gateway's route and must be aligned
+    with it when it ships; the list, the labels and the withholding rule are
+    `@claude` design choices, open to reversal.
+    *(test: `crates/api/src/credentials/posture.rs`'s two (withholding,
+    bounds); `crates/api/tests/it/gateway_posture_test.rs`'s five on a stub
+    gateway; `crates/connectors/src/gateway.rs`'s
+    `a_price_book_parses_with_and_without_its_newer_fields`;
+    `crates/web/src/roles.rs`'s `reading_the_gateway_posture_is_a_viewer_read`;
+    `apps/web/src/components/GatewayPosture.test.ts`'s five. Red first: the
+    test-only commit did not compile (no `get_settings`, no
+    `credentials::posture`), and the web suite failed to import
+    `./GatewayPosture`. Scenarios:
+    `features/the-posture-view-shows-the-gateways-settings.feature`, five,
+    bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no gateway has `GET /v1/settings` yet, so the
+    switches read "not reported" on every current install until it ships;
+    the withholding rule is a name heuristic, so a secret under an innocent
+    name would be shown; a second gateway (the OpenAI door) is not read, the
+    console holds one gateway descriptor.)*
+
+30. **A refused client key and a PII finding read as what they are, and
+    both are optional.** A gateway with client keys answered a call with no
+    or an unknown `x-fuse-key` with a 401 and wrote no event, and its PII
+    check in shadow mode left a finding only on the answer. TokenFuse now
+    writes a refused key as `identity_mismatch` with `data.reason`
+    `missing_key` or `unknown_key`, `data.key_fingerprint` (`sha256:` and
+    16 hex digits, never the key), the claimed agent and
+    `unreported_since_last` (tokenfuse#432), and a PII finding as
+    `pii_calls` on each `GET /v1/runs` row, `pii_calls` and `pii_kinds` on
+    `GET /v1/summary`, and a `dlp_shadow` event at medium with kinds and
+    counts only (tokenfuse#433).
+    `@decided 2026-10-14`: these appear in the console once TokenFuse emits
+    them, on the incident timeline it already reads, as optional types.
+
+    The refused key is filed like any identity refusal with no key id
+    (`key:(none)`, invariant 19's one rule, unchanged in Rust, SQL and
+    TypeScript); `apps/web/src/lib/attribution.ts`'s `keyRefusal` reads the
+    cause, accepts a fingerprint only in its `sha256:<hex>` shape (anything
+    else is never printed), and the claim sentence, the incident title
+    (`client key refused: none presented` / `unknown key`), the grouping
+    (cause and fingerprint join the key, so two unknown keys are two
+    incidents) and Agent 360's feed line name it.
+    `apps/web/src/lib/incidents.ts` titles `dlp_shadow` "personal data
+    found (shadow)" (or "masked") with its numeric counts and unit, bounded;
+    at medium it reaches the Anomalies tab, not the fire card. `RunAgg`,
+    `Summary`, `RunDto` and `OverviewDto` carry the PII counts as optional,
+    lenient fields; the runs board shows `pii ×N`, Incident 360 says it, the
+    export appends `pii_calls`, and the Overview's model calls tile says how
+    many calls carried personal data, by kind, only when the Cloud reports
+    it. The words are `@claude` design choices, open to reversal.
+    *(test: `apps/web/src/lib/refusedKeyAndPii.test.ts`'s nine;
+    `crates/connectors/src/cloud_rest.rs`'s
+    `pii_findings_are_read_when_the_cloud_reports_them_and_unknown_when_not`;
+    `crates/api/src/money/commands.rs`'s
+    `the_overview_carries_pii_counts_only_when_the_cloud_reports_them`;
+    `crates/api/tests/it/money_runs_status_test.rs`'s
+    `the_calls_a_run_carried_personal_data_in_reach_the_runs_table_when_reported`.
+    Red first: eight of the nine web cases failed against the unfixed code
+    (the real identity mismatch is the control); the Rust tests did not
+    compile on the test-only commit (no `pii_calls`, no `PiiKind`).
+    Scenarios:
+    `features/a-refused-key-and-a-pii-finding-read-as-what-they-are.feature`,
+    five, bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: neither TokenFuse change is merged, so no live
+    gateway has sent either event to this build; the Statistics panel counts
+    a refused key under `key:(none)` with every other keyless refusal, not
+    per fingerprint; a call that claimed no agent is skipped by the gateway
+    and never reaches the bus; no notification is raised by this console for
+    either.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

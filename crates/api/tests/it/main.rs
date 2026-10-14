@@ -16,6 +16,7 @@
 
 mod cloud_stub;
 mod delegation_revoke_test;
+mod gateway_posture_test;
 mod money_gateways_test;
 mod money_runs_budgets_test;
 mod money_runs_status_test;

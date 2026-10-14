@@ -153,6 +153,47 @@ export const fetchCredentialsKeys = (): Promise<GatewayKeysReport> =>
 export const fetchGatewayRetainedRuns = (): Promise<GatewayRetained> =>
   call<GatewayRetained>("credentials_gateway_retained_runs");
 
+/** Mirrors `credentials::posture::GatewayPostureDto`: the gateway's own
+ * switches, its keys and identity-map summary, and its price book. */
+export interface PostureSetting {
+  key: string;
+  label: string;
+  /** `null`: a reporting gateway did not include this switch. */
+  value: string | null;
+}
+
+export interface GatewayPosture {
+  gateway_url: string;
+  /** `null` when the settings read failed (see `notes`); `reported: false`
+   * when the gateway has no `GET /v1/settings`. */
+  settings: { reported: boolean; items: PostureSetting[] } | null;
+  keys: {
+    identity_strict: string;
+    identity_map_configured: boolean;
+    configured_keys: number;
+    keys_listed: number;
+    unauthorized_attempts: number;
+  } | null;
+  price_book: {
+    rows: number;
+    built_in_rows: number;
+    operator_file: boolean;
+    overridden_models: string[];
+    added_models: string[];
+    fallback_input_per_mtok_usd: number | null;
+    fallback_output_per_mtok_usd: number | null;
+    /** `null` from a gateway older than prompt-length tiers. */
+    tiers: { model: string; above_prompt_tokens: number; input_per_mtok_usd: number; output_per_mtok_usd: number }[] | null;
+    tiers_dropped_models: string[];
+    fallback_models_seen: string[];
+    fallback_models_seen_total: number;
+  } | null;
+  notes: string[];
+}
+
+/** The gateway's posture: `GET /v1/settings`, `/v1/keys`, `/v1/price-book`. */
+export const fetchGatewayPosture = (): Promise<GatewayPosture> => call<GatewayPosture>("credentials_posture");
+
 /** Human-readable text for any `CredentialsError` - mirrors
  * `lib/identity.ts`'s `describeIdentityError`. */
 export function describeCredentialsError(err: CredentialsError): string {

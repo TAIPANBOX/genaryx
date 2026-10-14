@@ -1,3 +1,4 @@
+import { overviewPiiLabel } from "../lib/runStatus";
 import { GatewaysSection } from "./GatewaysSection";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cssVar } from "../lib/cssVars";
@@ -499,7 +500,7 @@ export function OverviewView({
                 <KpiTile
                   label="Model calls"
                   value={overview.total_calls.toLocaleString("en-US")}
-                  sub="across the fleet"
+                  sub={overviewPiiLabel(overview) ? `across the fleet · ${overviewPiiLabel(overview)}` : "across the fleet"}
                   onClick={(rect) =>
                     open(
                       <MetricDetailCard

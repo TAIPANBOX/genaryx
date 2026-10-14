@@ -107,8 +107,8 @@ pub use cloud_cli::{CloudCliError, CloudListOptions, CloudProvider, CloudServer,
 pub use cloud_rest::{
     AckResponse, AgentAgg, AgentWindowSpend, Alert, AuditVerifyResponse, BudgetResponse,
     CloudClient, ConnectorError, GatewayAgg, Incident, KillResponse, OwnerAgg, PairNewResponse,
-    PairResponse, RunAgg, RunModel, SavingsSummary, Severity, Summary, UnitAgg, UnitBudgetResponse,
-    WindowSpend,
+    PairResponse, PiiKind, RunAgg, RunModel, SavingsSummary, Severity, Summary, UnitAgg,
+    UnitBudgetResponse, WindowSpend,
 };
 pub use cloud_sse::{CloudSse, CloudSseConfig};
 pub use engram::{
@@ -118,8 +118,8 @@ pub use engram::{
 pub use evidence::{EvidenceBuildError, EvidenceInputs, EvidencePack, build_evidence_pack};
 pub use gateway::{
     CLOSURE_TOKEN_HEADER, GatewayClient, GatewayCloseAnswer, GatewayError, GatewayKeyEntry,
-    GatewayKeyStats, GatewayKeysReport, GatewayRetainedReservation, GatewayRunView,
-    GatewayUnauthorized,
+    GatewayKeyStats, GatewayKeysReport, GatewayLongContextRow, GatewayPriceBook, GatewayRates,
+    GatewayRetainedReservation, GatewayRunView, GatewayUnauthorized,
 };
 pub use hetzner::{HetznerClient, HetznerError, HetznerServer};
 pub use idryx::{

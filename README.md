@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1058-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1070-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -395,6 +395,31 @@ box; these frames are not it, and say so here rather than in a footnote.
   one: on the forge lab it had answered that an Opus-then-Haiku run "used
   claude-haiku-5-5". Proven against fixtures; no Cloud reports per-run models
   yet.
+- **Gateway settings in the Posture view (2026-10-14, invariant 29).** The
+  Posture view opens with the switches the gateway runs with (firewall mode,
+  PII mode, run budget ceiling, wire, identity check, client keys, policy
+  hook and fail mode, cache, router, closure), as the gateway reports them on
+  `GET /v1/settings`; a gateway without that route reads "not reported by
+  this gateway version", never off. Beside them: the client keys and
+  identity map from `GET /v1/keys`, and the price book from
+  `GET /v1/price-book` (rows, the operator's overrides and additions, the
+  fallback rate, the prompt-length tiers, the model ids charged at the
+  fallback). A value under a name that suggests a secret is withheld
+  whatever the gateway sends. Verified against a stub gateway
+  (`crates/api/tests/it/gateway_posture_test.rs`); no gateway ships the
+  settings route yet.
+- **Refused client keys and PII findings (2026-10-14, invariant 30).** When
+  TokenFuse reports a call refused for its client key (an `identity_mismatch`
+  with `reason: missing_key` or `unknown_key`), the incident centre reads it
+  as "client key refused: none presented" or "unknown key", naming the
+  claimed agent, the key's fingerprint (never the key) and how many more the
+  gateway's rate limit held back; two unknown keys are two incidents. A PII
+  finding the gateway forwarded in shadow mode (`dlp_shadow`) reaches the
+  Anomalies tab as "personal data found (shadow)" with its kinds and counts,
+  a run with such calls carries a `pii ×N` pill, and the Overview's model
+  calls tile says how many calls carried personal data, by kind. All of it is
+  optional: a gateway or Cloud older than these changes reports none of it,
+  and the console then says nothing about it rather than zero.
 
 ## Being written to, not just watched
 

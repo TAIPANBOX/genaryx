@@ -6,6 +6,7 @@ import { usePostureData } from "../lib/usePostureData";
 import type { MoneyStatus } from "../moneyTypes";
 import type { PolicyStatus } from "../policyTypes";
 import { SeverityBadge } from "./SeverityBadge";
+import { GatewayPostureSection } from "./GatewayPosture";
 
 function SectionHeader({ title }: { title: string }) {
   return (
@@ -166,6 +167,13 @@ export function PostureView() {
           {describePolicyError(policiesError)}
         </div>
       )}
+
+      <section className="flex flex-col gap-2">
+        <SectionHeader title="Gateway settings" />
+        {/* The switches the gateway runs with, its keys and identity map,
+            and its price book, as the gateway itself reports them. */}
+        <GatewayPostureSection />
+      </section>
 
       <section className="flex flex-col gap-2">
         <SectionHeader title="Stack posture" />

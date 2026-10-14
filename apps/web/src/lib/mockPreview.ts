@@ -1060,6 +1060,56 @@ function mockGateways() {
   };
 }
 
+/** `credentials_posture`: the preview's gateway as a stack-single install
+ * runs it (firewall enforce, PII shadow, a 5.00 USD run ceiling, client keys
+ * and an identity map on), reporting its own settings. */
+function mockGatewayPosture() {
+  const item = (key: string, label: string, value: string | null) => ({ key, label, value });
+  return {
+    gateway_url: "http://127.0.0.1:4100",
+    settings: {
+      reported: true,
+      items: [
+        item("firewall", "Firewall (taint)", "enforce"),
+        item("dlp_pii", "PII detection", "shadow"),
+        item("dlp", "Data-loss prevention", "on"),
+        item("max_run_budget_usd", "Run budget ceiling (USD)", "5.0"),
+        item("wire", "Wire (provider shape)", "anthropic"),
+        item("identity_strict", "Identity check", "enforce"),
+        item("client_keys", "Client keys", "on"),
+        item("require_run_id", "Run id required", "on"),
+        item("wardryx_mode", "Policy hook (wardryx)", "enforce"),
+        item("failmode", "Policy fail mode", "closed"),
+        item("mode", "Gateway mode", "enforce"),
+        item("cache", "Response cache", "off"),
+        item("router", "FinOps router", "off"),
+        item("closure_enabled", "Retained-reservation closure", null),
+      ],
+    },
+    keys: {
+      identity_strict: "enforce",
+      identity_map_configured: true,
+      configured_keys: 6,
+      keys_listed: 7,
+      unauthorized_attempts: 3,
+    },
+    price_book: {
+      rows: 61,
+      built_in_rows: 60,
+      operator_file: true,
+      overridden_models: [],
+      added_models: ["openai/gpt-4.1-mini"],
+      fallback_input_per_mtok_usd: 15,
+      fallback_output_per_mtok_usd: 75,
+      tiers: [{ model: "gpt-6-astra", above_prompt_tokens: 200000, input_per_mtok_usd: 4, output_per_mtok_usd: 18 }],
+      tiers_dropped_models: [],
+      fallback_models_seen: ["openai/gpt-4.1-nano"],
+      fallback_models_seen_total: 1,
+    },
+    notes: [],
+  };
+}
+
 function mockOverview() {
   const runs = mockRuns();
   const spent = runs.reduce((s, r) => s + r.spent_usd, 0);
@@ -1074,6 +1124,14 @@ function mockOverview() {
     open_incidents: incidents.filter((i) => !i.acknowledged).length,
     total_incidents: incidents.length,
     total_saved_usd: mockSavings().total_saved_usd,
+    // The Cloud's PII counts (tokenfuse#433): calls in which the gateway's
+    // PII check found personal data, all time, by kind.
+    pii_calls: 41,
+    pii_kinds: [
+      { kind: "pii_email", calls: 29 },
+      { kind: "pii_phone", calls: 9 },
+      { kind: "pii_card", calls: 3 },
+    ],
   };
 }
 
@@ -2492,6 +2550,48 @@ function mockIdentityRefusalEvents(): UiEvent[] {
   }));
 }
 
+/** A call refused for its client key and a PII finding in shadow, as
+ * TokenFuse writes them since tokenfuse#432 and #433: the refusal as
+ * `identity_mismatch` with `reason: missing_key` (no key presented, nothing
+ * to fingerprint), and the finding as `dlp_shadow` (medium, kinds and counts
+ * only). The demo shows how the console reads each. */
+function mockRefusedKeyAndPiiEvents(): UiEvent[] {
+  const claimed = `agent://${ORG}/data/pipeline-monitor`;
+  const base = {
+    env: "live",
+    source: "tokenfuse",
+    schema: "taipanbox.dev/agent-event/v0.2",
+    on_behalf_of: [],
+    prev_hash: null,
+    raw: "",
+    file: "/root/.stack-up/events/tokenfuse.ndjson",
+  };
+  return [
+    {
+      ...base,
+      id: 900_201,
+      ts: ago(4 * 60_000),
+      type: "identity_mismatch",
+      agent_id: claimed,
+      run_id: null,
+      severity: "high",
+      data: { reason: "missing_key", key_fingerprint: null, agent_id: claimed, unreported_since_last: 7 },
+      off: 900_201,
+    },
+    {
+      ...base,
+      id: 900_202,
+      ts: ago(3 * 60_000),
+      type: "dlp_shadow",
+      agent_id: `agent://${ORG}/finops/invoice-reconciler`,
+      run_id: "invoice-reconciler-live",
+      severity: "medium",
+      data: { summary: "personal data found in the request", counts: { pii_card: 1, pii_email: 2 }, mode: "shadow", unit: "finops" },
+      off: 900_202,
+    },
+  ] as UiEvent[];
+}
+
 function mockQualityDriftEvent(): UiEvent {
   return {
     id: 900_001,
@@ -3693,6 +3793,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     }
     case "money_units": return r(mockUnitCaps());
     case "money_gateways": return r(mockGateways());
+    case "credentials_posture": return r(mockGatewayPosture());
     case "money_set_unit_budget": {
       const unit = String(args?.unit ?? "");
       const budgetUsd = Number(args?.budget_usd ?? Number.NaN);
@@ -3871,7 +3972,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // exactly as many as the seed makes, so anything appended after it is cut
     // before it is ever seen. The drift event was appended, and so the demo's
     // one bus incident with no run id never reached Incident 360.
-    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...seedEvents(Number(args?.limit ?? 60))]);
+    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...seedEvents(Number(args?.limit ?? 60))]);
     case "run_events": return r(seedEvents(20));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });

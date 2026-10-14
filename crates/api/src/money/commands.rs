@@ -39,7 +39,7 @@
 use super::env::EnvSource;
 use super::state::{MoneyClient, MoneyInner, MoneyState};
 use genaryx_connectors::{
-    ConnectorError, Incident, OwnerAgg, RunAgg, SavingsSummary, Severity, Summary,
+    ConnectorError, Incident, OwnerAgg, PiiKind, RunAgg, SavingsSummary, Severity, Summary,
 };
 use genaryx_core::{CommandRecord, command};
 use serde::Serialize;
@@ -71,6 +71,10 @@ pub struct OverviewDto {
     pub open_incidents: u64,
     pub total_incidents: u64,
     pub total_saved_usd: f64,
+    /// Calls in which the gateway's PII check found personal data, all
+    /// time, and by kind; `None` when the Cloud does not report them.
+    pub pii_calls: Option<u64>,
+    pub pii_kinds: Option<Vec<PiiKind>>,
 }
 
 impl OverviewDto {
@@ -91,6 +95,8 @@ impl OverviewDto {
             open_incidents,
             total_incidents: incidents.len() as u64,
             total_saved_usd: micros_to_usd(savings.total_saved_microusd),
+            pii_calls: summary.pii_calls,
+            pii_kinds: summary.pii_kinds.clone(),
         }
     }
 }
@@ -160,6 +166,9 @@ pub struct RunDto {
     pub models: Option<Vec<RunModelDto>>,
     /// Times the run's admitted calls changed model, when reported.
     pub model_switches: Option<u64>,
+    /// Calls on this run in which the gateway's PII check found personal
+    /// data, when reported.
+    pub pii_calls: Option<u64>,
 }
 
 /// One model a run used, with its calls and spend.
@@ -706,6 +715,7 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
                     .collect()
             }),
             model_switches: r.model_switches,
+            pii_calls: r.pii_calls,
         })
         .collect())
 }
@@ -935,6 +945,24 @@ mod tests {
         // not.
         let broken = millis_to_iso(i64::MAX);
         assert_eq!(broken, i64::MAX.to_string());
+    }
+
+    #[test]
+    fn the_overview_carries_pii_counts_only_when_the_cloud_reports_them() {
+        let savings = SavingsSummary::default();
+        let reported = Summary {
+            pii_calls: Some(4),
+            pii_kinds: Some(vec![PiiKind {
+                kind: "pii_email".to_string(),
+                calls: 3,
+            }]),
+            ..Default::default()
+        };
+        let o = OverviewDto::build(&reported, &[], &[], &savings);
+        assert_eq!(o.pii_calls, Some(4));
+        assert_eq!(o.pii_kinds.as_ref().map(Vec::len), Some(1));
+        let o = OverviewDto::build(&Summary::default(), &[], &[], &savings);
+        assert_eq!((o.pii_calls, o.pii_kinds), (None, None));
     }
 
     #[test]

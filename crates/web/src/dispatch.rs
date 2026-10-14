@@ -495,6 +495,11 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             genaryx_api::credentials::commands::credentials_gateway_retained_runs(&ctx.credentials)
                 .await,
         )),
+        // The gateway's posture: settings, keys and identity map, price
+        // book. A read, through the gateway admin key the plane holds.
+        "credentials_posture" => Ok(reply(
+            genaryx_api::credentials::posture::credentials_posture(&ctx.credentials).await,
+        )),
         "credentials_keys" => Ok(reply(
             genaryx_api::credentials::commands::credentials_keys(&ctx.credentials).await,
         )),

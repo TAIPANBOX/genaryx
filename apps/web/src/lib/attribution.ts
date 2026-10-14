@@ -36,6 +36,42 @@ export function refusedKey(e: Pick<UiEvent, "type" | "data">): string | null {
   return typeof key === "string" && key !== "" ? key : null;
 }
 
+/** A call the gateway refused for its CLIENT KEY, not for the agent it
+ * claimed: TokenFuse writes it as `identity_mismatch` with `data.reason`
+ * `missing_key` (no key presented) or `unknown_key` (a key it does not hold,
+ * named only by `data.key_fingerprint`, `sha256:` and 16 hex digits of the
+ * presented value, never the key), rate-limited per key and claimed agent,
+ * with `data.unreported_since_last` counting what the limit held back
+ * (tokenfuse invariant 105). Null for every other event, a real identity
+ * mismatch included. Optional: a gateway older than that writes no such
+ * event, and nothing here depends on one arriving.
+ *
+ * It is filed like any identity refusal (no `key_id`, so `key:(none)`): the
+ * rule in `filedUnder` is the Rust and SQL rule too, and stays one rule. What
+ * changes is the sentence, the incident's title and its grouping, which name
+ * the cause and the fingerprint. */
+export function keyRefusal(
+  e: Pick<UiEvent, "type" | "data">,
+): { reason: "missing_key" | "unknown_key"; fingerprint: string | null; heldBack: number | null } | null {
+  if (e.type !== IDENTITY_MISMATCH) return null;
+  const data = e.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const d = data as Record<string, unknown>;
+  if (d.reason !== "missing_key" && d.reason !== "unknown_key") return null;
+  const fp = d.key_fingerprint;
+  const fingerprint = typeof fp === "string" && /^sha256:[0-9a-f]{1,64}$/.test(fp) ? fp : null;
+  const held = d.unreported_since_last;
+  const heldBack = typeof held === "number" && Number.isFinite(held) && held >= 0 ? held : null;
+  return { reason: d.reason, fingerprint: d.reason === "unknown_key" ? fingerprint : null, heldBack };
+}
+
+/** How a refused client key reads: "no client key" or "an unknown key
+ * sha256:..." (or "an unknown key" when the fingerprint is unreadable). */
+function refusedKeyPhrase(r: { reason: "missing_key" | "unknown_key"; fingerprint: string | null }): string {
+  if (r.reason === "missing_key") return "no client key";
+  return r.fingerprint ? `an unknown key ${r.fingerprint}` : "an unknown key";
+}
+
 /** Who this event is filed under: its envelope `agent_id`, or, for an
  * identity refusal, the key that made the call. */
 export function filedUnder(e: EventLike): string {
@@ -61,8 +97,10 @@ export function isKeySubject(subject: string): boolean {
  * event. */
 export function claimSentence(e: EventLike): string | null {
   if (!isIdentityRefusal(e)) return null;
-  const key = refusedKey(e);
   const claimed = e.agent_id || "no agent";
+  const refusal = keyRefusal(e);
+  if (refusal) return `claimed ${claimed} with ${refusedKeyPhrase(refusal)}, refused before the call`;
+  const key = refusedKey(e);
   return key === null ? `claimed ${claimed} with no key` : `claimed ${claimed} with key ${key}`;
 }
 
@@ -75,6 +113,8 @@ export function claimSentence(e: EventLike): string | null {
  * Every other event reads as its own type, as before. */
 export function agentFeedLine(e: EventLike, viewer: string): { text: string; own: boolean } {
   if (isIdentityRefusal(e) && e.agent_id === viewer) {
+    const refusal = keyRefusal(e);
+    if (refusal) return { text: `${e.type}: claimed with ${refusedKeyPhrase(refusal)}, refused`, own: false };
     const key = refusedKey(e);
     const by = key === null ? "claimed with no key" : `claimed by key ${key}`;
     return { text: `${e.type}: ${by}, refused`, own: false };

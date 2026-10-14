@@ -17,7 +17,7 @@
  * here, so the three cannot disagree.
  */
 
-import type { Run } from "../moneyTypes";
+import type { Overview, Run } from "../moneyTypes";
 
 /** The two decisions that admitted a call. Anything else is a refusal. */
 const ADMITTED = new Set(["allow", "cache_hit"]);
@@ -89,7 +89,7 @@ export function statusTitle(run: Run): string | undefined {
 /** One small pill beside the status: a fact about how calls were charged or
  * admitted that an operator would otherwise not see. */
 export interface RunSignal {
-  key: "fallback" | "basis_unreported" | "identity_warn";
+  key: "fallback" | "basis_unreported" | "identity_warn" | "pii";
   label: string;
   title: string;
 }
@@ -126,7 +126,31 @@ export function runSignals(run: Run): RunSignal[] {
         ". They are spent and filed under the agent id they claimed.",
     });
   }
+  const pii = count(run.pii_calls);
+  if (pii !== null && pii > 0) {
+    out.push({
+      key: "pii",
+      label: `pii ×${pii}`,
+      title: `${pii} call(s) on this run carried personal data the gateway's PII check found (card, email, phone). In shadow mode the gateway forwards such a call unchanged and only records the finding; the kinds are on the Overview.`,
+    });
+  }
   return out;
+}
+
+/** The Overview's line about personal data, or `null` when the Cloud does not
+ * report it (an older Cloud; never "none found"). */
+export function overviewPiiLabel(o: Overview): string | null {
+  const n = count(o.pii_calls);
+  if (n === null) return null;
+  if (n === 0) return "no personal data found";
+  const kinds = Array.isArray(o.pii_kinds)
+    ? o.pii_kinds
+        .filter((k) => k && typeof k.kind === "string" && typeof k.calls === "number")
+        .slice(0, 4)
+        .map((k) => `${bounded(k.kind.replace(/^pii_/, ""), 24)} ${k.calls}`)
+        .join(", ")
+    : "";
+  return `${n.toLocaleString("en-US")} with personal data${kinds ? `: ${kinds}` : ""}`;
 }
 
 /** How much a run asks for an operator's attention, for the board's "status"
@@ -201,6 +225,7 @@ export function runDecisionSentence(run: Run): string {
   for (const s of runSignals(run)) {
     if (s.key === "fallback") parts.push(`${count(run.fallback_calls)} charged at the fallback rate`);
     if (s.key === "basis_unreported") parts.push(`${count(run.basis_unreported_calls)} with no price basis named`);
+    if (s.key === "pii") parts.push(`${count(run.pii_calls)} carried personal data`);
     if (s.key === "identity_warn") {
       const reason = text(run.last_identity_reason);
       parts.push(
