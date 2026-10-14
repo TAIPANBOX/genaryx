@@ -106,8 +106,9 @@ mod wg_uapi;
 pub use cloud_cli::{CloudCliError, CloudListOptions, CloudProvider, CloudServer, list_servers};
 pub use cloud_rest::{
     AckResponse, AgentAgg, AgentWindowSpend, Alert, AuditVerifyResponse, BudgetResponse,
-    CloudClient, ConnectorError, Incident, KillResponse, OwnerAgg, PairNewResponse, PairResponse,
-    RunAgg, SavingsSummary, Severity, Summary, UnitAgg, UnitBudgetResponse, WindowSpend,
+    CloudClient, ConnectorError, GatewayAgg, Incident, KillResponse, OwnerAgg, PairNewResponse,
+    PairResponse, RunAgg, SavingsSummary, Severity, Summary, UnitAgg, UnitBudgetResponse,
+    WindowSpend,
 };
 pub use cloud_sse::{CloudSse, CloudSseConfig};
 pub use engram::{

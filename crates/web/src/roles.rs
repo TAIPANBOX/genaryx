@@ -177,6 +177,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "money_savings",
     // Unit month caps and spend, read-only.
     "money_units",
+    // Which gateways the Cloud still hears from, read-only.
+    "money_gateways",
     "egress_recent",
     "money_status",
     "onboard_status",

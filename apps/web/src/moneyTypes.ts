@@ -151,6 +151,33 @@ export interface UnitCaps {
   units: UnitCap[];
 }
 
+/** Mirrors `money::gateways::GatewayDto`: one site the Cloud hears from. */
+export interface GatewaySite {
+  /** The site name, or `"unnamed"` for a key bound to no site. */
+  site: string;
+  state: "reporting" | "silent";
+  /** When the Cloud last heard from it (ISO-8601, the Cloud's clock). */
+  last_push: string;
+  /** Seconds since then by the console's clock; negative only on skew. */
+  last_push_age_secs: number;
+  /** The newest call time the gateway reported; `null` before any call. */
+  last_record: string | null;
+  first_push: string;
+  pushes: number;
+  calls: number;
+  spent_usd: number;
+}
+
+/** Mirrors `money::gateways::GatewaysDto`. */
+export interface Gateways {
+  /** False when this Cloud has no `GET /v1/gateways` at all. */
+  reported: boolean;
+  silent_after_secs: number;
+  checked_at: string;
+  /** Silent sites first. */
+  gateways: GatewaySite[];
+}
+
 /** Mirrors `money::commands::IncidentDto`. `severity` is a raw lowercase
  * string, same tolerant convention as `types.ts`'s bus `UiEvent.severity`. */
 export interface Incident {

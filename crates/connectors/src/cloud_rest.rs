@@ -353,6 +353,16 @@ impl CloudClient {
         self.get_json_or_absent("/v1/units").await
     }
 
+    /// `GET /v1/gateways` - per-site ingest rollup, most recently heard from
+    /// first (`http.rs::gateways`, `GatewayAgg` in `store.rs`): which gateway
+    /// (site) pushed, how much, and when the Cloud last heard from it. A
+    /// gateway pushes an empty batch as a heartbeat every 30 s by default, so
+    /// `last_push_millis` going stale is a gateway that stopped reporting.
+    /// `Ok(None)` on a 404 (an older Cloud), as [`Self::unit_budgets`].
+    pub async fn gateways(&self) -> Result<Option<Vec<GatewayAgg>>, ConnectorError> {
+        self.get_json_or_absent("/v1/gateways").await
+    }
+
     /// A read whose route an older Cloud may not have: 404 is `Ok(None)`,
     /// kept apart from an empty answer, the same rule as [`Self::spend_window`].
     async fn get_json_or_absent<T: DeserializeOwned>(
@@ -818,6 +828,32 @@ pub struct UnitAgg {
     pub month_spent_microusd: i64,
     #[serde(default)]
     pub month_calls: u64,
+}
+
+/// One element of `GET /v1/gateways`. Exact shape of `store.rs::GatewayAgg`.
+/// Every timestamp is the Cloud's own clock except `last_record_millis`,
+/// which is the newest call timestamp the gateway itself reported and is
+/// never used to judge liveness.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GatewayAgg {
+    /// The site name from the pushing key's spec, or the literal `"unnamed"`
+    /// for a key bound to no site. Never `""`.
+    pub site: String,
+    #[serde(default)]
+    pub spent_microusd: i64,
+    #[serde(default)]
+    pub calls: u64,
+    #[serde(default)]
+    pub tool_calls: u64,
+    /// Ingest posts from this site, heartbeats (empty batches) included.
+    #[serde(default)]
+    pub pushes: u64,
+    #[serde(default)]
+    pub first_push_millis: i64,
+    /// When the Cloud last heard from the site, by the Cloud's clock.
+    pub last_push_millis: i64,
+    #[serde(default)]
+    pub last_record_millis: i64,
 }
 
 /// One element of `GET /v1/alerts`. Exact shape of `store.rs::Alert`.

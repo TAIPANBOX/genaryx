@@ -1,3 +1,4 @@
+import { GatewaysSection } from "./GatewaysSection";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import {
@@ -526,6 +527,9 @@ export function OverviewView({
             }
             rail={
               <>
+                {/* Which gateways the Cloud still hears from: a silent one
+                    leads in red, since every other panel just goes quiet. */}
+                <GatewaysSection />
                 {savings && (
                   <Section title="Governed savings" right={`${savings.budget_breaks} budget breaks`}>
                     <Composition items={compItems} />
