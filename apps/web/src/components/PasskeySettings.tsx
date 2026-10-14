@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { PopoverHeader } from "../lib/popover";
+import { secretField } from "../lib/mockPreview";
 import { SimulatedNotice } from "./SimulatedNotice";
 import {
   CeremonyCancelled,
@@ -79,6 +80,7 @@ export function PasskeySettings() {
   const [password, setPassword] = useState("");
   const [needPassword, setNeedPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const operatorPassword = secretField("operator password");
 
   const refresh = () => {
     void listPasskeys()
@@ -244,10 +246,10 @@ export function PasskeySettings() {
                 fontSize: 12,
                 color: "var(--fg)",
               }}
-              placeholder="operator password"
+              placeholder={operatorPassword.placeholder}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              disabled={removing !== null || enrolling}
+              disabled={operatorPassword.disabled || removing !== null || enrolling}
               spellCheck={false}
             />
           </div>

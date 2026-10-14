@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { hasBackend, invokeBackend, isWebShell } from "../lib/transport";
+import { keyRequirementMet, secretField } from "../lib/mockPreview";
 import { useWindowControls, PopoverHeader } from "../lib/popover";
 
 /**
@@ -164,7 +165,7 @@ export function planConnect(form: ConnectForm, support: FelyxConnectSupport): Co
   if (!form.model.trim()) {
     return { send: false, error: "Pick a model." };
   }
-  if (!form.provider.local && !form.apiKey.trim()) {
+  if (!form.provider.local && !keyRequirementMet(form.apiKey)) {
     return { send: false, error: `${form.provider.label} needs an API key.` };
   }
   return {
@@ -352,7 +353,7 @@ export function FelyxConnectCard({ onConnected }: { onConnected?: () => void }) 
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-..."
+              {...secretField("sk-...")}
               autoComplete="off"
             />
           </>

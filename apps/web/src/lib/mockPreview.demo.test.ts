@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mockInvoke, simulatedNoticeText } from "./mockPreview";
+import { keyRequirementMet, mockInvoke, secretField, simulatedNoticeText } from "./mockPreview";
 
 // The demo answers every command from this mock. Two rules hold for each
 // action it stands in for: the answer says plainly that nothing was done, and
@@ -77,5 +77,21 @@ describe("the demo's remote actions", () => {
     await expect(
       mockInvoke("copilot_connect", { provider: "ollama", model: "qwen2.5:7b-instruct", local: true }),
     ).rejects.toThrow("nothing was done");
+  });
+});
+
+describe("the demo's secret fields", () => {
+  it("the_demo_secret_fields_are_disabled_and_say_so", () => {
+    expect(secretField("operator password", true)).toEqual({ disabled: true, placeholder: "disabled in the demo" });
+  });
+
+  it("the_real_build_secret_fields_stay_as_they_are", () => {
+    expect(secretField("operator password", false)).toEqual({ disabled: false, placeholder: "operator password" });
+  });
+
+  it("the_demo_key_requirement_is_waived_so_buttons_answer", () => {
+    expect(keyRequirementMet("", true)).toBe(true);
+    expect(keyRequirementMet("", false)).toBe(false);
+    expect(keyRequirementMet("  sk-1  ", false)).toBe(true);
   });
 });

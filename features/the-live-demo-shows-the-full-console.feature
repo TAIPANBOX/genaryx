@@ -103,3 +103,40 @@ Feature: The Live Demo shows the console's sidebar foot and says what it simulat
     Given the real web build talking to a box
     When the same panel is rendered
     Then no simulated line appears
+
+  # @test:the_demo_passkey_operator_password_is_disabled
+  Scenario: The demo passkey password field is disabled and says so
+    Given the demo build with no box behind it
+    When the Passkeys panel offers the first enrolment
+    Then the operator password field is disabled with the placeholder "disabled in the demo"
+
+  # @test:the_demo_add_passkey_still_answers_with_the_simulated_result
+  Scenario: Adding a passkey in the demo still answers with the simulated result
+    Given the demo build with its password field disabled
+    When the operator presses Add passkey
+    Then the panel shows that nothing was done
+
+  # @test:the_real_passkey_operator_password_stays_enabled
+  Scenario: The real console keeps the operator password field enabled
+    Given the real web build talking to a box
+    When the Passkeys panel offers the first enrolment
+    Then the operator password field is enabled with its own placeholder
+
+  # @test:the_demo_felyx_connect_answers_without_an_api_key
+  Scenario: Connecting a cloud provider to Felyx in the demo answers without an API key
+    Given the demo build with its API key field disabled
+    When the operator presses Connect Felyx for a cloud provider
+    Then the connect answers with the simulated result and asks for no key
+
+  # @test:the_demo_secret_fields_are_disabled_and_say_so
+  Scenario: Every secret field in the demo is disabled and says so
+    Given the demo build with fields that take a password, key or token
+    When the field is shown
+    Then it is disabled with the placeholder "disabled in the demo"
+
+  # @test:the_demo_key_requirement_is_waived_so_buttons_answer
+  Scenario: A button that needs a key still answers in the demo
+    Given the demo build with its key field disabled
+    When a button that would need a key is pressed
+    Then the requirement is waived and the button answers its simulated result
+

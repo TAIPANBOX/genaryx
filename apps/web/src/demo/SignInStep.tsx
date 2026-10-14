@@ -1,3 +1,4 @@
+import { secretField } from "../lib/mockPreview";
 import { useState, type FormEvent } from "react";
 
 /**
@@ -19,7 +20,7 @@ import { useState, type FormEvent } from "react";
  */
 export function SignInStep({ onSignIn }: { onSignIn: () => void }) {
   const [username, setUsername] = useState("ops");
-  const [password, setPassword] = useState("demo-pw-2026");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
   function submit(e: FormEvent) {
@@ -64,6 +65,7 @@ export function SignInStep({ onSignIn }: { onSignIn: () => void }) {
             id="demo-gx-pass"
             type="password"
             className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-neutral-500"
+            {...secretField("password")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="off"

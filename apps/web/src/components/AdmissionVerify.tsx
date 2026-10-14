@@ -1,3 +1,4 @@
+import { keyRequirementMet, secretField } from "../lib/mockPreview";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cssVar } from "../lib/cssVars";
@@ -257,7 +258,7 @@ export function AdmissionVerify({ seed }: { seed: AdmissionSeed | null }) {
   const [drillRunning, setDrillRunning] = useState(false);
   const [drillRanAtMs, setDrillRanAtMs] = useState<number | null>(null);
 
-  const canDrill = scenarioDir.trim().length > 0 && apiKey.trim().length > 0 && !drillRunning;
+  const canDrill = scenarioDir.trim().length > 0 && keyRequirementMet(apiKey) && !drillRunning;
   const onRunDrill = useCallback(async () => {
     if (!canDrill) return;
     setDrillRunning(true);
@@ -287,7 +288,7 @@ export function AdmissionVerify({ seed }: { seed: AdmissionSeed | null }) {
     evalsetPath.trim().length > 0 &&
     model.trim().length > 0 &&
     agentId.trim().length > 0 &&
-    apiKey.trim().length > 0 &&
+    keyRequirementMet(apiKey) &&
     !baselineRunning;
   const onRunBaseline = useCallback(async () => {
     if (!canBaseline) return;
@@ -356,7 +357,7 @@ export function AdmissionVerify({ seed }: { seed: AdmissionSeed | null }) {
           style={FIELD_STYLE}
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder="gx_... (the newcomer's own client key secret)"
+          {...secretField("gx_... (the newcomer's own client key secret)")}
           spellCheck={false}
           autoComplete="off"
         />
@@ -560,7 +561,7 @@ export function AdmissionVerify({ seed }: { seed: AdmissionSeed | null }) {
             try to trip guardrails - that is the point of a drill.
           </span>
         </div>
-        {apiKey.trim().length === 0 && (
+        {!keyRequirementMet(apiKey) && (
           <span className="text-[11px]" style={{ color: "var(--sev-medium)" }}>
             enter the newcomer's api key above to enable this.
           </span>

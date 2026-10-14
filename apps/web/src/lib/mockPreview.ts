@@ -62,6 +62,27 @@ export function simulatedNoticeText(demo: boolean = MOCK): string | null {
   return demo ? `${SIMULATED_NOTE}: the data here is example data, and no box was contacted.` : null;
 }
 
+/** The placeholder every secret field shows in the Live Demo. */
+export const DEMO_SECRET_PLACEHOLDER = "disabled in the demo";
+
+/**
+ * A field that takes a password, key or token. The demo is a public page, so a
+ * visitor must not be invited to type a real secret: in the demo the field is
+ * disabled and says so. `demo` defaults to this build's flag.
+ */
+export function secretField(placeholder: string, demo: boolean = MOCK): { disabled: boolean; placeholder: string } {
+  return demo ? { disabled: true, placeholder: DEMO_SECRET_PLACEHOLDER } : { disabled: false, placeholder };
+}
+
+/**
+ * Whether a button that needs a key may act. In the demo the key field is
+ * disabled, so the requirement is waived and the button answers its simulated
+ * result instead of asking for a key nobody can type.
+ */
+export function keyRequirementMet(value: string, demo: boolean = MOCK): boolean {
+  return demo || value.trim().length > 0;
+}
+
 export const DEMO_SESSION: Session = {
   configured: true,
   signed_in: true,

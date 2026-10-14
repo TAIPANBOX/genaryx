@@ -1,3 +1,4 @@
+import { keyRequirementMet, secretField } from "../lib/mockPreview";
 import { useCallback, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { describeRemoteError, listCloudServers, listHetznerServers } from "../lib/remote";
@@ -330,7 +331,7 @@ function HetznerInventory() {
   const [listedAtMs, setListedAtMs] = useState<number | null>(null);
 
   const onList = useCallback(async () => {
-    if (token.trim().length === 0 || loading) return;
+    if (!keyRequirementMet(token) || loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -356,7 +357,7 @@ function HetznerInventory() {
           type="password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          placeholder="paste a read-scoped Hetzner Cloud API token"
+          {...secretField("paste a read-scoped Hetzner Cloud API token")}
           spellCheck={false}
           autoComplete="off"
         />
@@ -376,7 +377,7 @@ function HetznerInventory() {
           className="icon-btn"
           style={{ width: "auto", padding: "0 14px", fontSize: 11 }}
           onClick={() => void onList()}
-          disabled={loading || token.trim().length === 0}
+          disabled={loading || !keyRequirementMet(token)}
         >
           {loading ? "Listing..." : "List servers"}
         </button>

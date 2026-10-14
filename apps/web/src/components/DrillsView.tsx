@@ -1,3 +1,4 @@
+import { secretField } from "../lib/mockPreview";
 import { useCallback, useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { describeDrillsError, runDrills } from "../lib/drills";
@@ -164,7 +165,7 @@ export function DrillsView() {
             style={{ ...FIELD_STYLE, minWidth: 140 }}
             value={apiKeyOverride}
             onChange={(e) => setApiKeyOverride(e.target.value)}
-            placeholder={status.has_api_key ? "leave blank to use the resolved bearer" : "leave blank for none"}
+            {...secretField(status.has_api_key ? "leave blank to use the resolved bearer" : "leave blank for none")}
             spellCheck={false}
           />
           <span className="text-[11.5px] shrink-0" style={{ color: "var(--dim)" }}>
