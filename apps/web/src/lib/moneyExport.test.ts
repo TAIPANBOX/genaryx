@@ -485,3 +485,53 @@ describe("the runs board shows how the gateway decided a run", () => {
     expect(joined).toMatch(/fallback rate/);
   });
 });
+
+/**
+ * The Cloud keeps ONE model per run, the last call's. The forge lab's B11
+ * run of 2026-10-14 went from Opus to Haiku and read "claude-haiku-5-5"
+ * under a comment calling it the model that priced the run.
+ */
+describe("the runs board says which model it knows", () => {
+  const SWITCHED: Run = {
+    ...RUN,
+    run_id: "w2-forge-switch-a3-133712",
+    model: "claude-haiku-5-5",
+    models: [
+      { model: "claude-opus-5-5", calls: 1, spent_usd: 0.000408 },
+      { model: "claude-haiku-5-5", calls: 1, spent_usd: 0.000158 },
+    ],
+    model_switches: 1,
+  };
+
+  it("a_run_whose_models_the_cloud_does_not_report_says_last_model", () => {
+    const html = board([{ ...RUN, model: "claude-haiku-5-5" }]);
+    expect(html).toContain("last model claude-haiku-5-5");
+    expect(html).toContain("whether the run used others is not known");
+    expect(html).toContain("run · agent · last model");
+  });
+
+  it("a_run_that_switched_models_shows_the_last_one_and_plus_n", () => {
+    const html = board([SWITCHED]);
+    expect(html).toContain("claude-haiku-5-5 +1");
+    expect(html).toContain("This run used 2 models: claude-opus-5-5 (1 call(s), $0.000408)");
+    expect(html).toContain("the model changed 1 time(s)");
+  });
+
+  it("a run the Cloud says used one model names it plainly", () => {
+    const html = board([{ ...RUN, model: "claude-haiku-5-5", models: [{ model: "claude-haiku-5-5", calls: 2, spent_usd: 0.0002 }], model_switches: 0 }]);
+    expect(html).toContain("Every call of this run used claude-haiku-5-5");
+    expect(html).not.toContain("last model claude-haiku-5-5");
+  });
+
+  it("the_runs_export_carries_every_model_and_the_switch_count", () => {
+    const [s] = runsExportRows([SWITCHED]);
+    expect(s.models).toBe("claude-opus-5-5:1:0.000408;claude-haiku-5-5:1:0.000158");
+    expect(s.model_switches).toBe(1);
+    expect(s.model).toBe("claude-haiku-5-5");
+    const [old] = runsExportRows([RUN]);
+    expect(old.models).toBeNull();
+    expect(old.model_switches).toBeNull();
+    const joined = (runsExportMeta({ shown: 1, total: 1, environment: "x", takenAt: "t" }).caveats ?? []).join(" ");
+    expect(joined).toMatch(/model is the model of the run's LAST call/);
+  });
+});

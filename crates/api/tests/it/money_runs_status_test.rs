@@ -244,3 +244,41 @@ async fn hostile_decision_fields_never_cost_the_table_or_invent_a_value() {
         assert_eq!(row(&rows, "calm").blocked, None, "seed {seed}");
     }
 }
+
+/// The forge lab's B11 run of 2026-10-14 went from Opus to Haiku; the Cloud
+/// keeps `model: claude-haiku-5-5`, the last call's. When the Cloud also
+/// reports `models`, the table carries every one with its spend; when it does
+/// not, the models are unknown, never "one model".
+#[tokio::test]
+async fn the_models_a_run_used_reach_the_runs_table_only_when_the_cloud_reports_them() {
+    let switched = v18_run(
+        "w2-forge-switch-a3-133712",
+        json!({"model": "claude-haiku-5-5", "spent_microusd": 566, "model_switches": 1,
+               "models": [{"model": "claude-opus-5-5", "calls": 1, "spent_microusd": 408},
+                          {"model": "claude-haiku-5-5", "calls": 1, "spent_microusd": 158}]}),
+    );
+    let today = v18_run("w2-forge-switch-a2", json!({"model": "claude-opus-5-5"}));
+    let rows = rows_for(json!([switched, today]).to_string()).await;
+
+    let s = row(&rows, "w2-forge-switch-a3-133712");
+    assert_eq!(
+        s.model, "claude-haiku-5-5",
+        "the last call's model, unchanged"
+    );
+    let models = s.models.as_ref().expect("reported");
+    assert_eq!(
+        models
+            .iter()
+            .map(|m| (m.model.as_str(), m.calls, m.spent_usd))
+            .collect::<Vec<_>>(),
+        [
+            ("claude-opus-5-5", 1, 0.000408),
+            ("claude-haiku-5-5", 1, 0.000158)
+        ]
+    );
+    assert_eq!(s.model_switches, Some(1));
+
+    let t = row(&rows, "w2-forge-switch-a2");
+    assert!(t.models.is_none(), "not reported is not one model");
+    assert_eq!(t.model_switches, None);
+}

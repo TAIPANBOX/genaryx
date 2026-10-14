@@ -1170,6 +1170,34 @@ mod tests {
     }
 
     #[test]
+    fn run_agg_carries_the_models_a_run_used_only_when_the_cloud_reports_them() {
+        let with: Vec<RunAgg> = serde_json::from_str(
+            r#"[{"run_id":"w2-forge-switch-a3-133712","model":"claude-haiku-5-5","agent_id":"",
+                 "spent_microusd":566,"calls":2,"cache_hits":0,"steps":2,
+                 "last_seen_millis":1,"killed":false,"model_switches":1,
+                 "models":[{"model":"claude-opus-5-5","calls":1,"spent_microusd":408},
+                           {"model":"claude-haiku-5-5","calls":1,"spent_microusd":158}]}]"#,
+        )
+        .expect("valid RunAgg json");
+        let models = with[0].models.as_ref().expect("models reported");
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].model, "claude-opus-5-5");
+        assert_eq!(models[1].spent_microusd, 158);
+        assert_eq!(with[0].model_switches, Some(1));
+
+        // Today's Cloud: only `model`, the last call's. Not reported, never
+        // "one model".
+        let without: Vec<RunAgg> = serde_json::from_str(
+            r#"[{"run_id":"r","model":"m","agent_id":"","spent_microusd":1,"calls":1,
+                 "cache_hits":0,"steps":1,"last_seen_millis":1,"killed":false,
+                 "models":"opus,haiku","model_switches":-1}]"#,
+        )
+        .expect("a malformed models field must not fail the row");
+        assert_eq!(without[0].models, None);
+        assert_eq!(without[0].model_switches, None);
+    }
+
+    #[test]
     fn agent_agg_deserializes() {
         let agents: Vec<AgentAgg> = serde_json::from_str(
             r#"[{"agent_id":"planner","spent_microusd":5000,"calls":2,"runs":1,

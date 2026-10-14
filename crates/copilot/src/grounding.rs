@@ -500,6 +500,140 @@ mod tests {
         assert!(check("r is over its budget.", &f, true).is_empty());
     }
 
+    /// The forge lab's B11 run of 2026-10-14: Opus, then Haiku. Today's Cloud
+    /// returns only the last call's model.
+    fn switched_run(models: Option<serde_json::Value>) -> BudgetFacts {
+        let mut row = json!({"run_id": "w2-forge-switch-a3-133712",
+                             "agent_id": "agent://lab/w2/switcher",
+                             "last_model": "claude-haiku-5-5", "spent_usd": 0.000566});
+        if let Some(m) = models {
+            row["models"] = m;
+            row["model_switches"] = json!(1);
+        }
+        let mut f = BudgetFacts::default();
+        f.record("list_runs", true, &json!({"runs": [row]}));
+        f
+    }
+
+    #[test]
+    fn a_single_model_claim_for_a_run_whose_models_are_unknown_is_flagged() {
+        // The measured answer, word for word in substance.
+        let f = switched_run(None);
+        let found = check(
+            "Run w2-forge-switch-a3-133712 used claude-haiku-5-5 and cost $0.000158.",
+            &f,
+            false,
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("only the model of"), "{found:?}");
+        assert!(revision_request(&found).contains("name it as the last model"));
+    }
+
+    #[test]
+    fn a_single_model_claim_for_a_run_that_used_several_is_flagged() {
+        let f = switched_run(Some(json!([
+            {"model": "claude-opus-5-5", "calls": 1, "spent_usd": 0.000408},
+            {"model": "claude-haiku-5-5", "calls": 1, "spent_usd": 0.000158}
+        ])));
+        let found = check(
+            "w2-forge-switch-a3-133712 ran on claude-haiku-5-5",
+            &f,
+            false,
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].contains("2 models") && found[0].contains("claude-opus-5-5"),
+            "{found:?}"
+        );
+        // Both named, or the last one named as the last: supported.
+        assert!(
+            check(
+                "w2-forge-switch-a3-133712 used claude-opus-5-5 then claude-haiku-5-5",
+                &f,
+                false
+            )
+            .is_empty()
+        );
+        assert!(
+            check(
+                "w2-forge-switch-a3-133712's last model was claude-haiku-5-5",
+                &f,
+                false
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_run_the_tools_say_used_one_model_may_be_said_to_have_used_it() {
+        let mut f = switched_run(Some(json!([{"model": "claude-haiku-5-5", "calls": 2}])));
+        f.run_models
+            .get_mut("w2-forge-switch-a3-133712")
+            .expect("recorded")
+            .switches = Some(0);
+        assert!(check("w2-forge-switch-a3-133712 used claude-haiku-5-5", &f, false).is_empty());
+        // ...but not a model the tools did not return for it.
+        f.known_models.insert("claude-opus-5-5".to_string());
+        let found = check("w2-forge-switch-a3-133712 used claude-opus-5-5", &f, false);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(!revision_request(&["budget only".to_string()]).contains("last_model"));
+    }
+
+    #[test]
+    fn a_model_id_is_matched_whole_with_its_inner_dots() {
+        let mut f = BudgetFacts::default();
+        f.record(
+            "list_runs",
+            true,
+            &json!({"runs": [{"run_id": "w2-b1-openai", "last_model": "openai/gpt-4.1-mini"}]}),
+        );
+        assert_eq!(
+            check("w2-b1-openai used openai/gpt-4.1-mini.", &f, false).len(),
+            1
+        );
+        assert!(check("w2-b1-openai used openai/gpt-4.1-mini-2024", &f, false).is_empty());
+        assert!(check("w2-b1-openai used xopenai/gpt-4.1-mini", &f, false).is_empty());
+        // A clause naming no run, or two, is not checked.
+        assert!(check("openai/gpt-4.1-mini is cheap", &f, false).is_empty());
+        // A row with no model facts at all records nothing.
+        f.record(
+            "alerts",
+            true,
+            &json!([{"run_id": "w2-b1-openai", "fraction": 0.2}]),
+        );
+        assert_eq!(f.run_models.len(), 1);
+    }
+
+    #[test]
+    fn hostile_model_text_never_panics_and_never_flags_a_last_model_clause() {
+        let f = switched_run(None);
+        let alphabet: Vec<char> =
+            "w2-forge-switch-a3-133712 claude-haiku-5-5 used last model İ. \n"
+                .chars()
+                .collect();
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        for _ in 0..200 {
+            let mut s = String::new();
+            for _ in 0..(seed % 160) {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                s.push(alphabet[(seed % alphabet.len() as u64) as usize]);
+            }
+            let _ = check(&s, &f, false);
+            let tagged = format!("w2-forge-switch-a3-133712 last model claude-haiku-5-5 {s}");
+            let tagged_findings = check(&tagged, &f, false);
+            assert!(
+                clauses(&tagged).len() > 1
+                    || tagged_findings
+                        .iter()
+                        .all(|x| !x.contains("as the model run")),
+                "{tagged:?}: {tagged_findings:?}"
+            );
+            seed = seed.wrapping_add(1);
+        }
+    }
+
     #[test]
     fn hostile_text_never_panics() {
         let f = facts(&["a", "é-run"], &["a"], false);

@@ -617,3 +617,87 @@ async fn the_revision_request_asks_for_a_fresh_answer_that_does_not_mention_the_
         "the operator saw \"You're right. Let me revise\" on forge: {feedback}"
     );
 }
+
+// ---- the loop: no single model for a run whose models the tools do not give
+
+/// The forge lab's B11 run of 2026-10-14: Opus, then Haiku. The Cloud keeps
+/// the last call's model only, unless it reports `models` too.
+fn switch_cloud(with_models: bool) -> Stub {
+    let mut row = json!({
+        "run_id": "w2-forge-switch-a3-133712", "model": "claude-haiku-5-5",
+        "agent_id": "agent://lab.taipanbox.dev/w2/switcher", "spent_microusd": 566,
+        "calls": 2, "cache_hits": 0, "steps": 2, "last_seen_millis": 0, "killed": false,
+    });
+    if with_models {
+        row["models"] = json!([
+            {"model": "claude-opus-5-5", "calls": 1, "spent_microusd": 408},
+            {"model": "claude-haiku-5-5", "calls": 1, "spent_microusd": 158}
+        ]);
+        row["model_switches"] = json!(1);
+    }
+    spawn_cloud(vec![("/v1/runs", json!([row]).to_string())])
+}
+
+/// What Felyx answered on forge, asked which model or models the run used.
+const SWITCH_WRONG: &str =
+    "Run w2-forge-switch-a3-133712 used claude-haiku-5-5 and cost $0.000158.";
+
+#[tokio::test]
+async fn felyx_does_not_say_a_run_used_one_model_when_the_tools_know_only_its_last() {
+    let cloud = switch_cloud(false);
+    let right = "Its last model was claude-haiku-5-5; the console cannot say whether \
+                 w2-forge-switch-a3-133712 used other models.";
+    let (felyx, seen) = felyx(
+        &cloud.base,
+        vec![calls(&["list_runs"]), says(SWITCH_WRONG), says(right)],
+    );
+    let answer = felyx
+        .answer("Which model or models did run w2-forge-switch-a3-133712 use?")
+        .await
+        .unwrap();
+    assert_eq!(answer.text, right, "the revised answer is the one returned");
+    assert!(answer.unsupported_claims.is_empty());
+    let seen = seen.lock().unwrap();
+    let feedback = last_user_message(&seen[2]);
+    assert!(feedback.contains("claude-haiku-5-5"), "{feedback}");
+    assert!(feedback.contains("name it as the last model"), "{feedback}");
+    // The tool result the model read names the field for what it is.
+    let tool_result = seen[1]
+        .messages
+        .iter()
+        .find(|m| m.role == Role::Tool)
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    assert!(tool_result.contains("\"last_model\""), "{tool_result}");
+}
+
+#[tokio::test]
+async fn felyx_names_every_model_of_a_run_that_switched_when_the_cloud_reports_them() {
+    let cloud = switch_cloud(true);
+    let (felyx, _seen) = felyx(
+        &cloud.base,
+        vec![
+            calls(&["list_runs"]),
+            says(SWITCH_WRONG),
+            says(SWITCH_WRONG),
+        ],
+    );
+    let answer = felyx
+        .answer("Which model or models did run w2-forge-switch-a3-133712 use?")
+        .await
+        .unwrap();
+    // The claim survived its one revision: the operator sees the note.
+    assert_eq!(
+        answer.unsupported_claims.len(),
+        1,
+        "{:?}",
+        answer.unsupported_claims
+    );
+    assert!(
+        answer.unsupported_claims[0].contains("2 models")
+            && answer.unsupported_claims[0].contains("claude-opus-5-5"),
+        "{:?}",
+        answer.unsupported_claims
+    );
+    assert!(answer.text.contains("not supported by any tool result"));
+}
