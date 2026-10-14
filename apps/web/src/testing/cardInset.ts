@@ -42,36 +42,29 @@ const px = (v: string): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Left inset declared by inline `padding` / `margin` (shorthand or longhand). */
-function styleLeft(style: string): number {
-  let left = 0;
-  for (const decl of style.split(";")) {
+/** Left inset a frame declares, split into its padding and its margin. */
+function insetsOf(f: Frame): { padding: number; margin: number } {
+  let padding = 0;
+  let margin = 0;
+  for (const c of f.classes) {
+    const m = /^(p|px|pl|m|mx|ml)-(\d+(?:\.\d+)?)$/.exec(c);
+    if (!m) continue;
+    if (m[1].startsWith("p")) padding += Number(m[2]) * 4;
+    else margin += Number(m[2]) * 4;
+  }
+  for (const decl of f.style.split(";")) {
     const i = decl.indexOf(":");
     if (i < 0) continue;
     const prop = decl.slice(0, i).trim();
     const parts = decl.slice(i + 1).trim().split(/\s+/);
-    if (prop === "padding" || prop === "margin") {
-      // 1 value: all sides; 2: vertical horizontal; 3: top horizontal bottom; 4: top right bottom left.
-      left += px(parts.length === 4 ? parts[3] : parts.length >= 2 ? parts[1] : parts[0]);
-    } else if (prop === "padding-left" || prop === "margin-left") {
-      left += px(parts[0]);
-    }
+    // 1 value: all sides; 2: vertical horizontal; 3: top horizontal bottom; 4: top right bottom left.
+    const left = parts.length === 4 ? parts[3] : parts.length >= 2 ? parts[1] : parts[0];
+    if (prop === "padding") padding += px(left);
+    else if (prop === "margin") margin += px(left);
+    else if (prop === "padding-left") padding += px(parts[0]);
+    else if (prop === "margin-left") margin += px(parts[0]);
   }
-  return left;
-}
-
-/** Left inset declared by Tailwind's spacing classes (`p-5`, `px-4`, `ml-2`, ...). */
-function classLeft(classes: string[]): number {
-  let left = 0;
-  for (const c of classes) {
-    const m = /^(p|px|pl|m|mx|ml)-(\d+(?:\.\d+)?)$/.exec(c);
-    if (m) left += Number(m[2]) * 4;
-  }
-  return left;
-}
-
-function frameLeft(f: Frame): number {
-  return classLeft(f.classes) + styleLeft(f.style);
+  return { padding, margin };
 }
 
 /** The element stack, outermost first, at the start of the first text run that contains `text`. */
@@ -110,8 +103,8 @@ function stackAtText(html: string, text: string): Frame[] | null {
  * text, the text's own element included.
  *
  * With `box`, the measure stops at the innermost element of that class holding
- * the text, so a bordered tile is measured by where it sits, not by its own
- * inner padding.
+ * the text: a bordered tile or box is measured by where its edge sits (its own
+ * margin included), not by the padding inside it.
  */
 export function insetOfText(html: string, text: string, box?: string): number {
   const stack = stackAtText(html, text);
@@ -119,13 +112,19 @@ export function insetOfText(html: string, text: string, box?: string): number {
   const cardIdx = stack.findIndex((f) => f.classes.includes("d-card"));
   if (cardIdx < 0) throw new Error(`no .d-card holds ${JSON.stringify(text)}`);
   let last = stack.length - 1;
+  let boxMargin = 0;
   if (box !== undefined) {
     let boxIdx = -1;
     for (let i = cardIdx + 1; i < stack.length; i++) if (stack[i].classes.includes(box)) boxIdx = i;
     if (boxIdx < 0) throw new Error(`no .${box} holds ${JSON.stringify(text)}`);
+    // The box's own margin places it; its own padding is the box's business.
+    boxMargin = insetsOf(stack[boxIdx]).margin;
     last = boxIdx - 1;
   }
-  let inset = 0;
-  for (let i = cardIdx + 1; i <= last; i++) inset += frameLeft(stack[i]);
+  let inset = boxMargin;
+  for (let i = cardIdx + 1; i <= last; i++) {
+    const { padding, margin } = insetsOf(stack[i]);
+    inset += padding + margin;
+  }
   return inset;
 }

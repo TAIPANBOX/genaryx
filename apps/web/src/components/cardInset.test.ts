@@ -110,7 +110,7 @@ const RUN: VerdryxRunSummary = {
 };
 
 describe("Overview: the Incident center's bus footnote", () => {
-  it("sits on the card's 20px inset", () => {
+  it("the_bus_footnote_of_the_incident_center_sits_on_the_20px_inset", () => {
     const html = inCard(createElement(BusCoverageFootnote, { coverage: COVERAGE }));
     expect(insetOfText(html, "bus event(s) are incidents")).toBe(INSET);
   });
@@ -119,17 +119,17 @@ describe("Overview: the Incident center's bus footnote", () => {
 describe("Incidents view: the footnote and the severity chips", () => {
   const html = renderToStaticMarkup(createElement(AnomaliesView, { onSelectView: noop, onOpenIncident: noop }));
 
-  it("the footnote sits on the 20px inset", () => {
+  it("the_incidents_footnote_sits_on_the_20px_inset", () => {
     expect(insetOfText(html, "no events read off the bus")).toBe(INSET);
   });
 
-  it("the severity filter chips sit on the 20px inset", () => {
+  it("the_incidents_severity_chips_sit_on_the_20px_inset", () => {
     expect(insetOfText(html, "critical")).toBe(INSET);
   });
 });
 
 describe("Money: the Runs card's sort row", () => {
-  it("the sort label sits on the 20px inset", () => {
+  it("the_runs_sort_row_sits_on_the_20px_inset", () => {
     const html = inCard(
       createElement(RunsToolbar, {
         sort: { key: "spend", dir: "desc" },
@@ -142,54 +142,54 @@ describe("Money: the Runs card's sort row", () => {
 });
 
 describe("Identity: the identities table's type filter and note", () => {
-  it("the type filter chips and the note sit on the 20px inset", () => {
+  it("the_identity_type_filter_and_note_sit_on_the_20px_inset", () => {
     const html = inCard(createElement(IdentityList, { identities: [IDENTITY], onOpenAgent: noop }));
     expect(insetOfText(html, "A dash is a field idryx sent empty")).toBe(INSET);
     expect(insetOfText(html, "human")).toBe(INSET);
   });
 
-  it("an empty list says so on the 20px inset", () => {
+  it("an_empty_identity_list_says_so_on_the_20px_inset", () => {
     const html = inCard(createElement(IdentityList, { identities: [], onOpenAgent: noop }));
     expect(insetOfText(html, "no identities in this snapshot.")).toBe(INSET);
   });
 });
 
 describe("Identity: the Alerts card's severity filter", () => {
-  it("the severity filter sits on the 20px inset", () => {
+  it("the_identity_alerts_severity_filter_sits_on_the_20px_inset", () => {
     const html = inCard(createElement(IdentityAlerts, { alerts: [ALERT], onOpenAgent: noop }));
     expect(insetOfText(html, "critical")).toBe(INSET);
   });
 
-  it("an empty list says so on the 20px inset", () => {
+  it("an_empty_identity_alerts_list_says_so_on_the_20px_inset", () => {
     const html = inCard(createElement(IdentityAlerts, { alerts: [], onOpenAgent: noop }));
     expect(insetOfText(html, "no alerts in this snapshot.")).toBe(INSET);
   });
 });
 
 describe("Policy: the Policies card's version chip", () => {
-  it("the policy_version chip sits on the 20px inset", () => {
+  it("the_policy_version_chip_sits_on_the_20px_inset", () => {
     const html = inCard(createElement(PolicyList, { policies: [], policyVersion: "v7" }));
     expect(insetOfText(html, "policy_version")).toBe(INSET);
   });
 
-  it("an empty list says so on the 20px inset", () => {
+  it("an_empty_policy_list_says_so_on_the_20px_inset", () => {
     const html = inCard(createElement(PolicyList, { policies: [], policyVersion: "v7" }));
     expect(insetOfText(html, "no policies configured.")).toBe(INSET);
   });
 });
 
 describe("Policy: the Approvals Inbox rows", () => {
-  it("a pending approval box sits on the 20px inset", () => {
+  it("a_pending_approval_box_sits_on_the_20px_inset", () => {
     const html = inCard(createElement(ApprovalsInbox, { ...APPROVALS_PROPS, approvals: [APPROVAL] }));
     expect(insetOfText(html, "over the unit cap", "panel")).toBe(INSET);
   });
 
-  it("the History label sits on the 20px inset", () => {
+  it("the_approvals_history_label_sits_on_the_20px_inset", () => {
     const html = inCard(createElement(ApprovalsInbox, { ...APPROVALS_PROPS, approvals: [APPROVAL, DECIDED] }));
     expect(insetOfText(html, "History")).toBe(INSET);
   });
 
-  it("an empty inbox says so on the 20px inset", () => {
+  it("an_empty_approvals_inbox_says_so_on_the_20px_inset", () => {
     const html = inCard(createElement(ApprovalsInbox, { ...APPROVALS_PROPS, approvals: [] }));
     expect(insetOfText(html, "no pending approvals.")).toBe(INSET);
   });
@@ -198,11 +198,11 @@ describe("Policy: the Approvals Inbox rows", () => {
 describe("Memory: the Store card's stat tiles and scope line", () => {
   const html = inCard(createElement(MemoryStats, { stats: STATS }));
 
-  it("the scope line sits on the 20px inset", () => {
+  it("the_memory_store_scope_line_sits_on_the_20px_inset", () => {
     expect(insetOfText(html, "scope:")).toBe(INSET);
   });
 
-  it("the stat tiles sit on the 20px inset in every grid", () => {
+  it("the_memory_store_stat_tiles_sit_on_the_20px_inset_in_every_grid", () => {
     expect(insetOfText(html, "Episodic", "panel")).toBe(INSET);
     expect(insetOfText(html, "Facts active", "panel")).toBe(INSET);
     expect(insetOfText(html, "Vector index size", "panel")).toBe(INSET);
@@ -210,19 +210,19 @@ describe("Memory: the Store card's stat tiles and scope line", () => {
 });
 
 describe("Quality: the Run Detail card", () => {
-  it("the stat tiles sit on the 20px inset", () => {
+  it("the_quality_run_detail_tiles_sit_on_the_20px_inset", () => {
     const html = inCard(createElement(QualityRunDetail, { summary: RUN, scores: [], error: null }));
     expect(insetOfText(html, "Mean score", "panel")).toBe(INSET);
   });
 
-  it("an error box sits on the 20px inset", () => {
+  it("the_quality_error_box_sits_on_the_20px_inset", () => {
     const html = inCard(
       createElement(QualityRunDetail, { summary: RUN, scores: [], error: { kind: "verdryx", message: "boom" } }),
     );
     expect(insetOfText(html, "boom", "d-card")).toBe(INSET);
   });
 
-  it("the empty state says so on the 20px inset", () => {
+  it("an_empty_quality_run_detail_says_so_on_the_20px_inset", () => {
     const html = inCard(createElement(QualityRunDetail, { summary: null, scores: [], error: null }));
     expect(insetOfText(html, "select a run above to see its detail.")).toBe(INSET);
   });
