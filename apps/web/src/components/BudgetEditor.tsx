@@ -13,8 +13,11 @@ export function BudgetEditor({
   runId,
   currentUsd,
   onSubmit,
+  subject = "run",
 }: {
   runId: string;
+  /** What the id names, for the confirm dialog: a run, or a unit. */
+  subject?: "run" | "unit";
   currentUsd: number | null;
   /** `reason` is the operator's mandatory break-glass justification,
    * collected by the modal below - never empty by the time this is called. */
@@ -90,7 +93,7 @@ export function BudgetEditor({
       <BreakGlassDialog
         open={confirming}
         title="Set the cap"
-        detail={`run ${runId} -> ${formatUsd(parsed)}`}
+        detail={`${subject} ${runId} -> ${formatUsd(parsed)}${subject === "unit" ? " a month" : ""}`}
         confirmLabel={`Confirm ${formatUsd(parsed)}`}
         tone="var(--sev-medium)"
         onCancel={() => setConfirming(false)}

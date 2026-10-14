@@ -54,6 +54,9 @@ const ADMIN_COMMANDS: &[&str] = &[
     // D8: closing a retained reservation settles money on the gateway, the
     // same floor as a budget change. Listing them is a read, below.
     "money_close_retained",
+    // A unit's central month cap: the gateways enforce it on every call of
+    // the unit, the same floor as a run budget.
+    "money_set_unit_budget",
     // Lifecycle: freezing an agent, or stopping a whole unit or user, writes
     // deny-all wardryx policies and records the block. A real enforcement
     // change on the fleet - admin only. Reading the blocks back
@@ -172,6 +175,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "money_runs",
     "money_spend_window",
     "money_savings",
+    // Unit month caps and spend, read-only.
+    "money_units",
     "egress_recent",
     "money_status",
     "onboard_status",
@@ -324,6 +329,19 @@ mod tests {
             required_role("money_set_budget")
         );
         assert_eq!(required_role("money_close_retained"), Role::Admin);
+    }
+
+    /// A unit's central month cap is enforced by every gateway on every call
+    /// of the unit: setting one is admin, the floor of `money_set_budget`;
+    /// reading the caps is a read.
+    #[test]
+    fn setting_a_unit_cap_is_admin_and_reading_caps_is_a_read() {
+        assert_eq!(required_role("money_units"), Role::Viewer);
+        assert_eq!(
+            required_role("money_set_unit_budget"),
+            required_role("money_set_budget")
+        );
+        assert_eq!(required_role("money_set_unit_budget"), Role::Admin);
     }
 
     /// A command that takes a live cloud API token in its request body is not

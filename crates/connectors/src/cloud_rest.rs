@@ -538,6 +538,24 @@ impl CloudClient {
             .await
     }
 
+    /// `POST /v1/units/{unit}/budget` (admin, ES256 device-signed, body
+    /// `{"budget_usd": f64}`) - `http.rs::set_unit_budget`. Sets the unit's
+    /// central monthly cap; every gateway of the org polls `GET
+    /// /v1/unit-budgets` every few seconds and enforces it in place of the
+    /// cap its identity map file names. The Cloud has no route that removes
+    /// one. `unit` is encoded as one path segment, as `run_id` is in
+    /// [`Self::set_budget`].
+    pub async fn set_unit_budget(
+        &self,
+        unit: &str,
+        budget_usd: f64,
+    ) -> Result<UnitBudgetResponse, ConnectorError> {
+        let segment = path_segment(unit)?;
+        let body = serde_json::to_vec(&BudgetBody { budget_usd })?;
+        self.signed_post(format!("/v1/units/{segment}/budget"), body)
+            .await
+    }
+
     /// `POST /v1/incidents/{incident_id}/ack` (admin, ES256 device-signed,
     /// empty body) - `http.rs::ack_incident`. `404` (surfaced as
     /// [`ConnectorError::Api`] with `status: 404`) for an unknown incident id.
@@ -936,6 +954,15 @@ pub struct BudgetResponse {
     pub budget_micros: i64,
 }
 
+/// `POST /v1/units/{unit}/budget` response. Exact shape of
+/// `http.rs::UnitBudgetResponse`: the unit as the Cloud stored it, and the
+/// micros it stored (`(budget_usd * 1e6) as i64`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnitBudgetResponse {
+    pub unit: String,
+    pub budget_micros: i64,
+}
+
 /// `POST /v1/incidents/{id}/ack` response. Exact shape of `http.rs::AckResponse`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AckResponse {
@@ -1270,6 +1297,26 @@ mod tests {
 
         let err = client.ack_incident("inc1").await.unwrap_err();
         assert!(matches!(err, ConnectorError::NoDeviceSigner));
+    }
+
+    #[tokio::test]
+    async fn a_unit_cap_change_fails_closed_without_a_device_or_with_a_unit_that_is_no_segment() {
+        let client = CloudClient::new("http://127.0.0.1:1", "key:acme:admin")
+            .expect("client construction never touches the network");
+        let err = client.set_unit_budget("finops", 5.0).await.unwrap_err();
+        assert!(matches!(err, ConnectorError::NoDeviceSigner), "{err:?}");
+        // A unit id that cannot be one path segment never addresses another
+        // resource, and is refused before anything is signed.
+        for bad in ["", ".", ".."] {
+            let err = client.set_unit_budget(bad, 5.0).await.unwrap_err();
+            assert!(
+                matches!(err, ConnectorError::InvalidPathSegment(_)),
+                "{bad:?}: {err:?}"
+            );
+        }
+        let r: UnitBudgetResponse =
+            serde_json::from_str(r#"{"unit":"w2x","budget_micros":7168}"#).expect("valid");
+        assert_eq!((r.unit.as_str(), r.budget_micros), ("w2x", 7168));
     }
 
     #[test]

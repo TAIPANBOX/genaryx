@@ -11,14 +11,42 @@ use genaryx_connectors::CloudClient;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// path -> (status line, body); anything else is a 404.
 type Routes = HashMap<&'static str, (&'static str, String)>;
 
+/// One request the stub received.
+#[derive(Debug, Clone)]
+pub struct Seen {
+    pub method: String,
+    pub path: String,
+    /// Header names lowercased.
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
+impl Seen {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
 /// Serve `routes` on a fresh loopback port and return its base URL.
 pub fn spawn_cloud(routes: Vec<(&'static str, &'static str, String)>) -> String {
+    spawn_recording_cloud(routes).0
+}
+
+/// [`spawn_cloud`], keeping every request it received.
+pub fn spawn_recording_cloud(
+    routes: Vec<(&'static str, &'static str, String)>,
+) -> (String, Arc<Mutex<Vec<Seen>>>) {
+    let seen: Arc<Mutex<Vec<Seen>>> = Arc::default();
+    let log = Arc::clone(&seen);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
     let base = format!("http://{}", listener.local_addr().expect("stub address"));
     let routes: Arc<Routes> = Arc::new(
@@ -29,22 +57,24 @@ pub fn spawn_cloud(routes: Vec<(&'static str, &'static str, String)>) -> String 
     );
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            serve(stream, &routes);
+            serve(stream, &routes, &log);
         }
     });
-    base
+    (base, seen)
 }
 
-fn serve(stream: TcpStream, routes: &Routes) {
+fn serve(stream: TcpStream, routes: &Routes, log: &Mutex<Vec<Seen>>) {
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() {
         return;
     }
+    let method = line.split_whitespace().next().unwrap_or("").to_string();
     let target = line.split_whitespace().nth(1).unwrap_or("").to_string();
     let path = target.split('?').next().unwrap_or("").to_string();
     let mut content_length = 0usize;
+    let mut headers = Vec::new();
     loop {
         let mut h = String::new();
         if reader.read_line(&mut h).is_err() {
@@ -54,15 +84,24 @@ fn serve(stream: TcpStream, routes: &Routes) {
         if t.is_empty() {
             break;
         }
-        if let Some((n, v)) = t.split_once(':')
-            && n.trim().eq_ignore_ascii_case("content-length")
-        {
-            content_length = v.trim().parse().unwrap_or(0);
+        if let Some((n, v)) = t.split_once(':') {
+            if n.trim().eq_ignore_ascii_case("content-length") {
+                content_length = v.trim().parse().unwrap_or(0);
+            }
+            headers.push((n.trim().to_ascii_lowercase(), v.trim().to_string()));
         }
     }
     let mut body = vec![0u8; content_length];
     if content_length > 0 {
         reader.read_exact(&mut body).ok();
+    }
+    if let Ok(mut seen) = log.lock() {
+        seen.push(Seen {
+            method,
+            path: path.clone(),
+            headers,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        });
     }
     let (status, out) = routes
         .get(path.as_str())
@@ -79,9 +118,22 @@ fn serve(stream: TcpStream, routes: &Routes) {
 
 /// A Ready Money panel pointed at `base`. No device is attached: reads only.
 pub async fn money_at(base: &str) -> MoneyState {
+    ready(CloudClient::new(base, "test-token").expect("client"), base).await
+}
+
+/// A Ready Money panel with a paired software device attached, so the signed
+/// mutations reach the stub.
+pub async fn money_with_device_at(base: &str) -> MoneyState {
+    let mut client = CloudClient::new(base, "test-token").expect("client");
+    let signer = genaryx_signing::SoftwareSigner::generate().expect("software signer");
+    client.attach_device("dev-test", "device-token", Box::new(signer));
+    ready(client, base).await
+}
+
+async fn ready(client: CloudClient, base: &str) -> MoneyState {
     let state = MoneyState::pending();
     *state.inner.lock().await = MoneyInner::Ready(MoneyClient {
-        client: Arc::new(CloudClient::new(base, "test-token").expect("client")),
+        client: Arc::new(client),
         source: EnvSource::EnvFallback,
         cloud_url: base.to_string(),
         org_domain: "local".to_string(),

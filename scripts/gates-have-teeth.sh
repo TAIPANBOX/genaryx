@@ -354,7 +354,7 @@ run_case "invariant 20: output read from completion_tokens alone again" fail \
 # 200 alone is not a closure.
 run_case "invariant 22: money_close_retained dropped from the ceremony list" fail \
 	'cargo test -q -p genaryx-web --bin genaryx-web money_close_retained' \
-	"$(py 'edit("crates/web/src/main.rs", "    \"money_close_retained\",\n];", "];")')" \
+	"$(py 'edit("crates/web/src/main.rs", "    \"money_close_retained\",\n", "")')" \
 	"money_close_retained_without_an_assertion_is_428"
 
 retained_gate='cargo test -q -p genaryx-api --test it retained_close_test'
@@ -452,6 +452,36 @@ run_case "api_key_ref: the pasted key echoed back into the refusal" fail \
 run_case "api_key_ref: the resolution's own comment reworded" pass \
 	"$api_key_ref_gate" \
 	"$(py 'edit("crates/copilot/src/config.rs", "/// Resolve `api_key_ref` to the secret value, or `None` if unset. Never logs", "/// Resolve `api_key_ref` to the secret value, or `None` when it is unset. Never logs")')"
+
+# invariant 26: a unit's month cap is set by an admin, after a fresh passkey
+# assertion, with a reason, and an unread cap map is never "no cap". Product
+# mutants; the gate is the tests that hold each half.
+run_case "invariant 26: money_set_unit_budget dropped from the ceremony list" fail \
+	'cargo test -q -p genaryx-web --bin genaryx-web money_set_unit_budget' \
+	"$(py 'edit("crates/web/src/main.rs", "    \"money_set_unit_budget\",\n];", "];")')" \
+	"money_set_unit_budget_without_an_assertion_is_428"
+
+run_case "invariant 26: setting a unit cap becomes a viewer read" fail \
+	'cargo test -q -p genaryx-web --bin genaryx-web unit_cap' \
+	"$(py 'edit("crates/web/src/roles.rs", "    \"money_set_unit_budget\",\n    // Lifecycle", "    // Lifecycle")
+edit("crates/web/src/roles.rs", "    \"money_units\",", "    \"money_units\",\n    \"money_set_unit_budget\",")')" \
+	"setting_a_unit_cap_is_admin_and_reading_caps_is_a_read"
+
+units_gate='cargo test -q -p genaryx-api --test it money_units_test'
+
+run_case "invariant 26: a cap change with no reason reaches the Cloud" fail \
+	"$units_gate" \
+	"$(py 'edit("crates/api/src/money/units.rs", "    require_break_glass_reason(&reason)?;\n    validate_unit_cap(&unit, budget_usd)?;", "    validate_unit_cap(&unit, budget_usd)?;")')" \
+	"a_unit_cap_change_that_cannot_be_a_cap_never_reaches_the_cloud"
+
+run_case "invariant 26: an unread cap map reads as no cap" fail \
+	"$units_gate" \
+	"$(py 'edit("crates/api/src/money/units.rs", "            UnitCapState::CapUnknown\n        };", "            UnitCapState::NoCap\n        };")')" \
+	"a_cloud_without_unit_budgets_shows_caps_unknown_never_no_cap"
+
+run_case "invariant 26: the units module's own comment reworded" pass \
+	"$units_gate" \
+	"$(py 'edit("crates/api/src/money/units.rs", "/// A unit at or above this share of its cap reads", "/// A unit at or above this fraction of its cap reads")')"
 
 echo
 echo "=== and the one this estate learned the hard way ==="

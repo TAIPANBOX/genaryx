@@ -24,6 +24,7 @@ import { MoneyEmptyState } from "./MoneyEmptyState";
 import { RetainedReservationsSection } from "./RetainedReservations";
 import { RetainedClosuresSection } from "./RetainedClosures";
 import { RunsBoard } from "./RunsBoard";
+import { UnitCapsSection } from "./UnitCaps";
 import { runAttentionRank } from "../lib/runStatus";
 import { DashMain, Section, Composition, Feed } from "./dash";
 import type { CompItem, FeedItem } from "./dash";
@@ -281,6 +282,7 @@ export function MoneyView({
         // open incidents totals.
         <DashMain
           primary={
+            <div className="flex flex-col gap-4">
             <Section
               title="Runs"
               right={`top ${Math.min(RUNS_SHOWN, allRuns.length)} of ${allRuns.length} · full stream in Bus`}
@@ -320,6 +322,10 @@ export function MoneyView({
                 onReplayRun={onOpenReplay}
               />
             </Section>
+            {/* Business units against their central month caps, the cap
+                every gateway enforces per unit (unit_budget_exceeded). */}
+            <UnitCapsSection />
+            </div>
           }
           rail={
             <>

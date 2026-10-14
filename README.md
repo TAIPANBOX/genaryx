@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1022-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1040-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -280,10 +280,11 @@ box; these frames are not it, and say so here rather than in a footnote.
   instead of the box's OS account. The local account stays the break-glass
   admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
-- **Per-action WebAuthn ceremony (D15/B3 part 2).** The seven privileged
+- **Per-action WebAuthn ceremony (D15/B3 part 2).** The eight privileged
   commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
   `remote_operator_wg_config`, `remote_operator_wg_revoke`,
-  `delegation_revoke`, `money_close_retained`) additionally require a fresh, per-action passkey
+  `delegation_revoke`, `money_close_retained`, `money_set_unit_budget`)
+  additionally require a fresh, per-action passkey
   assertion once the operator has enrolled one: a challenge minted for that
   exact command and its arguments,
   verified server-side (ES256, attestation "none", no `webauthn-rs`/OpenSSL
@@ -355,6 +356,22 @@ box; these frames are not it, and say so here rather than in a footnote.
   Verified against a stub Cloud carrying the forge figures of 2026-10-14
   (`crates/api/tests/it/money_runs_status_test.rs`), not yet against a live
   console.
+- **Unit month caps (2026-10-14, invariant 26).** A Money section lists every
+  business unit with its central month cap, what it has spent this UTC month,
+  its calls, and where it stands: `over cap` (the gateways refuse its next
+  call with `unit_budget_exceeded`; a zero cap refuses every call),
+  `near cap` at 80%, `under cap`, `no central cap`, `cap unknown` when the
+  Cloud's cap map could not be read (never shown as none), `spend unknown`
+  when a cap is set and the Cloud has no spend for the unit this month. It
+  joins the Cloud's `GET /v1/units` and `GET /v1/unit-budgets`
+  (`money_units`). An admin can change a unit's cap from the row
+  (`money_set_unit_budget`): a break-glass reason, a fresh passkey assertion,
+  a device-signed `POST /v1/units/{id}/budget`, one journal entry per
+  attempt; every gateway of the org polls the new cap within seconds. A cap
+  written only in a gateway's identity map file does not reach the Cloud,
+  so it is not shown here, and the Cloud has no route that removes a central
+  cap. Verified against a recording stub Cloud with the forge lab's figures
+  (`crates/api/tests/it/money_units_test.rs`), not yet against a live Cloud.
 
 ## Being written to, not just watched
 

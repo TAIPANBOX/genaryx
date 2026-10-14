@@ -481,13 +481,13 @@ function topRunForAgent(agentRuns: Run[]): Run | null {
 /** One unit's real, runs-derived aggregate - see the module doc comment
  * above for why this (not `UnitRecord`/`fetchUnitRecord`) is the number this
  * dock leads with. */
-/** Units carry no per-unit budget in this data model (`UnitRecord` has none -
- * see `lib/entityRecords.ts`), so "percent of cap" has no literal field to
- * read. The nearest honest, already-available proxy for "at a glance
- * operating health" is the share of the unit's own agents that are neither
- * blocked nor closed - derived from data `UnitCard.tsx` already fetches for
- * the same team, nothing new. `null` (muted dash) when the unit has no
- * agents to compute a share from. */
+/** The dock's unit line is the share of the unit's own agents that are
+ * neither blocked nor closed, derived from data `UnitCard.tsx` already
+ * fetches for the same team. It is NOT the unit's month cap: units do carry
+ * one (a central cap every gateway enforces, read by the Money tab's "Unit
+ * month caps" section through `money_units`), but `UnitRecord` here does not
+ * hold it, so this line never pretends to be a share of a cap. `null` (muted
+ * dash) when the unit has no agents to compute a share from. */
 function unitActivePct(rec: UnitRecord): number | null {
   if (rec.agents.length === 0) return null;
   const active = rec.agents.filter((a) => !a.blocked && !a.closed).length;

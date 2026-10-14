@@ -508,8 +508,8 @@ fn guard(ctx: &Arc<Ctx>, jar: &CookieJar) -> Result<auth::SessionInfo, Response>
 /// The commands whose dispatch REQUIRES a fresh per-action assertion once the
 /// caller has a passkey enrolled: the kill and the budget mutation (the two
 /// break-glass carriers), the approval grant/deny, the two operator
-/// WireGuard commands, revoking a delegation, and closing a retained
-/// reservation. The policy PUT/DELETE
+/// WireGuard commands, revoking a delegation, closing a retained
+/// reservation, and setting a unit's month cap. The policy PUT/DELETE
 /// editor joins this list the day it becomes routable (it is "v1, not built"
 /// today); an unknown name is already fail-closed to admin by the role gate.
 const SENSITIVE_COMMANDS: &[&str] = &[
@@ -531,6 +531,9 @@ const SENSITIVE_COMMANDS: &[&str] = &[
     // the console mints the token that lets it only after a person confirmed
     // this exact closure. A stolen session must not be able to settle money.
     "money_close_retained",
+    // A unit's central month cap moves what every gateway lets that unit
+    // spend, the same class of act as a run budget change.
+    "money_set_unit_budget",
 ];
 
 /// The two ceremony names that are NOT dispatchable commands: each names an
@@ -2247,6 +2250,73 @@ mod tests {
         .await;
         // The plane is pending in this Ctx, so the command answers its own
         // "bootstrapping" refusal; what matters is that no gate refused.
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "bootstrapping", "{body}");
+    }
+
+    // A unit's central month cap: money_set_budget's role and the ceremony.
+
+    fn unit_cap_args() -> String {
+        json!({ "unit": "w2x", "budget_usd": 0.007168, "reason": "B8 lab cap" }).to_string()
+    }
+
+    #[tokio::test]
+    async fn a_viewer_or_approver_is_refused_by_the_role_gate_on_money_set_unit_budget() {
+        let ctx = test_ctx();
+        for (who, role) in [("carol", Role::Viewer), ("dave", Role::Approver)] {
+            let sid = ctx.sessions.create(who, role, Method::Oidc);
+            let (status, body) = post_api(
+                &ctx,
+                "/api/command/money_set_unit_budget",
+                &sid,
+                None,
+                serde_json::from_str(&unit_cap_args()).unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{who}: {body}");
+            assert_eq!(body["error"], "role admin required");
+        }
+    }
+
+    #[tokio::test]
+    async fn money_set_unit_budget_without_an_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_eq!(
+            post_command_with(&ctx, "money_set_unit_budget", &sid, None, &unit_cap_args()).await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn money_set_unit_budget_with_a_valid_assertion_reaches_the_command() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = unit_cap_args();
+        let challenge = start_action(&ctx, &sid, "money_set_unit_budget", &args).await;
+        let header = assertion_header(&ctx, &challenge);
+        // The money plane is pending in this Ctx, so the COMMAND answers its
+        // own "bootstrapping" refusal: proof the gate let the assertion through.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_set_unit_budget",
+            &sid,
+            Some(&header),
+            serde_json::from_str(&args).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "bootstrapping", "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_viewer_may_read_unit_caps() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("carol", Role::Viewer, Method::Oidc);
+        let (status, body) =
+            post_api(&ctx, "/api/command/money_units", &sid, None, json!({})).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
         assert_eq!(body["kind"], "bootstrapping", "{body}");
     }
