@@ -129,6 +129,31 @@ pub struct RunDto {
     pub steps: u32,
     pub last_seen: String,
     pub killed: bool,
+    // How the gateway decided this run, as the Cloud reports it on every
+    // `GET /v1/runs` row (tokenfuse v1.2.0 for `site`, v1.8.0 for the rest).
+    // Each is `None` when this Cloud does not report the field, which the
+    // views print as "not reported", never as a zero: a zero is a count the
+    // Cloud made, and a Cloud that never counted made none.
+    /// The site (gateway) that pushed this run; `Some("")` when the Cloud
+    /// reports sites and no site-bound key pushed it.
+    pub site: Option<String>,
+    /// Calls the gateway refused on this run.
+    pub blocked: Option<u64>,
+    /// The latest call's decision: `allow`, `cache_hit`, or the Breaker
+    /// reason that refused it; `Some("")` before the Cloud trusted any.
+    pub last_decision: Option<String>,
+    /// When `last_decision` was taken, ISO-8601 UTC; `None` when not
+    /// reported or before any decision.
+    pub last_decision_at: Option<String>,
+    /// Admitted calls charged at the fallback rate (no price-book row).
+    pub fallback_calls: Option<u64>,
+    /// Admitted calls whose gateway named no price basis.
+    pub basis_unreported_calls: Option<u64>,
+    /// Admitted calls forwarded although the identity check would have
+    /// refused them (identity warn mode).
+    pub identity_warned: Option<u64>,
+    /// The gateway's identity reason for the latest warned or refused call.
+    pub last_identity_reason: Option<String>,
 }
 
 /// One row of the Money view's incidents list.
@@ -642,6 +667,14 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
             steps: r.steps,
             last_seen: millis_to_iso(r.last_seen_millis),
             killed: r.killed,
+            site: r.site.clone(),
+            blocked: r.blocked,
+            last_decision: r.last_decision.clone(),
+            last_decision_at: r.last_decision_millis.filter(|m| *m > 0).map(millis_to_iso),
+            fallback_calls: r.fallback_calls,
+            basis_unreported_calls: r.basis_unreported_calls,
+            identity_warned: r.identity_warned,
+            last_identity_reason: r.last_identity_reason.clone(),
         })
         .collect())
 }

@@ -679,6 +679,62 @@ pub struct RunAgg {
     pub steps: u32,
     pub last_seen_millis: i64,
     pub killed: bool,
+    /// The site (gateway) whose site-bound key pushed this run's calls
+    /// (tokenfuse v1.2.0, invariant 65), last non-empty wins. `Some("")`: the
+    /// Cloud reports sites and no site-bound key pushed this run. `None`: this
+    /// Cloud does not report the field at all.
+    ///
+    /// Every field from here down is `Option` and read leniently
+    /// ([`lenient`]): absent is `None`, never a zero, because a zero is a
+    /// count the Cloud did not make; and one field of the wrong type is
+    /// unknown rather than a failure of the whole `/v1/runs` answer.
+    #[serde(default, deserialize_with = "lenient")]
+    pub site: Option<String>,
+    /// Calls the gateway refused on this run, by a reason the Cloud trusts
+    /// (tokenfuse v1.8.0, invariants 83 and 86).
+    #[serde(default, deserialize_with = "lenient")]
+    pub blocked: Option<u64>,
+    /// The decision of this run's latest call by its own timestamp: `allow`,
+    /// `cache_hit`, or a Breaker reason (a refusal). `Some("")` until the Cloud
+    /// has seen a decision it trusts.
+    #[serde(default, deserialize_with = "lenient")]
+    pub last_decision: Option<String>,
+    /// When `last_decision` was taken, Unix millis; `0` before any.
+    #[serde(default, deserialize_with = "lenient")]
+    pub last_decision_millis: Option<i64>,
+    /// Admitted calls the gateway charged at the fallback rate because its
+    /// price book had no row for the model id (invariant 86).
+    #[serde(default, deserialize_with = "lenient")]
+    pub fallback_calls: Option<u64>,
+    /// Admitted calls whose gateway named no price basis at all (a gateway
+    /// older than v1.8.0, which may well have charged the fallback rate).
+    #[serde(default, deserialize_with = "lenient")]
+    pub basis_unreported_calls: Option<u64>,
+    /// Admitted calls the gateway forwarded although its identity check would
+    /// have refused them (`TOKENFUSE_IDENTITY_STRICT=warn`, invariant 87).
+    #[serde(default, deserialize_with = "lenient")]
+    pub identity_warned: Option<u64>,
+    /// The identity reason of the latest warned or refused record, when it is
+    /// a word of the gateway's vocabulary; `Some("")` otherwise.
+    #[serde(default, deserialize_with = "lenient")]
+    pub last_identity_reason: Option<String>,
+}
+
+/// Read an optional field leniently: absent, `null`, or a value of the wrong
+/// type (a string where a count belongs, a negative or fractional count) is
+/// `None`, never a failure of the whole response.
+///
+/// `GET /v1/runs` answers one array, so a strict parse lets one malformed
+/// optional field on one row cost the operator every run. A field this
+/// console cannot read is a field it does not know, and `None` says exactly
+/// that; it never becomes a value the body did not hold.
+fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 /// One element of `GET /v1/agents`. Exact shape of `store.rs::AgentAgg`; the
@@ -961,6 +1017,77 @@ mod tests {
         )
         .expect("valid RunAgg json");
         assert_eq!(runs[0].owner, "user://acme.example/platform-lead");
+    }
+
+    #[test]
+    fn run_agg_from_a_cloud_older_than_the_decision_fields_reports_none_not_zero() {
+        // A Cloud older than tokenfuse v1.8.0 sends none of these. Zero would
+        // read as "nothing refused, nothing at the fallback rate", which this
+        // Cloud never said.
+        let runs: Vec<RunAgg> = serde_json::from_str(
+            r#"[{"run_id":"r1","model":"gpt-4o","agent_id":"","spent_microusd":9000,
+                 "calls":5,"cache_hits":1,"steps":3,"last_seen_millis":1758000000000,
+                 "killed":false}]"#,
+        )
+        .expect("valid RunAgg json");
+        let r = &runs[0];
+        assert_eq!(r.site, None);
+        assert_eq!(r.blocked, None);
+        assert_eq!(r.last_decision, None);
+        assert_eq!(r.last_decision_millis, None);
+        assert_eq!(r.fallback_calls, None);
+        assert_eq!(r.basis_unreported_calls, None);
+        assert_eq!(r.identity_warned, None);
+        assert_eq!(r.last_identity_reason, None);
+    }
+
+    #[test]
+    fn run_agg_carries_the_decision_fields_and_the_site() {
+        let runs: Vec<RunAgg> = serde_json::from_str(
+            r#"[{"run_id":"w2-b3","model":"claude-haiku-5-5","agent_id":"agent://lab/x",
+                 "site":"forge","spent_microusd":190,"calls":2,"cache_hits":0,"steps":2,
+                 "last_seen_millis":1791985800000,"killed":false,"tool_calls":0,
+                 "blocked":1,"last_decision":"budget_exceeded",
+                 "last_decision_millis":1791985812345,"fallback_calls":2,
+                 "basis_unreported_calls":3,"identity_warned":4,
+                 "last_identity_reason":"agent_id_not_allowed"}]"#,
+        )
+        .expect("valid RunAgg json");
+        let r = &runs[0];
+        assert_eq!(r.site.as_deref(), Some("forge"));
+        assert_eq!(r.blocked, Some(1));
+        assert_eq!(r.last_decision.as_deref(), Some("budget_exceeded"));
+        assert_eq!(r.last_decision_millis, Some(1_791_985_812_345));
+        assert_eq!(r.fallback_calls, Some(2));
+        assert_eq!(r.basis_unreported_calls, Some(3));
+        assert_eq!(r.identity_warned, Some(4));
+        assert_eq!(
+            r.last_identity_reason.as_deref(),
+            Some("agent_id_not_allowed")
+        );
+    }
+
+    #[test]
+    fn a_decision_field_of_the_wrong_type_is_unknown_and_never_costs_the_row() {
+        // One wrong-typed optional field must not fail the whole `/v1/runs`
+        // answer: the rest of the row, and every other row, is still true.
+        let runs: Vec<RunAgg> = serde_json::from_str(
+            r#"[{"run_id":"r1","model":"m","agent_id":"","spent_microusd":9000,
+                 "calls":5,"cache_hits":1,"steps":3,"last_seen_millis":1,
+                 "killed":false,"blocked":"3","fallback_calls":-1,
+                 "identity_warned":1.5,"last_decision":7,"site":{"x":1},
+                 "last_decision_millis":"soon","basis_unreported_calls":null}]"#,
+        )
+        .expect("a wrong-typed optional field must not fail the row");
+        let r = &runs[0];
+        assert_eq!(r.spent_microusd, 9000, "the rest of the row survives");
+        assert_eq!(r.blocked, None);
+        assert_eq!(r.fallback_calls, None);
+        assert_eq!(r.identity_warned, None);
+        assert_eq!(r.last_decision, None);
+        assert_eq!(r.site, None);
+        assert_eq!(r.last_decision_millis, None);
+        assert_eq!(r.basis_unreported_calls, None);
     }
 
     #[test]

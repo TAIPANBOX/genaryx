@@ -24,6 +24,7 @@ import { MoneyEmptyState } from "./MoneyEmptyState";
 import { RetainedReservationsSection } from "./RetainedReservations";
 import { RetainedClosuresSection } from "./RetainedClosures";
 import { RunsBoard } from "./RunsBoard";
+import { runAttentionRank } from "../lib/runStatus";
 import { DashMain, Section, Composition, Feed } from "./dash";
 import type { CompItem, FeedItem } from "./dash";
 import { usePopover } from "../lib/popover";
@@ -46,7 +47,8 @@ function cmpRun(a: Run, b: Run, key: string): number {
     return ua - ub;
   }
   if (key === "agent") return a.agent_id.localeCompare(b.agent_id);
-  if (key === "status") return Number(a.killed) - Number(b.killed);
+  // Killed, then refused, then flagged (fallback, no basis, identity warn).
+  if (key === "status") return runAttentionRank(a) - runAttentionRank(b);
   return a.spent_usd - b.spent_usd; // spend (default)
 }
 

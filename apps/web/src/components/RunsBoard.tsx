@@ -12,6 +12,7 @@ import {
   runOwnerLabel,
   runUnitLabel,
 } from "../lib/moneyExport";
+import { latestRefusal, refusedCountLabel, runSignals, runSiteLabel, statusTitle } from "../lib/runStatus";
 import { BudgetEditor } from "./BudgetEditor";
 import { ConfirmButton } from "./ConfirmButton";
 import { FuseBar } from "./FuseBar";
@@ -125,14 +126,30 @@ export function RunsBoard({
         // A blocked run (STOPPED/FROZEN/KILLED) shows its precise lifecycle
         // pill; a live run keeps the utilisation-driven live/near/over pill.
         const blocked = runBlockedState(r);
-        const status = blocked ? lifecyclePillClass(blocked)! : frac >= 1 ? "over" : frac >= 0.8 ? "near" : "live";
+        // Then the gateway's own verdict on the latest call: a run whose
+        // calls are being refused is not live, whatever its spend says
+        // (TokenFuse Cloud v1.8.0's `last_decision`, see lib/runStatus.ts).
+        const refusal = blocked ? null : latestRefusal(r);
+        const status = blocked
+          ? lifecyclePillClass(blocked)!
+          : refusal
+            ? "over"
+            : frac >= 1
+              ? "over"
+              : frac >= 0.8
+                ? "near"
+                : "live";
         const statusLabel = blocked
           ? LIFECYCLE_BADGE[blocked].label.toLowerCase()
-          : frac >= 1
-            ? "over cap"
-            : frac >= 0.8
-              ? "near cap"
-              : "live";
+          : refusal
+            ? `refused · ${refusal.word}`
+            : frac >= 1
+              ? "over cap"
+              : frac >= 0.8
+                ? "near cap"
+                : "live";
+        const signals = runSignals(r);
+        const refusedCount = refusedCountLabel(r);
         return (
           <div
             className="d-tr"
@@ -163,9 +180,10 @@ export function RunsBoard({
               ) : (
                 <span className="rag">-</span>
               )}
-              {/* The model priced this run, the unit was charged for it, and
-                  the owner is who started it (the root of its delegation
-                  chain). All three ride on every row of GET /v1/runs. An
+              {/* The model the Cloud aggregated this run under, the unit
+                  charged for it, the owner who started it (the root of its
+                  delegation chain), and the site whose gateway pushed it.
+                  All four ride on every row of GET /v1/runs. An
                   empty unit is the Cloud's identity map answering "none";
                   an empty owner is this Cloud never having sent one at all
                   (older Cloud, or never asked) - see `runOwnerLabel`'s doc
@@ -173,9 +191,9 @@ export function RunsBoard({
               <span
                 className="rag"
                 style={{ fontSize: 9.5, color: "var(--faint)" }}
-                title={`model ${runModelLabel(r)} · unit ${runUnitLabel(r)} · owner ${runOwnerLabel(r)}`}
+                title={`model ${runModelLabel(r)} · unit ${runUnitLabel(r)} · owner ${runOwnerLabel(r)} · ${runSiteLabel(r)}`}
               >
-                {runModelLabel(r)} · {runUnitLabel(r)} · {runOwnerLabel(r)}
+                {runModelLabel(r)} · {runUnitLabel(r)} · {runOwnerLabel(r)} · {runSiteLabel(r)}
               </span>
             </div>
             <div className="d-spentcell">
@@ -205,9 +223,28 @@ export function RunsBoard({
               >
                 {cacheHitsLabel(r)}
               </div>
+              {refusedCount ? (
+                <div
+                  style={{ fontSize: 10.5, color: "var(--ember)", marginTop: 2 }}
+                  title="Calls the gateway refused on this run, counted by TokenFuse Cloud."
+                >
+                  {refusedCount}
+                </div>
+              ) : null}
             </div>
             <div>
-              <span className={`d-pill ${status}`}>{statusLabel}</span>
+              <span className={`d-pill ${status}`} title={refusal ? refusal.title : statusTitle(r)}>
+                {statusLabel}
+              </span>
+              {signals.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, marginTop: 3 }}>
+                  {signals.map((s) => (
+                    <span key={s.key} className="d-pill near" title={s.title}>
+                      {s.label}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="d-acts" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
               <button

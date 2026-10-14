@@ -94,6 +94,29 @@ export interface Run {
   last_seen: string;
   killed: boolean;
   lifecycle?: import("./lib/lifecycleTypes").EntityLifecycleState;
+  /* How the gateway decided this run, as TokenFuse Cloud reports it on every
+   * `GET /v1/runs` row (v1.2.0 for `site`, v1.8.0 for the rest). The Rust
+   * `RunDto` sends `null` for a field this Cloud does not report, and the
+   * views print that as "not reported", never as a zero: a zero is a count
+   * the Cloud made. Optional here as well, because the mock preview and any
+   * older backend omit them; absent and `null` mean the same thing. Read
+   * through `lib/runStatus.ts`, never directly. */
+  /** The site (gateway) that pushed the run; `""` = reported, none named. */
+  site?: string | null;
+  /** Calls the gateway refused on this run. */
+  blocked?: number | null;
+  /** The latest call's decision: `allow`, `cache_hit`, or a refusal reason. */
+  last_decision?: string | null;
+  /** When `last_decision` was taken, ISO-8601 UTC. */
+  last_decision_at?: string | null;
+  /** Admitted calls charged at the fallback rate (no price-book row). */
+  fallback_calls?: number | null;
+  /** Admitted calls whose gateway named no price basis. */
+  basis_unreported_calls?: number | null;
+  /** Admitted calls forwarded under identity warn. */
+  identity_warned?: number | null;
+  /** The gateway's identity reason for the latest warned or refused call. */
+  last_identity_reason?: string | null;
 }
 
 /** Mirrors `money::commands::IncidentDto`. `severity` is a raw lowercase

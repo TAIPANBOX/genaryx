@@ -362,3 +362,126 @@ describe("a run's budget reads as none only when the Cloud's budget map answered
     expect(joined).not.toMatch(/alert threshold has tripped for it, or somebody set one/);
   });
 });
+
+/**
+ * How the gateway decided a run, as TokenFuse Cloud v1.8.0 reports it on every
+ * `GET /v1/runs` row: refused calls and the latest decision, calls charged at
+ * the fallback rate, calls forwarded under identity warn, and the site that
+ * pushed the run. The board used to drop all of it, so a run whose every call
+ * was refused read "live". Figures from the forge lab, 2026-10-14.
+ */
+describe("the runs board shows how the gateway decided a run", () => {
+  const V18: Run = {
+    ...RUN,
+    site: "forge",
+    blocked: 0,
+    last_decision: "allow",
+    last_decision_at: "2026-10-14T13:50:00.000Z",
+    fallback_calls: 0,
+    basis_unreported_calls: 0,
+    identity_warned: 0,
+    last_identity_reason: "",
+  };
+
+  /** The status cell, isolated so "live" or "refused" cannot match elsewhere. */
+  function statusCell(html: string): string {
+    const m = html.match(/<div><span class="d-pill [^"]*"[^>]*>.*?<\/div><div class="d-acts"/);
+    return m ? m[0] : "";
+  }
+
+  it("a_refused_run_reads_as_refused_with_its_reason_on_the_runs_board", () => {
+    const html = board([{ ...V18, blocked: 1, last_decision: "budget_exceeded", last_decision_at: "2026-10-14T13:50:12.345Z" }]);
+    const status = statusCell(html);
+    expect(status).toContain("refused · budget");
+    expect(status).not.toContain(">live<");
+    expect(status).toContain("budget_exceeded");
+    expect(numericCell(html)).toContain("1 refused");
+  });
+
+  it("names the identity reason beside an identity refusal", () => {
+    const html = board([
+      { ...V18, blocked: 2, last_decision: "identity_mismatch", last_identity_reason: "agent_id_not_allowed" },
+    ]);
+    expect(statusCell(html)).toContain("refused · identity");
+    expect(statusCell(html)).toContain("agent_id_not_allowed");
+  });
+
+  it("shows a refusal it has no word for as the Cloud's own string", () => {
+    expect(statusCell(board([{ ...V18, last_decision: "some_future_reason" }]))).toContain("refused · some_future_reason");
+  });
+
+  it("keeps an admitted run live and its counted zero refusals out of the cell", () => {
+    const html = board([{ ...V18, last_decision: "cache_hit" }]);
+    expect(statusCell(html)).toContain(">live<");
+    expect(numericCell(html)).not.toContain("refused");
+  });
+
+  it("a killed run reads as killed even when its latest call was refused", () => {
+    const html = board([{ ...V18, killed: true, blocked: 1, last_decision: "killed" }]);
+    expect(statusCell(html)).toContain("killed");
+    expect(statusCell(html)).not.toContain("refused · ");
+  });
+
+  it("a_run_with_fallback_priced_calls_carries_a_fallback_pill_beside_its_model", () => {
+    const html = board([{ ...V18, model: "openai/gpt-4.1-mini", fallback_calls: 2 }]);
+    expect(statusCell(html)).toContain("fallback ×2");
+    expect(html).toContain("2 call(s) charged at the fallback rate");
+    expect(board([V18])).not.toContain("fallback ×");
+  });
+
+  it("a_run_whose_gateway_named_no_price_basis_says_so", () => {
+    const html = board([{ ...V18, basis_unreported_calls: 3 }]);
+    expect(statusCell(html)).toContain("no basis ×3");
+    expect(html).toContain("named no price basis");
+  });
+
+  it("a_run_forwarded_under_identity_warn_says_so", () => {
+    const html = board([{ ...V18, identity_warned: 2, last_identity_reason: "agent_id_not_allowed" }]);
+    expect(statusCell(html)).toContain("id warn ×2");
+    expect(html).toContain("forwarded although the identity check would have refused them");
+    expect(html).toContain("agent_id_not_allowed");
+  });
+
+  it("the_site_that_pushed_a_run_is_named_on_the_runs_board", () => {
+    expect(board([{ ...V18, site: "forge-openai" }])).toContain("site forge-openai");
+    expect(board([{ ...V18, site: "" }])).toContain("no site named");
+    expect(board([RUN])).toContain("site not reported");
+  });
+
+  it("a_cloud_that_does_not_report_the_decision_fields_is_never_shown_as_clean", () => {
+    // RUN carries none of the v1.8 fields, as an older Cloud sends it.
+    const html = board([RUN]);
+    expect(numericCell(html)).not.toContain("refused");
+    expect(statusCell(html)).not.toContain("fallback");
+    expect(statusCell(html)).not.toContain("×0");
+    expect(statusCell(html)).toContain("does not report refused calls");
+  });
+
+  it("the_runs_export_carries_the_decision_fields_and_null_when_not_reported", () => {
+    const [reported] = runsExportRows([
+      { ...V18, blocked: 1, last_decision: "budget_exceeded", fallback_calls: 2, identity_warned: 3, site: "forge" },
+    ]);
+    expect(reported.blocked).toBe(1);
+    expect(reported.last_decision).toBe("budget_exceeded");
+    expect(reported.last_decision_at).toBe("2026-10-14T13:50:00.000Z");
+    expect(reported.fallback_calls).toBe(2);
+    expect(reported.basis_unreported_calls).toBe(0);
+    expect(reported.identity_warned).toBe(3);
+    expect(reported.site).toBe("forge");
+
+    const [old] = runsExportRows([RUN]);
+    expect(old.blocked).toBeNull();
+    expect(old.last_decision).toBeNull();
+    expect(old.fallback_calls).toBeNull();
+    expect(old.identity_warned).toBeNull();
+    expect(old.site).toBeNull();
+
+    // Appended after the columns the export already had, never reordered.
+    const keys = RUNS_EXPORT_COLUMNS.map((c) => c.key);
+    expect(keys.indexOf("blocked")).toBeGreaterThan(keys.indexOf("killed"));
+    const meta = { shown: 1, total: 1, environment: "console.example", takenAt: "2026-10-14T15:00:00.000Z" };
+    const joined = (runsExportMeta(meta).caveats ?? []).join(" ");
+    expect(joined).toMatch(/An empty blocked/);
+    expect(joined).toMatch(/fallback rate/);
+  });
+});
