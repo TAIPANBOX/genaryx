@@ -478,8 +478,8 @@ const manualRunBudgets = new Map<string, number>();
 /** Central unit month caps set from the preview's Unit month caps section,
  * seeded so the demo shows one unit over its cap and one near it. */
 const manualUnitCaps = new Map<string, number>([
-  ["sre", 1200],
-  ["finops", 1100],
+  ["sre", 1400],
+  ["finops", 2400],
   ["data", 4000],
 ]);
 const ackedIncidentIds = new Set<string>();
