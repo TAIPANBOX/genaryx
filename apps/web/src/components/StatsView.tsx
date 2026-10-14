@@ -537,7 +537,7 @@ export function StatsView({
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col overflow-auto">
+    <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-4">
       <HeroBand
         hero={
           <Hero
