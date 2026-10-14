@@ -44,21 +44,35 @@
   --rad: 14px;
   --rad-s: 9px;
 
+  /* Surfaces that differ between themes by more than a colour swap: the two
+     side rails, and the dashboard cards (top and bottom of their gradient,
+     and a shadow). Dark keeps what it always had. */
+  --rail: color-mix(in srgb, var(--panel) 55%, transparent);
+  --card-top: var(--panel-2);
+  --card-bot: var(--panel);
+  --card-shadow: none;
+
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-  --ink: #fdfbf6;
-  --bg: #e6ddcd;
-  --bg2: #ddd3c0;
-  --panel: #fefcf8;
-  --panel-2: #eee5d4;
-  --panel-3: #ddd2bd;
-  --line: rgba(58, 46, 28, 0.16);
-  --line-2: rgba(58, 46, 28, 0.26);
-  --fg: #201c15;
-  --dim: #5a5345;
-  --faint: #928774;
+  /* Contrast pass: cards near white on a warm grey page, rails a deeper sand
+     than both, borders and secondary text a step darker for legibility. */
+  --ink: #f6f2ea;
+  --bg: #ebe5da;
+  --bg2: #e3dccf;
+  --panel: #fffdf9;
+  --panel-2: #f1ebe0;
+  --panel-3: #e2d9c8;
+  --line: rgba(58, 46, 28, 0.18);
+  --line-2: rgba(58, 46, 28, 0.3);
+  --fg: #1c1813;
+  --dim: #4a4336;
+  --faint: #7a705e;
+  --rail: #ddd3c1;
+  --card-top: #ffffff;
+  --card-bot: #fdfbf7;
+  --card-shadow: 0 1px 2px rgba(58, 46, 28, 0.06), 0 6px 18px -6px rgba(58, 46, 28, 0.14);
 
   --sev-info: #3f5670;
   --sev-low: #0d8f61;
@@ -79,17 +93,23 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --ink: #fdfbf6;
-    --bg: #e6ddcd;
-    --bg2: #ddd3c0;
-    --panel: #fefcf8;
-    --panel-2: #eee5d4;
-    --panel-3: #ddd2bd;
-    --line: rgba(58, 46, 28, 0.16);
-    --line-2: rgba(58, 46, 28, 0.26);
-    --fg: #201c15;
-    --dim: #5a5345;
-    --faint: #928774;
+    /* Contrast pass: cards near white on a warm grey page, rails a deeper sand
+       than both, borders and secondary text a step darker for legibility. */
+    --ink: #f6f2ea;
+    --bg: #ebe5da;
+    --bg2: #e3dccf;
+    --panel: #fffdf9;
+    --panel-2: #f1ebe0;
+    --panel-3: #e2d9c8;
+    --line: rgba(58, 46, 28, 0.18);
+    --line-2: rgba(58, 46, 28, 0.3);
+    --fg: #1c1813;
+    --dim: #4a4336;
+    --faint: #7a705e;
+    --rail: #ddd3c1;
+    --card-top: #ffffff;
+    --card-bot: #fdfbf7;
+    --card-shadow: 0 1px 2px rgba(58, 46, 28, 0.06), 0 6px 18px -6px rgba(58, 46, 28, 0.14);
 
     --sev-info: #3f5670;
     --sev-low: #0d8f61;
@@ -399,9 +419,10 @@ body {
 
 /* soft gradient card, larger radius than the flat .panel */
 .d-card {
-  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  background: linear-gradient(180deg, var(--card-top), var(--card-bot));
   border: 1px solid var(--line);
   border-radius: 18px;
+  box-shadow: var(--card-shadow);
 }
 
 .d-sechead {

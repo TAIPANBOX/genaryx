@@ -421,7 +421,7 @@ export function AppHeader({
         width: railCollapsed ? 52 : railWidth,
         height: "100%",
         borderRight: "1px solid var(--line)",
-        background: "color-mix(in srgb, var(--panel) 55%, transparent)",
+        background: "var(--rail)",
         backdropFilter: "blur(12px) saturate(1.2)",
         WebkitBackdropFilter: "blur(12px) saturate(1.2)",
         transition: dragging ? undefined : "width 0.16s ease",
