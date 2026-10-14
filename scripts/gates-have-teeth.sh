@@ -354,7 +354,7 @@ run_case "invariant 20: output read from completion_tokens alone again" fail \
 # 200 alone is not a closure.
 run_case "invariant 22: money_close_retained dropped from the ceremony list" fail \
 	'cargo test -q -p genaryx-web --bin genaryx-web money_close_retained' \
-	"$(py 'edit("crates/web/src/main.rs", "    \"money_close_retained\",\n];", "];")')" \
+	"$(py 'edit("crates/web/src/main.rs", "    \"money_close_retained\",\n", "")')" \
 	"money_close_retained_without_an_assertion_is_428"
 
 retained_gate='cargo test -q -p genaryx-api --test it retained_close_test'
