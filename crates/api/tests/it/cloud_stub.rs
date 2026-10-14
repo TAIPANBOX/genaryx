@@ -118,7 +118,7 @@ fn serve(stream: TcpStream, routes: &Routes, log: &Mutex<Vec<Seen>>) {
 
 /// A Ready Money panel pointed at `base`. No device is attached: reads only.
 pub async fn money_at(base: &str) -> MoneyState {
-    ready(CloudClient::new(base, "test-token").expect("client")).await
+    ready(CloudClient::new(base, "test-token").expect("client"), base).await
 }
 
 /// A Ready Money panel with a paired software device attached, so the signed
@@ -127,10 +127,10 @@ pub async fn money_with_device_at(base: &str) -> MoneyState {
     let mut client = CloudClient::new(base, "test-token").expect("client");
     let signer = genaryx_signing::SoftwareSigner::generate().expect("software signer");
     client.attach_device("dev-test", "device-token", Box::new(signer));
-    ready(client).await
+    ready(client, base).await
 }
 
-async fn ready(client: CloudClient) -> MoneyState {
+async fn ready(client: CloudClient, base: &str) -> MoneyState {
     let state = MoneyState::pending();
     *state.inner.lock().await = MoneyInner::Ready(MoneyClient {
         client: Arc::new(client),
