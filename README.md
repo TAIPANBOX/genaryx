@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1048-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1058-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -383,6 +383,18 @@ box; these frames are not it, and say so here rather than in a footnote.
   the console's clock against the Cloud's; the section says both. Verified
   against a stub Cloud (`crates/api/tests/it/money_gateways_test.rs`), not
   yet against a live one.
+- **A run's model is named for what it is (2026-10-14, invariant 28).** The
+  Cloud keeps one model per run, the model of its last call, so the runs
+  board and Incident 360 now say `last model claude-haiku-5-5`, with a hover
+  saying whether the run used others is not known. When the Cloud reports
+  every model a run used, the board shows the last one and `+N`, with each
+  model's calls and spend in the hover, and the runs export carries `models`
+  and `model_switches`. Felyx's `list_runs` hands the model over as
+  `last_model`, its prompt says what that means, and its answer check sends
+  back a claim that a run used one model unless the tools listed exactly that
+  one: on the forge lab it had answered that an Opus-then-Haiku run "used
+  claude-haiku-5-5". Proven against fixtures; no Cloud reports per-run models
+  yet.
 
 ## Being written to, not just watched
 

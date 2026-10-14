@@ -118,6 +118,13 @@ export interface Run {
   identity_warned?: number | null;
   /** The gateway's identity reason for the latest warned or refused call. */
   last_identity_reason?: string | null;
+  /** Every model the run's calls named, when the Cloud reports it. Absent or
+   * `null`: only `model` is known, and `model` is the model of the run's LAST
+   * call, never "the model of the run". Read through `lib/runStatus.ts`'s
+   * `runModelSummary`. */
+  models?: { model: string; calls: number; spent_usd: number }[] | null;
+  /** Times the run's admitted calls changed model, when reported. */
+  model_switches?: number | null;
 }
 
 /** Mirrors `money::units::UnitCapState`: where a unit stands against its

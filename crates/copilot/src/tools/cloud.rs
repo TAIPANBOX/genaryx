@@ -103,10 +103,13 @@ impl Tool for ListRuns {
         "list_runs"
     }
     fn description(&self) -> &'static str {
-        "Top per-run spenders for the org, highest spend first (run id, model, agent, spent_usd, \
-         calls, steps, whether killed), plus the org-wide run count and total spend. Safe on a fleet \
-         of thousands (returns only the top runs). Use `money_summary` for headline totals and \
-         `incidents` for budget breaks / runaways."
+        "Top per-run spenders for the org, highest spend first (run id, last_model, agent, \
+         spent_usd, calls, steps, whether killed, refused calls), plus the org-wide run count and \
+         total spend. `last_model` is the model of the run's LAST call only, not the model of the \
+         run: a run can switch models. `models` lists every model the run used, with calls and \
+         spend, only when the Cloud reports it; when `models` is null, which models a run used is \
+         unknown. Safe on a fleet of thousands (returns only the top runs). Use `money_summary` \
+         for headline totals and `incidents` for budget breaks / runaways."
     }
     async fn run(&self, clients: &Clients, _args: &Value) -> Result<Value, ToolError> {
         let runs = cloud!(clients, "list_runs")
@@ -116,8 +119,35 @@ impl Tool for ListRuns {
                 tool: "list_runs",
                 detail: e.to_string(),
             })?;
-        Ok(dollarize(top_runs_by_spend(to_result("list_runs", runs)?)))
+        Ok(dollarize(top_runs_by_spend(last_model_named(to_result(
+            "list_runs",
+            runs,
+        )?))))
     }
+}
+
+/// Rename each run row's `model` to `last_model`. The Cloud's `RunAgg.model`
+/// is the model of the run's last ingested call; handed to the model under
+/// the bare name `model`, it read as the run's only model, and on the forge
+/// lab (2026-10-14) Felyx answered that an Opus-then-Haiku run "used
+/// claude-haiku-5-5". A non-array value passes through unchanged.
+fn last_model_named(data: Value) -> Value {
+    let Value::Array(rows) = data else {
+        return data;
+    };
+    Value::Array(
+        rows.into_iter()
+            .map(|row| match row {
+                Value::Object(mut map) => {
+                    if let Some(m) = map.remove("model") {
+                        map.insert("last_model".to_string(), m);
+                    }
+                    Value::Object(map)
+                }
+                other => other,
+            })
+            .collect(),
+    )
 }
 
 /// `incidents`, but bounded to [`MAX_ROWS`] newest-first (the connector already
@@ -198,7 +228,7 @@ fn cap_rows(field: &'static str, data: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use genaryx_connectors::{Alert, RunAgg, Summary};
+    use genaryx_connectors::{Alert, RunAgg, RunModel, Summary};
 
     // These name the exact shaping `money_summary`, `list_runs` and `alerts`
     // hand back to the model, run against the same `to_result` + `dollarize`
@@ -236,6 +266,51 @@ mod tests {
         assert_eq!(shaped["total_spent_usd"], json!(0.07264));
         assert_eq!(shaped["runs"][0]["spent_usd"], json!(0.063_64));
         assert!(shaped["runs"][0].get("spent_microusd").is_none());
+    }
+
+    #[test]
+    fn list_runs_names_the_model_as_the_last_model_and_passes_the_models_through() {
+        let runs = vec![
+            RunAgg {
+                run_id: "w2-forge-switch-a3-133712".to_string(),
+                model: "claude-haiku-5-5".to_string(),
+                spent_microusd: 566,
+                models: Some(vec![
+                    RunModel {
+                        model: "claude-opus-5-5".to_string(),
+                        calls: 1,
+                        spent_microusd: 408,
+                    },
+                    RunModel {
+                        model: "claude-haiku-5-5".to_string(),
+                        calls: 1,
+                        spent_microusd: 158,
+                    },
+                ]),
+                model_switches: Some(1),
+                ..Default::default()
+            },
+            RunAgg {
+                run_id: "today".to_string(),
+                model: "claude-opus-5-5".to_string(),
+                ..Default::default()
+            },
+        ];
+        let shaped = dollarize(top_runs_by_spend(last_model_named(
+            to_result("list_runs", runs).unwrap(),
+        )));
+        let first = &shaped["runs"][0];
+        assert_eq!(first["last_model"], json!("claude-haiku-5-5"));
+        assert!(first.get("model").is_none(), "no bare `model`: {first}");
+        assert_eq!(first["models"][0]["model"], json!("claude-opus-5-5"));
+        assert_eq!(first["models"][0]["spent_usd"], json!(0.000408));
+        assert_eq!(first["model_switches"], json!(1));
+        let today = &shaped["runs"][1];
+        assert_eq!(today["last_model"], json!("claude-opus-5-5"));
+        assert_eq!(today["models"], json!(null), "unknown, never one model");
+        assert_eq!(last_model_named(json!({"x": 1})), json!({"x": 1}));
+        let tool = ListRuns;
+        assert!(tool.description().contains("LAST call only"));
     }
 
     #[test]

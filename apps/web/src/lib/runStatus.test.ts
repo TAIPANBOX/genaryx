@@ -6,6 +6,7 @@ import {
   refusedCountLabel,
   runDecisionSentence,
   runAttentionRank,
+  runModelSummary,
   runSignals,
   runSiteLabel,
   statusTitle,
@@ -134,5 +135,20 @@ describe("the helpers behind the runs board", () => {
     expect(runAttentionRank({ ...V18, fallback_calls: 5 })).toBe(1);
     expect(runAttentionRank(V18)).toBe(0);
     expect(runAttentionRank(OLD)).toBe(0);
+  });
+
+  it("says the model is not recorded, and falls back to the list's last when the Cloud sent no model", () => {
+    expect(runModelSummary({ ...V18, model: "" }).label).toBe("last model not recorded");
+    const s = runModelSummary({
+      ...V18,
+      model: "",
+      models: [
+        { model: "a", calls: 1, spent_usd: 0.1 },
+        { model: "b", calls: 1, spent_usd: 0.2 },
+      ],
+    });
+    expect(s.label).toBe("b +1");
+    expect(s.title).not.toContain("changed");
+    expect(runModelSummary({ ...V18, model: "m", model_switches: 2 }).title).toContain("changed 2 time(s)");
   });
 });

@@ -107,7 +107,7 @@ pub use cloud_cli::{CloudCliError, CloudListOptions, CloudProvider, CloudServer,
 pub use cloud_rest::{
     AckResponse, AgentAgg, AgentWindowSpend, Alert, AuditVerifyResponse, BudgetResponse,
     CloudClient, ConnectorError, GatewayAgg, Incident, KillResponse, OwnerAgg, PairNewResponse,
-    PairResponse, RunAgg, SavingsSummary, Severity, Summary, UnitAgg, UnitBudgetResponse,
+    PairResponse, RunAgg, RunModel, SavingsSummary, Severity, Summary, UnitAgg, UnitBudgetResponse,
     WindowSpend,
 };
 pub use cloud_sse::{CloudSse, CloudSseConfig};
