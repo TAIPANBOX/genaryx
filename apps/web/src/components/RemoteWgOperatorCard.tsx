@@ -9,6 +9,7 @@ import {
   revokeOperatorWgPeer,
 } from "../lib/remote";
 import { useSession } from "../lib/useSession";
+import { SimulatedNotice } from "./SimulatedNotice";
 import type { RemoteError, RemoteWgOperatorConfig, RemoteWgPeer } from "../remoteTypes";
 
 /** A filesystem-safe slug for the downloaded `.conf`'s filename, from the
@@ -379,6 +380,7 @@ export function RemoteWgOperatorPopoverCard() {
     <div className="flex flex-col">
       <PopoverHeader kicker="Session" title="Connect this machine" />
       <div style={{ padding: "0 16px 16px" }}>
+        <SimulatedNotice />
         <RemoteWgOperatorCard />
       </div>
     </div>

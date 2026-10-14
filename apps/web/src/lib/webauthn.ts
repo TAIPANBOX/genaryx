@@ -1,4 +1,5 @@
 import { invokeBackend, isWebShell, webApiBase } from "./transport";
+import { MOCK, SIMULATED_NOTE } from "./mockPreview";
 
 /**
  * The WebAuthn per-action ceremony (D15 B3 part 2, docs/CONSOLE-IDP.md; the
@@ -264,6 +265,9 @@ async function registerStart(operatorPassword?: string, assertion?: string): Pro
  * operator cancel rejects with {@link CeremonyCancelled} instead.
  */
 export async function enrollPasskey(label?: string, operatorPassword?: string): Promise<EnrolledPasskey> {
+  // The demo has no box to enrol on. Nothing is sent, and no passkey prompt
+  // is raised; the panel shows this message as its answer.
+  if (MOCK) throw new Error(`${SIMULATED_NOTE}: no passkey was enrolled on any box.`);
   if (!isWebShell()) {
     throw new Error("no backend: cannot enroll a passkey without a console session");
   }
@@ -365,6 +369,7 @@ export function operatorPasswordRequired(err: unknown): boolean {
  * can read it), or {@link CeremonyCancelled} on a plain operator cancel.
  */
 export async function removePasskey(credentialId: string, operatorPassword?: string): Promise<RemovedPasskey> {
+  if (MOCK) throw new Error(`${SIMULATED_NOTE}: no passkey was removed from any box.`);
   if (!isWebShell()) {
     throw new Error("no backend: cannot remove a passkey without a console session");
   }

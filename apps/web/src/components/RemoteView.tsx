@@ -7,6 +7,7 @@ import { RemoteCloudInventory } from "./RemoteCloudInventory";
 import { RemoteSshOps } from "./RemoteSshOps";
 import { RemoteTunnelPanel } from "./RemoteTunnelPanel";
 import { RemoteWgOperatorCard } from "./RemoteWgOperatorCard";
+import { SimulatedNotice } from "./SimulatedNotice";
 
 function SectionHeader({ title, detail }: { title: string; detail?: string }) {
   return (
@@ -63,6 +64,7 @@ export function RemoteView() {
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-4 flex flex-col gap-6">
+      <SimulatedNotice />
       <div className="panel px-4 py-3 flex flex-col gap-2" style={{ background: "var(--panel-2)", borderLeft: "2px solid var(--src-remote)" }}>
         <span className="text-[13px]" style={{ color: "var(--fg)", fontWeight: 500 }}>
           Connect to your stack on any infrastructure
