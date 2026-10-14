@@ -139,6 +139,44 @@ export function runAttentionRank(run: Run): number {
   return runSignals(run).length > 0 ? 1 : 0;
 }
 
+/** What a view prints for a run's model, and its hover.
+ *
+ * The Cloud keeps ONE model per run, the last call's (forge lab, 2026-10-14:
+ * an Opus-then-Haiku run read Haiku, and the board's comment called it "the
+ * model priced this run"). So the label says "last model" unless the Cloud
+ * also reports `models`: one model is then that model, several are the last
+ * one and "+N", with each one's calls and spend in the hover. */
+export function runModelSummary(run: Run): { label: string; title: string } {
+  const last = typeof run.model === "string" && run.model.length > 0 ? run.model : null;
+  const models = Array.isArray(run.models) ? run.models.filter((m) => m && typeof m.model === "string") : null;
+  const switches = count(run.model_switches);
+  const per = (m: { model: string; calls: number; spent_usd: number }) =>
+    `${m.model} (${m.calls} call(s), $${m.spent_usd})`;
+  if (models && models.length > 1) {
+    const head = last ?? models[models.length - 1].model;
+    return {
+      label: `${bounded(head)} +${models.length - 1}`,
+      title:
+        `This run used ${models.length} models: ${models.map(per).join(" · ")}. ` +
+        `Its last call used ${head}` +
+        (switches !== null ? `; the model changed ${switches} time(s).` : "."),
+    };
+  }
+  if (models && models.length === 1 && (switches === null || switches === 0)) {
+    return { label: bounded(models[0].model), title: `Every call of this run used ${per(models[0])}.` };
+  }
+  if (!last) {
+    return { label: "last model not recorded", title: "The Cloud's aggregate for this run carried no model." };
+  }
+  return {
+    label: `last model ${bounded(last)}`,
+    title:
+      "The model of this run's last call. This Cloud keeps one model per run, the last it ingested, " +
+      "so whether the run used others is not known" +
+      (switches !== null && switches > 0 ? `; the model changed ${switches} time(s).` : "."),
+  };
+}
+
 /** The site that pushed the run, or what the Cloud's answer means. */
 export function runSiteLabel(run: Run): string {
   const s = text(run.site);

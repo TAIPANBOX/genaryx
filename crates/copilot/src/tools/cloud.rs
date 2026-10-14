@@ -103,10 +103,13 @@ impl Tool for ListRuns {
         "list_runs"
     }
     fn description(&self) -> &'static str {
-        "Top per-run spenders for the org, highest spend first (run id, model, agent, spent_usd, \
-         calls, steps, whether killed), plus the org-wide run count and total spend. Safe on a fleet \
-         of thousands (returns only the top runs). Use `money_summary` for headline totals and \
-         `incidents` for budget breaks / runaways."
+        "Top per-run spenders for the org, highest spend first (run id, last_model, agent, \
+         spent_usd, calls, steps, whether killed, refused calls), plus the org-wide run count and \
+         total spend. `last_model` is the model of the run's LAST call only, not the model of the \
+         run: a run can switch models. `models` lists every model the run used, with calls and \
+         spend, only when the Cloud reports it; when `models` is null, which models a run used is \
+         unknown. Safe on a fleet of thousands (returns only the top runs). Use `money_summary` \
+         for headline totals and `incidents` for budget breaks / runaways."
     }
     async fn run(&self, clients: &Clients, _args: &Value) -> Result<Value, ToolError> {
         let runs = cloud!(clients, "list_runs")
@@ -116,8 +119,35 @@ impl Tool for ListRuns {
                 tool: "list_runs",
                 detail: e.to_string(),
             })?;
-        Ok(dollarize(top_runs_by_spend(to_result("list_runs", runs)?)))
+        Ok(dollarize(top_runs_by_spend(last_model_named(to_result(
+            "list_runs",
+            runs,
+        )?))))
     }
+}
+
+/// Rename each run row's `model` to `last_model`. The Cloud's `RunAgg.model`
+/// is the model of the run's last ingested call; handed to the model under
+/// the bare name `model`, it read as the run's only model, and on the forge
+/// lab (2026-10-14) Felyx answered that an Opus-then-Haiku run "used
+/// claude-haiku-5-5". A non-array value passes through unchanged.
+fn last_model_named(data: Value) -> Value {
+    let Value::Array(rows) = data else {
+        return data;
+    };
+    Value::Array(
+        rows.into_iter()
+            .map(|row| match row {
+                Value::Object(mut map) => {
+                    if let Some(m) = map.remove("model") {
+                        map.insert("last_model".to_string(), m);
+                    }
+                    Value::Object(map)
+                }
+                other => other,
+            })
+            .collect(),
+    )
 }
 
 /// `incidents`, but bounded to [`MAX_ROWS`] newest-first (the connector already

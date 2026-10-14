@@ -154,6 +154,20 @@ pub struct RunDto {
     pub identity_warned: Option<u64>,
     /// The gateway's identity reason for the latest warned or refused call.
     pub last_identity_reason: Option<String>,
+    /// Every model the run's calls named, when the Cloud reports it. `None`
+    /// means only `model` is known, and `model` is the model of the run's
+    /// LAST call, never "the model that priced the run".
+    pub models: Option<Vec<RunModelDto>>,
+    /// Times the run's admitted calls changed model, when reported.
+    pub model_switches: Option<u32>,
+}
+
+/// One model a run used, with its calls and spend.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunModelDto {
+    pub model: String,
+    pub calls: u64,
+    pub spent_usd: f64,
 }
 
 /// One row of the Money view's incidents list.
@@ -682,6 +696,16 @@ pub async fn money_runs(state: &MoneyState) -> Result<Vec<RunDto>, MoneyError> {
             basis_unreported_calls: r.basis_unreported_calls,
             identity_warned: r.identity_warned,
             last_identity_reason: r.last_identity_reason.clone(),
+            models: r.models.as_ref().map(|list| {
+                list.iter()
+                    .map(|m| RunModelDto {
+                        model: m.model.clone(),
+                        calls: m.calls,
+                        spent_usd: micros_to_usd(m.spent_microusd),
+                    })
+                    .collect()
+            }),
+            model_switches: r.model_switches,
         })
         .collect())
 }

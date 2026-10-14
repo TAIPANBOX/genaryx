@@ -8,11 +8,17 @@ import {
   budgetUnknown,
   cacheHitsLabel,
   NOT_RECORDED,
-  runModelLabel,
   runOwnerLabel,
   runUnitLabel,
 } from "../lib/moneyExport";
-import { latestRefusal, refusedCountLabel, runSignals, runSiteLabel, statusTitle } from "../lib/runStatus";
+import {
+  latestRefusal,
+  refusedCountLabel,
+  runModelSummary,
+  runSignals,
+  runSiteLabel,
+  statusTitle,
+} from "../lib/runStatus";
 import { BudgetEditor } from "./BudgetEditor";
 import { ConfirmButton } from "./ConfirmButton";
 import { FuseBar } from "./FuseBar";
@@ -111,7 +117,7 @@ export function RunsBoard({
     <div style={{ overflowX: "auto", contain: "inline-size" }}>
       <div style={{ minWidth: BOARD_MIN_WIDTH_PX }}>
       <div className="d-th" style={{ gridTemplateColumns: COLS }}>
-        <span>run · agent · model</span>
+        <span>run · agent · last model</span>
         <span>spent / cap</span>
         <span className="r">
           calls · steps
@@ -180,7 +186,8 @@ export function RunsBoard({
               ) : (
                 <span className="rag">-</span>
               )}
-              {/* The model the Cloud aggregated this run under, the unit
+              {/* The model of the run's last call (or every model, when the
+                  Cloud reports them: runModelSummary), the unit
                   charged for it, the owner who started it (the root of its
                   delegation chain), and the site whose gateway pushed it.
                   All four ride on every row of GET /v1/runs. An
@@ -191,9 +198,9 @@ export function RunsBoard({
               <span
                 className="rag"
                 style={{ fontSize: 9.5, color: "var(--faint)" }}
-                title={`model ${runModelLabel(r)} · unit ${runUnitLabel(r)} · owner ${runOwnerLabel(r)} · ${runSiteLabel(r)}`}
+                title={`${runModelSummary(r).title} · unit ${runUnitLabel(r)} · owner ${runOwnerLabel(r)} · ${runSiteLabel(r)}`}
               >
-                {runModelLabel(r)} · {runUnitLabel(r)} · {runOwnerLabel(r)} · {runSiteLabel(r)}
+                {runModelSummary(r).label} · {runUnitLabel(r)} · {runOwnerLabel(r)} · {runSiteLabel(r)}
               </span>
             </div>
             <div className="d-spentcell">

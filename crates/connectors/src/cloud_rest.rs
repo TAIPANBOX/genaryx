@@ -746,6 +746,28 @@ pub struct RunAgg {
     /// a word of the gateway's vocabulary; `Some("")` otherwise.
     #[serde(default, deserialize_with = "lenient")]
     pub last_identity_reason: Option<String>,
+    /// Every model this run's calls named, with calls and spend per model.
+    /// `None`: this Cloud reports only `model` above, which is the model of
+    /// the LAST call it ingested for the run, not the model that "priced the
+    /// run": a run that went from Opus to Haiku reads `model: haiku` (forge
+    /// lab, 2026-10-14). Coded against the shape proposed for TokenFuse Cloud
+    /// (`models: [{model, calls, spent_microusd}]`) and read leniently, so a
+    /// Cloud without it, or with another shape, is "not reported".
+    #[serde(default, deserialize_with = "lenient")]
+    pub models: Option<Vec<RunModel>>,
+    /// How many times the run's admitted calls changed model, in call order;
+    /// `None` when not reported.
+    #[serde(default, deserialize_with = "lenient")]
+    pub model_switches: Option<u32>,
+}
+
+/// One model a run used, as `RunAgg::models` lists it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunModel {
+    pub model: String,
+    pub calls: u64,
+    #[serde(default)]
+    pub spent_microusd: i64,
 }
 
 /// Read an optional field leniently: absent, `null`, or a value of the wrong

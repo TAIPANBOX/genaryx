@@ -27,6 +27,17 @@
 //! positive claim in a clause naming several runs (it cannot tell which run
 //! the budget word is about), a run id no tool returned, budget AMOUNTS, and
 //! unit budgets. Those are the model's and the prompt's.
+//!
+//! The same per-clause pass checks one claim about MODELS (2026-10-14): a
+//! clause that names exactly one run and exactly one model a tool returned,
+//! as the model that run used, when the tools did not return that model as
+//! the run's only one. `list_runs` returns `last_model`, the model of the
+//! run's last call, and `models` only when the Cloud reports every model a
+//! run used. Measured on the forge lab the same day: asked which models an
+//! Opus-then-Haiku run used, Felyx answered that it "used claude-haiku-5-5",
+//! and this check passed it, because the tool result carried only the last
+//! model. A clause that says "last model" (or "latest", "most recent", "last
+//! call") is a claim the tools do support and is left alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,6 +59,19 @@ pub(crate) struct BudgetFacts {
     run_agent: BTreeMap<String, String>,
     /// Every agent id any read tool returned.
     agents: BTreeSet<String>,
+    /// What the tools returned about each run's models.
+    run_models: BTreeMap<String, RunModels>,
+    /// Every model id any read tool returned.
+    known_models: BTreeSet<String>,
+}
+
+/// One run's models as the tools returned them.
+#[derive(Debug, Default)]
+struct RunModels {
+    /// Every model the run used, when a tool returned the list.
+    models: Option<Vec<String>>,
+    /// Model changes, when a tool returned the count.
+    switches: Option<u64>,
 }
 
 impl BudgetFacts {
@@ -86,6 +110,7 @@ impl BudgetFacts {
                     {
                         self.run_agent.insert(id.to_string(), agent.to_string());
                     }
+                    self.record_models(id, map);
                 }
                 if let Some(agent) = map.get("agent_id").and_then(Value::as_str)
                     && !agent.is_empty()
@@ -100,6 +125,121 @@ impl BudgetFacts {
     }
 }
 
+impl BudgetFacts {
+    /// A run row's model facts: `last_model` (or a bare `model`), `models`
+    /// and `model_switches`. A row with none of them says nothing about the
+    /// run's models and is not recorded.
+    fn record_models(&mut self, id: &str, map: &serde_json::Map<String, Value>) {
+        let last = map
+            .get("last_model")
+            .or_else(|| map.get("model"))
+            .and_then(Value::as_str)
+            .filter(|m| !m.is_empty());
+        let list: Option<Vec<String>> = map.get("models").and_then(Value::as_array).map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("model").and_then(Value::as_str))
+                .filter(|m| !m.is_empty())
+                .map(str::to_string)
+                .collect()
+        });
+        let switches = map.get("model_switches").and_then(Value::as_u64);
+        if last.is_none() && list.is_none() && switches.is_none() {
+            return;
+        }
+        if let Some(m) = last {
+            self.known_models.insert(m.to_string());
+        }
+        for m in list.iter().flatten() {
+            self.known_models.insert(m.clone());
+        }
+        let entry = self.run_models.entry(id.to_string()).or_default();
+        if list.is_some() {
+            entry.models = list;
+        }
+        if switches.is_some() {
+            entry.switches = switches;
+        }
+    }
+}
+
+/// Phrases that make a model claim about a run's LAST call, which
+/// `last_model` supports.
+const LAST_MODEL_PHRASES: [&str; 7] = [
+    "last model",
+    "latest model",
+    "most recent model",
+    "last call",
+    "latest call",
+    "most recent call",
+    "last_model",
+];
+
+/// A clause naming one run and one model, as the model that run used, when
+/// the tools did not return that model as the run's only one.
+fn model_claim(clause: &str, facts: &BudgetFacts) -> Option<(String, String)> {
+    let runs = runs_named(clause, &facts.known_runs);
+    let [run] = runs.as_slice() else {
+        return None;
+    };
+    let fact = facts.run_models.get(*run)?;
+    let lower = clause.to_lowercase();
+    if LAST_MODEL_PHRASES.iter().any(|p| lower.contains(p)) {
+        return None;
+    }
+    let models = models_named(clause, &facts.known_models);
+    let [model] = models.as_slice() else {
+        return None;
+    };
+    let key = format!("model:{run}");
+    let finding = match &fact.models {
+        Some(list) if list.len() == 1 && list[0] == **model && fact.switches.unwrap_or(0) == 0 => {
+            return None;
+        }
+        Some(list) if list.len() > 1 => format!(
+            "names `{model}` as the model run `{run}` used, but the tools returned {} models \
+             for `{run}`: {}",
+            list.len(),
+            list.join(", ")
+        ),
+        Some(list) => format!(
+            "names `{model}` as the model run `{run}` used, but the tools returned {} for `{run}`",
+            if list.is_empty() {
+                "no model".to_string()
+            } else {
+                format!("`{}`", list.join(", "))
+            }
+        ),
+        None => format!(
+            "names `{model}` as the model run `{run}` used, but the tools return only the model \
+             of `{run}`'s last call, so which models `{run}` used is not known"
+        ),
+    };
+    Some((key, finding))
+}
+
+/// Known model ids named in the clause as whole ids: "claude-haiku-5-5" is
+/// not found inside "claude-haiku-5-5-thinking", and a dot inside an id
+/// ("gpt-4.1-mini") is part of it while a dot ending a sentence is not.
+fn models_named<'a>(clause: &str, known: &'a BTreeSet<String>) -> Vec<&'a String> {
+    let lower = clause.to_lowercase();
+    let is_id_char = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '/');
+    known
+        .iter()
+        .filter(|id| {
+            let needle = id.to_lowercase();
+            lower.match_indices(needle.as_str()).any(|(at, _)| {
+                let before = lower[..at].chars().next_back();
+                let mut rest = lower[at + needle.len()..].chars();
+                let after = rest.next();
+                let after_after = rest.next();
+                let continues = after.is_some_and(is_id_char)
+                    || (after == Some('.') && after_after.is_some_and(char::is_alphanumeric));
+                !before.is_some_and(|c| is_id_char(c) || c == '.') && !continues
+            })
+        })
+        .collect()
+}
+
 /// Check a draft answer. Each returned string names one unsupported
 /// statement, in words the model (and, if it persists, the operator) can act
 /// on. Empty means nothing was found.
@@ -108,6 +248,11 @@ pub(crate) fn check(text: &str, facts: &BudgetFacts, budgets_available: bool) ->
     let mut seen = BTreeSet::new();
     let mut unread_flagged = false;
     for clause in clauses(text) {
+        if let Some((key, finding)) = model_claim(&clause, facts)
+            && seen.insert(key)
+        {
+            findings.push(finding);
+        }
         let words = words(&clause);
         if !words.iter().any(|w| is_budget_word(w)) {
             continue;
@@ -170,6 +315,7 @@ pub(crate) fn check(text: &str, facts: &BudgetFacts, budgets_available: bool) ->
 
 /// The revision request fed back to the model once, as a user turn.
 pub(crate) fn revision_request(findings: &[String]) -> String {
+    let models = model_rule(findings);
     let list: String = findings
         .iter()
         .map(|f| format!("\n- Your draft {f}."))
@@ -179,10 +325,22 @@ pub(crate) fn revision_request(findings: &[String]) -> String {
          the console, not the operator):{list}\n\nRevise the answer so every budget statement \
          comes from a tool result. A run has a budget only if `budgets` (or `alerts`) returned \
          one for that run, and a budget returned for one run never belongs to another. If \
-         budgets cannot be read, say so. Reply with only the corrected answer for the \
+         budgets cannot be read, say so.{models} Reply with only the corrected answer for the \
          operator, written as if it were your first answer. Do not mention this check, \
          apologise, or say that you are revising."
     )
+}
+
+/// The model sentence of the revision request, only when a model claim was
+/// found.
+fn model_rule(findings: &[String]) -> &'static str {
+    if findings.iter().any(|f| f.contains("as the model run")) {
+        " A run's `last_model` is the model of its last call only: name it as the last \
+         model, and say a run used one model only when `models` lists exactly that one. When \
+         `models` is null, say which models the run used is not known."
+    } else {
+        ""
+    }
 }
 
 /// The note appended to an answer whose statements survived the revision.

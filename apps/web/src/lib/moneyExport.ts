@@ -43,7 +43,11 @@ export function cacheHitsLabel(run: Run): string {
   return countLabel(run.cache_hits);
 }
 
-/** The model the run's spend was aggregated under, or an honest absence.
+/** The model of the run's LAST call, as the Cloud aggregated it, or an honest
+ * absence. Not "the model that priced the run": a run can switch models, and
+ * the Cloud keeps one id, the last it ingested (forge lab, 2026-10-14: an
+ * Opus-then-Haiku run reads Haiku). `lib/runStatus.ts`'s `runModelSummary`
+ * is what a view prints.
  *
  * `RunAgg.model` is a plain string, so `""` is the Cloud recording none. */
 export function runModelLabel(run: Run): string {
@@ -137,6 +141,11 @@ export interface RunExportRow {
   basis_unreported_calls: number | null;
   identity_warned: number | null;
   last_identity_reason: string | null;
+  /** Every model the run used, `model:calls:spent_usd` joined by `;`, or
+   * `null` when the Cloud does not report them (then only `model`, the last
+   * call's, is known). */
+  models: string | null;
+  model_switches: number | null;
 }
 
 export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: string }[] = [
@@ -161,6 +170,8 @@ export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: st
   { key: "basis_unreported_calls", header: "basis_unreported_calls" },
   { key: "identity_warned", header: "identity_warned" },
   { key: "last_identity_reason", header: "last_identity_reason" },
+  { key: "models", header: "models" },
+  { key: "model_switches", header: "model_switches" },
 ];
 
 function orNull(value: string | null | undefined): string | null {
@@ -208,6 +219,8 @@ export function runsExportRows(runs: Run[]): RunExportRow[] {
     basis_unreported_calls: numberOrNull(r.basis_unreported_calls),
     identity_warned: numberOrNull(r.identity_warned),
     last_identity_reason: reportedOrNull(r.last_identity_reason),
+    models: Array.isArray(r.models) ? r.models.map((m) => `${m.model}:${m.calls}:${m.spent_usd}`).join(";") : null,
+    model_switches: numberOrNull(r.model_switches),
   }));
 }
 
@@ -236,7 +249,7 @@ export function runsExportMeta(opts: {
       "An empty unit means the Cloud's identity map resolved none for that run. The run was still charged whatever the Cloud charged it.",
       "An empty owner means this Cloud sent no owner for that run at all (an older Cloud, or one never asked to attribute one). It is not the same claim as an empty unit: this console cannot tell 'resolved and nobody' from 'never asked' through this field.",
       "An empty agent_id is what the money plane carried for that run, not a value this console dropped.",
-      "An empty model means the run's aggregate carried none.",
+      "model is the model of the run's LAST call as the Cloud aggregated it, not the model of the run: a run can switch models. An empty model means the run's aggregate carried none. models lists every model the run used (model:calls:spent_usd, joined by ;) only when the Cloud reports it; an empty models means it does not, and whether the run used other models is then unknown. model_switches counts the changes, when reported.",
       "An empty cache_hits means the field never arrived. A cache_hits of 0 means the money plane counted no cache hit for that run. They are different statements and this file keeps them apart.",
       "An empty blocked, last_decision, fallback_calls, basis_unreported_calls, identity_warned, last_identity_reason or site means this Cloud does not report that field (site needs TokenFuse Cloud v1.2.0, the rest v1.8.0), never zero. A blocked of 0 is a count. last_decision is the latest call's decision: allow or cache_hit admitted it, anything else is the reason the gateway refused it.",
       "fallback_calls counts admitted calls the gateway charged at the fallback rate (15/75 USD per million tokens) because its price book had no row for the model id: their spend is a gateway estimate, not a provider bill. basis_unreported_calls counts calls from a gateway that named no price basis at all. identity_warned counts calls forwarded although the identity check would have refused them (warn mode); they are spent and filed under the agent id they claimed.",

@@ -483,6 +483,24 @@ run_case "invariant 26: the units module's own comment reworded" pass \
 	"$units_gate" \
 	"$(py 'edit("crates/api/src/money/units.rs", "/// A unit at or above this share of its cap reads", "/// A unit at or above this fraction of its cap reads")')"
 
+# invariant 28: Felyx names only the models a run is known to have used.
+# Product mutants; the gate is the copilot tests whose names carry "model".
+model_gate='cargo test -q --no-fail-fast -p genaryx-copilot model'
+
+run_case "invariant 28: list_runs hands the last model over as the run's model again" fail \
+	"$model_gate" \
+	"$(py 'edit("crates/copilot/src/tools/cloud.rs", "if let Some(m) = map.remove(\"model\") {", "if let Some(m) = map.get(\"model\").cloned() {")')" \
+	"list_runs_names_the_model_as_the_last_model_and_passes_the_models_through"
+
+run_case "invariant 28: the answer check ignores what the tools said about models" fail \
+	"$model_gate" \
+	"$(py 'edit("crates/copilot/src/grounding.rs", "let fact = facts.run_models.get(*run)?;", "let fact = facts.run_models.get(*run).filter(|_| false)?;")')" \
+	"a_single_model_claim_for_a_run_whose_models_are_unknown_is_flagged"
+
+run_case "invariant 28: the phrase list's own comment reworded" pass \
+	"$model_gate" \
+	"$(py 'edit("crates/copilot/src/grounding.rs", "/// Phrases that make a model claim about a run", "/// Phrases that make a model claim about one run")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"

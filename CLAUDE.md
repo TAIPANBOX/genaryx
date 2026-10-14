@@ -1455,6 +1455,61 @@ an absent invariant.
     no Cloud sink at all never appears; no incident or mail is raised for a
     silent gateway, the section shows it only while someone looks.)*
 
+28. **The console and Felyx name only the models a run is known to have
+    used.** TokenFuse Cloud keeps one model per run (`RunAgg.model`), the
+    model of the last call it ingested. The runs board's comment called it
+    "the model priced this run", Incident 360 printed it as the run's model,
+    and Felyx's `list_runs` handed it over as `model`. Measured on the forge
+    lab on 2026-10-14: an Opus-then-Haiku run read Haiku everywhere, and asked
+    which model or models it used, Felyx answered "used claude-haiku-5-5"
+    while its answer check (invariant 16) passed it, the tool result carrying
+    only the last model.
+    `@decided 2026-10-14`: until the Cloud lists every model a run used, the
+    console says "last model", shows "+N" when the run is known to have
+    switched, and Felyx refuses to state a single model for a run with more
+    than one.
+
+    `RunAgg` reads `models` (`[{model, calls, spent_microusd}]`) and
+    `model_switches` as optional, lenient fields: the shape proposed for the
+    Cloud, so a Cloud without them, or with another shape, is "not
+    reported". The web prints a run's model through
+    `apps/web/src/lib/runStatus.ts`'s `runModelSummary`: `last model <id>`
+    when the models are not reported, `<last> +N` with each model's calls and
+    spend in the hover when several are, the model alone only when the Cloud
+    lists exactly one. The runs export appends `models` and
+    `model_switches`. `list_runs` renames each row's `model` to `last_model`
+    and says so in its description; the system prompt gains a Models rule;
+    `crates/copilot/src/grounding.rs` sends back, once, a clause that names
+    one run and one model as the model that run used unless the tools listed
+    exactly that model as the run's only one, and a clause saying "last
+    model" (or "latest", "most recent", "last call") is left alone. The field
+    names follow the proposal and must be aligned with the Cloud's when it
+    ships them; the wording and the phrase list are `@claude` design choices,
+    open to reversal.
+    *(test: `crates/copilot/src/grounding.rs`'s five model tests, one a
+    200-seed sweep; `crates/copilot/src/tools/cloud.rs`'s
+    `list_runs_names_the_model_as_the_last_model_and_passes_the_models_through`;
+    `crates/copilot/tests/it/felyx_reads_budgets_test.rs`'s two loop tests
+    with the measured answer; `crates/connectors/src/cloud_rest.rs`'s
+    `run_agg_carries_the_models_a_run_used_only_when_the_cloud_reports_them`;
+    `crates/api/tests/it/money_runs_status_test.rs`'s
+    `the_models_a_run_used_reach_the_runs_table_only_when_the_cloud_reports_them`;
+    `apps/web/src/lib/moneyExport.test.ts`'s four and
+    `apps/web/src/lib/runStatus.test.ts`'s one. Red first: the test-only
+    commit did not compile (no `RunModel`, no `models` on `RunAgg`, no
+    `last_model_named`, no model facts in the grounding check), and the five
+    new web cases failed against the unfixed views (`runModelSummary is not
+    a function`, "last model" absent). Two product mutants and one
+    non-fault are cases in `scripts/gates-have-teeth.sh`. Scenarios:
+    `features/a-run-names-the-models-it-is-known-to-have-used.feature`, six,
+    bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no Cloud reports `models` yet, so the "+N" path
+    is proven against fixtures only; the check reads one run and one model
+    per clause, so "both runs used Haiku" is not checked; a model named by a
+    nickname ("Haiku") is not matched to its id; Felyx's `cost_per_action`
+    per-model figures still group the whole trace, never by run.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

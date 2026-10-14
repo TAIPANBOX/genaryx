@@ -825,6 +825,28 @@ function mockFallbackRun() {
       site: "edge-openai",
       fallback_calls: 118,
     },
+    // A run that changed model mid-way, as a Cloud reporting per-run models
+    // lists it: the board shows the last one and "+1", the hover both.
+    {
+      run_id: "query-cost-optimizer-switch-1",
+      model: "claude-haiku-4-5",
+      agent_id: agentId(a),
+      unit: unitForTeam(a.team),
+      spent_usd: 0.31,
+      budget_usd: 2,
+      budgets_read: true,
+      calls: 9,
+      cache_hits: 0,
+      steps: 9,
+      last_seen: ago(5 * 60 * 60_000),
+      killed: false,
+      ...mockDecisionFields(a, false),
+      models: [
+        { model: "claude-opus-4-5", calls: 3, spent_usd: 0.27 },
+        { model: "claude-haiku-4-5", calls: 6, spent_usd: 0.04 },
+      ],
+      model_switches: 1,
+    },
   ];
 }
 

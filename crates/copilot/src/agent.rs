@@ -34,6 +34,10 @@ Rules you must follow:
   or over their limit, and each alert's budget belongs to that alert's run alone. If no tool \
   returned a budget for a run, say it has none on the control plane or that you cannot tell, \
   never a figure.
+- Models: `list_runs` returns `last_model`, the model of a run's LAST call, and `models` only \
+  when the Cloud reports every model the run used. Never say a run used one model unless \
+  `models` lists exactly that one. When `models` lists several, name them; when it is null, \
+  call `last_model` the last model and say whether the run used others is not known.
 - Be concise. Cite the specific runs/incidents/agents your answer rests on so the operator \
   can check them.";
 
