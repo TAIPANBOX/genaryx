@@ -56,74 +56,86 @@
 }
 
 :root[data-theme="light"] {
-  /* Contrast pass: cards near white on a warm grey page, rails a deeper sand
-     than both, borders and secondary text a step darker for legibility. */
-  --ink: #f6f2ea;
-  --bg: #ebe5da;
-  --bg2: #e3dccf;
-  --panel: #fffdf9;
-  --panel-2: #f1ebe0;
-  --panel-3: #e2d9c8;
-  --line: rgba(58, 46, 28, 0.18);
-  --line-2: rgba(58, 46, 28, 0.3);
-  --fg: #1c1813;
-  --dim: #4a4336;
-  --faint: #7a705e;
-  --rail: #ddd3c1;
-  --card-top: #ffffff;
-  --card-bot: #fdfbf7;
-  --card-shadow: 0 1px 2px rgba(58, 46, 28, 0.06), 0 6px 18px -6px rgba(58, 46, 28, 0.14);
+  /* Light theme, pastel pass: a muted dark-beige page, lighter beige cards
+     (not white), caramel side rails, and text and status colours deep enough
+     to read at 5:1 or better on every one of those surfaces (the dark theme's
+     neon mint read at about 1.3:1 on beige). */
+  --ink: #e9dfcc;
+  --bg: #ddd0b8;
+  --bg2: #d3c5aa;
+  --panel: #f1e9d9;
+  --panel-2: #e3d7c0;
+  --panel-3: #d5c7ab;
+  --line: rgba(74, 52, 24, 0.22);
+  --line-2: rgba(74, 52, 24, 0.34);
+  --fg: #1e1810;
+  --dim: #3d3427;
+  --faint: #4f4535;
+  --rail: #d4c3a4;
+  --card-top: #efe6d4;
+  --card-bot: #e9dfca;
+  --card-shadow: 0 1px 2px rgba(74, 52, 24, 0.1), 0 6px 16px -8px rgba(74, 52, 24, 0.22);
+  --mint: #145536;
+  --amber: #6f4100;
+  --ember: #8a2812;
+  --iris: #323a90;
 
-  --sev-info: #3f5670;
-  --sev-low: #0d8f61;
-  --sev-medium: #a06400;
-  --sev-high: #c14a1c;
-  --sev-critical: #c22e27;
+  --sev-info: #2e3f54;
+  --sev-low: #0a5537;
+  --sev-medium: #6f4100;
+  --sev-high: #8a2812;
+  --sev-critical: #8f1d18;
 
-  --src-tokenfuse: #a06400;
-  --src-wardryx: #0d8478;
-  --src-engram: #4650c9;
-  --src-verdryx: #c23e73;
-  --src-mockryx: #c14a1c;
-  --src-qryx: #7a4cc4;
-  --src-remote: #1d5fb8;
+  --src-tokenfuse: #6f4100;
+  --src-wardryx: #0b5a53;
+  --src-engram: #323a90;
+  --src-verdryx: #8a2450;
+  --src-mockryx: #8a2812;
+  --src-qryx: #55309a;
+  --src-remote: #1a4585;
 
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    /* Contrast pass: cards near white on a warm grey page, rails a deeper sand
-       than both, borders and secondary text a step darker for legibility. */
-    --ink: #f6f2ea;
-    --bg: #ebe5da;
-    --bg2: #e3dccf;
-    --panel: #fffdf9;
-    --panel-2: #f1ebe0;
-    --panel-3: #e2d9c8;
-    --line: rgba(58, 46, 28, 0.18);
-    --line-2: rgba(58, 46, 28, 0.3);
-    --fg: #1c1813;
-    --dim: #4a4336;
-    --faint: #7a705e;
-    --rail: #ddd3c1;
-    --card-top: #ffffff;
-    --card-bot: #fdfbf7;
-    --card-shadow: 0 1px 2px rgba(58, 46, 28, 0.06), 0 6px 18px -6px rgba(58, 46, 28, 0.14);
+    /* Light theme, pastel pass: a muted dark-beige page, lighter beige cards
+       (not white), caramel side rails, and text and status colours deep enough
+       to read at 5:1 or better on every one of those surfaces (the dark theme's
+       neon mint read at about 1.3:1 on beige). */
+    --ink: #e9dfcc;
+    --bg: #ddd0b8;
+    --bg2: #d3c5aa;
+    --panel: #f1e9d9;
+    --panel-2: #e3d7c0;
+    --panel-3: #d5c7ab;
+    --line: rgba(74, 52, 24, 0.22);
+    --line-2: rgba(74, 52, 24, 0.34);
+    --fg: #1e1810;
+    --dim: #3d3427;
+    --faint: #4f4535;
+    --rail: #d4c3a4;
+    --card-top: #efe6d4;
+    --card-bot: #e9dfca;
+    --card-shadow: 0 1px 2px rgba(74, 52, 24, 0.1), 0 6px 16px -8px rgba(74, 52, 24, 0.22);
+    --mint: #145536;
+    --amber: #6f4100;
+    --ember: #8a2812;
+    --iris: #323a90;
 
-    --sev-info: #3f5670;
-    --sev-low: #0d8f61;
-    --sev-medium: #a06400;
-    --sev-high: #c14a1c;
-    --sev-critical: #c22e27;
+    --sev-info: #2e3f54;
+    --sev-low: #0a5537;
+    --sev-medium: #6f4100;
+    --sev-high: #8a2812;
+    --sev-critical: #8f1d18;
 
-    --src-tokenfuse: #a06400;
-    --src-wardryx: #0d8478;
-    --src-engram: #4650c9;
-    --src-verdryx: #c23e73;
-    --src-mockryx: #c14a1c;
-    --src-qryx: #7a4cc4;
-    --src-remote: #1d5fb8;
+    --src-tokenfuse: #6f4100;
+    --src-wardryx: #0b5a53;
+    --src-engram: #323a90;
+    --src-verdryx: #8a2450;
+    --src-mockryx: #8a2812;
+    --src-qryx: #55309a;
+    --src-remote: #1a4585;
 
     color-scheme: light;
   }
