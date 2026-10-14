@@ -147,3 +147,8 @@ Feature: The Live Demo shows the console's sidebar foot and says what it simulat
     When a button that would need a key is pressed
     Then the requirement is waived and the button answers its simulated result
 
+  # @test:every_view_insets_its_cards_and_spaces_them
+  Scenario: Every view keeps its cards off the rails and apart from each other
+    Given any view of the console, Web Egress and Statistics among them
+    When it lays out its cards
+    Then they are inset from the side rails and separated by the same gap as on Quality
