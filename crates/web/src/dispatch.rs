@@ -863,6 +863,29 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "money_status" => Ok(reply(
             genaryx_api::money::commands::money_status(&ctx.money).await,
         )),
+        // Unit month caps: a read, and the signed cap change (admin, in
+        // SENSITIVE_COMMANDS, journaled like money_set_budget).
+        "money_units" => Ok(reply(
+            genaryx_api::money::units::money_units(&ctx.money).await,
+        )),
+        "money_set_unit_budget" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                unit: String,
+                budget_usd: f64,
+                reason: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::money::units::money_set_unit_budget(
+                    a.unit,
+                    a.budget_usd,
+                    a.reason,
+                    &ctx.money,
+                )
+                .await,
+            ))
+        }
         "onboard_generate" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

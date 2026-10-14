@@ -538,6 +538,24 @@ impl CloudClient {
             .await
     }
 
+    /// `POST /v1/units/{unit}/budget` (admin, ES256 device-signed, body
+    /// `{"budget_usd": f64}`) - `http.rs::set_unit_budget`. Sets the unit's
+    /// central monthly cap; every gateway of the org polls `GET
+    /// /v1/unit-budgets` every few seconds and enforces it in place of the
+    /// cap its identity map file names. The Cloud has no route that removes
+    /// one. `unit` is encoded as one path segment, as `run_id` is in
+    /// [`Self::set_budget`].
+    pub async fn set_unit_budget(
+        &self,
+        unit: &str,
+        budget_usd: f64,
+    ) -> Result<UnitBudgetResponse, ConnectorError> {
+        let segment = path_segment(unit)?;
+        let body = serde_json::to_vec(&BudgetBody { budget_usd })?;
+        self.signed_post(format!("/v1/units/{segment}/budget"), body)
+            .await
+    }
+
     /// `POST /v1/incidents/{incident_id}/ack` (admin, ES256 device-signed,
     /// empty body) - `http.rs::ack_incident`. `404` (surfaced as
     /// [`ConnectorError::Api`] with `status: 404`) for an unknown incident id.
@@ -933,6 +951,15 @@ pub struct KillResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BudgetResponse {
     pub run: String,
+    pub budget_micros: i64,
+}
+
+/// `POST /v1/units/{unit}/budget` response. Exact shape of
+/// `http.rs::UnitBudgetResponse`: the unit as the Cloud stored it, and the
+/// micros it stored (`(budget_usd * 1e6) as i64`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnitBudgetResponse {
+    pub unit: String,
     pub budget_micros: i64,
 }
 

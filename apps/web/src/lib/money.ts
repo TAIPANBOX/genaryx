@@ -10,6 +10,7 @@ import type {
   Owner,
   Run,
   Savings,
+  UnitCaps,
 } from "../moneyTypes";
 
 /** Thrown by every fetcher/mutator below when there is no backend to
@@ -152,6 +153,16 @@ export const killRun = (runId: string, reason: string): Promise<MutationOutcome>
 export const setBudget = (runId: string, budgetUsd: number, reason: string): Promise<MutationOutcome> =>
   callWithCeremony<MutationOutcome>("money_set_budget", { run_id: runId, budget_usd: budgetUsd, reason });
 
+/** Every business unit with its central month cap and this month's spend
+ * (`GET /v1/units` joined with `GET /v1/unit-budgets`). */
+export const fetchUnitCaps = (): Promise<UnitCaps> => call<UnitCaps>("money_units");
+
+/** Set a unit's central month cap: break-glass like `setBudget`, admin only,
+ * through the per-action passkey ceremony. Every gateway of the org enforces
+ * it within seconds; the Cloud has no route that removes one. */
+export const setUnitBudget = (unit: string, budgetUsd: number, reason: string): Promise<MutationOutcome> =>
+  callWithCeremony<MutationOutcome>("money_set_unit_budget", { unit, budget_usd: budgetUsd, reason });
+
 /** NOT break-glass: acknowledging an incident overrides no governance
  * decision, so this carries no reason and the Rust side journals it as
  * `decision: "allow"` rather than `"break_glass"`. */
@@ -187,6 +198,8 @@ export function describeMoneyError(err: MoneyError, currentRole?: ConsoleRole | 
       return `The Cloud plane refused ${err.feature} for ${err.org}.`;
     case "break_glass_missing_reason":
       return "Break-glass override requires a non-empty reason.";
+    case "invalid_argument":
+      return `Not sent: ${err.message}`;
     case "cloud":
       return err.status !== null ? `Cloud error ${err.status}: ${err.message}` : err.message;
     case "role_required": {

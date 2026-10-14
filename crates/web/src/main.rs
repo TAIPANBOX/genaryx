@@ -508,8 +508,8 @@ fn guard(ctx: &Arc<Ctx>, jar: &CookieJar) -> Result<auth::SessionInfo, Response>
 /// The commands whose dispatch REQUIRES a fresh per-action assertion once the
 /// caller has a passkey enrolled: the kill and the budget mutation (the two
 /// break-glass carriers), the approval grant/deny, the two operator
-/// WireGuard commands, revoking a delegation, and closing a retained
-/// reservation. The policy PUT/DELETE
+/// WireGuard commands, revoking a delegation, closing a retained
+/// reservation, and setting a unit's month cap. The policy PUT/DELETE
 /// editor joins this list the day it becomes routable (it is "v1, not built"
 /// today); an unknown name is already fail-closed to admin by the role gate.
 const SENSITIVE_COMMANDS: &[&str] = &[
@@ -531,6 +531,9 @@ const SENSITIVE_COMMANDS: &[&str] = &[
     // the console mints the token that lets it only after a person confirmed
     // this exact closure. A stolen session must not be able to settle money.
     "money_close_retained",
+    // A unit's central month cap moves what every gateway lets that unit
+    // spend, the same class of act as a run budget change.
+    "money_set_unit_budget",
 ];
 
 /// The two ceremony names that are NOT dispatchable commands: each names an

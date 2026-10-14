@@ -38,6 +38,7 @@ export type MoneyError =
   // honestly instead of going blank; `upgrade_url` is parsed and never shown.
   | { kind: "plan_required"; feature: string; org: string; upgrade_url: string }
   | { kind: "break_glass_missing_reason" }
+  | { kind: "invalid_argument"; message: string }
   | { kind: "cloud"; status: number | null; message: string }
   | { kind: "role_required"; role: "viewer" | "approver" | "admin" };
 
@@ -117,6 +118,37 @@ export interface Run {
   identity_warned?: number | null;
   /** The gateway's identity reason for the latest warned or refused call. */
   last_identity_reason?: string | null;
+}
+
+/** Mirrors `money::units::UnitCapState`: where a unit stands against its
+ * central month cap. `no_cap` is a real answer from a cap map that was read;
+ * `cap_unknown` means the map was not read and is never shown as "no cap". */
+export type UnitCapState = "over_cap" | "near_cap" | "under_cap" | "no_cap" | "cap_unknown" | "spend_unknown";
+
+/** Mirrors `money::units::UnitCapDto`. */
+export interface UnitCap {
+  unit: string;
+  /** Month-to-date spend; `null` when the Cloud has no record of the unit this
+   * month or `/v1/units` was not read. Never a zero it did not report. */
+  month_spent_usd: number | null;
+  month_calls: number | null;
+  /** The central cap; `null` when none is set or the map was not read. */
+  cap_usd: number | null;
+  fraction: number | null;
+  state: UnitCapState;
+  /** False for the `unassigned` bucket, which no cap can apply to. */
+  cappable: boolean;
+}
+
+/** Mirrors `money::units::UnitCapsDto`. */
+export interface UnitCaps {
+  /** The UTC month the spend covers (`2026-10`), `null` when not read. */
+  month: string | null;
+  units_read: boolean;
+  caps_read: boolean;
+  /** One sentence per read that did not answer. */
+  notes: string[];
+  units: UnitCap[];
 }
 
 /** Mirrors `money::commands::IncidentDto`. `severity` is a raw lowercase

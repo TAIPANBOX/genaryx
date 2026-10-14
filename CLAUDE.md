@@ -77,11 +77,12 @@ an absent invariant.
    the same decision arriving under another name.)*
 2. **A sensitive command requires a per-action ceremony.** Kill, budget
    change, approval, the two operator WireGuard commands (issue a peer,
-   revoke a peer), revoking a delegation, and closing a retained
-   reservation, each need a fresh passkey confirmation. Seven, not three:
-   `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS` is the list, and this
-   file said three until 2026-08-05, five until 2026-09-24, six until
-   2026-10-12. Not a session, not a role check alone:
+   revoke a peer), revoking a delegation, closing a retained reservation,
+   and setting a unit's month cap, each need a fresh passkey confirmation.
+   Eight, not three: `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS` is the
+   list, and this file said three until 2026-08-05, five until 2026-09-24,
+   six until 2026-10-12, seven until 2026-10-14. Not a session, not a role
+   check alone:
    the ceremony is per action, because the whole point is that a stolen
    session cannot pull the switch.
    *(partly gated: router-level tests in `crates/web/src/main.rs` drive the
@@ -89,7 +90,7 @@ an absent invariant.
    caller is refused without an assertion, that the command and argument
    bindings are enforced, that enrolling and removing a passkey each need a
    factor the session does not carry, and that with
-   `GENARYX_WEB_REQUIRE_PASSKEY=1` all seven are refused when nobody is
+   `GENARYX_WEB_REQUIRE_PASSKEY=1` all eight are refused when nobody is
    enrolled. What is NOT held is the default configuration: with the setting
    off and no passkey enrolled, a sensitive command still runs and is
    journaled software-signed. So the invariant holds on a box that enrolled a
@@ -1362,6 +1363,60 @@ an absent invariant.
     with this build; the Cloud's `model` is still one value per run (the
     last one ingested), which this does not change; `tool_calls` and
     the Cloud's own `run_stalled` view are not read here.)*
+
+26. **The Money panel shows each business unit against its central month cap,
+    and a cap is changed only by an admin, after a fresh passkey assertion,
+    with a reason.** A gateway refuses a unit's calls with
+    `unit_budget_exceeded` once its month spend reaches the cap in effect, the
+    central cap the Cloud holds (`GET /v1/unit-budgets`, polled by every
+    gateway) ahead of the cap in the gateway's identity map file. The console
+    read neither the caps nor the month spend (`GET /v1/units`) for any view,
+    and the watch dock said units carry no budget.
+    `@decided 2026-10-14`: the dashboards show what the product does today: a
+    section listing each unit, its cap, its spend this month and its state.
+    The cap is changeable here because the Cloud already offers a signed
+    admin route (`POST /v1/units/{id}/budget`) for it.
+
+    `money_units` (`crates/api/src/money/units.rs`) joins the two reads:
+    `over_cap` at or above the cap (a zero cap always: the gateway then
+    refuses every call), `near_cap` at 80%, `under_cap`, `no_cap` only when
+    the cap map was read, `cap_unknown` when it was not, `spend_unknown` when
+    a cap is set and the Cloud has no month spend for the unit. A route the
+    Cloud does not have is a note; only both reads failing is an error. The
+    `unassigned` bucket is listed and offered no cap control.
+    `money_set_unit_budget` is `money_set_budget`'s class of act: admin
+    (`roles.rs`), in `SENSITIVE_COMMANDS` (eight now), a mandatory reason,
+    an amount that must be a finite number of zero or more and a unit that
+    is not empty or `unassigned`, all refused before anything is signed;
+    then a device-signed POST and one `console.set_unit_budget` journal
+    entry per attempt with the Cloud's real status. The 80% threshold, the
+    state names and the refusal of `unassigned` are `@claude` design
+    choices, open to reversal.
+    *(test: `crates/api/src/money/units.rs`'s three;
+    `crates/api/tests/it/money_units_test.rs`'s nine, on a recording stub
+    Cloud with the forge figures, one a 200-seed sweep of cap-map bodies,
+    one asserting the exact signed POST, one that no refused change reaches
+    the stub; `crates/connectors/src/cloud_rest.rs`'s
+    `a_unit_cap_change_fails_closed_without_a_device_or_with_a_unit_that_is_no_segment`;
+    `crates/web/src/roles.rs`'s
+    `setting_a_unit_cap_is_admin_and_reading_caps_is_a_read`;
+    `crates/web/src/main.rs`'s four router tests (viewer and approver
+    refused, 428 without an assertion, a valid assertion reaches the
+    command, a viewer may read); `apps/web/src/components/UnitCaps.test.ts`'s
+    seven. Red first: on the test-only commit the workspace did not compile
+    (no `set_unit_budget`, no `money::units`), and the web suite failed to
+    import `./UnitCaps`. Four product mutants and one non-fault are cases in
+    `scripts/gates-have-teeth.sh`: dropped from the ceremony list, moved to
+    a viewer read, the reason check removed, an unread map read as no cap.
+    Scenarios: `features/money-shows-unit-month-caps.feature`, ten, bound;
+    gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: a cap written only in a gateway's identity map
+    file never reaches the Cloud and reads "no central cap" (the section
+    says so); the month spend is the Cloud's fold of what gateways pushed and
+    can trail a gateway's own counter; the Cloud has no route that removes a
+    central cap; no live console has set a cap on a real Cloud with this
+    build.)*
 
 ## Decisions that have no gate yet
 

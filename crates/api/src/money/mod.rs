@@ -23,5 +23,6 @@ pub mod commands;
 pub mod env;
 pub mod retained;
 pub mod state;
+pub mod units;
 
 pub use state::{MoneyState, bootstrap};

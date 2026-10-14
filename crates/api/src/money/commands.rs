@@ -297,6 +297,13 @@ pub enum MoneyError {
     /// reason is typed, so this is a fail-closed backstop, not the expected
     /// path.
     BreakGlassMissingReason,
+    /// An argument the command refused before anything was signed or sent
+    /// (`money_set_unit_budget`'s unit or amount). Kept apart from `Cloud`
+    /// for the same reason as `BreakGlassMissingReason`: the Cloud never saw
+    /// it.
+    InvalidArgument {
+        message: String,
+    },
     /// Any other Cloud-side failure: transport, signature rejection, a
     /// plain non-2xx, or a response that failed to parse. `status` is
     /// `None` when the request never got far enough to have one (couldn't
@@ -374,7 +381,7 @@ pub struct MutationOutcome {
 // helpers
 // ============================================================================
 
-fn micros_to_usd(micros: i64) -> f64 {
+pub(super) fn micros_to_usd(micros: i64) -> f64 {
     micros as f64 / 1_000_000.0
 }
 
@@ -419,7 +426,7 @@ fn status_of(e: &ConnectorError) -> u16 {
 /// independent copy rather than a shared call) - that is the authority this
 /// shell must never bypass, this is the shell's own earlier refusal so an
 /// unjustified override does not even reach the network.
-fn require_break_glass_reason(reason: &str) -> Result<(), MoneyError> {
+pub(super) fn require_break_glass_reason(reason: &str) -> Result<(), MoneyError> {
     if reason.trim().is_empty() {
         return Err(MoneyError::BreakGlassMissingReason);
     }
@@ -431,7 +438,7 @@ fn require_break_glass_reason(reason: &str) -> Result<(), MoneyError> {
 /// state lock long enough to clone the (cheap, `Arc`-backed) client out -
 /// the caller's actual Cloud HTTP call happens after this returns, never
 /// while holding the lock (see `state.rs`'s module docs).
-async fn ready_client(state: &&MoneyState) -> Result<MoneyClient, MoneyError> {
+pub(super) async fn ready_client(state: &&MoneyState) -> Result<MoneyClient, MoneyError> {
     let guard = state.inner.lock().await;
     match &*guard {
         MoneyInner::Ready(client) => Ok(client.clone()),
@@ -499,7 +506,7 @@ fn journal(client: &MoneyClient, rec: &CommandRecord) -> (bool, Option<String>) 
 /// must have already put a justification in `params["reason"]`, see
 /// `require_break_glass_reason`). `money_ack_incident` passes `"allow"`:
 /// acknowledging an already-raised incident overrides nothing.
-fn finish_mutation<T>(
+pub(super) fn finish_mutation<T>(
     client: &MoneyClient,
     action: &'static str,
     target: &str,

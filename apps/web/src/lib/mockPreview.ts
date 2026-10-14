@@ -475,6 +475,13 @@ let arcApproval: ArcApproval | null = null;
 // `opKillAt >= armedAt` again once a fresh arc has armed).
 const manualRunKills = new Map<string, number>();
 const manualRunBudgets = new Map<string, number>();
+/** Central unit month caps set from the preview's Unit month caps section,
+ * seeded so the demo shows one unit over its cap and one near it. */
+const manualUnitCaps = new Map<string, number>([
+  ["sre", 1200],
+  ["finops", 1100],
+  ["data", 4000],
+]);
 const ackedIncidentIds = new Set<string>();
 const decidedApprovals = new Map<string, { decision: "grant" | "deny"; decidedAt: number }>();
 
@@ -949,6 +956,57 @@ function mockDriftAgentRunHistory() {
 
 function mockRuns() {
   return [...FLEET.map(runFor), ...mockDriftAgentRunHistory(), ...mockFallbackRun()];
+}
+
+/** `money_units`: this month's spend per unit from the preview's runs (a
+ * month is a share of each run's lifetime spend), joined with the central
+ * caps above, the way `crates/api/src/money/units.rs` joins the Cloud's two
+ * reads. The `unassigned` bucket stands for spend whose run resolved no unit. */
+function mockUnitCaps() {
+  const spent = new Map<string, { usd: number; calls: number }>();
+  for (const run of mockRuns()) {
+    const key = run.unit || "unassigned";
+    const cur = spent.get(key) ?? { usd: 0, calls: 0 };
+    cur.usd += run.spent_usd * 0.18;
+    cur.calls += Math.round(run.calls * 0.18);
+    spent.set(key, cur);
+  }
+  spent.set("unassigned", { usd: 14.6, calls: 212 });
+  const names = new Set<string>([...spent.keys(), ...manualUnitCaps.keys()]);
+  const rank = { over_cap: 0, near_cap: 1, spend_unknown: 2, under_cap: 3, cap_unknown: 4, no_cap: 5 } as const;
+  const units = [...names].map((unit) => {
+    const s = spent.get(unit) ?? null;
+    const cap = manualUnitCaps.get(unit) ?? null;
+    const usd = s ? Number(s.usd.toFixed(2)) : null;
+    let state: keyof typeof rank = "no_cap";
+    let fraction: number | null = null;
+    if (cap !== null) {
+      if (cap <= 0) state = "over_cap";
+      else if (usd === null) state = "spend_unknown";
+      else {
+        fraction = usd / cap;
+        state = usd >= cap ? "over_cap" : fraction >= 0.8 ? "near_cap" : "under_cap";
+      }
+    }
+    return {
+      unit,
+      month_spent_usd: usd,
+      month_calls: s ? s.calls : null,
+      cap_usd: cap,
+      fraction,
+      state,
+      cappable: unit !== "unassigned",
+    };
+  });
+  units.sort((a, b) => rank[a.state] - rank[b.state] || (b.month_spent_usd ?? 0) - (a.month_spent_usd ?? 0));
+  const now = new Date();
+  return {
+    month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`,
+    units_read: true,
+    caps_read: true,
+    notes: [],
+    units,
+  };
 }
 
 function mockOverview() {
@@ -3576,6 +3634,25 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
         summary: `Budget for ${runId || "run"} set to $${budgetUsd.toFixed(2)}${reason ? ` - ${reason}` : ""}`,
         http_status: 200,
         verify_result: `budget_usd:${budgetUsd}`,
+        sig_alg: "es256",
+        sig_fpr: "software-signed",
+        bus_recorded: true,
+        bus_error: null,
+      });
+    }
+    case "money_units": return r(mockUnitCaps());
+    case "money_set_unit_budget": {
+      const unit = String(args?.unit ?? "");
+      const budgetUsd = Number(args?.budget_usd ?? Number.NaN);
+      if (!unit || unit === "unassigned" || !Number.isFinite(budgetUsd) || budgetUsd < 0) {
+        throw { kind: "invalid_argument", message: "a unit cap needs a unit and a finite amount of zero or more USD" };
+      }
+      manualUnitCaps.set(unit, budgetUsd);
+      emitConsoleCommand("console.set_unit_budget", unit, "break_glass", `budget_usd:${budgetUsd}`, `user://${ORG}/ops`);
+      return r({
+        summary: `unit ${unit} month cap set to $${budgetUsd.toFixed(4)}`,
+        http_status: 200,
+        verify_result: `budget_micros:${Math.round(budgetUsd * 1e6)}`,
         sig_alg: "es256",
         sig_fpr: "software-signed",
         bus_recorded: true,
