@@ -17,28 +17,30 @@ const REFRESH_INTERVAL_MS = 20_000;
 export function GatewaysBody({ data, error }: { data: Gateways | null; error: MoneyError | null }) {
   if (error) {
     return (
-      <div className="mono" style={{ fontSize: 11.5, color: "var(--sev-high)", padding: "10px 0" }}>
+      <div className="mono" style={{ fontSize: 11.5, color: "var(--sev-high)", padding: "10px 20px" }}>
         gateways could not be read: {describeMoneyError(error)}
       </div>
     );
   }
   if (data === null) {
     return (
-      <div className="mono" style={{ fontSize: 12, color: "var(--faint)", padding: "10px 0" }}>
+      <div className="mono" style={{ fontSize: 12, color: "var(--faint)", padding: "10px 20px" }}>
         reading gateways...
       </div>
     );
   }
   if (!data.reported) {
     return (
-      <div className="mono" style={{ fontSize: 11.5, color: "var(--faint)", padding: "10px 0" }}>
+      <div className="mono" style={{ fontSize: 11.5, color: "var(--faint)", padding: "10px 20px" }}>
         This Cloud has no GET /v1/gateways, so whether a gateway stopped reporting cannot be shown here. That is not
         the same as none having stopped.
       </div>
     );
   }
+  // The card has no padding of its own; each body insets itself, as `.d-comp`
+  // does (6px 20px 18px), so rows, pills and the note keep off its edges.
   return (
-    <div className="flex flex-col" style={{ gap: 6 }}>
+    <div className="flex flex-col" style={{ gap: 6, padding: "6px 20px 18px" }}>
       {data.gateways.length === 0 ? (
         <div className="mono" style={{ fontSize: 12, color: "var(--faint)", padding: "10px 0" }}>
           no gateway has pushed to this Cloud yet.
