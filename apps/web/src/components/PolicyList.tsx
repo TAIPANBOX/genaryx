@@ -16,13 +16,15 @@ const COLUMNS = "110px 1fr 1fr 1fr 90px 90px 80px 90px 150px";
 export function PolicyList({ policies, policyVersion }: { policies: PolicyRecord[]; policyVersion: string | null }) {
   return (
     <div className="flex flex-col gap-2">
-      <span className="chip" style={cssVar("dot", "var(--src-wardryx)")}>
-        <span className="dot" aria-hidden="true" />
-        policy_version {policyVersion ?? "unknown (no approval decided yet)"}
-      </span>
+      <div className="px-5">
+        <span className="chip" style={cssVar("dot", "var(--src-wardryx)")}>
+          <span className="dot" aria-hidden="true" />
+          policy_version {policyVersion ?? "unknown (no approval decided yet)"}
+        </span>
+      </div>
 
       {policies.length === 0 ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no policies configured.
         </div>
       ) : (

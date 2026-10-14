@@ -1,3 +1,4 @@
+import { BusCoverageFootnote } from "./BusCoverageFootnote";
 import { useEffect, useMemo, useState } from "react";
 import { fetchIncidents, describeMoneyError } from "../lib/money";
 import { fetchAlerts } from "../lib/identity";
@@ -256,7 +257,7 @@ export function AnomaliesView({
           </span>
         }
       >
-        <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
+        <div className="flex items-center gap-2 flex-wrap px-5" style={{ marginBottom: 10 }}>
           {available.map((plane) => (
             <button
               key={plane}
@@ -314,14 +315,10 @@ export function AnomaliesView({
         {/* The same sentence the Overview card carries, for the same reason: a
             quiet stream and a blind one look identical, and this view is where
             an operator goes when they expect to see everything. */}
-        <div className="mono" style={{ fontSize: 10, color: "var(--faint)", marginTop: 8 }}>
-          {coverage.read === 0
-            ? "no events read off the bus, so no plane is accounted for here"
-            : `${coverage.incidentRows} of ${coverage.read} bus event(s) are incidents` +
-              `${coverage.truncated ? `, capped at ${coverage.limit}` : ""}` +
-              ` · on the bus: ${coverage.planes.join(", ")}`}
-          {moneyError ? ` · money incidents unread: ${describeMoneyError(moneyError)}` : ""}
-        </div>
+        <BusCoverageFootnote
+          coverage={coverage}
+          extra={moneyError ? ` · money incidents unread: ${describeMoneyError(moneyError)}` : undefined}
+        />
       </Section>
     </div>
   );

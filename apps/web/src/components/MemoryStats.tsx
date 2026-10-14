@@ -12,7 +12,7 @@ import { StatTile } from "./StatTile";
  */
 export function MemoryStats({ stats }: { stats: EngramStats }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 px-5">
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
         <StatTile label="Episodic" value={String(stats.counts.episodic)} />
         <StatTile label="Semantic" value={String(stats.counts.semantic)} />

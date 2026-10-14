@@ -37,6 +37,7 @@ import {
   type UnifiedIncident,
 } from "../lib/incidents";
 import { usePostureData } from "../lib/usePostureData";
+import { BusCoverageFootnote } from "./BusCoverageFootnote";
 import { fetchRecentEvents } from "../lib/recentEvents";
 import { hasBackend, subscribeBackend } from "../lib/transport";
 import type { UiEvent } from "../types";
@@ -563,16 +564,7 @@ export function OverviewView({
                       line claiming to name every plane that spoke would have
                       been wrong about the ones directly under it. This sentence
                       is about the BUS read and says so. */}
-                  <div
-                    className="mono"
-                    style={{ fontSize: 10, color: "var(--faint)", marginTop: 6 }}
-                  >
-                    {coverage.read === 0
-                      ? "no events read off the bus, so no plane is accounted for here"
-                      : `${coverage.incidentRows} of ${coverage.read} bus event(s) are incidents` +
-                        `${coverage.truncated ? `, capped at ${coverage.limit}` : ""}` +
-                        ` · on the bus: ${coverage.planes.join(", ")}`}
-                  </div>
+                  <BusCoverageFootnote coverage={coverage} />
                 </Section>
               </>
             }

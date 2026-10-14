@@ -26,7 +26,7 @@ export function QualityRunDetail({
 }) {
   if (!summary) {
     return (
-      <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+      <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
         select a run above to see its detail.
       </div>
     );
@@ -34,7 +34,7 @@ export function QualityRunDetail({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+      <div className="grid gap-3 px-5" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
         <StatTile label="Mean score" value={summary.mean_score !== null ? summary.mean_score.toFixed(3) : "unmeasured"} />
         <StatTile label="Cases" value={String(summary.case_count)} />
         <StatTile label="Total tokens" value={summary.total_tokens.toLocaleString()} />
@@ -42,23 +42,23 @@ export function QualityRunDetail({
       </div>
 
       {summary.unanswered_supported && (
-        <div className="mono" style={{ fontSize: 11.5, color: "var(--dim)" }}>
+        <div className="mono px-5" style={{ fontSize: 11.5, color: "var(--dim)" }}>
           {formatQualityMean(summary)}
         </div>
       )}
 
       {error && (
-        <div className="d-card px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
+        <div className="d-card mx-5 px-3 py-2 mono" style={{ fontSize: 11.5, color: "var(--sev-high)" }}>
           {describeQualityError(error)}
         </div>
       )}
 
       {scores === null ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           loading scores...
         </div>
       ) : scores.length === 0 ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="px-5 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no per-case scores for this run.
         </div>
       ) : (

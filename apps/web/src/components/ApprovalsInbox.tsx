@@ -392,13 +392,13 @@ export function ApprovalsInbox({
   }, [focusApprovalId, approvals]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 px-5">
       {grantedToken && <GrantedTokenPanel granted={grantedToken} onDismiss={onDismissToken} />}
 
       <MutedAgentsStrip mutedAgents={mutedAgentIds} onUnmute={onToggleMuteAgent} />
 
       {pending.length === 0 ? (
-        <div className="px-4 py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
+        <div className="py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no pending approvals.
         </div>
       ) : (

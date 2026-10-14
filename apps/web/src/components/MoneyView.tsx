@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ackIncident,
   describeMoneyError,
@@ -64,6 +64,25 @@ const RUNS_SHOWN = 18;
  * and used to render only on Overview, so the Money tab said less about
  * savings than the summary card above it did.
  */
+/** The Runs card's toolbar: the sort keys, then the export buttons pushed right. */
+export function RunsToolbar({
+  sort,
+  onSort,
+  exportButtons,
+}: {
+  sort: { key: string; dir: SortDir };
+  onSort: (key: string, dir: SortDir) => void;
+  exportButtons: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-5" style={{ paddingBottom: 8 }}>
+      <SortBar options={RUN_SORTS} active={sort.key} dir={sort.dir} onChange={onSort} />
+      <span className="flex-1" />
+      {exportButtons}
+    </div>
+  );
+}
+
 export function GovernedSavingsSection({ savings }: { savings: Savings }) {
   const saved = savings.total_saved_usd;
   const items: CompItem[] = [
@@ -287,33 +306,37 @@ export function MoneyView({
               title="Runs"
               right={`top ${Math.min(RUNS_SHOWN, allRuns.length)} of ${allRuns.length} · full stream in Bus`}
             >
-              <div className="flex items-center gap-2" style={{ paddingBottom: 8 }}>
-                <SortBar options={RUN_SORTS} active={sort.key} dir={sort.dir} onChange={(key, dir) => setSort({ key, dir })} />
-                <span className="flex-1" />
-                {/* Exports the WHOLE list the money plane returned, never the
-                    sorted top slice on screen, and the meta block says which
-                    of the two the reader is holding. It also carries the
-                    fields the table cannot fit (last_seen) and the ones it
-                    now shows only in passing (unit, model, cache hits). */}
-                <button
-                  type="button"
-                  className="mono text-[11.5px] px-3 py-1 rounded"
-                  style={{ background: "var(--panel-2)", color: "var(--dim)", border: "1px solid var(--line)" }}
-                  title={`Every one of the ${allRuns.length} run(s) this console received, not the ${topRuns.length} shown`}
-                  onClick={() => downloadCsv("genaryx-money-runs.csv", RUNS_EXPORT_COLUMNS, runsExportRows(allRuns), exportMeta())}
-                >
-                  Export CSV
-                </button>
-                <button
-                  type="button"
-                  className="mono text-[11.5px] px-3 py-1 rounded"
-                  style={{ background: "var(--panel-2)", color: "var(--dim)", border: "1px solid var(--line)" }}
-                  title={`Every one of the ${allRuns.length} run(s) this console received, not the ${topRuns.length} shown`}
-                  onClick={() => downloadJson("genaryx-money-runs.json", runsExportRows(allRuns), exportMeta())}
-                >
-                  Export JSON
-                </button>
-              </div>
+              <RunsToolbar
+                sort={sort}
+                onSort={(key, dir) => setSort({ key, dir })}
+                exportButtons={
+                  <>
+                    {/* Exports the WHOLE list the money plane returned, never the
+                        sorted top slice on screen, and the meta block says which
+                        of the two the reader is holding. It also carries the
+                        fields the table cannot fit (last_seen) and the ones it
+                        now shows only in passing (unit, model, cache hits). */}
+                    <button
+                      type="button"
+                      className="mono text-[11.5px] px-3 py-1 rounded"
+                      style={{ background: "var(--panel-2)", color: "var(--dim)", border: "1px solid var(--line)" }}
+                      title={`Every one of the ${allRuns.length} run(s) this console received, not the ${topRuns.length} shown`}
+                      onClick={() => downloadCsv("genaryx-money-runs.csv", RUNS_EXPORT_COLUMNS, runsExportRows(allRuns), exportMeta())}
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="mono text-[11.5px] px-3 py-1 rounded"
+                      style={{ background: "var(--panel-2)", color: "var(--dim)", border: "1px solid var(--line)" }}
+                      title={`Every one of the ${allRuns.length} run(s) this console received, not the ${topRuns.length} shown`}
+                      onClick={() => downloadJson("genaryx-money-runs.json", runsExportRows(allRuns), exportMeta())}
+                    >
+                      Export JSON
+                    </button>
+                  </>
+                }
+              />
               <RunsBoard
                 runs={topRuns}
                 onKill={handleKill}
