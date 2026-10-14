@@ -39,10 +39,37 @@ import { agentTeam } from "./dashData";
 import { getScenario, onScenarioChange, type DemoScenario } from "../demo/scenario";
 import { notifyConsoleStateChanged } from "./consoleState";
 import type { EntityLifecycleState } from "./lifecycleTypes";
-import type { EgressRow } from "../egressTypes";
+import type { Session } from "./session";
 import { shortAgentLabel } from "./graph";
 
 export const MOCK = import.meta.env.VITE_GENARYX_MOCK === "1";
+
+/** The line every demo action and simulated panel says when it stands in for
+ * something a real box would do. One place, so the words cannot drift between
+ * the mock, the passkey code and the panels that show them. */
+export const SIMULATED_NOTE = "Simulated in the demo, nothing was done";
+
+/** The signed-in operator the demo's sidebar foot shows: the same shape the box
+ * answers `GET /auth/session` with, so `useSession` hands it to the badge as
+ * it is. No login happens; the demo has no box to sign in to. */
+/**
+ * The one plain line a panel with example data shows in the Live Demo, or
+ * `null` in the real console: the data is example data and no box was
+ * contacted. `demo` defaults to this build's own flag; it is a parameter so the
+ * rule can be tested without reloading modules.
+ */
+export function simulatedNoticeText(demo: boolean = MOCK): string | null {
+  return demo ? `${SIMULATED_NOTE}: the data here is example data, and no box was contacted.` : null;
+}
+
+export const DEMO_SESSION: Session = {
+  configured: true,
+  signed_in: true,
+  user: "ops",
+  role: "admin",
+  method: "local",
+  oidc_available: false,
+};
 
 const ORG = "meridian.io";
 const DAY = 86_400_000;
@@ -1243,105 +1270,6 @@ function mockOwners() {
   });
   return out.sort((a, b) => b.spent_usd - a.spent_usd);
 }
-
-/** Recent web egress for the Web Egress panel, mirroring
- * `crates/api/src/egress/mod.rs`'s shape.
- *
- * WP13 shipped that panel with no preview handler at all, so the published
- * demo showed its honest "nothing was read" card, which is the right card for
- * a box that could not look and the wrong one for a demo that has plenty to
- * show.
- *
- * The fidelity story is the point of the panel, so these rows carry it: a
- * majority served by a backend that enforces per request, a visible minority
- * served only at the navigation, and two refusals with different verdicts.
- * Deterministic (`pseudo`) so screenshots do not jitter. Hosts are RFC 2606
- * documentation domains, never anywhere real. */
-function mockEgress() {
-  const hosts = [
-    "https://docs.example.com",
-    "https://status.example.net",
-    "https://api.example.org",
-    "https://registry.example.com",
-    "https://blog.example.net",
-  ];
-  const fleet = FLEET.slice(0, 8);
-  const rows: EgressRow[] = fleet.flatMap((a, i): EgressRow[] => {
-    const id = agentId(a);
-    const p = pseudo(id + "egress");
-    const origin = hosts[i % hosts.length];
-    // Every third agent's backend governs the navigation only: the number the
-    // panel exists to surface.
-    const navigationOnly = i % 3 === 2;
-    const out: EgressRow[] = [
-      {
-        ts: ago(Math.round(p * 90 * 60_000)),
-        agent_id: id,
-        run_id: `${a.name}-live`,
-        outcome: "fetched",
-        origin,
-        url_sha384: null,
-        backend: navigationOnly ? "browser-run" : "kitesurf",
-        enforcement: navigationOnly ? "navigation_only" : "per_request",
-        content_bytes: 1_200 + Math.round(p * 40_000),
-        verdict: null,
-        reason: null,
-      },
-    ];
-    if (i === 1) {
-      out.push({
-        ts: ago(Math.round(p * 40 * 60_000)),
-        agent_id: id,
-        run_id: `${a.name}-live`,
-        outcome: "blocked",
-        origin: "https://paste.example.org",
-        url_sha384: null,
-        backend: null,
-        enforcement: null,
-        content_bytes: null,
-        verdict: "deny_policy",
-        reason: "destination outside the allowed set for this run",
-      });
-    }
-    if (i === 4) {
-      out.push({
-        ts: ago(Math.round(p * 20 * 60_000)),
-        agent_id: id,
-        run_id: `${a.name}-live`,
-        outcome: "blocked",
-        origin: "https://internal.example.com",
-        url_sha384: null,
-        backend: null,
-        enforcement: null,
-        content_bytes: null,
-        verdict: "deny_address_range",
-        reason: "resolves inside a private address range",
-      });
-    }
-    return out;
-  });
-
-  const fetched = rows.filter((r) => r.outcome === "fetched");
-  const blocked = rows.filter((r) => r.outcome === "blocked");
-  const by_verdict: Record<string, number> = {};
-  for (const b of blocked) by_verdict[b.verdict ?? "unrecorded"] = (by_verdict[b.verdict ?? "unrecorded"] ?? 0) + 1;
-
-  return {
-    measured: true,
-    note: `Read from the ${rows.length * 12} most recent events on the bus. An older fetch than that is in the Bus Explorer, not here.`,
-    totals: {
-      fetched: fetched.length,
-      blocked: blocked.length,
-      by_verdict,
-      navigation_only: fetched.filter((r) => r.enforcement === "navigation_only").length,
-      // The passthrough backend reports what a page asked for; the
-      // navigation-only one cannot, and that gap is a count of its own.
-      subresources_unknown: fetched.filter((r) => r.enforcement === "navigation_only").length,
-    },
-    rows: rows.sort((x, y) => (x.ts < y.ts ? 1 : -1)),
-  };
-}
-
 /** Per-agent event counts for the Statistics view, mirroring
  * `crates/api/src/stats/mod.rs`'s shape.
  *
@@ -2501,11 +2429,20 @@ function mockQualityScores(runId: string) {
   }
   return out;
 }
+// Each row is a `VerdryxBaselineSummary`: the panel destructures `baseline`.
+// The demo's runs carry no unanswered cases, so the summary says it is not
+// supported, which hides the column rather than showing a measured zero.
 function mockQualityBaselines() {
+  const summary = (baseline: { id: string; eval_run_id: string; mean_score: number; created_at: string; label: string }) => ({
+    baseline,
+    unanswered_count: 0,
+    unanswered_by_reason: [],
+    unanswered_supported: false,
+  });
   return [
-    { id: "base-eom", eval_run_id: "eval-1000", mean_score: 0.92, created_at: ago(28 * DAY), label: "end-of-month gate" },
-    { id: "base-release", eval_run_id: "eval-1002", mean_score: 0.88, created_at: ago(96 * DAY), label: "pre-release" },
-    { id: "base-haiku", eval_run_id: "eval-1004", mean_score: 0.85, created_at: ago(284 * DAY), label: "haiku cost-tier check" },
+    summary({ id: "base-eom", eval_run_id: "eval-1000", mean_score: 0.92, created_at: ago(28 * DAY), label: "end-of-month gate" }),
+    summary({ id: "base-release", eval_run_id: "eval-1002", mean_score: 0.88, created_at: ago(96 * DAY), label: "pre-release" }),
+    summary({ id: "base-haiku", eval_run_id: "eval-1004", mean_score: 0.85, created_at: ago(284 * DAY), label: "haiku cost-tier check" }),
   ];
 }
 
@@ -3220,57 +3157,12 @@ function mockHetznerList() {
     { id: 51234569, name: "relay-1", status: "running", ipv4: "203.0.113.9", server_type: "cx22", cores: 2, memory_gb: 4, location: "hel1", price_hourly_eur: 0.008, labels: { "managed-by": "taipan" }, created: "2026-07-19T19:02:00Z" },
   ];
 }
-// "Connect this machine" (`remote_operator_wg_config`): one fixed example
-// config, the same fake "prod-stack" demo box `SEED_REMOTE_ENV` above already
-// uses (RFC 5737 documentation endpoint, never a real host, and a fake
-// keypair this preview never uses to open a real tunnel). `qr_svg` is
-// deliberately empty, mirroring `mockEvidenceBuild`'s own `zip_base64: ""`:
-// a QR that scans would hand whoever pointed a phone at it a config for a
-// tunnel that does not exist, so the card renders its own honest "no QR
-// available" placeholder instead.
-function mockOperatorWgConfig() {
-  const clientPriv = "eA3mK9pLwQ2vXsZ0tYbNcRf8dGjHu5MoPq1Wn6CiT2E=";
-  // The lowest free address, the same rule the real allocator follows, so
-  // issuing twice in the preview does not hand out one address twice.
-  const taken = new Set(
-    mockWgPeers.map((p) => Number((p.allowed_ips[0] ?? "").split("/")[0].split(".")[3])),
-  );
-  let host = 2;
-  while (taken.has(host) && host < 255) host += 1;
-  const clientIp = `10.9.0.${host}`;
-  const serverPub = "k7QmZ4RfWp2NxTqYs81cVbA0dEoJnHu5MdMv9wXpUYo=";
-  const endpoint = "198.51.100.42:51820";
-  // A distinct key per issue, and the peer really joins the list: an "Issue"
-  // that leaves the device list unchanged would be the preview telling a lie
-  // about the one thing this panel exists to show.
-  const peerPublicKey = `Qp7VnK2mX9dLc4RtYw0sZbF6gJhU3oNeM1iA8u${String(host).padStart(2, "0")}=`;
-  mockWgPeers = [
-    ...mockWgPeers,
-    {
-      public_key: peerPublicKey,
-      allowed_ips: [`${clientIp}/32`],
-      last_handshake_unix: null as number | null,
-      endpoint: null as string | null,
-      rx_bytes: 0,
-      tx_bytes: 0,
-    },
-  ];
-  return {
-    conf: `[Interface]\nPrivateKey = ${clientPriv}\nAddress = ${clientIp}/32\n\n[Peer]\nPublicKey = ${serverPub}\nEndpoint = ${endpoint}\nAllowedIPs = 10.9.0.1/32\nPersistentKeepalive = 25\n`,
-    qr_svg: "",
-    client_ip: clientIp,
-    endpoint,
-    server_public_key: serverPub,
-    peer_public_key: peerPublicKey,
-    console_tunnel_url: "http://10.9.0.1:7420",
-  };
-}
 
 // The devices this preview pretends are authorized. Mutable so Revoke visibly
 // removes a row: a revoke button that leaves the list unchanged reads as
 // broken, and the point of showing this panel at all is that revocation is a
 // thing you can see happen.
-let mockWgPeers = [
+const mockWgPeers = [
   {
     public_key: "h+tkRs4b2x3oHJU36eBBSJRNKXJBwMcTHBZcPdHNuXw=",
     allowed_ips: ["10.9.0.2/32"],
@@ -3306,12 +3198,6 @@ function mockOperatorWgPeers() {
   };
 }
 
-function mockOperatorWgRevoke(args: Record<string, unknown> | undefined) {
-  const key = typeof args?.public_key === "string" ? args.public_key : "";
-  const wasPresent = mockWgPeers.some((p) => p.public_key === key);
-  mockWgPeers = mockWgPeers.filter((p) => p.public_key !== key);
-  return { public_key: key, was_present: wasPresent, remaining_peers: mockWgPeers.length };
-}
 // Example CloudServer rows for the AWS/GCP/Azure/IBM Cloud live-listing
 // (preview only; the real connector shells out to the operator's own
 // aws/gcloud/az/ibmcloud CLI). RFC 5737 documentation IPs, never a real host.
@@ -3657,9 +3543,13 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "remote_status": return r(remoteStatus());
     case "remote_hetzner_list": return r(mockHetznerList());
     case "remote_cloud_list": return r(mockCloudList(String(args?.provider ?? "aws")));
-    case "remote_operator_wg_config": return r(mockOperatorWgConfig());
+    // Issuing a device config mints a road into the control plane: the demo
+    // refuses it, and the device list stays as it was.
+    case "remote_operator_wg_config": throw { kind: "wg", message: `${SIMULATED_NOTE}: no config was issued, and no box was contacted.` };
     case "remote_operator_wg_peers": return r(mockOperatorWgPeers());
-    case "remote_operator_wg_revoke": return r(mockOperatorWgRevoke(args));
+    // Revoking a device is a real act on a real box, so the demo refuses it
+    // plainly and leaves the device list as it was.
+    case "remote_operator_wg_revoke": throw { kind: "wg", message: `${SIMULATED_NOTE}: no device was revoked, and no box was contacted.` };
     case "remote_set_environment": {
       const req = (args?.request ?? null) as Record<string, unknown> | null;
       if (req) remoteEnv = { ...req };
@@ -3667,23 +3557,23 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       return r(remoteStatus());
     }
     case "remote_wg_connect": {
-      remoteTunnel = { state: "failed", message: "this local preview cannot open a real WireGuard tunnel - connect from a packaged build against your own box" };
+      remoteTunnel = { state: "failed", message: `${SIMULATED_NOTE}: no tunnel was opened. Connect from a packaged build against your own box.` };
       return r(remoteStatus());
     }
     case "remote_wg_disconnect": { remoteTunnel = { state: "disconnected" }; return r(remoteStatus()); }
-    case "remote_ssh_tail_start":
+    // Nothing below reaches a box. Each refusal says so, and none of them is
+    // answered with a reachable host, a tailed line or a file's contents.
+    case "remote_ssh_tail_start": throw { kind: "ssh", message: `${SIMULATED_NOTE}: no log was tailed from any box.` };
     case "remote_ssh_tail_stop": return r(remoteStatus());
-    case "remote_ssh_check_reachable": return r(undefined);
-    case "remote_ssh_read_file": return r({ content: "# preview: remote file reads run against your own box, not this local demo\n", valid_utf8: true, size_bytes: 74 });
-    case "copilot_status": return r(copilotStatus());
-    case "copilot_connect": {
-      copilotConfig = {
-        provider: String(args?.provider ?? "ollama"),
-        model: String(args?.model ?? "unknown"),
-        local: Boolean(args?.local),
-      };
-      return r({ ok: true });
+    case "remote_ssh_check_reachable": throw { kind: "ssh", message: `${SIMULATED_NOTE}: no box was contacted.` };
+    case "remote_ssh_read_file": {
+      const content = `# ${SIMULATED_NOTE}: no file was read from any box.\n`;
+      return r({ content, valid_utf8: true, size_bytes: content.length });
     }
+    case "copilot_status": return r(copilotStatus());
+    // The box refuses provider changes from the browser; the demo refuses them
+    // too and keeps the provider it started with.
+    case "copilot_connect": throw new Error(SIMULATED_NOTE);
     case "bus_status": return r({ kind: "demo", dir: "/preview" });
     case "bus_quarantine": return r(mockQuarantine());
     // The stop history: when, by whom, why. Folded from the SAME seeded year
@@ -3966,7 +3856,9 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // console_command is genuinely the newest thing on the bus.
     case "money_owners": return r(mockOwners());
     case "stats_counts": return r(mockStatsCounts(Number(args?.window_days ?? 0)));
-    case "egress_recent": return r(mockEgress());
+    // Web Egress holds no demo data, by design (see EgressView). The panel
+    // shows its own "no backend" note for this answer.
+    case "egress_recent": throw { kind: "no_environment" };
     // The refusals and the quality_drift event go ahead of the seed: a reader
     // asking for N events keeps the first N, and the Incidents tab asks for
     // exactly as many as the seed makes, so anything appended after it is cut

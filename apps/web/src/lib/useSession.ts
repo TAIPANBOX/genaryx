@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DEMO_SESSION, MOCK } from "./mockPreview";
 import { fetchSession, type Session } from "./session";
 import { isWebShell } from "./transport";
 
@@ -14,11 +15,16 @@ import { isWebShell } from "./transport";
  * Always `null` in the desktop shell (`isWebShell()` false): there is no
  * console session there, matching `WebGate.tsx`'s own gate bypass for that
  * shell.
+ *
+ * The Live Demo (`MOCK`) answers a fixed operator from the first render, so
+ * the sidebar foot shows the same session badge the real console shows. It
+ * asks no box: the demo build has none, and its network calls are blocked.
  */
 export function useSession(): Session | null {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<Session | null>(() => (MOCK ? DEMO_SESSION : null));
 
   useEffect(() => {
+    if (MOCK) return;
     if (!isWebShell()) return;
     let cancelled = false;
     void fetchSession().then((s) => {

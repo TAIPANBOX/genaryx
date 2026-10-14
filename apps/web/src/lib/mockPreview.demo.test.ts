@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { mockInvoke } from "./mockPreview";
+import { mockInvoke, simulatedNoticeText } from "./mockPreview";
 
 // The demo answers every command from this mock. Two rules hold for each
 // action it stands in for: the answer says plainly that nothing was done, and
 // a panel that must never show invented data gets the same "no backend"
 // answer the real build would give it.
+
+describe("the simulated notice", () => {
+  it("the_demo_marks_its_example_panels_as_simulated", () => {
+    const text = simulatedNoticeText(true);
+
+    expect(text).toContain("nothing was done");
+    expect(text).toContain("no box was contacted");
+  });
+
+  it("the_real_console_renders_no_simulated_notice", () => {
+    expect(simulatedNoticeText(false)).toBeNull();
+  });
+});
 
 describe("the demo's quality baselines", () => {
   it("quality_baselines_answer_the_summary_shape_the_panel_reads", async () => {
@@ -47,11 +60,15 @@ describe("the demo's remote actions", () => {
   it("the_demo_wireguard_issue_and_revoke_leave_the_peer_list_as_it_was", async () => {
     const before = await mockInvoke<{ peers: Array<{ public_key: string }> }>("remote_operator_wg_peers");
 
-    await mockInvoke("remote_operator_wg_config");
+    // Issuing a config is refused in the demo as well.
+    await expect(mockInvoke("remote_operator_wg_config")).rejects.toMatchObject({ kind: "wg" });
     const afterIssue = await mockInvoke<{ peers: unknown[] }>("remote_operator_wg_peers");
     expect(afterIssue.peers).toHaveLength(before.peers.length);
 
-    await mockInvoke("remote_operator_wg_revoke", { public_key: before.peers[0].public_key });
+    // Revoking is refused in the demo, so the device list cannot change.
+    await expect(
+      mockInvoke("remote_operator_wg_revoke", { public_key: before.peers[0].public_key }),
+    ).rejects.toMatchObject({ kind: "wg" });
     const afterRevoke = await mockInvoke<{ peers: unknown[] }>("remote_operator_wg_peers");
     expect(afterRevoke.peers).toHaveLength(before.peers.length);
   });

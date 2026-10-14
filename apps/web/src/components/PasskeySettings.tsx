@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { PopoverHeader } from "../lib/popover";
+import { SimulatedNotice } from "./SimulatedNotice";
 import {
   CeremonyCancelled,
   enrollPasskey,
@@ -152,6 +153,7 @@ export function PasskeySettings() {
     <div className="flex flex-col">
       <PopoverHeader kicker="Session" title="Passkeys" />
       <div className="flex flex-col gap-3" style={{ padding: "0 16px 16px" }}>
+        <SimulatedNotice />
         {!available && (
           <div className="text-[11.5px]" style={{ color: "var(--sev-medium)", lineHeight: 1.6 }}>
             This page is not a secure context, so the browser has no WebAuthn here. Reach the
