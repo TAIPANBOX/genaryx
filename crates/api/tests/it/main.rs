@@ -18,6 +18,7 @@ mod cloud_stub;
 mod delegation_revoke_test;
 mod money_runs_budgets_test;
 mod money_runs_status_test;
+mod money_units_test;
 mod quarantine_is_visible_test;
 mod retained_close_test;
 mod stats_scale;

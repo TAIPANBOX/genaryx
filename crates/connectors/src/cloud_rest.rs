@@ -1272,6 +1272,26 @@ mod tests {
         assert!(matches!(err, ConnectorError::NoDeviceSigner));
     }
 
+    #[tokio::test]
+    async fn a_unit_cap_change_fails_closed_without_a_device_or_with_a_unit_that_is_no_segment() {
+        let client = CloudClient::new("http://127.0.0.1:1", "key:acme:admin")
+            .expect("client construction never touches the network");
+        let err = client.set_unit_budget("finops", 5.0).await.unwrap_err();
+        assert!(matches!(err, ConnectorError::NoDeviceSigner), "{err:?}");
+        // A unit id that cannot be one path segment never addresses another
+        // resource, and is refused before anything is signed.
+        for bad in ["", ".", ".."] {
+            let err = client.set_unit_budget(bad, 5.0).await.unwrap_err();
+            assert!(
+                matches!(err, ConnectorError::InvalidPathSegment(_)),
+                "{bad:?}: {err:?}"
+            );
+        }
+        let r: UnitBudgetResponse =
+            serde_json::from_str(r#"{"unit":"w2x","budget_micros":7168}"#).expect("valid");
+        assert_eq!((r.unit.as_str(), r.budget_micros), ("w2x", 7168));
+    }
+
     #[test]
     fn new_trims_a_trailing_slash_from_base_url() {
         let client = CloudClient::new("http://127.0.0.1:8080/", "devkey").expect("client");

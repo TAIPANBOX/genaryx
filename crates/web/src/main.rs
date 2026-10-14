@@ -2251,6 +2251,73 @@ mod tests {
         assert_eq!(body["kind"], "bootstrapping", "{body}");
     }
 
+    // A unit's central month cap: money_set_budget's role and the ceremony.
+
+    fn unit_cap_args() -> String {
+        json!({ "unit": "w2x", "budget_usd": 0.007168, "reason": "B8 lab cap" }).to_string()
+    }
+
+    #[tokio::test]
+    async fn a_viewer_or_approver_is_refused_by_the_role_gate_on_money_set_unit_budget() {
+        let ctx = test_ctx();
+        for (who, role) in [("carol", Role::Viewer), ("dave", Role::Approver)] {
+            let sid = ctx.sessions.create(who, role, Method::Oidc);
+            let (status, body) = post_api(
+                &ctx,
+                "/api/command/money_set_unit_budget",
+                &sid,
+                None,
+                serde_json::from_str(&unit_cap_args()).unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{who}: {body}");
+            assert_eq!(body["error"], "role admin required");
+        }
+    }
+
+    #[tokio::test]
+    async fn money_set_unit_budget_without_an_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_eq!(
+            post_command_with(&ctx, "money_set_unit_budget", &sid, None, &unit_cap_args()).await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn money_set_unit_budget_with_a_valid_assertion_reaches_the_command() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = unit_cap_args();
+        let challenge = start_action(&ctx, &sid, "money_set_unit_budget", &args).await;
+        let header = assertion_header(&ctx, &challenge);
+        // The money plane is pending in this Ctx, so the COMMAND answers its
+        // own "bootstrapping" refusal: proof the gate let the assertion through.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_set_unit_budget",
+            &sid,
+            Some(&header),
+            serde_json::from_str(&args).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "bootstrapping", "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_viewer_may_read_unit_caps() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("carol", Role::Viewer, Method::Oidc);
+        let (status, body) =
+            post_api(&ctx, "/api/command/money_units", &sid, None, json!({})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "bootstrapping", "{body}");
+    }
+
     #[tokio::test]
     async fn an_assertion_bound_to_another_command_or_args_is_refused() {
         let ctx = test_ctx();

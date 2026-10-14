@@ -326,6 +326,19 @@ mod tests {
         assert_eq!(required_role("money_close_retained"), Role::Admin);
     }
 
+    /// A unit's central month cap is enforced by every gateway on every call
+    /// of the unit: setting one is admin, the floor of `money_set_budget`;
+    /// reading the caps is a read.
+    #[test]
+    fn setting_a_unit_cap_is_admin_and_reading_caps_is_a_read() {
+        assert_eq!(required_role("money_units"), Role::Viewer);
+        assert_eq!(
+            required_role("money_set_unit_budget"),
+            required_role("money_set_budget")
+        );
+        assert_eq!(required_role("money_set_unit_budget"), Role::Admin);
+    }
+
     /// A command that takes a live cloud API token in its request body is not
     /// a viewer read, whatever the upstream HTTP verb is. Its sibling, which
     /// spawns the operator's own already-authenticated CLI and never sees a
