@@ -78,7 +78,7 @@ export const PRESETS: readonly OnboardPreset[] = [
       attestation_method: "none",
       models: [
         { provider: "anthropic", model: "claude-sonnet-4-5" },
-        { provider: "openai", model: "gpt-4o" },
+        { provider: "openai", model: "gpt-5.4" },
       ],
       filesystem: [{ path: "./langgraph_checkpoints", mode: "write" }],
     },
@@ -92,7 +92,7 @@ export const PRESETS: readonly OnboardPreset[] = [
       attestation_method: "none",
       models: [
         { provider: "anthropic", model: "claude-sonnet-4-5" },
-        { provider: "openai", model: "gpt-4o-mini" },
+        { provider: "openai", model: "gpt-5.4-mini" },
       ],
       filesystem: [],
     },
@@ -106,7 +106,7 @@ export const PRESETS: readonly OnboardPreset[] = [
       attestation_method: "none",
       models: [
         { provider: "anthropic", model: "claude-sonnet-4-5" },
-        { provider: "openai", model: "gpt-4o" },
+        { provider: "openai", model: "gpt-5.4" },
       ],
       filesystem: [{ path: "./coding", mode: "write" }],
     },
