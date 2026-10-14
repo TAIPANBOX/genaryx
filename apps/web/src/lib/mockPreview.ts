@@ -1124,6 +1124,14 @@ function mockOverview() {
     open_incidents: incidents.filter((i) => !i.acknowledged).length,
     total_incidents: incidents.length,
     total_saved_usd: mockSavings().total_saved_usd,
+    // The Cloud's PII counts (tokenfuse#433): calls in which the gateway's
+    // PII check found personal data, all time, by kind.
+    pii_calls: 41,
+    pii_kinds: [
+      { kind: "pii_email", calls: 29 },
+      { kind: "pii_phone", calls: 9 },
+      { kind: "pii_card", calls: 3 },
+    ],
   };
 }
 
