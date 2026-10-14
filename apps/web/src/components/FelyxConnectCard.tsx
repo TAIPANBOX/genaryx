@@ -62,7 +62,7 @@ export interface Provider {
 
 export const PROVIDERS: Provider[] = [
   { id: "anthropic", label: "Anthropic", local: false, defaultModel: "claude-haiku-4-5", keyLabel: "Anthropic API key" },
-  { id: "openai_compat", label: "OpenAI", local: false, defaultModel: "gpt-4o-mini", keyLabel: "OpenAI API key" },
+  { id: "openai_compat", label: "OpenAI", local: false, defaultModel: "gpt-5.4-mini", keyLabel: "OpenAI API key" },
   { id: "openrouter", label: "OpenRouter", local: false, defaultModel: "meta-llama/llama-3.1-70b-instruct", keyLabel: "OpenRouter API key" },
   { id: "ollama", label: "Ollama", local: true, defaultModel: "qwen2.5:7b-instruct", defaultBase: "http://127.0.0.1:11434/v1" },
   { id: "lmstudio", label: "LM Studio", local: true, defaultModel: "local-model", defaultBase: "http://127.0.0.1:1234/v1" },

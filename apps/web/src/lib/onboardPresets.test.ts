@@ -126,7 +126,7 @@ describe("applyOnboardPreset", () => {
       attestation_method: "none",
       models: [
         { provider: "anthropic", model: "claude-sonnet-4-5" },
-        { provider: "openai", model: "gpt-4o" },
+        { provider: "openai", model: "gpt-5.4" },
       ],
       filesystem: [{ path: "./langgraph_checkpoints", mode: "write" }],
     };
@@ -139,7 +139,7 @@ describe("applyOnboardPreset", () => {
     expect(applied.attestation_method).toBe("none");
     expect(applied.models).toEqual([
       { provider: "anthropic", model: "claude-sonnet-4-5" },
-      { provider: "openai", model: "gpt-4o-mini" },
+      { provider: "openai", model: "gpt-5.4-mini" },
     ]);
     expect(applied.filesystem).toEqual([]);
   });
@@ -150,7 +150,7 @@ describe("applyOnboardPreset", () => {
     expect(applied.attestation_method).toBe("none");
     expect(applied.models).toEqual([
       { provider: "anthropic", model: "claude-sonnet-4-5" },
-      { provider: "openai", model: "gpt-4o" },
+      { provider: "openai", model: "gpt-5.4" },
     ]);
     expect(applied.filesystem).toEqual([{ path: "./coding", mode: "write" }]);
   });
