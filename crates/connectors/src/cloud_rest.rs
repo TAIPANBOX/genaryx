@@ -685,39 +685,56 @@ pub struct RunAgg {
     /// Cloud does not report the field at all.
     ///
     /// Every field from here down is `Option` and read leniently
-    /// (`lenient` below): absent is `None`, never a zero, because a zero is a
+    /// ([`lenient`]): absent is `None`, never a zero, because a zero is a
     /// count the Cloud did not make; and one field of the wrong type is
     /// unknown rather than a failure of the whole `/v1/runs` answer.
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub site: Option<String>,
     /// Calls the gateway refused on this run, by a reason the Cloud trusts
     /// (tokenfuse v1.8.0, invariants 83 and 86).
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub blocked: Option<u64>,
     /// The decision of this run's latest call by its own timestamp: `allow`,
     /// `cache_hit`, or a Breaker reason (a refusal). `Some("")` until the Cloud
     /// has seen a decision it trusts.
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub last_decision: Option<String>,
     /// When `last_decision` was taken, Unix millis; `0` before any.
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub last_decision_millis: Option<i64>,
     /// Admitted calls the gateway charged at the fallback rate because its
     /// price book had no row for the model id (invariant 86).
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub fallback_calls: Option<u64>,
     /// Admitted calls whose gateway named no price basis at all (a gateway
     /// older than v1.8.0, which may well have charged the fallback rate).
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub basis_unreported_calls: Option<u64>,
     /// Admitted calls the gateway forwarded although its identity check would
     /// have refused them (`TOKENFUSE_IDENTITY_STRICT=warn`, invariant 87).
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub identity_warned: Option<u64>,
     /// The identity reason of the latest warned or refused record, when it is
     /// a word of the gateway's vocabulary; `Some("")` otherwise.
-    #[serde(skip)]
+    #[serde(default, deserialize_with = "lenient")]
     pub last_identity_reason: Option<String>,
+}
+
+/// Read an optional field leniently: absent, `null`, or a value of the wrong
+/// type (a string where a count belongs, a negative or fractional count) is
+/// `None`, never a failure of the whole response.
+///
+/// `GET /v1/runs` answers one array, so a strict parse lets one malformed
+/// optional field on one row cost the operator every run. A field this
+/// console cannot read is a field it does not know, and `None` says exactly
+/// that; it never becomes a value the body did not hold.
+fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 /// One element of `GET /v1/agents`. Exact shape of `store.rs::AgentAgg`; the

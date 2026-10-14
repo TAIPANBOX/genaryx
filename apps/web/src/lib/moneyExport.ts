@@ -125,6 +125,18 @@ export interface RunExportRow {
   steps: number | null;
   last_seen: string;
   killed: boolean;
+  // How the gateway decided the run (TokenFuse Cloud v1.2.0 and v1.8.0).
+  // Appended after the columns this file already had, never reordered, so a
+  // reader of an older export keeps its column positions. `null` (an empty
+  // cell) wherever the Cloud did not report the field.
+  site: string | null;
+  blocked: number | null;
+  last_decision: string | null;
+  last_decision_at: string | null;
+  fallback_calls: number | null;
+  basis_unreported_calls: number | null;
+  identity_warned: number | null;
+  last_identity_reason: string | null;
 }
 
 export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: string }[] = [
@@ -141,6 +153,14 @@ export const RUNS_EXPORT_COLUMNS: { key: keyof RunExportRow & string; header: st
   { key: "steps", header: "steps" },
   { key: "last_seen", header: "last_seen" },
   { key: "killed", header: "killed" },
+  { key: "site", header: "site" },
+  { key: "blocked", header: "blocked" },
+  { key: "last_decision", header: "last_decision" },
+  { key: "last_decision_at", header: "last_decision_at" },
+  { key: "fallback_calls", header: "fallback_calls" },
+  { key: "basis_unreported_calls", header: "basis_unreported_calls" },
+  { key: "identity_warned", header: "identity_warned" },
+  { key: "last_identity_reason", header: "last_identity_reason" },
 ];
 
 function orNull(value: string | null | undefined): string | null {
@@ -149,6 +169,12 @@ function orNull(value: string | null | undefined): string | null {
 
 function numberOrNull(value: number | null | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** A string the Cloud reported, kept verbatim even when empty (`""` is an
+ * answer for `site` and `last_decision`), or `null` when it reported none. */
+function reportedOrNull(value: string | null | undefined): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 /** The rows of the runs export.
@@ -174,6 +200,14 @@ export function runsExportRows(runs: Run[]): RunExportRow[] {
     steps: numberOrNull(r.steps),
     last_seen: r.last_seen,
     killed: r.killed,
+    site: reportedOrNull(r.site),
+    blocked: numberOrNull(r.blocked),
+    last_decision: reportedOrNull(r.last_decision),
+    last_decision_at: reportedOrNull(r.last_decision_at),
+    fallback_calls: numberOrNull(r.fallback_calls),
+    basis_unreported_calls: numberOrNull(r.basis_unreported_calls),
+    identity_warned: numberOrNull(r.identity_warned),
+    last_identity_reason: reportedOrNull(r.last_identity_reason),
   }));
 }
 
@@ -204,6 +238,8 @@ export function runsExportMeta(opts: {
       "An empty agent_id is what the money plane carried for that run, not a value this console dropped.",
       "An empty model means the run's aggregate carried none.",
       "An empty cache_hits means the field never arrived. A cache_hits of 0 means the money plane counted no cache hit for that run. They are different statements and this file keeps them apart.",
+      "An empty blocked, last_decision, fallback_calls, basis_unreported_calls, identity_warned, last_identity_reason or site means this Cloud does not report that field (site needs TokenFuse Cloud v1.2.0, the rest v1.8.0), never zero. A blocked of 0 is a count. last_decision is the latest call's decision: allow or cache_hit admitted it, anything else is the reason the gateway refused it.",
+      "fallback_calls counts admitted calls the gateway charged at the fallback rate (15/75 USD per million tokens) because its price book had no row for the model id: their spend is a gateway estimate, not a provider bill. basis_unreported_calls counts calls from a gateway that named no price basis at all. identity_warned counts calls forwarded although the identity check would have refused them (warn mode); they are spent and filed under the agent id they claimed.",
       "killed is the money plane's own flag. A run an operator froze or stopped through this console shows its lifecycle on screen, and that state is this console's, not a column of GET /v1/runs.",
     ],
   };

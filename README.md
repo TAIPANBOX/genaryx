@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1015-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1022-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -335,6 +335,26 @@ box; these frames are not it, and say so here rather than in a footnote.
   cell means. Verified against a stub Cloud carrying the forge figures
   (`crates/api/tests/it/money_runs_budgets_test.rs`); invariant 17 records no run
   against a live console yet.
+- **Money runs table shows how the gateway decided each run (2026-10-14,
+  invariant 25).** TokenFuse Cloud v1.8.0 reports, on every `GET /v1/runs`
+  row, the calls the gateway refused and the decision of the latest call, the
+  calls it charged at the fallback rate because its price book had no row for
+  the model, the calls from a gateway that named no price basis, the calls it
+  forwarded under identity warn, and (since v1.2.0) the site that pushed the
+  run. The runs board now prints them: a run whose latest call was refused
+  reads `refused · budget` (or `taint`, `loop`, `identity`, `unit cap`...)
+  instead of `live`, with the raw reason, its time and the identity reason in
+  the hover; `N refused` sits under the call count; `fallback ×N`,
+  `no basis ×N` and `id warn ×N` pills sit beside the status; the site is on
+  the run's meta line. Incident 360's "What the whole run cost" says the same
+  in one sentence, and the runs export appends eight columns (`site`,
+  `blocked`, `last_decision`, `last_decision_at`, `fallback_calls`,
+  `basis_unreported_calls`, `identity_warned`, `last_identity_reason`). A
+  Cloud older than those fields leaves them empty: the board says the Cloud
+  does not report refusals, and never prints a zero for a count nobody made.
+  Verified against a stub Cloud carrying the forge figures of 2026-10-14
+  (`crates/api/tests/it/money_runs_status_test.rs`), not yet against a live
+  console.
 
 ## Being written to, not just watched
 

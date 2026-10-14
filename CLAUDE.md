@@ -1314,6 +1314,55 @@ an absent invariant.
     that is itself the key still shows in the unreadable-file message,
     because that message names the path, as every real reference's does.)*
 
+25. **The runs table shows how the gateway decided each run, and a field the
+    Cloud does not report is never shown as zero.** TokenFuse Cloud v1.8.0
+    puts on every `GET /v1/runs` row the calls the gateway refused
+    (`blocked`), the decision of the latest call (`last_decision`, with
+    `last_decision_millis`), the admitted calls charged at the fallback rate
+    (`fallback_calls`), those whose gateway named no price basis
+    (`basis_unreported_calls`), those forwarded under identity warn
+    (`identity_warned`, `last_identity_reason`), and since v1.2.0 the `site`
+    that pushed the run. `RunAgg` mirrored the older shape and serde dropped
+    them all, so a run whose every call was refused read "live".
+    `@decided 2026-10-14`: the dashboards show what the product does today;
+    refused runs, fallback pricing and identity warnings are shown plainly.
+
+    `RunAgg` reads each of the eight as an `Option` through `lenient`
+    (`crates/connectors/src/cloud_rest.rs`): absent is `None`, and a value of
+    the wrong type is `None` too, never a failure of the whole `/v1/runs`
+    answer. `RunDto` carries them as `null` when unreported. The web reads
+    them only through `apps/web/src/lib/runStatus.ts`: a latest decision other
+    than `allow`/`cache_hit` turns the status pill into `refused · <word>` (a
+    killed or operator-blocked run keeps its lifecycle pill), a positive
+    count earns `N refused` or a `fallback`/`no basis`/`id warn` pill, an
+    unreported field earns nothing and a hover saying the Cloud does not
+    report it. Incident 360 states it in one sentence; the runs export
+    appends eight columns after the existing ones, empty when unreported.
+    The pill words, the lenient read and the hover text are `@claude` design
+    choices, open to reversal.
+    *(test: `crates/connectors/src/cloud_rest.rs`'s
+    `run_agg_from_a_cloud_older_than_the_decision_fields_reports_none_not_zero`,
+    `run_agg_carries_the_decision_fields_and_the_site`,
+    `a_decision_field_of_the_wrong_type_is_unknown_and_never_costs_the_row`;
+    `crates/api/tests/it/money_runs_status_test.rs`'s four, on a stub Cloud
+    with the forge figures of 2026-10-14, one a 200-seed sweep of wrong-typed
+    fields; `apps/web/src/lib/moneyExport.test.ts`'s eleven board and export
+    cases and `apps/web/src/lib/runStatus.test.ts`'s eleven. Red first: with
+    the fields declared and still dropped on the wire (`serde(skip)`), four
+    of the seven Rust tests failed in CI on assertions (`left: None, right:
+    Some(1)` and the like; the two older-Cloud cases and the wrong-type
+    parse are green by design), and nine of the eleven board cases failed locally (the
+    two controls, an admitted run and a killed run, green by design); the
+    status sort ranks killed, refused, then flagged runs above live ones
+    (`runAttentionRank`). Scenarios:
+    `features/money-runs-show-how-the-gateway-decided.feature`, eight, bound;
+    gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no live console has been pointed at a v1.8 Cloud
+    with this build; the Cloud's `model` is still one value per run (the
+    last one ingested), which this does not change; `tool_calls` and
+    the Cloud's own `run_stalled` view are not read here.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

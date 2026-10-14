@@ -768,6 +768,59 @@ export function mockAgentRecord(id: string): FleetAgent | null {
 // Derived wire DTOs.
 // ---------------------------------------------------------------------------
 
+/** How the gateway decided a preview run, the TokenFuse Cloud v1.8.0 fields
+ * every real `GET /v1/runs` row carries (`lib/runStatus.ts`). The preview
+ * stands in for a current Cloud with two sites, so the runs board shows the
+ * signals an operator meets on a real box: one run whose calls the firewall
+ * is refusing, one forwarded under identity warn, and (in
+ * {@link mockFallbackRun}) one charged at the fallback rate. Every other run
+ * reports counted zeros, which is what a clean run on a current Cloud says. */
+function mockDecisionFields(a: FleetAgent, killed: boolean) {
+  const base = {
+    site: pseudo(a.name + "site") < 0.62 ? "hq-gateway" : "edge-eu",
+    blocked: 0,
+    last_decision: "allow",
+    last_decision_at: ago(Math.round(pseudo(a.name + "dec") * 40 * 60_000)),
+    fallback_calls: 0,
+    basis_unreported_calls: 0,
+    identity_warned: 0,
+    last_identity_reason: "",
+  };
+  if (killed) return { ...base, blocked: 1, last_decision: "killed" };
+  if (a.name === "log-analyzer") return { ...base, blocked: 3, last_decision: "taint_blocked" };
+  if (a.name === "invoice-reconciler") {
+    return { ...base, identity_warned: 2, last_identity_reason: "agent_id_not_allowed" };
+  }
+  return base;
+}
+
+/** One run through the OpenAI-wire door over a multi-vendor upstream, whose
+ * model id has no row in the gateway's price book: the measured forge case of
+ * 2026-10-14 (`openai/gpt-4.1-mini`), charged at the fallback rate. */
+function mockFallbackRun() {
+  const a = FLEET.find((x) => x.name === "query-cost-optimizer");
+  if (!a) return [];
+  return [
+    {
+      run_id: "query-cost-optimizer-openrouter-1",
+      model: "openai/gpt-4.1-mini",
+      agent_id: agentId(a),
+      unit: unitForTeam(a.team),
+      spent_usd: 0.42,
+      budget_usd: 2,
+      budgets_read: true,
+      calls: 118,
+      cache_hits: 0,
+      steps: 40,
+      last_seen: ago(3 * 60 * 60_000),
+      killed: false,
+      ...mockDecisionFields(a, false),
+      site: "edge-openai",
+      fallback_calls: 118,
+    },
+  ];
+}
+
 /** Every non-protagonist agent's live run, and the protagonist's own run when
  * "calm" is selected: the original pseudo-random utilisation snapshot, now
  * with `liveDrift` layered on top so the numbers still creep forward tick
@@ -816,6 +869,7 @@ function baseRunFor(a: FleetAgent, opts: { ignoreClosed?: boolean } = {}) {
     last_seen: ago(Math.round(pseudo(a.name + "seen") ** 3 * 45 * DAY)),
     killed: lifecycle !== "live",
     lifecycle,
+    ...mockDecisionFields(a, lifecycle === "killed"),
   };
 }
 
@@ -854,6 +908,7 @@ function runFor(a: FleetAgent) {
     last_seen: state.killed ? new Date(Math.min(Date.now(), armedAt + state.arcElapsedMs)).toISOString() : new Date().toISOString(),
     killed: state.killed || manual !== null,
     lifecycle,
+    ...mockDecisionFields(a, state.killed),
   };
 }
 
@@ -893,7 +948,7 @@ function mockDriftAgentRunHistory() {
 }
 
 function mockRuns() {
-  return [...FLEET.map(runFor), ...mockDriftAgentRunHistory()];
+  return [...FLEET.map(runFor), ...mockDriftAgentRunHistory(), ...mockFallbackRun()];
 }
 
 function mockOverview() {
