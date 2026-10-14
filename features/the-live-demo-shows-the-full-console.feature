@@ -62,11 +62,18 @@ Feature: The Live Demo shows the console's sidebar foot and says what it simulat
     When the Quality panel reads the baselines
     Then every row carries its source run and a flag for unanswered cases
 
-  # @test:the_demo_egress_panel_holds_no_invented_rows
-  Scenario: The demo's Web Egress panel holds no invented rows
-    Given the demo build, where the egress panel has no demo data by design
+  # @test:the_demo_egress_panel_shows_example_rows_on_documentation_domains_only
+  Scenario: The demo's Web Egress panel shows example rows, on documentation domains only
+    Given the demo build, under the "Demo, simulated data" pill
     When the egress panel asks for its recent rows
-    Then it is told there is no backend and shows no rows
+    Then it shows fetches enforced per request and at the navigation only, and refusals
+    And every host it names is an example.com, example.net or example.org documentation domain
+
+  # @test:the_gateways_body_is_inset_like_the_other_dashboard_cards
+  Scenario: The Gateways card keeps its rows off the card's edges
+    Given the Overview's Gateways card, in the demo and in the console
+    When it lists the gateways, or says it is still reading them
+    Then its rows, pills and note are inset as the other dashboard cards are
 
   # @test:the_demo_tunnel_connect_says_nothing_was_done
   Scenario: Opening a tunnel in the demo says nothing was done

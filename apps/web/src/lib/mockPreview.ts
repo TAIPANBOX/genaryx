@@ -40,6 +40,7 @@ import { getScenario, onScenarioChange, type DemoScenario } from "../demo/scenar
 import { notifyConsoleStateChanged } from "./consoleState";
 import type { EntityLifecycleState } from "./lifecycleTypes";
 import type { Session } from "./session";
+import type { EgressRow } from "../egressTypes";
 import { shortAgentLabel } from "./graph";
 
 export const MOCK = import.meta.env.VITE_GENARYX_MOCK === "1";
@@ -1248,6 +1249,104 @@ function mockSavings() {
  * gone again once a fresh arc loops in. Every arc-specific incident id is
  * suffixed with the arc's own `armedAt`, so an ack from a PAST arc can never
  * silently apply to a fresh one reusing the same kind. */
+/** Recent web egress for the Web Egress panel, mirroring
+ * `crates/api/src/egress/mod.rs`'s shape.
+ *
+ * WP13 shipped that panel with no preview handler at all, so the published
+ * demo showed its honest "nothing was read" card, which is the right card for
+ * a box that could not look and the wrong one for a demo that has plenty to
+ * show.
+ *
+ * The fidelity story is the point of the panel, so these rows carry it: a
+ * majority served by a backend that enforces per request, a visible minority
+ * served only at the navigation, and two refusals with different verdicts.
+ * Deterministic (`pseudo`) so screenshots do not jitter. Hosts are RFC 2606
+ * documentation domains, never anywhere real. */
+function mockEgress() {
+  const hosts = [
+    "https://docs.example.com",
+    "https://status.example.net",
+    "https://api.example.org",
+    "https://registry.example.com",
+    "https://blog.example.net",
+  ];
+  const fleet = FLEET.slice(0, 8);
+  const rows: EgressRow[] = fleet.flatMap((a, i): EgressRow[] => {
+    const id = agentId(a);
+    const p = pseudo(id + "egress");
+    const origin = hosts[i % hosts.length];
+    // Every third agent's backend governs the navigation only: the number the
+    // panel exists to surface.
+    const navigationOnly = i % 3 === 2;
+    const out: EgressRow[] = [
+      {
+        ts: ago(Math.round(p * 90 * 60_000)),
+        agent_id: id,
+        run_id: `${a.name}-live`,
+        outcome: "fetched",
+        origin,
+        url_sha384: null,
+        backend: navigationOnly ? "browser-run" : "kitesurf",
+        enforcement: navigationOnly ? "navigation_only" : "per_request",
+        content_bytes: 1_200 + Math.round(p * 40_000),
+        verdict: null,
+        reason: null,
+      },
+    ];
+    if (i === 1) {
+      out.push({
+        ts: ago(Math.round(p * 40 * 60_000)),
+        agent_id: id,
+        run_id: `${a.name}-live`,
+        outcome: "blocked",
+        origin: "https://paste.example.org",
+        url_sha384: null,
+        backend: null,
+        enforcement: null,
+        content_bytes: null,
+        verdict: "deny_policy",
+        reason: "destination outside the allowed set for this run",
+      });
+    }
+    if (i === 4) {
+      out.push({
+        ts: ago(Math.round(p * 20 * 60_000)),
+        agent_id: id,
+        run_id: `${a.name}-live`,
+        outcome: "blocked",
+        origin: "https://internal.example.com",
+        url_sha384: null,
+        backend: null,
+        enforcement: null,
+        content_bytes: null,
+        verdict: "deny_address_range",
+        reason: "resolves inside a private address range",
+      });
+    }
+    return out;
+  });
+
+  const fetched = rows.filter((r) => r.outcome === "fetched");
+  const blocked = rows.filter((r) => r.outcome === "blocked");
+  const by_verdict: Record<string, number> = {};
+  for (const b of blocked) by_verdict[b.verdict ?? "unrecorded"] = (by_verdict[b.verdict ?? "unrecorded"] ?? 0) + 1;
+
+  return {
+    measured: true,
+    note: `Read from the ${rows.length * 12} most recent events on the bus. An older fetch than that is in the Bus Explorer, not here.`,
+    totals: {
+      fetched: fetched.length,
+      blocked: blocked.length,
+      by_verdict,
+      navigation_only: fetched.filter((r) => r.enforcement === "navigation_only").length,
+      // The passthrough backend reports what a page asked for; the
+      // navigation-only one cannot, and that gap is a count of its own.
+      subresources_unknown: fetched.filter((r) => r.enforcement === "navigation_only").length,
+    },
+    rows: rows.sort((x, y) => (x.ts < y.ts ? 1 : -1)),
+  };
+}
+
 /** The money plane's own per-person rollup (`/v1/owners`, tokenfuse #192).
  *
  * Built from the SAME delegation chain the preview already puts on every bus
@@ -3879,7 +3978,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "stats_counts": return r(mockStatsCounts(Number(args?.window_days ?? 0)));
     // Web Egress holds no demo data, by design (see EgressView). The panel
     // shows its own "no backend" note for this answer.
-    case "egress_recent": throw { kind: "no_environment" };
+    case "egress_recent": return r(mockEgress());
     // The refusals and the quality_drift event go ahead of the seed: a reader
     // asking for N events keeps the first N, and the Incidents tab asks for
     // exactly as many as the seed makes, so anything appended after it is cut

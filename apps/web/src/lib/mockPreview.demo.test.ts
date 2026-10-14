@@ -37,9 +37,25 @@ describe("the demo's quality baselines", () => {
 });
 
 describe("the demo's web egress", () => {
-  it("the_demo_egress_panel_holds_no_invented_rows", async () => {
-    // EgressView says in its own words that it has no demo data, by design.
-    await expect(mockInvoke("egress_recent", { limit: 10 })).rejects.toEqual({ kind: "no_environment" });
+  it("the_demo_egress_panel_shows_example_rows_on_documentation_domains_only", async () => {
+    // The demo carries the panel's fidelity story as every other panel carries
+    // its own, under the "Demo, simulated data" pill. EgressView's "no demo data"
+    // card is for a box with no backend to ask, not for the demo. Every host is
+    // an RFC 2606 documentation domain, so no row names a real site.
+    const panel = await mockInvoke<{
+      measured: boolean;
+      rows: { origin: string | null; enforcement: string; outcome: string }[];
+    }>("egress_recent", { limit: 50 });
+    expect(panel.measured).toBe(true);
+    const rows = panel.rows;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      if (row.origin) expect(new URL(row.origin).hostname).toMatch(/(^|\.)example\.(com|net|org)$/);
+    }
+    // A fetch carries how far its backend enforced; a refusal carries none.
+    const fetched = rows.filter((r) => r.outcome === "fetched");
+    expect(new Set(fetched.map((r) => r.enforcement))).toEqual(new Set(["per_request", "navigation_only"]));
+    expect(rows.some((r) => r.outcome !== "fetched")).toBe(true);
   });
 });
 

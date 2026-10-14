@@ -101,3 +101,14 @@ describe("the Overview's Gateways section", () => {
     expect(renderToStaticMarkup(createElement(GatewaysSection))).toContain("Gateways");
   });
 });
+
+describe("the gateways card's inset", () => {
+  it("the_gateways_body_is_inset_like_the_other_dashboard_cards", () => {
+    // The card itself has no padding; each body insets itself, as `.d-comp`
+    // does with 6px 20px 18px. A body without it puts its rows, pills and
+    // note against the card's edges.
+    for (const html of [render(FORGE), render(null)]) {
+      expect(html).toMatch(/^<div[^>]*style="[^"]*padding:\s*(6px|10px) 20px/);
+    }
+  });
+});
