@@ -150,6 +150,8 @@ const VIEWER_COMMANDS: &[&str] = &[
     "copilot_status",
     "credentials_gateway_retained_runs",
     "credentials_keys",
+    // The gateway's settings, keys summary and price book, read-only.
+    "credentials_posture",
     "credentials_status",
     "crypto_scan_cbom",
     "crypto_scan_evidence",

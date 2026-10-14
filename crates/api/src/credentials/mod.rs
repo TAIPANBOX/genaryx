@@ -24,6 +24,7 @@
 
 pub mod commands;
 pub mod env;
+pub mod posture;
 pub mod state;
 
 pub use state::{CredentialsState, bootstrap};

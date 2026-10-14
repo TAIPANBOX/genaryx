@@ -1060,6 +1060,56 @@ function mockGateways() {
   };
 }
 
+/** `credentials_posture`: the preview's gateway as a stack-single install
+ * runs it (firewall enforce, PII shadow, a 5.00 USD run ceiling, client keys
+ * and an identity map on), reporting its own settings. */
+function mockGatewayPosture() {
+  const item = (key: string, label: string, value: string | null) => ({ key, label, value });
+  return {
+    gateway_url: "http://127.0.0.1:4100",
+    settings: {
+      reported: true,
+      items: [
+        item("firewall", "Firewall (taint)", "enforce"),
+        item("dlp_pii", "PII detection", "shadow"),
+        item("dlp", "Data-loss prevention", "on"),
+        item("max_run_budget_usd", "Run budget ceiling (USD)", "5.0"),
+        item("wire", "Wire (provider shape)", "anthropic"),
+        item("identity_strict", "Identity check", "enforce"),
+        item("client_keys", "Client keys", "on"),
+        item("require_run_id", "Run id required", "on"),
+        item("wardryx_mode", "Policy hook (wardryx)", "enforce"),
+        item("failmode", "Policy fail mode", "closed"),
+        item("mode", "Gateway mode", "enforce"),
+        item("cache", "Response cache", "off"),
+        item("router", "FinOps router", "off"),
+        item("closure_enabled", "Retained-reservation closure", null),
+      ],
+    },
+    keys: {
+      identity_strict: "enforce",
+      identity_map_configured: true,
+      configured_keys: 6,
+      keys_listed: 7,
+      unauthorized_attempts: 3,
+    },
+    price_book: {
+      rows: 61,
+      built_in_rows: 60,
+      operator_file: true,
+      overridden_models: [],
+      added_models: ["openai/gpt-4.1-mini"],
+      fallback_input_per_mtok_usd: 15,
+      fallback_output_per_mtok_usd: 75,
+      tiers: [{ model: "gpt-6-astra", above_prompt_tokens: 200000, input_per_mtok_usd: 4, output_per_mtok_usd: 18 }],
+      tiers_dropped_models: [],
+      fallback_models_seen: ["openai/gpt-4.1-nano"],
+      fallback_models_seen_total: 1,
+    },
+    notes: [],
+  };
+}
+
 function mockOverview() {
   const runs = mockRuns();
   const spent = runs.reduce((s, r) => s + r.spent_usd, 0);
@@ -3693,6 +3743,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     }
     case "money_units": return r(mockUnitCaps());
     case "money_gateways": return r(mockGateways());
+    case "credentials_posture": return r(mockGatewayPosture());
     case "money_set_unit_budget": {
       const unit = String(args?.unit ?? "");
       const budgetUsd = Number(args?.budget_usd ?? Number.NaN);

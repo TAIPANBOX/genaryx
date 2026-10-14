@@ -101,7 +101,9 @@ impl From<GatewayError> for CredentialsError {
 /// appropriate [`CredentialsError`] when the panel is not ready. Only holds
 /// the state lock long enough to clone the (cheap, `Arc`-backed) client out -
 /// mirrors `identity::commands::ready_client` exactly.
-async fn ready_client(state: &&CredentialsState) -> Result<CredentialsClient, CredentialsError> {
+pub(super) async fn ready_client(
+    state: &&CredentialsState,
+) -> Result<CredentialsClient, CredentialsError> {
     let guard = state.inner.lock().await;
     match &*guard {
         CredentialsInner::Ready(client) => Ok(client.clone()),

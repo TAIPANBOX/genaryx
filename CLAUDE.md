@@ -1510,6 +1510,51 @@ an absent invariant.
     nickname ("Haiku") is not matched to its id; Felyx's `cost_per_action`
     per-model figures still group the whole trace, never by run.)*
 
+29. **The Posture view shows the switches the gateway runs with, as the
+    gateway reports them, and never a secret.** The firewall mode, the PII
+    mode, the run budget ceiling and the wire were environment variables
+    visible only on the box, and the gateway's price book was never read.
+    `@decided 2026-10-14`: the dashboards show what the product does today:
+    firewall mode, PII mode, run-budget ceiling, wire, client keys, identity
+    map, price book and tiers, read from the gateway's own settings report
+    when present, and "not reported by this gateway version" otherwise.
+
+    `credentials_posture` (`crates/api/src/credentials/posture.rs`) makes
+    three independent reads with the credentials plane's gateway client and
+    admin key: `GET /v1/settings` (newer than this console; a 404 is
+    `reported: false`, never off; fields read one by one, a known switch
+    missing from a reported body is `null`, an unknown one listed under its
+    own name, at most 32), `GET /v1/keys` (identity check, identity map,
+    configured keys, refused attempts) and `GET /v1/price-book` (rows,
+    operator overrides and additions, the fallback rate, the tiers, the ids
+    charged at the fallback). A value under a name that suggests a
+    credential (`secret`, `token`, `password`, `api_key`, a name ending in
+    `key`, except `client_keys`) is withheld whatever the gateway sent;
+    values are bounded at 120 characters and arrays or objects summarised.
+    One failed read costs its own part, with a note; all three failing is
+    an error. The Posture view's "Gateway settings" section
+    (`apps/web/src/components/GatewayPosture.tsx`) shows it. The setting
+    names follow the proposal for the gateway's route and must be aligned
+    with it when it ships; the list, the labels and the withholding rule are
+    `@claude` design choices, open to reversal.
+    *(test: `crates/api/src/credentials/posture.rs`'s two (withholding,
+    bounds); `crates/api/tests/it/gateway_posture_test.rs`'s five on a stub
+    gateway; `crates/connectors/src/gateway.rs`'s
+    `a_price_book_parses_with_and_without_its_newer_fields`;
+    `crates/web/src/roles.rs`'s `reading_the_gateway_posture_is_a_viewer_read`;
+    `apps/web/src/components/GatewayPosture.test.ts`'s five. Red first: the
+    test-only commit did not compile (no `get_settings`, no
+    `credentials::posture`), and the web suite failed to import
+    `./GatewayPosture`. Scenarios:
+    `features/the-posture-view-shows-the-gateways-settings.feature`, five,
+    bound; gate: `scripts/features-are-bound.sh`.
+
+    Where it says nothing: no gateway has `GET /v1/settings` yet, so the
+    switches read "not reported" on every current install until it ships;
+    the withholding rule is a name heuristic, so a secret under an innocent
+    name would be shown; a second gateway (the OpenAI door) is not read, the
+    console holds one gateway descriptor.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
