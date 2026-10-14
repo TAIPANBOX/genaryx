@@ -1470,9 +1470,9 @@ an absent invariant.
     than one.
 
     `RunAgg` reads `models` (`[{model, calls, spent_microusd}]`) and
-    `model_switches` as optional, lenient fields: the shape proposed for the
-    Cloud, so a Cloud without them, or with another shape, is "not
-    reported". The web prints a run's model through
+    `model_switches` (u64) as optional, lenient fields, the names the
+    TokenFuse change adding them uses, so a Cloud without them, or with
+    another shape, is "not reported". The web prints a run's model through
     `apps/web/src/lib/runStatus.ts`'s `runModelSummary`: `last model <id>`
     when the models are not reported, `<last> +N` with each model's calls and
     spend in the hover when several are, the model alone only when the Cloud
@@ -1482,10 +1482,9 @@ an absent invariant.
     `crates/copilot/src/grounding.rs` sends back, once, a clause that names
     one run and one model as the model that run used unless the tools listed
     exactly that model as the run's only one, and a clause saying "last
-    model" (or "latest", "most recent", "last call") is left alone. The field
-    names follow the proposal and must be aligned with the Cloud's when it
-    ships them; the wording and the phrase list are `@claude` design choices,
-    open to reversal.
+    model" (or "latest", "most recent", "last call") is left alone. The
+    wording and the phrase list are `@claude` design choices, open to
+    reversal.
     *(test: `crates/copilot/src/grounding.rs`'s five model tests, one a
     200-seed sweep; `crates/copilot/src/tools/cloud.rs`'s
     `list_runs_names_the_model_as_the_last_model_and_passes_the_models_through`;
