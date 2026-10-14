@@ -750,7 +750,7 @@ pub struct RunAgg {
     /// `None`: this Cloud reports only `model` above, which is the model of
     /// the LAST call it ingested for the run, not the model that "priced the
     /// run": a run that went from Opus to Haiku reads `model: haiku` (forge
-    /// lab, 2026-10-14). Coded against the shape proposed for TokenFuse Cloud
+    /// lab, 2026-10-14). The shape the TokenFuse Cloud change adding it uses
     /// (`models: [{model, calls, spent_microusd}]`) and read leniently, so a
     /// Cloud without it, or with another shape, is "not reported".
     #[serde(default, deserialize_with = "lenient")]
