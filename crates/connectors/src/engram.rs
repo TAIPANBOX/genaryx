@@ -254,6 +254,63 @@ impl EngramClient {
     }
 }
 
+// ---- the read scope (Engram F-007) -----------------------------------------
+//
+// A server started with `--agent-id` serves that agent and refuses a call that
+// names any other. A server started without one serves the whole file and
+// refuses a call that names any agent. So a read names no agent to the server
+// at all: the server's own scope answers it. A read for an agent its server is
+// not scoped to is refused here, before anything is sent.
+
+/// Scaffold (F-007): the `engram-mcp` arguments after the binary, as `spawn`
+/// passes them today.
+#[allow(dead_code)]
+pub(crate) fn spawn_args(db_path: &str, agent_id: Option<&str>) -> Vec<String> {
+    let mut args = vec!["--db".to_string(), db_path.to_string()];
+    if let Some(id) = agent_id {
+        args.push("--agent-id".to_string());
+        args.push(id.to_string());
+    }
+    args
+}
+
+/// Scaffold (F-007): refuse a read that names an agent its server is not scoped
+/// to. Today nothing is checked.
+#[allow(dead_code)]
+pub(crate) fn check_scope(_asked: Option<&str>, _scope: Option<&str>) -> Result<(), McpError> {
+    Ok(())
+}
+
+/// Scaffold (F-007): the wire arguments of `stats`. Today a named agent goes on
+/// the wire.
+#[allow(dead_code)]
+pub(crate) fn stats_args(
+    asked: Option<&str>,
+    _scope: Option<&str>,
+) -> Result<serde_json::Value, McpError> {
+    Ok(match asked {
+        Some(id) => json!({ "agent_id": id }),
+        None => json!({}),
+    })
+}
+
+/// Scaffold (F-007): the wire arguments of `recall`. Today a named agent goes
+/// on the wire.
+#[allow(dead_code)]
+pub(crate) fn recall_args(
+    query: &str,
+    limit: u32,
+    mode: &str,
+    asked: Option<&str>,
+    _scope: Option<&str>,
+) -> Result<serde_json::Value, McpError> {
+    let mut args = json!({ "query": query, "limit": limit, "mode": mode });
+    if let Some(id) = asked {
+        args["agent_id"] = json!(id);
+    }
+    Ok(args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +397,71 @@ mod tests {
             }
             other => panic!("expected Episodic, got {other:?}"),
         }
+    }
+
+    // ---- the read scope (Engram F-007) -------------------------------------
+    // A whole-file server (no --agent-id) and a per-agent server (--agent-id)
+    // are two processes. A read names no agent to either, and a read naming an
+    // agent its server is not scoped to is refused before it is sent.
+
+    const BOT: &str = "agent://acme.example/support/bot";
+    const OTHER: &str = "agent://acme.example/support/other";
+
+    #[test]
+    fn a_whole_file_server_starts_with_no_agent() {
+        assert_eq!(
+            spawn_args("/data/.engram", None),
+            vec!["--db", "/data/.engram"]
+        );
+    }
+
+    #[test]
+    fn a_per_agent_server_starts_with_its_agent() {
+        assert_eq!(
+            spawn_args("/data/.engram", Some(BOT)),
+            vec!["--db", "/data/.engram", "--agent-id", BOT]
+        );
+    }
+
+    #[test]
+    fn a_read_naming_another_agent_than_the_servers_is_refused_before_the_call() {
+        assert!(matches!(
+            check_scope(Some(OTHER), Some(BOT)),
+            Err(McpError::Scope(_))
+        ));
+        assert!(matches!(
+            check_scope(Some(BOT), None),
+            Err(McpError::Scope(_))
+        ));
+        assert!(matches!(
+            stats_args(Some(OTHER), Some(BOT)),
+            Err(McpError::Scope(_))
+        ));
+        assert!(matches!(
+            recall_args("q", 5, "hybrid", Some(OTHER), Some(BOT)),
+            Err(McpError::Scope(_))
+        ));
+    }
+
+    #[test]
+    fn a_read_never_names_an_agent_to_the_server() {
+        let stats = stats_args(Some(BOT), Some(BOT)).expect("the server's own agent");
+        assert!(stats.get("agent_id").is_none(), "stats wire args: {stats}");
+        let recall =
+            recall_args("q", 5, "hybrid", Some(BOT), Some(BOT)).expect("the server's own agent");
+        assert!(
+            recall.get("agent_id").is_none(),
+            "recall wire args: {recall}"
+        );
+    }
+
+    #[test]
+    fn a_whole_file_read_carries_no_agent_and_no_provenance() {
+        assert_eq!(stats_args(None, None).expect("whole file"), json!({}));
+        assert_eq!(
+            recall_args("q", 5, "hybrid", None, None).expect("whole file"),
+            json!({"query": "q", "limit": 5, "mode": "hybrid"})
+        );
     }
 
     #[test]

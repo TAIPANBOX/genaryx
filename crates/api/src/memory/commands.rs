@@ -231,10 +231,39 @@ pub async fn memory_forget(
     run_blocking(move || lock_engram(&client.client)?.forget(&memory_id)).await
 }
 
+/// Scaffold (F-007): the scope a read asks for. An empty name is the whole-file
+/// view, and a name must be one printable word. Today a name passes through
+/// as it is.
+#[allow(dead_code)]
+pub(crate) fn read_scope(agent_id: Option<String>) -> Result<Option<String>, MemoryError> {
+    Ok(agent_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    const BOT: &str = "agent://acme.example/support/bot";
+
+    #[test]
+    fn an_empty_agent_is_the_whole_file_view() {
+        assert_eq!(read_scope(None).expect("no agent"), None);
+        assert_eq!(
+            read_scope(Some(String::new())).expect("an empty name"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_bad_agent_is_refused_before_any_server_starts() {
+        assert!(read_scope(Some("--db".to_string())).is_err());
+        assert!(read_scope(Some("two words".to_string())).is_err());
+        assert_eq!(
+            read_scope(Some(BOT.to_string())).expect("an agent id"),
+            Some(BOT.to_string())
+        );
+    }
 
     #[test]
     fn status_dto_maps_bootstrapping_and_no_environment_directly() {
