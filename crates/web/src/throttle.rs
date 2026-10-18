@@ -189,6 +189,7 @@ mod tests {
         for i in 0..10_000 {
             t.record_failure(&format!("k{i}"), now);
         }
+        assert!(!t.is_empty(), "a flood still leaves its newest keys held");
         assert!(t.len() <= 8, "held {} keys", t.len());
     }
 
