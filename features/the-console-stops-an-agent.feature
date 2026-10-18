@@ -124,9 +124,11 @@ Feature: The console stops an agent everywhere with one action
   # @test:a_step_the_journal_did_not_take_is_said
   # @test:a_ban_a_restart_forgets_is_a_warning
   # @test:a_lift_vouchryx_refused_never_reads_as_lifted
+  # @test:an_answer_that_is_not_a_stop_outcome_never_reads_as_stopped
   Scenario: The operator reads the outcome step by step
     Given a stop or a lift has run
     When the console shows its outcome
     Then a complete action reads as done and lists every step
     And an action with a failed step reads as not done, with the failed step and its reason
     And a step the chain did not take, and a ban a restart would forget, are said
+    And an answer that is not an outcome, such as the demo's empty answer, never reads as done

@@ -183,15 +183,18 @@ paths (set => named actor; unset => OS-user default).
 
 ## Part 2: WebAuthn per-action ceremony (built, branch `feat/webauthn-per-action`)
 
-Signing in gets you the console; it does not get you the kill. SIX
+Signing in gets you the console; it does not get you the kill. TEN
 privileged commands carry the ceremony today
 (the ceremony column of `crates/web/src/roles.rs`): `money_kill_run`,
 `money_set_budget`, `policy_decide_approval`, `remote_operator_wg_config`,
-`remote_operator_wg_revoke` and `delegation_revoke`. The middle two joined
-because issuing a WireGuard peer hands out a road into the control plane and
-revoking one takes an operator's access away mid-incident; the last joined
-2026-09-24 for the same reason, cutting an agent's or a user's delegated
-authority. (This document, the README and CLAUDE.md all said "three" until
+`remote_operator_wg_revoke`, `delegation_revoke`, `money_close_retained`,
+`money_set_unit_budget`, `agent_stop` and `agent_lift`. The two WireGuard
+commands joined because issuing a peer hands out a road into the control
+plane and revoking one takes an operator's access away mid-incident;
+`delegation_revoke` joined 2026-09-24 for the same reason, cutting an agent's
+or a user's delegated authority, and `agent_stop` and `agent_lift` on
+2026-10-18, banning an agent at vouchryx and killing its runs, and lifting
+that ban. (This document, the README and CLAUDE.md all said "three" until
 2026-08-05, which is what a hand-copied list does.)
 Each additionally requires a fresh, per-action WebAuthn assertion once the
 caller has enrolled a passkey - the operator's authenticator (Touch ID,

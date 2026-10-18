@@ -42,12 +42,14 @@
 //! 3) through the journal `delegation_revoke` writes to, under
 //! `decision: break_glass` with the operator's reason.
 
+use super::commands::{MAX_REASON_LEN, journal, post_capped};
 use super::env::RevokeConfig;
-use crate::money::state::{BusHandle, MoneyState};
+use crate::money::state::{BusHandle, MoneyInner, MoneyState};
+use genaryx_connectors::CloudClient;
+use genaryx_core::CommandRecord;
 use serde::Serialize;
-
-/// The bound `delegation_revoke` puts on a reason.
-pub const MAX_REASON_LEN: usize = 500;
+use serde_json::{Value, json};
+use std::sync::Arc;
 
 /// The signature algorithm the router's ceremony sets on a verified
 /// assertion (`crates/web/src/main.rs`'s `webauthn_gate`).
@@ -116,56 +118,485 @@ pub enum StopError {
     NotLifted { outcome: Box<LiftOutcome> },
 }
 
-/// The estate's agent id grammar. SCAFFOLD (red-first commit): today the
-/// console checks only the scheme, as `delegation_revoke` does.
+/// The estate's agent id grammar, `^agent://[a-z0-9.-]+/[a-z0-9._/-]+$`
+/// (`crates/core/src/schemas/agent-event.v0.2.schema.json`).
 pub fn is_agent_id(s: &str) -> bool {
-    s.starts_with("agent://")
+    let Some(rest) = s.strip_prefix("agent://") else {
+        return false;
+    };
+    let Some((domain, path)) = rest.split_once('/') else {
+        return false;
+    };
+    !domain.is_empty()
+        && !path.is_empty()
+        && domain
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        && path.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'/' | b'-')
+        })
 }
 
 fn validate(subject: String, reason: &str) -> Result<(String, String), StopError> {
-    Ok((subject, reason.to_string()))
+    if !is_agent_id(&subject) {
+        return Err(StopError::InvalidSubject { subject });
+    }
+    let trimmed = reason.trim();
+    let chars = trimmed.chars().count();
+    if chars == 0 || chars > MAX_REASON_LEN {
+        return Err(StopError::InvalidReason { chars });
+    }
+    Ok((subject, trimmed.to_string()))
 }
 
-/// SCAFFOLD (red-first commit): today the console has no stop, so nothing is
-/// banned, killed or recorded.
+fn org_domain() -> String {
+    std::env::var("GENARYX_ORG_DOMAIN").unwrap_or_else(|_| "local".to_string())
+}
+
+/// Writes each step into the console's chain as it happens, and keeps the
+/// list the operator is shown.
+struct Steps<'a> {
+    bus: Option<&'a BusHandle>,
+    org_domain: String,
+    actor: String,
+    reason: String,
+    sig_alg: String,
+    sig_fpr: String,
+    /// `console.stop_agent` or `console.lift_agent`.
+    action: &'static str,
+    list: Vec<StopStep>,
+}
+
+impl Steps<'_> {
+    fn record(&mut self, step: &str, target: &str, ok: bool, http_status: u16, verify: String) {
+        let action = if step == "verdict" {
+            self.action.to_string()
+        } else {
+            format!("{}.{step}", self.action)
+        };
+        let rec = CommandRecord {
+            operator: self.actor.clone(),
+            env: self.org_domain.clone(),
+            action,
+            target: target.to_string(),
+            params: json!({ "reason": self.reason, "step": step }),
+            decision: "break_glass".to_string(),
+            sig_alg: self.sig_alg.clone(),
+            sig_fpr: self.sig_fpr.clone(),
+            http_status,
+            verify_result: verify.clone(),
+        };
+        let (journaled, journal_error) = journal(self.bus, &self.org_domain, &rec);
+        self.list.push(StopStep {
+            step: step.to_string(),
+            target: target.to_string(),
+            ok,
+            http_status,
+            verify_result: verify,
+            journaled,
+            journal_error,
+        });
+    }
+}
+
+fn steps_for<'a>(action: &'static str, bus: Option<&'a BusHandle>, reason: String) -> Steps<'a> {
+    let org = org_domain();
+    let actor = crate::console_actor::operator_or(&format!("user://{org}/operator"));
+    let (sig_alg, sig_fpr) =
+        crate::console_actor::signature_or("software-signed", "software-signed");
+    Steps {
+        bus,
+        org_domain: org,
+        actor,
+        reason,
+        sig_alg,
+        sig_fpr,
+        action,
+        list: Vec::new(),
+    }
+}
+
+/// The first step of both actions: what confirmed it. Without a verified
+/// assertion the action still runs (the router's documented fallback for a
+/// caller with no passkey enrolled, on a console that does not require one),
+/// and the operator is told so.
+fn record_ceremony(s: &mut Steps<'_>, subject: &str, warnings: &mut Vec<String>) {
+    let verify = if s.sig_alg == CEREMONY_ALG {
+        format!("confirmed:{CEREMONY_ALG}")
+    } else {
+        warnings.push(
+            "no passkey confirmed this action: the caller has none enrolled, so it ran on \
+             the session alone (GENARYX_WEB_REQUIRE_PASSKEY makes a passkey mandatory)"
+                .to_string(),
+        );
+        "not_confirmed:no_passkey_enrolled".to_string()
+    };
+    s.record("ceremony", subject, true, 0, verify);
+}
+
+/// One answer from vouchryx, folded into a step.
+struct Answer {
+    ok: bool,
+    http_status: u16,
+    verify: String,
+    durable: Option<bool>,
+}
+
+/// vouchryx's own refusals carry only `{"error":"<code>"}`.
+fn refused(status: u16, body: &Value) -> Answer {
+    let code = body
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let verify = if status == 503 {
+        // vouchryx's 503 means it could not keep this durably; for a ban it
+        // may hold it in memory until a restart, which is not a stop.
+        format!("not_durable:{code}")
+    } else {
+        format!("refused:{code}")
+    };
+    Answer {
+        ok: false,
+        http_status: status,
+        verify,
+        durable: None,
+    }
+}
+
+fn not_configured() -> Answer {
+    Answer {
+        ok: false,
+        http_status: 0,
+        verify:
+            "not_configured: GENARYX_VOUCHRYX_URL and GENARYX_VOUCHRYX_REVOKE_KEY_FILE are unset"
+                .to_string(),
+        durable: None,
+    }
+}
+
+async fn ban_at_vouchryx(
+    config: &RevokeConfig,
+    subject: &str,
+    actor: &str,
+    reason: &str,
+) -> Answer {
+    let RevokeConfig::Configured {
+        vouchryx_url,
+        revoke_key,
+    } = config
+    else {
+        return not_configured();
+    };
+    let body = json!({
+        "jti": "",
+        "subject": subject,
+        "actor": actor,
+        "reason": reason,
+        "ban": true,
+    });
+    let url = format!("{vouchryx_url}/v1/revoke");
+    match post_capped(&url, revoke_key.as_str(), &body).await {
+        Err(detail) => Answer {
+            ok: false,
+            http_status: 0,
+            verify: format!("unreachable: {detail}"),
+            durable: None,
+        },
+        Ok((200, answer)) => {
+            let revoked = answer.get("revoked").and_then(Value::as_bool) == Some(true);
+            let banned = answer.get("banned").and_then(Value::as_bool) == Some(true);
+            match (revoked, banned) {
+                (true, true) => {
+                    let durable = answer.get("durable").and_then(Value::as_bool);
+                    Answer {
+                        ok: true,
+                        http_status: 200,
+                        verify: if durable == Some(true) {
+                            "banned:durable".to_string()
+                        } else {
+                            "banned:not_durable".to_string()
+                        },
+                        durable: Some(durable == Some(true)),
+                    }
+                }
+                (true, false) => Answer {
+                    ok: false,
+                    http_status: 200,
+                    verify: "revoked_not_banned: vouchryx revoked the tokens the agent holds and \
+                             did not confirm a ban, so new tokens can still be issued"
+                        .to_string(),
+                    durable: None,
+                },
+                _ => Answer {
+                    ok: false,
+                    http_status: 200,
+                    verify: "200 without revoked:true confirmation".to_string(),
+                    durable: None,
+                },
+            }
+        }
+        Ok((status, answer)) => refused(status, &answer),
+    }
+}
+
+async fn lift_at_vouchryx(
+    config: &RevokeConfig,
+    subject: &str,
+    actor: &str,
+    reason: &str,
+) -> Answer {
+    let RevokeConfig::Configured {
+        vouchryx_url,
+        revoke_key,
+    } = config
+    else {
+        return not_configured();
+    };
+    let body = json!({ "subject": subject, "actor": actor, "reason": reason });
+    let url = format!("{vouchryx_url}/v1/revoke/lift");
+    match post_capped(&url, revoke_key.as_str(), &body).await {
+        Err(detail) => Answer {
+            ok: false,
+            http_status: 0,
+            verify: format!("unreachable: {detail}"),
+            durable: None,
+        },
+        Ok((200, answer)) => {
+            if answer.get("lifted").and_then(Value::as_bool) == Some(true) {
+                let durable = answer.get("durable").and_then(Value::as_bool) == Some(true);
+                Answer {
+                    ok: true,
+                    http_status: 200,
+                    verify: if durable {
+                        "lifted:durable".to_string()
+                    } else {
+                        "lifted:not_durable".to_string()
+                    },
+                    durable: Some(durable),
+                }
+            } else {
+                Answer {
+                    ok: false,
+                    http_status: 200,
+                    verify: "200 without lifted:true confirmation".to_string(),
+                    durable: None,
+                }
+            }
+        }
+        Ok((status, answer)) => refused(status, &answer),
+    }
+}
+
+/// The Cloud client of a Ready Money panel, or why there is none.
+async fn cloud_client(money: &MoneyState) -> Result<Arc<CloudClient>, String> {
+    match &*money.inner.lock().await {
+        MoneyInner::Ready(c) => Ok(Arc::clone(&c.client)),
+        MoneyInner::Bootstrapping => Err("the Cloud connection is still starting".to_string()),
+        MoneyInner::NoEnvironment => Err("no TokenFuse Cloud is configured".to_string()),
+        MoneyInner::PairingFailed { reason, .. } => {
+            Err(format!("the Cloud connection failed: {reason}"))
+        }
+    }
+}
+
+/// Stop one agent: ban it at vouchryx, kill its open runs, record each step.
+///
+/// `bus` is the console's own journal (`crates/web/src/dispatch.rs`'s
+/// `wg_journal`); `money` is the Money panel whose Cloud client lists and
+/// kills runs. Returns `Ok` only for a complete stop; any failed step comes
+/// back as [`StopError::NotStopped`] with every step listed.
 pub async fn agent_stop(
     subject: String,
     reason: String,
-    _config: &RevokeConfig,
-    _money: &MoneyState,
-    _bus: Option<&BusHandle>,
+    config: &RevokeConfig,
+    money: &MoneyState,
+    bus: Option<&BusHandle>,
 ) -> Result<StopOutcome, StopError> {
-    let (subject, _reason) = validate(subject, &reason)?;
-    Err(StopError::NotStopped {
-        outcome: Box::new(StopOutcome {
-            subject,
-            stopped: false,
-            ban_durable: None,
-            open_runs: None,
-            runs_killed: 0,
-            warnings: Vec::new(),
-            steps: Vec::new(),
-        }),
-    })
+    let (subject, reason) = validate(subject, &reason)?;
+    let mut s = steps_for("console.stop_agent", bus, reason);
+    let mut warnings = Vec::new();
+
+    // (a) the ceremony the router already ran.
+    record_ceremony(&mut s, &subject, &mut warnings);
+
+    // (b) the ban.
+    let actor = s.actor.clone();
+    let reason = s.reason.clone();
+    let ban = ban_at_vouchryx(config, &subject, &actor, &reason).await;
+    s.record("ban", &subject, ban.ok, ban.http_status, ban.verify.clone());
+    if ban.durable == Some(false) {
+        warnings.push(
+            "the ban is not durable: vouchryx keeps no revocation store, so restarting it \
+             lifts the ban"
+                .to_string(),
+        );
+    }
+
+    // (c) the agent's open runs.
+    let mut open_runs = None;
+    let mut runs_killed = 0usize;
+    let mut kills_failed = 0usize;
+    let mut not_attempted = 0usize;
+    match cloud_client(money).await {
+        Err(why) => s.record("list_runs", &subject, false, 0, format!("error: {why}")),
+        Ok(client) => match client.runs().await {
+            Err(e) => s.record(
+                "list_runs",
+                &subject,
+                false,
+                crate::money::commands::status_of(&e),
+                format!("error: {e}"),
+            ),
+            Ok(runs) => {
+                let mut open: Vec<_> = runs
+                    .into_iter()
+                    .filter(|r| r.agent_id == subject && !r.killed)
+                    .collect();
+                // The newest first: the run most likely still spending.
+                open.sort_by(|a, b| b.last_seen_millis.cmp(&a.last_seen_millis));
+                open_runs = Some(open.len());
+                s.record(
+                    "list_runs",
+                    &subject,
+                    true,
+                    200,
+                    format!("listed:{} open", open.len()),
+                );
+                not_attempted = open.len().saturating_sub(MAX_RUNS_PER_STOP);
+                for run in open.iter().take(MAX_RUNS_PER_STOP) {
+                    let id = run.run_id.as_str();
+                    match client.kill_run(id).await {
+                        Ok(resp) if resp.killed == id => {
+                            runs_killed += 1;
+                            s.record("kill_run", id, true, 200, "killed:true".to_string());
+                        }
+                        Ok(resp) => {
+                            kills_failed += 1;
+                            s.record(
+                                "kill_run",
+                                id,
+                                false,
+                                200,
+                                format!("unconfirmed: the Cloud answered killed={:?}", resp.killed),
+                            );
+                        }
+                        Err(e) => {
+                            kills_failed += 1;
+                            s.record(
+                                "kill_run",
+                                id,
+                                false,
+                                crate::money::commands::status_of(&e),
+                                format!("error: {e}"),
+                            );
+                        }
+                    }
+                }
+            }
+        },
+    }
+
+    // (d) the verdict.
+    // Stopped only when the ban held and every open run the list named was
+    // killed: counted from the kills that succeeded, so a kill skipped for
+    // any reason can never read as done.
+    let stopped = ban.ok && open_runs == Some(runs_killed);
+    let verdict = if stopped {
+        if ban.durable == Some(true) {
+            "stopped".to_string()
+        } else {
+            "stopped:ban_not_durable".to_string()
+        }
+    } else {
+        let mut why = Vec::new();
+        if !ban.ok {
+            why.push(format!("ban {}", ban.verify));
+        }
+        match open_runs {
+            None => why.push("runs not listed".to_string()),
+            Some(n) => {
+                if kills_failed > 0 {
+                    why.push(format!("{kills_failed} of {n} run kill(s) failed"));
+                }
+                if not_attempted > 0 {
+                    why.push(format!(
+                        "{not_attempted} run(s) over the limit of {MAX_RUNS_PER_STOP} not attempted"
+                    ));
+                }
+            }
+        }
+        format!("not_stopped: {}", why.join("; "))
+    };
+    s.record("verdict", &subject, stopped, 0, verdict);
+
+    let outcome = StopOutcome {
+        subject,
+        stopped,
+        ban_durable: ban.durable,
+        open_runs,
+        runs_killed,
+        warnings,
+        steps: s.list,
+    };
+    if stopped {
+        Ok(outcome)
+    } else {
+        Err(StopError::NotStopped {
+            outcome: Box::new(outcome),
+        })
+    }
 }
 
-/// SCAFFOLD (red-first commit): today the console has no lift.
+/// Lift an agent's ban at vouchryx, after the same ceremony, and record it.
+/// The tokens the agent held when it was stopped stay revoked (vouchryx
+/// invariant 25); nothing is restarted here.
 pub async fn agent_lift(
     subject: String,
     reason: String,
-    _config: &RevokeConfig,
-    _bus: Option<&BusHandle>,
+    config: &RevokeConfig,
+    bus: Option<&BusHandle>,
 ) -> Result<LiftOutcome, StopError> {
-    let (subject, _reason) = validate(subject, &reason)?;
-    Err(StopError::NotLifted {
-        outcome: Box::new(LiftOutcome {
-            subject,
-            lifted: false,
-            lift_durable: None,
-            warnings: Vec::new(),
-            steps: Vec::new(),
-        }),
-    })
+    let (subject, reason) = validate(subject, &reason)?;
+    let mut s = steps_for("console.lift_agent", bus, reason);
+    let mut warnings = Vec::new();
+
+    record_ceremony(&mut s, &subject, &mut warnings);
+
+    let actor = s.actor.clone();
+    let reason = s.reason.clone();
+    let lift = lift_at_vouchryx(config, &subject, &actor, &reason).await;
+    s.record(
+        "lift",
+        &subject,
+        lift.ok,
+        lift.http_status,
+        lift.verify.clone(),
+    );
+    if lift.durable == Some(false) {
+        warnings.push("the lift is not durable: vouchryx keeps no revocation store".to_string());
+    }
+
+    let verdict = if lift.ok {
+        "lifted".to_string()
+    } else {
+        format!("not_lifted: {}", lift.verify)
+    };
+    s.record("verdict", &subject, lift.ok, 0, verdict);
+
+    let outcome = LiftOutcome {
+        subject,
+        lifted: lift.ok,
+        lift_durable: lift.durable,
+        warnings,
+        steps: s.list,
+    };
+    if outcome.lifted {
+        Ok(outcome)
+    } else {
+        Err(StopError::NotLifted {
+            outcome: Box::new(outcome),
+        })
+    }
 }
 
 #[cfg(test)]

@@ -78,10 +78,11 @@ an absent invariant.
 2. **A sensitive command requires a per-action ceremony.** Kill, budget
    change, approval, the two operator WireGuard commands (issue a peer,
    revoke a peer), revoking a delegation, closing a retained reservation,
-   and setting a unit's month cap, each need a fresh passkey confirmation.
-   Eight, not three: the `ceremony` column of `crates/web/src/roles.rs`'s command
+   setting a unit's month cap, stopping an agent and lifting its ban, each
+   need a fresh passkey confirmation.
+   Ten, not three: the `ceremony` column of `crates/web/src/roles.rs`'s command
    table is the list (invariant 31), and this file said three until 2026-08-05, five until 2026-09-24,
-   six until 2026-10-12, seven until 2026-10-14. Not a session, not a role
+   six until 2026-10-12, seven until 2026-10-14, eight until 2026-10-18. Not a session, not a role
    check alone:
    the ceremony is per action, because the whole point is that a stolen
    session cannot pull the switch.
@@ -90,7 +91,7 @@ an absent invariant.
    caller is refused without an assertion, that the command and argument
    bindings are enforced, that enrolling and removing a passkey each need a
    factor the session does not carry, and that with
-   `GENARYX_WEB_REQUIRE_PASSKEY=1` all eight are refused when nobody is
+   `GENARYX_WEB_REQUIRE_PASSKEY=1` all ten are refused when nobody is
    enrolled. What is NOT held is the default configuration: with the setting
    off and no passkey enrolled, a sensitive command still runs and is
    journaled software-signed. So the invariant holds on a box that enrolled a
@@ -1653,6 +1654,83 @@ an absent invariant.
     `style-src` policy keeps `'unsafe-inline'`; and a console behind TLS whose
     `GENARYX_WEB_ORIGIN` is still http needs `--secure-cookies` for its cookie
     to be Secure.
+
+33. **Stopping an agent is one console action, and so is letting it back;
+    a step that fails is shown and recorded and the action is never
+    reported as done.** `@decided 2026-10-18`: an operator stops an agent
+    with one action. It bans the agent at its issuer, so every token it
+    holds dies at every door that polls the revocation list and no new one
+    is issued until the ban is lifted, then kills the agent's open runs,
+    and records every step in the console's own chain. Lifting the ban is
+    the same ceremony.
+
+    `agent_stop` (`crates/api/src/delegation/stop.rs`) is an admin row of
+    the command table with the ceremony (invariants 2 and 31). It journals,
+    in order, into the chain `delegation_revoke` writes to (invariant 3):
+    `console.stop_agent.ceremony` (a verified assertion as
+    `confirmed:webauthn-es256`, or `not_confirmed:no_passkey_enrolled` for
+    the router's documented fallback, never a ceremony that did not
+    happen), `.ban`, `.list_runs`, one `.kill_run` per run, and the verdict
+    `console.stop_agent`. The ban is vouchryx's `POST /v1/revoke` with
+    `{subject, actor, reason, ban: true}` and no token (vouchryx invariant
+    25), and only an answer carrying both `"revoked":true` and
+    `"banned":true` is a ban: a vouchryx older than the ban ignores the
+    field and answers `{"revoked":true}`, which is recorded as
+    `revoked_not_banned` and is not a stop. TokenFuse has no route that
+    kills runs by agent (Cloud and gateway kill one run id at a time), so
+    the console lists the Cloud's `GET /v1/runs`, keeps the runs whose
+    `agent_id` equals the agent exactly and that are not killed, newest
+    first, at most 500 per stop, and kills each with the signed
+    `POST /v1/runs/{id}/kill` `money_kill_run` sends; a kill counts only
+    when the Cloud answers with that run id. The kills are attempted when
+    the ban failed too. The command answers `Ok` only when the ban was
+    confirmed, the runs were listed and every one was killed; anything else
+    is `not_stopped` with every step, and a ban vouchryx keeps without a
+    store (`"durable":false`) is a stop with a warning that a vouchryx
+    restart lifts it. `agent_lift` is `POST /v1/revoke/lift` after the same
+    ceremony; only `"lifted":true` is a lift. The web reads the outcome
+    through `apps/web/src/lib/stopAgent.ts`, where an answer that is not an
+    outcome (the demo transport's `null`, a wrong box) never reads as done;
+    the Stop agent and Lift ban buttons sit beside Revoke delegation on
+    Agent 360 and the agent card, and stay offered when the agent's runs
+    are already killed. Attempting the kills after a failed ban, the 500
+    cap, newest first, and the step names are `@claude` design choices,
+    open to reversal.
+    *(test: `crates/api/tests/it/agent_stop_test.rs`'s fourteen, on the
+    recording stub as vouchryx and as the Cloud, among them
+    `the_stop_asks_vouchryx_for_a_ban_not_a_revocation`,
+    `every_step_of_a_stop_is_journaled_in_order_ceremony_first`,
+    `a_revocation_without_a_confirmed_ban_is_never_a_stop`,
+    `a_refused_ban_is_shown_and_recorded_and_the_runs_are_still_killed`,
+    `a_run_the_cloud_will_not_kill_makes_the_stop_incomplete`,
+    `runs_that_cannot_be_listed_make_the_stop_incomplete` and
+    `only_the_agents_own_open_runs_are_killed`; `stop.rs`'s two, one a
+    200-seed sweep of hostile arguments; `crates/web/src/main.rs`'s five
+    router tests and `roles.rs`'s
+    `stopping_and_lifting_an_agent_are_admin_rows_with_the_ceremony`;
+    `apps/web/src/lib/stopAgent.test.ts`'s six. Red first in CI on the
+    test-only commit of genaryx#129 (`7c5c658`), with scaffolds that kept
+    today's behaviour: 20 Rust tests failed on assertions and five web
+    tests failed; the three router controls (a viewer or approver refused,
+    428 without an assertion) passed by the fail-closed design for an
+    unknown command. Four product mutants and one non-fault are cases in
+    `scripts/gates-have-teeth.sh`: the ban flag dropped, a revocation with
+    no ban counted as a ban, the runs not killed, the ceremony column
+    cleared. Scenarios:
+    `features/the-console-stops-an-agent.feature`, fifteen, bound; gate:
+    `scripts/features-are-bound.sh`.
+
+    Where it says nothing: a refused ceremony is answered 403 or 428 by
+    the router before the command runs and is not journaled, as for every
+    ceremony command; a vouchryx that holds a ban in memory and answers 503
+    is reported not stopped, though the ban may hold until it restarts; the
+    Cloud's run list is the console's only view of open runs, so a run a
+    gateway has not pushed yet is not killed (the ban still refuses its
+    next call within one revocation poll at a door that verifies tokens,
+    which no stub here exercises); a static client key is not stopped by a
+    ban at all; no live vouchryx, Cloud or gateway has been exercised by
+    this build, and the time from stop to refusal at a door is not
+    measured here.)*
 
 ## Decisions that have no gate yet
 

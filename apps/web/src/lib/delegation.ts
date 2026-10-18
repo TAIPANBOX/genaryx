@@ -1,6 +1,14 @@
 import { hasBackend, requiredRoleFromCommandError } from "./transport";
 import { invokeWithCeremony } from "./webauthn";
-import type { DelegationError, RevokeOutcome } from "../delegationTypes";
+import type {
+  DelegationError,
+  LiftOutcome,
+  LiftResult,
+  RevokeOutcome,
+  StopError,
+  StopOutcome,
+  StopResult,
+} from "../delegationTypes";
 
 /** Thrown when there is no backend to talk to (a plain `vite build`/browser
  * preview) - mirrors `lib/money.ts`'s identical guard. There is no mock
@@ -53,3 +61,40 @@ async function callWithCeremony<T>(command: string, args?: Record<string, unknow
  */
 export const revokeDelegation = (subject: string, reason: string): Promise<RevokeOutcome> =>
   callWithCeremony<RevokeOutcome>("delegation_revoke", { subject, reason });
+
+/** Whatever a stop or a lift rejected with, as a `StopError`. The command's
+ * own refusals (`not_stopped`, `not_lifted`, an argument refusal) arrive as
+ * the structured value `genaryx-web` serialized; the role gate's 403 and a
+ * transport failure happen before the command, and are named here. */
+function toStopError(err: unknown): StopError {
+  const role = requiredRoleFromCommandError(err);
+  if (role) return { kind: "role_required", role };
+  if (err && typeof err === "object" && "kind" in err) return err as StopError;
+  return { kind: "failed", detail: err instanceof Error ? err.message : String(err) };
+}
+
+/**
+ * Stop an agent everywhere (`agent_stop`, admin-only, WebAuthn-ceremony-gated):
+ * a ban at vouchryx, its open runs killed, every step in the console's chain.
+ * Never throws: the caller always gets the outcome, done or not, with every
+ * step, so a failed step is shown rather than lost in a rejected promise.
+ */
+export async function stopAgent(subject: string, reason: string): Promise<StopResult> {
+  if (!hasBackend()) return { ok: false, error: { kind: "failed", detail: "no console backend in this build" } };
+  try {
+    return { ok: true, outcome: await invokeWithCeremony<StopOutcome>("agent_stop", { subject, reason }) };
+  } catch (err) {
+    return { ok: false, error: toStopError(err) };
+  }
+}
+
+/** Lift the ban a stop set (`agent_lift`), after the same ceremony. Never
+ * throws, for the same reason as {@link stopAgent}. */
+export async function liftAgent(subject: string, reason: string): Promise<LiftResult> {
+  if (!hasBackend()) return { ok: false, error: { kind: "failed", detail: "no console backend in this build" } };
+  try {
+    return { ok: true, outcome: await invokeWithCeremony<LiftOutcome>("agent_lift", { subject, reason }) };
+  } catch (err) {
+    return { ok: false, error: toStopError(err) };
+  }
+}

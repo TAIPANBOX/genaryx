@@ -87,6 +87,35 @@ describe("stopReport", () => {
   });
 });
 
+describe("an answer that is not an outcome", () => {
+  it("an_answer_that_is_not_a_stop_outcome_never_reads_as_stopped", () => {
+    // The demo transport answers null for a command it has no handler for,
+    // and a wrong box could answer anything: none of it is a stop.
+    const answers: unknown[] = [
+      null,
+      undefined,
+      {},
+      "ok",
+      { subject: AGENT, stopped: false, steps: [] },
+      { subject: AGENT, stopped: "true", steps: [] },
+      { subject: AGENT, stopped: true },
+    ];
+    for (const a of answers) {
+      const r = stopReport({ ok: true, outcome: a as StopOutcome });
+      expect(r.done, JSON.stringify(a)).toBe(false);
+      expect(r.headline, JSON.stringify(a)).toMatch(/not stopped/i);
+      expect(r.lines.some((l) => l.tone === "bad")).toBe(true);
+      const l = liftReport({ ok: true, outcome: a as LiftOutcome });
+      expect(l.done, JSON.stringify(a)).toBe(false);
+      expect(l.headline, JSON.stringify(a)).toMatch(/not lifted/i);
+    }
+    // And a refusal whose outcome is missing is still a refusal, not a crash.
+    const r = stopReport({ ok: false, error: { kind: "not_stopped", outcome: null as unknown as StopOutcome } });
+    expect(r.done).toBe(false);
+    expect(r.headline).toMatch(/not stopped/i);
+  });
+});
+
 describe("liftReport", () => {
   it("a_lift_vouchryx_refused_never_reads_as_lifted", () => {
     const outcome: LiftOutcome = {

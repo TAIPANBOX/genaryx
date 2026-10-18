@@ -12,11 +12,13 @@ import { fetchAgentEvents, fetchAgentSlice, shortAgentLabel } from "../lib/graph
 import { describeIdentityError, fetchAlerts, fetchIdentities } from "../lib/identity";
 import { isQualityDriftEvent } from "../lib/incidents";
 import { describeMoneyError, fetchRuns, killRun } from "../lib/money";
-import { revokeDelegation } from "../lib/delegation";
+import { liftAgent, revokeDelegation, stopAgent } from "../lib/delegation";
 import {
   FreezeToggleButton,
   KillRunButton,
+  LiftAgentButton,
   RevokeDelegationButton,
+  StopAgentButton,
   runBlockedState,
   StateBadge,
 } from "../lib/lifecycle";
@@ -648,6 +650,8 @@ export function Agent360({
           agentId={agentId}
           onRevoke={(subject, reason) => revokeDelegation(subject, reason).then(() => {})}
         />
+        <StopAgentButton agentId={agentId} onStop={stopAgent} />
+        <LiftAgentButton agentId={agentId} onLift={liftAgent} />
         <WatchToggleButton kind="agent" id={agentId} label={shortAgentLabel(agentId)} />
         <button type="button" className="icon-btn" aria-label="Close Agent 360" onClick={onClose}>
           &times;

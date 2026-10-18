@@ -204,6 +204,11 @@ const COMMANDS: &[Gate] = &[
     // reason `remote_operator_wg_revoke` is admin-only just above: it takes
     // access away mid-incident, a deliberate, attributed act, not a read.
     gate("delegation_revoke", Role::Admin, true),
+    // Stopping an agent bans it at vouchryx and kills its runs: the two acts
+    // above in one, so the same floor and the ceremony. Lifting the ban lets
+    // it back, which is the same class of decision.
+    gate("agent_stop", Role::Admin, true),
+    gate("agent_lift", Role::Admin, true),
 ];
 
 fn gate_of(command: &str) -> Option<&'static Gate> {

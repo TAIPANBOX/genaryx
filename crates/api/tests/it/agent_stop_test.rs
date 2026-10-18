@@ -257,6 +257,11 @@ async fn every_step_of_a_stop_is_journaled_in_order_ceremony_first() {
         lines[0]["verify_result"],
         json!("not_confirmed:no_passkey_enrolled")
     );
+    assert!(
+        outcome.warnings.iter().any(|w| w.contains("no passkey")),
+        "{:?}",
+        outcome.warnings
+    );
     for d in &lines {
         assert_eq!(d["decision"], json!("break_glass"));
     }
