@@ -935,6 +935,22 @@ mod tests {
     // ---- assertion ----
 
     #[test]
+    fn an_assertion_without_user_verification_is_refused() {
+        let s = signer();
+        let rec = enrolled(&s, 5);
+        let cd = client_data("webauthn.get", "chal-uv", ORIGIN);
+        // Presence only: the person tapped, nobody was verified.
+        let ad = auth_data(RP, FLAG_UP, 6, None);
+        let sig = assert_sign(&s, &ad, &cd);
+        let refused = verify_assertion(&rp(), "chal-uv", &rec, &cd, &ad, &sig);
+        assert!(
+            matches!(refused, Err(WebAuthnError::UserNotVerified)),
+            "a tap without verification must not pass a ceremony: {refused:?}"
+        );
+    }
+
+    #[test]
+    #[test]
     fn assertion_round_trips_and_updates_the_counter() {
         let s = signer();
         let rec = enrolled(&s, 5);

@@ -178,6 +178,14 @@ mod tests {
     }
 
     #[test]
+    fn the_cookie_is_secure_when_the_origin_is_https_or_asked_for() {
+        assert!(cookie_is_secure(false, "https://console.example"));
+        assert!(cookie_is_secure(true, "http://10.0.0.2:7420"));
+        assert!(!cookie_is_secure(false, "http://localhost:7420"));
+    }
+
+    #[test]
+    #[test]
     fn the_strict_passkey_mode_turns_on_for_the_words_an_operator_would_type() {
         for on in ["1", "true", "yes", "on", "TRUE", "Yes", " ON ", "\ttrue\n"] {
             assert!(

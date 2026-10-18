@@ -372,6 +372,55 @@ mod tests {
         assert_eq!(required_role("remote_cloud_list"), Role::Viewer);
     }
 
+    /// The commands that need a fresh passkey assertion per action, written
+    /// out once here as the spec for the command table's ceremony column.
+    const CEREMONY_SPEC: &[&str] = &[
+        "delegation_revoke",
+        "money_close_retained",
+        "money_kill_run",
+        "money_set_budget",
+        "money_set_unit_budget",
+        "policy_decide_approval",
+        "remote_operator_wg_config",
+        "remote_operator_wg_revoke",
+    ];
+
+    #[test]
+    fn the_ceremony_is_a_column_of_the_command_table() {
+        let mut got: Vec<&str> = ceremony_commands().collect();
+        got.sort_unstable();
+        let mut want = CEREMONY_SPEC.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn an_unknown_command_is_treated_as_a_ceremony_command() {
+        assert!(requires_ceremony("definitely_not_a_command"));
+        assert!(requires_ceremony(""));
+    }
+
+    #[test]
+    fn a_read_needs_no_ceremony_and_a_sensitive_write_does() {
+        assert!(!requires_ceremony("money_units"));
+        assert!(requires_ceremony("money_kill_run"));
+        // An approver's grant is a ceremony too, though its role is lower.
+        assert_eq!(required_role("policy_decide_approval"), Role::Approver);
+        assert!(requires_ceremony("policy_decide_approval"));
+    }
+
+    /// The second hand-kept list this file and `main.rs` used to share is
+    /// gone: the ceremony set is read from the command table, and `main.rs`
+    /// names no list of its own.
+    #[test]
+    fn the_ceremony_list_is_written_once_in_the_command_table() {
+        const MAIN: &str = include_str!("main.rs");
+        assert!(
+            !MAIN.contains("SENSITIVE_COMMANDS"),
+            "main.rs still keeps a ceremony list of its own"
+        );
+    }
+
     #[test]
     fn role_ordering_expresses_privilege() {
         assert!(Role::Admin >= Role::Approver);

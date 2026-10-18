@@ -20,6 +20,7 @@ mod doctor;
 mod lifecycle;
 mod oidc;
 mod roles;
+mod throttle;
 mod webauthn;
 
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -2348,6 +2349,255 @@ mod tests {
             )
             .await,
             StatusCode::FORBIDDEN
+        );
+    }
+
+    // -- F-017: user verification, sign-in throttle, headers, cookie ---------
+
+    /// A hermetic Ctx whose relying-party origin is `origin`, as a console
+    /// behind TLS has it. Set before the Ctx is shared, the way `serve` sets it.
+    fn ctx_with_origin(origin: &str) -> Arc<Ctx> {
+        let cfg = Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            state_dir: test_dir(),
+            ui_dir: None,
+            secure_cookies: false,
+            require_passkey: false,
+            delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
+            closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+        };
+        let (events_tx, _) = tokio::sync::broadcast::channel(512);
+        let bus = genaryx_api::bus::AppState {
+            events_dir: None,
+            source_events_dir: None,
+            mode: genaryx_api::bus::BusMode::Unavailable {
+                reason: "test".into(),
+            },
+        };
+        let mut ctx = Ctx::bootstrap(cfg, bus, events_tx);
+        ctx.webauthn_rp.origin = origin.to_string();
+        Arc::new(ctx)
+    }
+
+    /// The same assertion [`assertion_header`] builds, with the authenticator
+    /// flags chosen by the caller: `0x01` is presence only, `0x05` adds user
+    /// verification.
+    fn assertion_header_with_flags(ctx: &Arc<Ctx>, challenge: &str, flags: u8) -> String {
+        let s = test_support::signer();
+        let cd = test_support::client_data("webauthn.get", challenge, &ctx.webauthn_rp.origin);
+        let ad = test_support::auth_data(&ctx.webauthn_rp.rp_id, flags, 1, None);
+        let sig = test_support::assert_sign(&s, &ad, &cd);
+        let envelope = json!({
+            "credential_id": test_support::enrolled(&s, 0).credential_id,
+            "client_data_json": B64URL.encode(&cd),
+            "authenticator_data": B64URL.encode(&ad),
+            "signature": B64URL.encode(&sig),
+        });
+        B64URL.encode(envelope.to_string())
+    }
+
+    /// `POST /api/auth/login` from `peer` (when the server recorded one),
+    /// through the real router. Returns the status, the headers and the body.
+    async fn sign_in_from(
+        ctx: &Arc<Ctx>,
+        peer: Option<SocketAddr>,
+        username: &str,
+        password: &str,
+    ) -> (StatusCode, HeaderMap, Value) {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "username": username, "password": password }).to_string(),
+            ))
+            .unwrap();
+        if let Some(addr) = peer {
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo(addr));
+        }
+        let resp = app(Arc::clone(ctx)).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            headers,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// A ceremony confirmed with a presence-only tap is refused, and the same
+    /// ceremony confirmed with user verification runs.
+    #[tokio::test]
+    async fn a_ceremony_refuses_a_presence_only_assertion() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        enroll_test_passkey(&ctx, "alice");
+        let args = "{\"run_id\":\"a\"}";
+        let challenge = start_action(&ctx, &sid, "money_kill_run", args).await;
+        let tap = assertion_header_with_flags(&ctx, &challenge, 0x01);
+        assert_eq!(
+            post_command_with(&ctx, "money_kill_run", &sid, Some(&tap), args).await,
+            StatusCode::FORBIDDEN,
+            "a tap without verification must not run a kill"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_ceremony_accepts_a_verified_assertion() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        enroll_test_passkey(&ctx, "alice");
+        let args = "{\"run_id\":\"a\"}";
+        let challenge = start_action(&ctx, &sid, "money_kill_run", args).await;
+        let verified = assertion_header_with_flags(&ctx, &challenge, 0x05);
+        let status = post_command_with(&ctx, "money_kill_run", &sid, Some(&verified), args).await;
+        assert_ne!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a verified assertion reaches the command"
+        );
+        assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
+    }
+
+    /// The browser is told to ask for verification, not merely to accept it.
+    #[tokio::test]
+    async fn the_action_start_asks_the_authenticator_to_verify_the_user() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        enroll_test_passkey(&ctx, "alice");
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/action/start",
+            &sid,
+            None,
+            json!({ "command": "money_kill_run", "args": { "run_id": "a" } }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["user_verification"], "required", "{body}");
+    }
+
+    #[tokio::test]
+    async fn every_response_carries_the_security_headers() {
+        let ctx = test_ctx();
+        for uri in ["/healthz", "/api/auth/session", "/no/such/page"] {
+            let req = Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap();
+            let resp = app(Arc::clone(&ctx)).oneshot(req).await.unwrap();
+            let h = resp.headers();
+            let csp = h
+                .get("content-security-policy")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default();
+            assert!(csp.contains("default-src 'self'"), "{uri}: CSP is {csp:?}");
+            assert!(
+                csp.contains("frame-ancestors 'none'"),
+                "{uri}: CSP is {csp:?}"
+            );
+            assert!(csp.contains("object-src 'none'"), "{uri}: CSP is {csp:?}");
+            assert_eq!(
+                h.get("x-frame-options").and_then(|v| v.to_str().ok()),
+                Some("DENY"),
+                "{uri}"
+            );
+            assert_eq!(
+                h.get("x-content-type-options")
+                    .and_then(|v| v.to_str().ok()),
+                Some("nosniff"),
+                "{uri}"
+            );
+            assert_eq!(
+                h.get("referrer-policy").and_then(|v| v.to_str().ok()),
+                Some("no-referrer"),
+                "{uri}"
+            );
+        }
+    }
+
+    /// Ten wrong passwords for one account, each from a different address,
+    /// hold the account back: even the right password is refused, with a wait.
+    #[tokio::test]
+    async fn the_sign_in_is_throttled_per_account_after_repeated_failures() {
+        let ctx = test_ctx();
+        set_test_operator(&ctx, "correct horse battery");
+        for i in 0..10u8 {
+            let peer = Some(SocketAddr::from(([10, 0, 0, i], 40000)));
+            let (status, _, body) = sign_in_from(&ctx, peer, "ops", "wrong password").await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "attempt {i}: {body}");
+        }
+        let peer = Some(SocketAddr::from(([10, 0, 1, 1], 40000)));
+        let (status, headers, body) =
+            sign_in_from(&ctx, peer, "ops", "correct horse battery").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+        let retry = headers
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        assert!(
+            retry > 0,
+            "Retry-After names the wait in seconds: {headers:?}"
+        );
+    }
+
+    /// Thirty failures for different names from one address hold that
+    /// address back, and leave another address free to sign in.
+    #[tokio::test]
+    async fn the_sign_in_is_throttled_per_client_address() {
+        let ctx = test_ctx();
+        set_test_operator(&ctx, "correct horse battery");
+        let peer = Some(SocketAddr::from(([10, 0, 0, 9], 40000)));
+        for i in 0..30 {
+            let (status, _, body) = sign_in_from(&ctx, peer, &format!("guess-{i}"), "x").await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "attempt {i}: {body}");
+        }
+        let (status, _, body) = sign_in_from(&ctx, peer, "ops", "correct horse battery").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+        let other = Some(SocketAddr::from(([10, 0, 0, 10], 40000)));
+        let (status, _, body) = sign_in_from(&ctx, other, "ops", "correct horse battery").await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "another address is not held back: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_session_cookie_is_secure_over_tls() {
+        let ctx = ctx_with_origin("https://console.example");
+        set_test_operator(&ctx, "correct horse battery");
+        let (status, headers, body) =
+            sign_in_from(&ctx, None, "ops", "correct horse battery").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let cookie = headers
+            .get("set-cookie")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            cookie.contains("Secure"),
+            "served over TLS, so Secure: {cookie:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_session_cookie_stays_plain_over_plain_http() {
+        let ctx = ctx_with_origin("http://localhost:7420");
+        set_test_operator(&ctx, "correct horse battery");
+        let (status, headers, body) =
+            sign_in_from(&ctx, None, "ops", "correct horse battery").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let cookie = headers
+            .get("set-cookie")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            !cookie.contains("Secure"),
+            "plain http keeps its cookie: {cookie:?}"
         );
     }
 
