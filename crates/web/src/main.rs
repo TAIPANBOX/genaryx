@@ -2309,7 +2309,7 @@ mod tests {
         assert_eq!(first["verify_result"], "confirmed:webauthn-es256", "{body}");
         let ban = &body["outcome"]["steps"][1];
         assert_eq!(ban["step"], "ban", "{body}");
-        assert_eq!(ban["ok"], false, "{body}");
+        assert_eq!(ban["ok"], json!(false), "{body}");
     }
 
     #[tokio::test]

@@ -453,7 +453,7 @@ pub async fn agent_stop(
                     .filter(|r| r.agent_id == subject && !r.killed)
                     .collect();
                 // The newest first: the run most likely still spending.
-                open.sort_by(|a, b| b.last_seen_millis.cmp(&a.last_seen_millis));
+                open.sort_by_key(|r| std::cmp::Reverse(r.last_seen_millis));
                 open_runs = Some(open.len());
                 s.record(
                     "list_runs",
@@ -644,9 +644,7 @@ mod tests {
             let Some(rest) = s.strip_prefix("agent://") else {
                 return false;
             };
-            let mut halves = rest.splitn(2, '/');
-            let domain = halves.next().unwrap_or("");
-            let path = halves.next().unwrap_or("");
+            let (domain, path) = rest.split_once('/').unwrap_or((rest, ""));
             !domain.is_empty()
                 && !path.is_empty()
                 && domain
@@ -673,7 +671,10 @@ mod tests {
             if let Ok((s, r)) = got {
                 assert!(grammar(&s), "seed {seed}: accepted {s:?}");
                 let n = r.chars().count();
-                assert!(n > 0 && n <= MAX_REASON_LEN, "seed {seed}: reason of {n}");
+                assert!(
+                    (1..=MAX_REASON_LEN).contains(&n),
+                    "seed {seed}: reason of {n}"
+                );
             }
         }
     }
