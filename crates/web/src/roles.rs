@@ -392,6 +392,8 @@ mod tests {
     /// The commands that need a fresh passkey assertion per action, written
     /// out once here as the spec for the command table's ceremony column.
     const CEREMONY_SPEC: &[&str] = &[
+        "agent_lift",
+        "agent_stop",
         "delegation_revoke",
         "money_close_retained",
         "money_kill_run",
@@ -409,6 +411,18 @@ mod tests {
         let mut want = CEREMONY_SPEC.to_vec();
         want.sort_unstable();
         assert_eq!(got, want);
+    }
+
+    /// Stopping an agent bans it at the issuer and kills its runs, and
+    /// lifting the ban lets it back: both are admin rows of the table with
+    /// the ceremony, not commands that only fail closed for being unknown.
+    #[test]
+    fn stopping_and_lifting_an_agent_are_admin_rows_with_the_ceremony() {
+        for command in ["agent_stop", "agent_lift"] {
+            let row = gate_of(command).unwrap_or_else(|| panic!("{command} has no row"));
+            assert_eq!(row.role, Role::Admin, "{command}");
+            assert!(row.ceremony, "{command}");
+        }
     }
 
     #[test]

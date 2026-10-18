@@ -37,6 +37,15 @@ pub const KEY_FILE_VAR: &str = "GENARYX_VOUCHRYX_REVOKE_KEY_FILE";
 pub struct RevokeKey(String);
 
 impl RevokeKey {
+    /// A key from bytes already in hand, trimmed the way the key file is.
+    /// `None` when nothing is left after trimming. Startup goes through
+    /// [`resolve_from_env`]; this is for a caller that holds the key some
+    /// other way, the integration tests among them.
+    pub fn new(key: &str) -> Option<Self> {
+        let key = key.trim();
+        (!key.is_empty()).then(|| RevokeKey(key.to_string()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
