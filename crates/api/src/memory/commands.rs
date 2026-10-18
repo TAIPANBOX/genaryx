@@ -28,12 +28,14 @@
 //! embedding model (docs/PHASE4.md W2's CRITICAL note).
 
 use super::env::EnvSource;
+use super::pool;
 use super::state::{MemoryClient, MemoryInner, MemoryState};
 use genaryx_connectors::{
     EngramClient, EngramForgetResult, EngramMemory, EngramProvenance, EngramStats, McpError,
 };
 use serde::Serialize;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 // ============================================================================
 // DTOs
@@ -181,8 +183,14 @@ pub async fn memory_stats(
     agent_id: Option<String>,
     state: &MemoryState,
 ) -> Result<EngramStats, MemoryError> {
+    let scope = read_scope(agent_id)?;
     let client = ready_client(&state).await?;
-    run_blocking(move || lock_engram(&client.client)?.stats(agent_id.as_deref())).await
+    run_blocking(move || {
+        let target = target_client(&client, scope.as_deref())?;
+        let mut engram = lock_engram(&target)?;
+        engram.stats(scope.as_deref())
+    })
+    .await
 }
 
 /// `recall` - up to `limit` memories relevant to `query`, most relevant
@@ -196,9 +204,12 @@ pub async fn memory_recall(
     agent_id: Option<String>,
     state: &MemoryState,
 ) -> Result<Vec<EngramMemory>, MemoryError> {
+    let scope = read_scope(agent_id)?;
     let client = ready_client(&state).await?;
     run_blocking(move || {
-        lock_engram(&client.client)?.recall(&query, limit, &mode, agent_id.as_deref())
+        let target = target_client(&client, scope.as_deref())?;
+        let mut engram = lock_engram(&target)?;
+        engram.recall(&query, limit, &mode, scope.as_deref())
     })
     .await
 }
@@ -231,12 +242,38 @@ pub async fn memory_forget(
     run_blocking(move || lock_engram(&client.client)?.forget(&memory_id)).await
 }
 
-/// Scaffold (F-007): the scope a read asks for. An empty name is the whole-file
-/// view, and a name must be one printable word. Today a name passes through
-/// as it is.
-#[allow(dead_code)]
+/// The scope a read asks for. An empty name is the whole-file view. A name must
+/// be one printable word (see [`pool::valid_agent_scope`]); anything else is
+/// refused here, before any server is started for it.
 pub(crate) fn read_scope(agent_id: Option<String>) -> Result<Option<String>, MemoryError> {
-    Ok(agent_id)
+    match agent_id {
+        None => Ok(None),
+        Some(id) if id.is_empty() => Ok(None),
+        Some(id) if pool::valid_agent_scope(&id) => Ok(Some(id)),
+        Some(_) => Err(MemoryError::Mcp {
+            message: "an agent name must be one printable word; no engram-mcp was started for it"
+                .to_string(),
+        }),
+    }
+}
+
+/// The server a read goes to: the whole-file server when no agent is asked for,
+/// otherwise the pool's server for that agent, started on its first read.
+fn target_client(
+    client: &MemoryClient,
+    scope: Option<&str>,
+) -> Result<Arc<Mutex<EngramClient>>, McpError> {
+    let Some(scope) = scope else {
+        return Ok(Arc::clone(&client.client));
+    };
+    let mut pool = client
+        .scoped
+        .lock()
+        .map_err(|_| McpError::Protocol("scoped engram pool mutex poisoned".to_string()))?;
+    pool.client_for(scope, Instant::now(), || {
+        let db = client.db_path.to_string_lossy().into_owned();
+        EngramClient::spawn(&client.engram_mcp_bin, &db, Some(scope)).map(Mutex::new)
+    })
 }
 
 #[cfg(test)]

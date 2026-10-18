@@ -15,8 +15,6 @@
 //! so a name from the UI never reaches the command line as a flag or as text
 //! with spaces in it.
 
-#![allow(dead_code)]
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -26,35 +24,95 @@ pub const MAX_SCOPED_SERVERS: usize = 4;
 /// How long a per-agent server may go unread before it is closed.
 pub const IDLE_AFTER: Duration = Duration::from_secs(10 * 60);
 
-/// Scaffold (F-007): today every name is accepted.
-pub fn valid_agent_scope(_agent_id: &str) -> bool {
-    true
+/// Whether `agent_id` may become a server's `--agent-id`: one printable word,
+/// at most 256 bytes, and not a flag. Estate agent ids (`agent://…`) pass; a
+/// name with a space, a control character, a leading dash or non-ASCII text
+/// does not.
+pub fn valid_agent_scope(agent_id: &str) -> bool {
+    !agent_id.is_empty()
+        && agent_id.len() <= 256
+        && !agent_id.starts_with('-')
+        && agent_id.chars().all(|c| c.is_ascii_graphic())
 }
 
-/// Scaffold (F-007): a pool that starts a server on every read and keeps none.
+/// One held server: the scope it serves, the server, and when and in what order
+/// it was last read.
+struct Entry<C> {
+    scope: String,
+    client: Arc<C>,
+    last_used: Instant,
+    seq: u64,
+}
+
+/// The per-agent servers the Memory panel holds: at most `max` at once, each
+/// closed after `idle` without a read. A read reuses the server its agent
+/// already has. A start that fails is not held.
 pub struct ScopePool<C> {
-    entries: Vec<Arc<C>>,
+    entries: Vec<Entry<C>>,
     max: usize,
     idle: Duration,
+    next_seq: u64,
 }
 
 impl<C> ScopePool<C> {
+    /// A pool that holds at least one server, whatever `max` says.
     pub fn new(max: usize, idle: Duration) -> Self {
         Self {
             entries: Vec::new(),
-            max,
+            max: max.max(1),
             idle,
+            next_seq: 0,
         }
     }
 
-    /// Scaffold: always starts a new server, never reuses or evicts one.
+    /// The server for `scope`, reused when the pool holds one and started with
+    /// `spawn` otherwise. Idle servers are closed first; then, when the pool is
+    /// full, the least recently read one is closed to make room.
     pub fn client_for<E>(
         &mut self,
-        _scope: &str,
-        _now: Instant,
+        scope: &str,
+        now: Instant,
         spawn: impl FnOnce() -> Result<C, E>,
     ) -> Result<Arc<C>, E> {
-        spawn().map(Arc::new)
+        self.close_idle(now);
+        self.next_seq += 1;
+        let seq = self.next_seq;
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.scope == scope) {
+            entry.last_used = now;
+            entry.seq = seq;
+            return Ok(Arc::clone(&entry.client));
+        }
+        let client = Arc::new(spawn()?);
+        while self.entries.len() >= self.max {
+            self.close_least_recent();
+        }
+        self.entries.push(Entry {
+            scope: scope.to_string(),
+            client: Arc::clone(&client),
+            last_used: now,
+            seq,
+        });
+        Ok(client)
+    }
+
+    /// Close every server not read for longer than `idle`.
+    fn close_idle(&mut self, now: Instant) {
+        let idle = self.idle;
+        self.entries
+            .retain(|e| now.saturating_duration_since(e.last_used) <= idle);
+    }
+
+    /// Close the least recently read server.
+    fn close_least_recent(&mut self) {
+        let oldest = self
+            .entries
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, e)| e.seq)
+            .map(|(i, _)| i);
+        if let Some(i) = oldest {
+            self.entries.swap_remove(i);
+        }
     }
 
     pub fn len(&self) -> usize {
