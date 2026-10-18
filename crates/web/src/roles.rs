@@ -131,6 +131,33 @@ pub fn required_role(command: &str) -> Role {
     }
 }
 
+/// Scaffold (F-017): the eight commands `main.rs`'s `SENSITIVE_COMMANDS` lists
+/// today, so the ceremony answer does not change until the fix moves the
+/// column into the command table.
+const SCAFFOLD_CEREMONY: &[&str] = &[
+    "money_kill_run",
+    "money_set_budget",
+    "policy_decide_approval",
+    "remote_operator_wg_config",
+    "remote_operator_wg_revoke",
+    "delegation_revoke",
+    "money_close_retained",
+    "money_set_unit_budget",
+];
+
+/// Scaffold: the commands that need a per-action passkey ceremony. Empty until
+/// the command table carries the column.
+#[allow(dead_code)]
+pub fn ceremony_commands() -> impl Iterator<Item = &'static str> {
+    std::iter::empty()
+}
+
+/// Scaffold: whether `command` needs a ceremony, today's answer.
+#[allow(dead_code)]
+pub fn requires_ceremony(command: &str) -> bool {
+    SCAFFOLD_CEREMONY.contains(&command)
+}
+
 /// Reads and non-mutating inspections: `viewer` and up. Named explicitly (not
 /// a fallthrough) so the completeness test can prove every dispatch command is
 /// placed on purpose and an unknown name still fails closed in

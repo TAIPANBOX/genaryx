@@ -142,6 +142,13 @@ impl Config {
     }
 }
 
+/// Scaffold (F-017): whether the session cookie is Secure. Today only the
+/// explicit setting decides, so the origin is ignored until the fix reads it.
+#[allow(dead_code)]
+pub fn cookie_is_secure(explicit: bool, _origin: &str) -> bool {
+    explicit
+}
+
 /// The words that turn the strict mode on, split out of
 /// [`Config::require_passkey_from_env`] so the decision has a seam a test can
 /// reach. Reading the variable is I/O and setting one is process-global; which

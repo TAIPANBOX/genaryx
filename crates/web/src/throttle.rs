@@ -8,6 +8,53 @@
 //! The table is bounded. A flood of distinct names or addresses cannot grow it
 //! past `max_keys`: expired windows go first, then the oldest live one.
 
+// Scaffold (F-017): this is today's behaviour, a table that records every
+// failed key and never refuses anything, so the tests below fail on their
+// assertions rather than on a missing name. The fix replaces it.
+#![allow(dead_code)]
+
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// Scaffold: records each failed key and never holds one back.
+pub struct LoginThrottle {
+    failed: Mutex<Vec<String>>,
+}
+
+impl LoginThrottle {
+    pub fn new(_limit: u32, _window: Duration, _max_keys: usize) -> Self {
+        Self {
+            failed: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn check(&self, _key: &str, _now: Instant) -> Result<(), Duration> {
+        Ok(())
+    }
+
+    pub fn record_failure(&self, key: &str, _now: Instant) {
+        self.failed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(key.to_string());
+    }
+
+    pub fn record_success(&self, _key: &str) {}
+
+    pub fn len(&self) -> usize {
+        self.failed.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Scaffold: the key for one account or address, with no bound on its length.
+pub fn login_key(kind: &str, value: &str) -> String {
+    format!("{kind}:{value}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

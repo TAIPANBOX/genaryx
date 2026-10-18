@@ -75,6 +75,10 @@ pub enum WebAuthnError {
     Mismatch(&'static str),
     /// The authenticator did not assert user presence.
     UserNotPresent,
+    /// Scaffold (F-017): a ceremony that requires user verification got an
+    /// assertion without it. Never produced until the fix checks the flag.
+    #[allow(dead_code)]
+    UserNotVerified,
     /// Attestation format other than "none" (out of scope by design).
     UnsupportedAttestation,
     /// COSE key is not the ES256 / P-256 shape this module supports.
@@ -105,6 +109,7 @@ impl std::fmt::Display for WebAuthnError {
             WebAuthnError::Malformed(what) => write!(f, "malformed {what}"),
             WebAuthnError::Mismatch(what) => write!(f, "{what} mismatch"),
             WebAuthnError::UserNotPresent => write!(f, "user presence not asserted"),
+            WebAuthnError::UserNotVerified => write!(f, "user verification not asserted"),
             WebAuthnError::UnsupportedAttestation => {
                 write!(f, "unsupported attestation format (only \"none\")")
             }
