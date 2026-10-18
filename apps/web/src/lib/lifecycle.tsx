@@ -1,5 +1,8 @@
+import { useState, type CSSProperties } from "react";
 import { cssVar } from "./cssVars";
 import { ConfirmButton } from "../components/ConfirmButton";
+import { liftReport, stopReport, type StopReport } from "./stopAgent";
+import type { LiftResult, StopResult } from "../delegationTypes";
 import { LIFECYCLE_BADGE, type EntityLifecycleState } from "./lifecycleTypes";
 import type { AgentRecord } from "./agentRecord";
 import type { EntityAgent, UnitRecord, UserRecord } from "./entityRecords";
@@ -214,5 +217,135 @@ export function RevokeDelegationButton({
       disabled={disabled}
       onConfirm={(reason) => onRevoke(agentId, reason)}
     />
+  );
+}
+
+const REPORT_TONE = { ok: "var(--mint)", bad: "var(--sev-critical)", warn: "var(--sev-high)" } as const;
+
+/** What a stop or a lift did, step by step, shown under its button until it
+ * is dismissed or the next one runs. It floats, so a button row in a header
+ * keeps its layout. A failed step is red and the headline says NOT, so an
+ * action that did not complete never reads as done. */
+export function StopReportView({
+  report,
+  onClose,
+  align,
+}: {
+  report: StopReport;
+  onClose: () => void;
+  /** "left"/"right": float under the button from that edge, so a header row
+   * keeps its layout. "inline": a block in the normal flow, for a narrow card
+   * that would clip a floating one. */
+  align: "left" | "right" | "inline";
+}) {
+  const place: CSSProperties =
+    align === "inline"
+      ? { marginTop: 6 }
+      : { position: "absolute", top: "calc(100% + 6px)", [align]: 0, zIndex: 20, width: "min(380px, 80vw)" };
+  return (
+    <div
+      role="status"
+      style={{
+        ...place,
+        padding: "8px 10px",
+        borderRadius: 8,
+        border: `1px solid ${report.done ? "var(--mint)" : "var(--sev-critical)"}`,
+        background: "var(--panel)",
+        boxShadow: "0 12px 28px color-mix(in srgb, var(--ink) 35%, transparent)",
+      }}
+    >
+      <div className="flex items-start gap-2">
+        <div
+          className="text-[11.5px] flex-1 min-w-0"
+          style={{ color: report.done ? "var(--fg)" : "var(--sev-critical)", fontWeight: 600, overflowWrap: "anywhere" }}
+        >
+          {report.headline}
+        </div>
+        <button type="button" className="icon-btn" aria-label="Dismiss" onClick={onClose}>
+          &times;
+        </button>
+      </div>
+      {report.lines.map((l, i) => (
+        <div key={i} className="mono text-[10.5px]" style={{ color: REPORT_TONE[l.tone], overflowWrap: "anywhere" }}>
+          {l.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Stop an agent everywhere: a ban at the issuer (vouchryx), its open runs
+ * killed, every step in the console's chain (`agent_stop`). The same
+ * break-glass reason and WebAuthn step-up as {@link RevokeDelegationButton};
+ * the outcome, done or not, is shown under the button. */
+export function StopAgentButton({
+  agentId,
+  onStop,
+  disabled,
+  reportAlign = "right",
+  onReport,
+}: {
+  agentId: string;
+  onStop: (subject: string, reason: string) => Promise<StopResult>;
+  disabled?: boolean;
+  /** Which edge of the button the outcome hangs from. */
+  reportAlign?: "left" | "right";
+  /** When given, the outcome is handed to the caller to show (a card that
+   * shows it inline under its row) instead of floating under the button. */
+  onReport?: (report: StopReport) => void;
+}) {
+  const [report, setReport] = useState<StopReport | null>(null);
+  return (
+    <span className="relative inline-flex">
+      <ConfirmButton
+        label="Stop agent"
+        confirmLabel="Confirm stop"
+        tone="var(--sev-critical)"
+        breakGlass
+        breakGlassDetail={`${agentId}: ban it at the issuer and kill its open runs`}
+        disabled={disabled}
+        onConfirm={(reason) =>
+          onStop(agentId, reason).then((r) => (onReport ? onReport(stopReport(r)) : setReport(stopReport(r))))
+        }
+      />
+      {report && <StopReportView report={report} onClose={() => setReport(null)} align={reportAlign} />}
+    </span>
+  );
+}
+
+/** Lift the ban a stop set (`agent_lift`), after the same ceremony. The
+ * tokens the agent held when it was stopped stay revoked. */
+export function LiftAgentButton({
+  agentId,
+  onLift,
+  disabled,
+  reportAlign = "right",
+  onReport,
+}: {
+  agentId: string;
+  onLift: (subject: string, reason: string) => Promise<LiftResult>;
+  disabled?: boolean;
+  /** Which edge of the button the outcome hangs from. */
+  reportAlign?: "left" | "right";
+  /** When given, the outcome is handed to the caller to show (a card that
+   * shows it inline under its row) instead of floating under the button. */
+  onReport?: (report: StopReport) => void;
+}) {
+  const [report, setReport] = useState<StopReport | null>(null);
+  return (
+    <span className="relative inline-flex">
+      <ConfirmButton
+        label="Lift ban"
+        confirmLabel="Confirm lift"
+        tone="var(--mint)"
+        breakGlass
+        breakGlassDetail={`${agentId}: lift its ban at the issuer`}
+        disabled={disabled}
+        onConfirm={(reason) =>
+          onLift(agentId, reason).then((r) => (onReport ? onReport(liftReport(r)) : setReport(liftReport(r))))
+        }
+      />
+      {report && <StopReportView report={report} onClose={() => setReport(null)} align={reportAlign} />}
+    </span>
   );
 }

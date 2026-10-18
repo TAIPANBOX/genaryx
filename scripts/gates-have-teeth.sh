@@ -500,6 +500,35 @@ run_case "invariant 28: the phrase list's own comment reworded" pass \
 	"$model_gate" \
 	"$(py 'edit("crates/copilot/src/grounding.rs", "/// Phrases that make a model claim about a run", "/// Phrases that make a model claim about one run")')"
 
+# invariant 33: Stop agent bans the agent at vouchryx, kills its open runs and
+# takes the ceremony, and a step that fails is never a stop. Product mutants;
+# the gate is the tests that hold each, against the stub vouchryx and Cloud.
+stop_gate='cargo test -q -p genaryx-api --test it agent_stop_test'
+
+run_case "invariant 33: the stop asks for a revocation and no ban" fail \
+	"$stop_gate" \
+	"$(py 'edit("crates/api/src/delegation/stop.rs", "        \"ban\": true,\n", "        \"ban\": false,\n")')" \
+	"the_stop_asks_vouchryx_for_a_ban_not_a_revocation"
+
+run_case "invariant 33: a revocation with no ban counted as a ban" fail \
+	"$stop_gate" \
+	"$(py 'edit("crates/api/src/delegation/stop.rs", "let banned = answer.get(\"banned\").and_then(Value::as_bool) == Some(true);", "let banned = true;")')" \
+	"a_revocation_without_a_confirmed_ban_is_never_a_stop"
+
+run_case "invariant 33: the agent's runs are not killed" fail \
+	"$stop_gate" \
+	"$(py 'edit("crates/api/src/delegation/stop.rs", "for run in open.iter().take(MAX_RUNS_PER_STOP) {", "for run in open.iter().take(0) {")')" \
+	"stopping_an_agent_bans_it_and_kills_each_open_run"
+
+run_case "invariant 33: agent_stop taken out of the ceremony column" fail \
+	'cargo test -q -p genaryx-web --bin genaryx-web agent_stop' \
+	"$(py 'edit("crates/web/src/roles.rs", "    gate(\"agent_stop\", Role::Admin, true),", "    gate(\"agent_stop\", Role::Admin, false),")')" \
+	"agent_stop_with_a_passkey_and_no_assertion_is_428"
+
+run_case "invariant 33: the stop module's own comment reworded" pass \
+	"$stop_gate" \
+	"$(py 'edit("crates/api/src/delegation/stop.rs", "/// The most runs one stop kills.", "/// The largest number of runs one stop kills.")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"

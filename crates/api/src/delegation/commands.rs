@@ -56,7 +56,7 @@ enum RevokeTarget {
 /// Vouchryx's own bearer-key check runs first regardless (nothing here is a
 /// security boundary vouchryx does not already enforce); this is a courtesy
 /// to whoever reads the journal afterwards.
-const MAX_REASON_LEN: usize = 500;
+pub(super) const MAX_REASON_LEN: usize = 500;
 
 /// How long this console waits for vouchryx to answer before calling it
 /// unreachable. Short: an operator cutting off a compromised agent is
@@ -334,40 +334,47 @@ async fn read_capped_body(resp: &mut reqwest::Response) -> Result<Vec<u8>, Strin
     Ok(buf)
 }
 
-async fn call_vouchryx(
-    vouchryx_url: &str,
+/// POST `body` as JSON to `url` with the revoke key as the bearer, and
+/// answer with the status and the body read capped at
+/// [`MAX_RESPONSE_BYTES`], or why no answer came. Shared by the revocation
+/// here and by `super::stop`'s ban and lift, so every call this console makes
+/// to vouchryx has the same timeout, no redirect, and the same cap.
+pub(super) async fn post_capped<B: Serialize + ?Sized>(
+    url: &str,
     revoke_key: &str,
-    body: &RevokeRequest<'_>,
-) -> Result<serde_json::Value, CallOutcome> {
-    let client = match reqwest::Client::builder()
+    body: &B,
+) -> Result<(u16, serde_json::Value), String> {
+    let client = reqwest::Client::builder()
         .timeout(VOUCHRYX_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-    {
-        Ok(c) => c,
-        Err(e) => return Err(CallOutcome::Unreachable(e.to_string())),
-    };
-    let url = format!("{vouchryx_url}/v1/revoke");
-    let sent = client
-        .post(&url)
+        .map_err(|e| e.to_string())?;
+    let mut resp = client
+        .post(url)
         .bearer_auth(revoke_key)
         .json(body)
         .send()
-        .await;
-    let mut resp = match sent {
-        Ok(r) => r,
-        Err(e) => return Err(CallOutcome::Unreachable(e.to_string())),
-    };
-    let status = resp.status().as_u16();
-
-    let raw = read_capped_body(&mut resp)
         .await
-        .map_err(CallOutcome::Unreachable)?;
+        .map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let raw = read_capped_body(&mut resp).await?;
     // Not valid JSON at all (an HTML error page from the wrong URL, say) -
     // kept visible as a string rather than silently collapsing to `Null`,
     // so `Unconfirmed`'s body still shows the operator what answered.
     let parsed: serde_json::Value = serde_json::from_slice(&raw)
         .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(&raw).into_owned()));
+    Ok((status, parsed))
+}
+
+async fn call_vouchryx(
+    vouchryx_url: &str,
+    revoke_key: &str,
+    body: &RevokeRequest<'_>,
+) -> Result<serde_json::Value, CallOutcome> {
+    let url = format!("{vouchryx_url}/v1/revoke");
+    let (status, parsed) = post_capped(&url, revoke_key, body)
+        .await
+        .map_err(CallOutcome::Unreachable)?;
 
     if status != 200 {
         return Err(CallOutcome::Http {

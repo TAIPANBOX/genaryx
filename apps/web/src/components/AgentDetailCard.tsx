@@ -12,12 +12,16 @@ import {
 import { shortAgentLabel } from "../lib/graph";
 import { fetchIdentities } from "../lib/identity";
 import { fetchRuns, killRun } from "../lib/money";
-import { revokeDelegation } from "../lib/delegation";
+import { liftAgent, revokeDelegation, stopAgent } from "../lib/delegation";
+import type { StopReport } from "../lib/stopAgent";
 import {
   agentStateFromRecord,
   FreezeToggleButton,
   KillRunButton,
+  LiftAgentButton,
   RevokeDelegationButton,
+  StopAgentButton,
+  StopReportView,
   StateBadge,
 } from "../lib/lifecycle";
 import { useLifecycleBlocks } from "../lib/lifecycleBlocks";
@@ -195,6 +199,7 @@ export function AgentDetailCard({
   const { open } = usePopover();
   const win = useWindowControls();
   const [record, setRecord] = useState<AgentRecord | null | undefined>(undefined);
+  const [stopOutcome, setStopOutcome] = useState<StopReport | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
   const [action, setAction] = useState<null | "owner" | "unit" | "budget" | "behaviour">(null);
   const [dir, setDir] = useState<OrgDirectory | null>(null);
@@ -405,6 +410,18 @@ export function AgentDetailCard({
                 agentId={agentId}
                 onRevoke={(subject, reason) => revokeDelegation(subject, reason).then(() => {})}
               />
+            </div>
+          )}
+          {/* A stop bans the agent at its issuer, which outlives its runs: both
+              stay offered when the agent's runs are already killed, so a
+              stopped agent can always be let back. */}
+          <div className="flex items-center gap-2" style={{ paddingBottom: 8 }}>
+            <StopAgentButton agentId={agentId} onStop={stopAgent} onReport={setStopOutcome} />
+            <LiftAgentButton agentId={agentId} onLift={liftAgent} onReport={setStopOutcome} />
+          </div>
+          {stopOutcome && (
+            <div style={{ paddingBottom: 8 }}>
+              <StopReportView report={stopOutcome} onClose={() => setStopOutcome(null)} align="inline" />
             </div>
           )}
           <div className="flex flex-wrap gap-1.5">

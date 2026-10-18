@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1106-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1128-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -280,10 +280,11 @@ box; these frames are not it, and say so here rather than in a footnote.
   instead of the box's OS account. The local account stays the break-glass
   admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
-- **Per-action WebAuthn ceremony (D15/B3 part 2).** The eight privileged
+- **Per-action WebAuthn ceremony (D15/B3 part 2).** The ten privileged
   commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
   `remote_operator_wg_config`, `remote_operator_wg_revoke`,
-  `delegation_revoke`, `money_close_retained`, `money_set_unit_budget`)
+  `delegation_revoke`, `money_close_retained`, `money_set_unit_budget`,
+  `agent_stop`, `agent_lift`)
   additionally require a fresh, per-action passkey
   assertion once the operator has enrolled one: a challenge minted for that
   exact command and its arguments,
@@ -310,6 +311,16 @@ box; these frames are not it, and say so here rather than in a footnote.
   refused, not-durable, or unreachable answer from vouchryx is reported as
   itself, never as success. `crates/api/src/delegation` + a "Revoke
   delegation" button on the agent detail card in the web shell.
+- **Stop agent and Lift ban (2026-10-18, invariant 33).** One action stops an
+  agent everywhere: after the passkey ceremony, `agent_stop` asks vouchryx
+  for a ban (`POST /v1/revoke` with `ban: true`), so the tokens the agent
+  holds die at every door that polls the revocation list and no new one is
+  issued, then kills each of the agent's open runs on the Cloud, and writes
+  every step into the console's chain. Only an answer confirming both the
+  revocation and the ban counts as a ban, a run counts as killed only when
+  the Cloud names it back, and a stop with any failed step is shown as not
+  stopped with that step. `agent_lift` lifts the ban the same way. Buttons
+  on Agent 360 and the agent card, next to Revoke delegation.
 - **Closing a retained reservation (D8, 2026-10-12, invariant 22).** The
   Money panel lists the reservations the TokenFuse gateway holds after a call
   whose outcome it never learned (`money_list_retained`, the gateway's

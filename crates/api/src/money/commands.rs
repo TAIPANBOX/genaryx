@@ -428,7 +428,7 @@ fn severity_str(s: Severity) -> &'static str {
 /// never reached a point where one exists (never fabricated - see
 /// [`CommandRecord::http_status`]'s doc for why an honest `0` beats a
 /// made-up `500`).
-fn status_of(e: &ConnectorError) -> u16 {
+pub(crate) fn status_of(e: &ConnectorError) -> u16 {
     match e {
         ConnectorError::Api { status, .. } => *status,
         ConnectorError::SignatureRejected => 403,

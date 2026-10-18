@@ -585,6 +585,48 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 .await,
             ))
         }
+        // Stops one agent everywhere: a ban at vouchryx, its open runs killed
+        // on the Cloud, every step in the console's own chain. Admin only and
+        // ceremony-gated (`roles.rs`), the same class of act as
+        // `delegation_revoke` and `money_kill_run`, which it combines.
+        "agent_stop" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                subject: String,
+                reason: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::delegation::stop::agent_stop(
+                    a.subject,
+                    a.reason,
+                    &ctx.cfg.delegation,
+                    &ctx.money,
+                    wg_journal(ctx).as_ref(),
+                )
+                .await,
+            ))
+        }
+        // Lifts the ban `agent_stop` set. The same gate as the stop.
+        "agent_lift" => {
+            #[derive(serde::Deserialize)]
+            #[allow(non_snake_case)]
+            struct A {
+                subject: String,
+                reason: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::delegation::stop::agent_lift(
+                    a.subject,
+                    a.reason,
+                    &ctx.cfg.delegation,
+                    wg_journal(ctx).as_ref(),
+                )
+                .await,
+            ))
+        }
         "drills_run" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

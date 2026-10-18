@@ -8,6 +8,9 @@
 //! - [`commands`] is `delegation_revoke` itself: validate, call vouchryx,
 //!   journal the attempt (success or refusal) into the same command journal
 //!   `money_kill_run` and `remote_operator_wg_revoke` write to.
+//! - [`stop`] is `agent_stop` and `agent_lift`: one action that bans an
+//!   agent at vouchryx and kills its open runs, and one that lifts the ban,
+//!   each step journaled into the same command journal.
 //!
 //! No `state.rs`: there is no long-lived client to manage or resolve in the
 //! background (`crates/web/src/ctx.rs`'s `Ctx::resolve` pattern every other
@@ -16,3 +19,4 @@
 
 pub mod commands;
 pub mod env;
+pub mod stop;

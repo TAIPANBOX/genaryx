@@ -2236,6 +2236,100 @@ mod tests {
         assert_ne!(status, StatusCode::UNAUTHORIZED);
     }
 
+    // -- agent_stop / agent_lift: role gate, ceremony gate, the ceremony
+    //    recorded as the first step ------------------------------------------
+    //
+    // Bound in features/the-console-stops-an-agent.feature. Stopping an agent
+    // bans it at vouchryx and kills its runs, so it takes the passkey ceremony
+    // and the admin role, like delegation_revoke and money_kill_run.
+
+    #[tokio::test]
+    async fn a_viewer_or_approver_is_refused_by_the_role_gate_on_agent_stop_and_lift() {
+        let ctx = test_ctx();
+        for (user, role) in [("carol", Role::Viewer), ("dave", Role::Approver)] {
+            let sid = ctx.sessions.create(user, role, Method::Oidc);
+            for command in ["agent_stop", "agent_lift"] {
+                let (status, body) = post_api(
+                    &ctx,
+                    &format!("/api/command/{command}"),
+                    &sid,
+                    None,
+                    json!({ "subject": "agent://acme.example/bots/a", "reason": "x" }),
+                )
+                .await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "{user} {command}: {body}");
+                assert_eq!(body["error"], "role admin required", "{user} {command}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_stop_with_a_passkey_and_no_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = json!({ "subject": "agent://acme.example/bots/a", "reason": "x" }).to_string();
+        assert_eq!(
+            post_command_with(&ctx, "agent_stop", &sid, None, &args).await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_lift_with_a_passkey_and_no_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = json!({ "subject": "agent://acme.example/bots/a", "reason": "x" }).to_string();
+        assert_eq!(
+            post_command_with(&ctx, "agent_lift", &sid, None, &args).await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    /// A genuine assertion passes the gate and reaches the command, and the
+    /// command's first step names the assertion that confirmed it. This test's
+    /// Ctx has no vouchryx and no Cloud, so the stop is refused by the COMMAND
+    /// (422, not stopped), never by the gate.
+    #[tokio::test]
+    async fn agent_stop_with_a_valid_assertion_reaches_the_command_and_records_the_ceremony() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = json!({ "subject": "agent://acme.example/bots/a", "reason": "compromised" });
+        let challenge = start_action(&ctx, &sid, "agent_stop", &args.to_string()).await;
+        let header = assertion_header(&ctx, &challenge);
+
+        let (status, body) =
+            post_api(&ctx, "/api/command/agent_stop", &sid, Some(&header), args).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "not_stopped", "{body}");
+        let first = &body["outcome"]["steps"][0];
+        assert_eq!(first["step"], "ceremony", "{body}");
+        assert_eq!(first["verify_result"], "confirmed:webauthn-es256", "{body}");
+        let ban = &body["outcome"]["steps"][1];
+        assert_eq!(ban["step"], "ban", "{body}");
+        assert_eq!(ban["ok"], json!(false), "{body}");
+    }
+
+    #[tokio::test]
+    async fn agent_lift_with_a_valid_assertion_reaches_the_command_and_records_the_ceremony() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = json!({ "subject": "agent://acme.example/bots/a", "reason": "cleared" });
+        let challenge = start_action(&ctx, &sid, "agent_lift", &args.to_string()).await;
+        let header = assertion_header(&ctx, &challenge);
+
+        let (status, body) =
+            post_api(&ctx, "/api/command/agent_lift", &sid, Some(&header), args).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["kind"], "not_lifted", "{body}");
+        let first = &body["outcome"]["steps"][0];
+        assert_eq!(first["step"], "ceremony", "{body}");
+        assert_eq!(first["verify_result"], "confirmed:webauthn-es256", "{body}");
+    }
+
     // -- money_close_retained (D8): role gate and ceremony gate ---------------
     //
     // Bound in features/the-console-closes-a-retained-reservation.feature.
