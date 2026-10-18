@@ -79,11 +79,11 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
-      # Measured 2026-09-06: two allowed warnings, rustls-pemfile (unmaintained)
-      # and chacha20 (yanked), neither of which cargo-audit treats as a
-      # failing vulnerability, so no --ignore is needed for this to be green.
-      # If a future advisory adds a real vulnerability here, this step is the
-      # one meant to catch it and go red.
+      # No --ignore. rustls-pemfile (unmaintained) is gone: PEM is parsed by
+      # rustls-pki-types. zip is 9.x, which fixes RUSTSEC-2026-0367, -0368 and
+      # -0369. The one warning left is chacha20 (yanked), which cargo-audit
+      # reports without failing this step. If a future advisory adds a real
+      # vulnerability here, this step is the one meant to catch it and go red.
       - name: cargo audit
         run: cargo audit
 

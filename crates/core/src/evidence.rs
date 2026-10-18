@@ -223,7 +223,7 @@ pub fn assemble_zip(
     let mut cursor = std::io::Cursor::new(Vec::new());
     {
         let mut zw = zip::ZipWriter::new(&mut cursor);
-        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+        let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             .unix_permissions(0o644);
 
@@ -329,7 +329,7 @@ mod tests {
         // Read it back: manifest.json, manifest.sig.json, a.json, b.csv all present.
         let mut zr = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).expect("open zip");
         let names: std::collections::BTreeSet<String> = (0..zr.len())
-            .map(|i| zr.by_index(i).unwrap().name().to_string())
+            .map(|i| zr.by_index(i).unwrap().name().unwrap().to_string())
             .collect();
         assert!(names.contains("manifest.json"));
         assert!(names.contains("manifest.sig.json"));
@@ -346,6 +346,24 @@ mod tests {
         let mut a = Vec::new();
         zr.by_name("a.json").unwrap().read_to_end(&mut a).unwrap();
         assert_eq!(a, b"{\"x\":1}");
+    }
+
+    #[test]
+    fn every_entry_is_deflated_and_mode_0644() {
+        // The writer options moved to zip 9 (`SimpleFileOptions`); the pack's
+        // entries must stay deflated and 0644 through that port.
+        let arts = vec![artifact("a.json", b"{\"x\":1}")];
+        let zip_bytes = assemble_zip(b"{}", None, &arts).unwrap();
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        for name in ["manifest.json", "a.json"] {
+            let entry = zr.by_name(name).unwrap();
+            assert_eq!(
+                entry.compression(),
+                zip::CompressionMethod::Deflated,
+                "{name}"
+            );
+            assert_eq!(entry.unix_mode().map(|m| m & 0o777), Some(0o644), "{name}");
+        }
     }
 
     #[test]

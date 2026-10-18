@@ -61,5 +61,4 @@ getrandom = { workspace = true }
 # `rustls::StreamOwned` over a plain `TcpStream` keeps this module synchronous
 # like its unix path, rather than dragging one call into async.
 rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
 rustls-pki-types = { workspace = true }
