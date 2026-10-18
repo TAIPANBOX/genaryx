@@ -42,7 +42,6 @@ regex = "1.13.1"
 # 0.23.42 with aws-lc-rs, and no `ring` under connectors, so there is exactly
 # one crypto provider in that tree and no process-default to install.
 rustls = "0.23.42"
-rustls-pemfile = "2.2.0"
 rustls-pki-types = "1.15.0"
 # Phase-0 spike #6 (06 §7): genaryx-connectors' CloudSse client. Versions
 # originally pinned against the (since-removed) desktop FFI bindgen tree
@@ -62,10 +61,11 @@ x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 sha2 = "0.10.9"
 hmac = "0.12.1"
 # Phase-4 wave 3 (docs/PHASE4.md W3): the Evidence Center assembles the pack
-# into one zip (`genaryx_core::evidence`). No compression is needed for
-# integrity (the signed manifest + each artifact's sha256 provide it), so this
-# is used store/deflate only, no extra codec families.
-zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
+# into one zip (`genaryx_core::evidence`). Write-only: nothing here extracts an
+# archive. 9.0.0 is the first release fixing RUSTSEC-2026-0367, -0368 and
+# -0369 (extraction of SUID/SGID bits and symlinks), which 2.x was flagged for.
+# `deflate` is the only codec; in 9.x it pulls zopfli and flate2 (zlib-rs).
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 base64 = "0.22.1"
 getrandom = "0.2.17"
 # The operator's WireGuard peer config as a scannable QR (crates/api/src/

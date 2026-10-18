@@ -33,7 +33,7 @@
 //! operator-facing `.conf` and QR must carry base64 while the wire carries
 //! hex. Reference: <https://www.wireguard.com/xplatform/>.
 
-use std::io::{BufReader, Read as _, Write as _};
+use std::io::{Read as _, Write as _};
 use std::net::{TcpStream, ToSocketAddrs as _};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -42,6 +42,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
+use rustls_pki_types::pem::PemObject as _;
 
 /// Where `wireguard-go` places its UAPI sockets, on every platform it targets.
 /// Same constant as [`crate::wg`]'s, deliberately not shared: these two agree
@@ -469,6 +470,29 @@ impl Endpoint {
     }
 }
 
+/// The proxy's certificate as the only root the client trusts. A file with no
+/// certificate in it is refused here, by name, so an empty root store never
+/// reaches a handshake, where it fails with an error about the server.
+fn pinned_roots(path: &Path) -> Result<rustls::RootCertStore, String> {
+    let pem = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut roots = rustls::RootCertStore::empty();
+    let mut added = 0usize;
+    for cert in rustls_pki_types::CertificateDer::pem_slice_iter(&pem) {
+        let cert = cert.map_err(|e| format!("{} is not a PEM certificate: {e}", path.display()))?;
+        roots
+            .add(cert)
+            .map_err(|e| format!("certificate rejected: {e}"))?;
+        added += 1;
+    }
+    if added == 0 {
+        return Err(format!(
+            "{} contains no certificate, so nothing would be trusted",
+            path.display()
+        ));
+    }
+    Ok(roots)
+}
+
 /// A handle to one interface's UAPI. Holds no connection: UAPI is one
 /// operation per connection, so every call dials afresh.
 #[derive(Debug, Clone)]
@@ -607,32 +631,7 @@ impl UapiSocket {
             message: m,
         };
 
-        let mut roots = rustls::RootCertStore::empty();
-        let file = std::fs::File::open(&t.cert_pem)
-            .map_err(|e| fail(format!("cannot read {}: {e}", t.cert_pem.display())))?;
-        let mut rd = BufReader::new(file);
-        let mut added = 0usize;
-        for cert in rustls_pemfile::certs(&mut rd) {
-            let cert = cert.map_err(|e| {
-                fail(format!(
-                    "{} is not a PEM certificate: {e}",
-                    t.cert_pem.display()
-                ))
-            })?;
-            roots
-                .add(cert)
-                .map_err(|e| fail(format!("certificate rejected: {e}")))?;
-            added += 1;
-        }
-        // An empty root store does not fail to build, it fails every
-        // handshake, with an error about the SERVER rather than about the file
-        // nobody filled in.
-        if added == 0 {
-            return Err(fail(format!(
-                "{} contains no certificate, so nothing would be trusted",
-                t.cert_pem.display()
-            )));
-        }
+        let roots = pinned_roots(&t.cert_pem).map_err(fail)?;
 
         let cfg = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
@@ -748,6 +747,35 @@ mod tests {
              tx_bytes=0\n\
              errno=0\n\n"
         )
+    }
+
+    #[test]
+    fn a_pinned_file_with_no_certificate_is_refused_by_name() {
+        // Without this, an empty pin would build a root store that trusts
+        // nothing and fail every handshake with an error about the server.
+        let path =
+            std::env::temp_dir().join(format!("wg-uapi-pin-empty-{}.pem", std::process::id()));
+        std::fs::write(&path, "this file holds no certificate\n").unwrap();
+        let result = pinned_roots(&path);
+        std::fs::remove_file(&path).ok();
+        let Err(err) = result else {
+            panic!("a file with no certificate was accepted as the pin");
+        };
+        assert!(err.contains("contains no certificate"), "{err}");
+    }
+
+    #[test]
+    fn the_committed_pin_loads_as_one_root() {
+        // The same certificate the uapi_tls_pinning test pins, read from the
+        // committed fixture, so the PEM parser is held on a real file.
+        let ca = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ca.crt"
+        ));
+        let Ok(roots) = pinned_roots(ca) else {
+            panic!("the committed fixture CA must load as the pin");
+        };
+        assert_eq!(roots.len(), 1);
     }
 
     #[test]

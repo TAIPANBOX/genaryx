@@ -20,11 +20,12 @@
 //! broken daemon: a certificate that does not match the name being dialled,
 //! and a certificate the client was never given.
 
-use std::io::{BufReader, Read as _, Write as _};
+use std::io::{Read as _, Write as _};
 use std::net::TcpListener;
 use std::sync::Arc;
 
 use genaryx_connectors::UapiSocket;
+use rustls_pki_types::pem::PemObject as _;
 
 /// The fixture directory. The certificates are committed; the leaf's PRIVATE
 /// KEY deliberately is not, because `.gitignore` keeps `*.key` out of the tree
@@ -69,12 +70,11 @@ fn spawn_proxy(
     cert: &[u8],
     key_pem: &[u8],
 ) -> (u16, std::thread::JoinHandle<Option<String>>) {
-    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert))
+    let certs: Vec<_> = rustls_pki_types::CertificateDer::pem_slice_iter(cert)
         .collect::<Result<_, _>>()
         .expect("fixture certificate");
-    let key = rustls_pemfile::private_key(&mut BufReader::new(key_pem))
-        .expect("fixture key readable")
-        .expect("fixture key present");
+    let key =
+        rustls_pki_types::PrivateKeyDer::from_pem_slice(key_pem).expect("fixture key present");
 
     let cfg = rustls::ServerConfig::builder()
         .with_no_client_auth()
