@@ -6,7 +6,7 @@
 //! secret it shares with this console. The console mints that token only
 //! after a person confirmed the closure with a passkey assertion: the web
 //! shell's ceremony gate runs before `money_close_retained` is dispatched at
-//! all (`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`).
+//! all (the ceremony column of `crates/web/src/roles.rs`).
 //!
 //! **The token** is `v1.<id>.<revision>.<expiry>.<signature>`: the
 //! reservation id in decimal, the revision as the 16 lowercase hex digits

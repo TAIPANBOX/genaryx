@@ -3,7 +3,7 @@
 //! A signed-in session gets you the console; it does not get you the kill.
 //! The seven privileged commands additionally require a fresh, per-action
 //! WebAuthn assertion, and they are exactly the seven names in `main.rs`'s
-//! `SENSITIVE_COMMANDS`: `money_kill_run`, `money_set_budget`,
+//! the ceremony column: `money_kill_run`, `money_set_budget`,
 //! `policy_decide_approval`, `remote_operator_wg_config`,
 //! `remote_operator_wg_revoke`, `delegation_revoke` and
 //! `money_close_retained`. (This list used to
@@ -75,9 +75,8 @@ pub enum WebAuthnError {
     Mismatch(&'static str),
     /// The authenticator did not assert user presence.
     UserNotPresent,
-    /// Scaffold (F-017): a ceremony that requires user verification got an
-    /// assertion without it. Never produced until the fix checks the flag.
-    #[allow(dead_code)]
+    /// A ceremony requires user verification (F-017), and the assertion did
+    /// not carry it. A tap is not enough for a sensitive command.
     UserNotVerified,
     /// Attestation format other than "none" (out of scope by design).
     UnsupportedAttestation,
@@ -647,6 +646,9 @@ pub fn verify_assertion(
     if auth.flags & FLAG_UP == 0 {
         return Err(WebAuthnError::UserNotPresent);
     }
+    if auth.flags & FLAG_UV == 0 {
+        return Err(WebAuthnError::UserNotVerified);
+    }
 
     // message = authenticatorData || SHA-256(clientDataJSON)
     let mut message = authenticator_data.to_vec();
@@ -971,12 +973,12 @@ mod tests {
     fn assertion_rejects_tampering_wrong_key_and_replay_shapes() {
         let s = signer();
         let rec = enrolled(&s, 5);
-        let ad = auth_data(RP, FLAG_UP, 6, None);
+        let ad = auth_data(RP, FLAG_UP | FLAG_UV, 6, None);
         let cd = client_data("webauthn.get", "chal", ORIGIN);
         let sig = assert_sign(&s, &ad, &cd);
 
         // signature over different authData must fail
-        let other_ad = auth_data(RP, FLAG_UP, 99, None);
+        let other_ad = auth_data(RP, FLAG_UP | FLAG_UV, 99, None);
         assert_eq!(
             verify_assertion(&rp(), "chal", &rec, &cd, &other_ad, &sig).unwrap_err(),
             WebAuthnError::BadSignature
@@ -1010,7 +1012,7 @@ mod tests {
         let s = signer();
         // regression: stored 5, asserted 5 (not greater) -> refuse
         let rec = enrolled(&s, 5);
-        let ad = auth_data(RP, FLAG_UP, 5, None);
+        let ad = auth_data(RP, FLAG_UP | FLAG_UV, 5, None);
         let cd = client_data("webauthn.get", "chal", ORIGIN);
         let sig = assert_sign(&s, &ad, &cd);
         assert_eq!(
@@ -1019,7 +1021,7 @@ mod tests {
         );
         // an authenticator that never counts (0) stays acceptable
         let rec0 = enrolled(&s, 0);
-        let ad0 = auth_data(RP, FLAG_UP, 0, None);
+        let ad0 = auth_data(RP, FLAG_UP | FLAG_UV, 0, None);
         let sig0 = assert_sign(&s, &ad0, &cd);
         assert!(verify_assertion(&rp(), "chal", &rec0, &cd, &ad0, &sig0).is_ok());
     }

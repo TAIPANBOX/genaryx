@@ -6,7 +6,7 @@
 //!   same client `credentials_gateway_retained_runs` reads `GET /v1/runs`
 //!   with.
 //! - [`money_close_retained`] is sensitive: the web shell runs the passkey
-//!   ceremony before dispatching it (`SENSITIVE_COMMANDS`), with
+//!   ceremony before dispatching it (the ceremony column), with
 //!   `money_set_budget`'s role. It validates the evidence, generates the
 //!   operation id, mints a two-minute token ([`super::closure`]), and posts
 //!   `POST /v1/retained/close` with the admin key and the token in

@@ -8,51 +8,133 @@
 //! The table is bounded. A flood of distinct names or addresses cannot grow it
 //! past `max_keys`: expired windows go first, then the oldest live one.
 
-// Scaffold (F-017): this is today's behaviour, a table that records every
-// failed key and never refuses anything, so the tests below fail on their
-// assertions rather than on a missing name. The fix replaces it.
-#![allow(dead_code)]
-
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-/// Scaffold: records each failed key and never holds one back.
+/// Failures allowed per account name inside one window (F-017).
+pub const ACCOUNT_LIMIT: u32 = 10;
+/// Failures allowed per client address inside one window. Higher than the
+/// account limit, because one address can serve many people behind a proxy.
+pub const ADDRESS_LIMIT: u32 = 30;
+/// One window: a held key is admitted again once it has passed.
+pub const WINDOW: Duration = Duration::from_secs(15 * 60);
+/// Keys held at once, per table. This bounds the memory a flood can take.
+pub const MAX_KEYS: usize = 4096;
+/// Characters of a name kept in its key. A longer name shares a key with its
+/// prefix, which only makes its limit stricter, and keeps every key one size.
+const MAX_KEY_CHARS: usize = 128;
+
+/// The failures of one key inside its current window.
+struct Window {
+    started: Instant,
+    failures: u32,
+}
+
+/// Failed password sign-ins, counted per key inside a fixed window.
 pub struct LoginThrottle {
-    failed: Mutex<Vec<String>>,
+    limit: u32,
+    window: Duration,
+    max_keys: usize,
+    windows: Mutex<HashMap<String, Window>>,
 }
 
 impl LoginThrottle {
-    pub fn new(_limit: u32, _window: Duration, _max_keys: usize) -> Self {
+    pub fn new(limit: u32, window: Duration, max_keys: usize) -> Self {
         Self {
-            failed: Mutex::new(Vec::new()),
+            limit,
+            window,
+            max_keys,
+            windows: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn check(&self, _key: &str, _now: Instant) -> Result<(), Duration> {
-        Ok(())
+    fn table(&self) -> MutexGuard<'_, HashMap<String, Window>> {
+        // A panic while the lock was held leaves the counts as they were.
+        // Refusing every later sign-in over that would lock the operator out.
+        self.windows.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn record_failure(&self, key: &str, _now: Instant) {
-        self.failed
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(key.to_string());
+    fn is_live(&self, w: &Window, now: Instant) -> bool {
+        now.saturating_duration_since(w.started) < self.window
     }
 
-    pub fn record_success(&self, _key: &str) {}
+    /// `Ok` while `key` may try again. `Err` carries the time left in its
+    /// window once it has used up its failures.
+    pub fn check(&self, key: &str, now: Instant) -> Result<(), Duration> {
+        let table = self.table();
+        match table.get(key) {
+            Some(w) if w.failures >= self.limit && self.is_live(w, now) => {
+                Err(self.window - now.saturating_duration_since(w.started))
+            }
+            _ => Ok(()),
+        }
+    }
 
+    /// Count one failed sign-in against `key`. A key whose window has passed
+    /// starts a fresh one.
+    pub fn record_failure(&self, key: &str, now: Instant) {
+        let mut table = self.table();
+        if let Some(w) = table.get_mut(key) {
+            if self.is_live(w, now) {
+                w.failures = w.failures.saturating_add(1);
+            } else {
+                *w = Window {
+                    started: now,
+                    failures: 1,
+                };
+            }
+            return;
+        }
+        if table.len() >= self.max_keys {
+            self.make_room(&mut table, now);
+        }
+        table.insert(
+            key.to_string(),
+            Window {
+                started: now,
+                failures: 1,
+            },
+        );
+    }
+
+    /// Forget the windows that have passed. If the table is still full, forget
+    /// the oldest live one, so a flood of names cannot grow it.
+    fn make_room(&self, table: &mut HashMap<String, Window>, now: Instant) {
+        table.retain(|_, w| self.is_live(w, now));
+        if table.len() < self.max_keys {
+            return;
+        }
+        let oldest = table
+            .iter()
+            .min_by_key(|(_, w)| w.started)
+            .map(|(k, _)| k.clone());
+        if let Some(key) = oldest {
+            table.remove(&key);
+        }
+    }
+
+    /// A sign-in under `key` succeeded: the key starts from nothing.
+    pub fn record_success(&self, key: &str) {
+        self.table().remove(key);
+    }
+
+    #[cfg(test)]
     pub fn len(&self) -> usize {
-        self.failed.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.table().len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
 
-/// Scaffold: the key for one account or address, with no bound on its length.
+/// The key for one account name or one client address. The value is cut to
+/// `MAX_KEY_CHARS`, so a hostile username cannot make a key of any size.
 pub fn login_key(kind: &str, value: &str) -> String {
-    format!("{kind}:{value}")
+    let short: String = value.chars().take(MAX_KEY_CHARS).collect();
+    format!("{kind}:{short}")
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ pub struct Config {
     /// missing was any way to STOP standing on it. An operator who wants the
     /// invariant enforced ("a sensitive command requires a per-action
     /// ceremony", CLAUDE.md 2) sets `GENARYX_WEB_REQUIRE_PASSKEY=1` and the
-    /// fallback is gone for every command in `SENSITIVE_COMMANDS`.
+    /// fallback is gone for every command whose row carries the ceremony.
     pub require_passkey: bool,
     /// Where `delegation_revoke` sends a revocation, resolved ONCE at
     /// startup (`GENARYX_VOUCHRYX_URL` + `GENARYX_VOUCHRYX_REVOKE_KEY_FILE`).
@@ -142,11 +142,13 @@ impl Config {
     }
 }
 
-/// Scaffold (F-017): whether the session cookie is Secure. Today only the
-/// explicit setting decides, so the origin is ignored until the fix reads it.
-#[allow(dead_code)]
-pub fn cookie_is_secure(explicit: bool, _origin: &str) -> bool {
-    explicit
+/// Whether the session cookie is marked Secure (F-017). It is, when the
+/// operator asks for it, and whenever the console's own origin is https: that
+/// is a person reaching the console over TLS, directly or through the proxy
+/// the origin names. A plain http origin, the tunnel case, keeps its cookie as
+/// it was.
+pub fn cookie_is_secure(explicit: bool, origin: &str) -> bool {
+    explicit || origin.starts_with("https://")
 }
 
 /// The words that turn the strict mode on, split out of

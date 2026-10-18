@@ -561,7 +561,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         }
         // Cuts an agent's or a user's delegated authority at vouchryx. Admin
         // only, sensitive-ceremony-gated (see `main.rs`'s
-        // `SENSITIVE_COMMANDS` and `roles.rs`'s `ADMIN_COMMANDS`), the same
+        // the ceremony column and the admin rows of `roles.rs`), the same
         // class of act as `money_kill_run` and `remote_operator_wg_revoke`.
         "delegation_revoke" => {
             #[derive(serde::Deserialize)]
@@ -721,7 +721,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             genaryx_api::money::retained::money_list_retained(&ctx.credentials).await,
         )),
         // D8: close one retained reservation with evidence. Admin only and
-        // ceremony-gated (`main.rs`'s `SENSITIVE_COMMANDS`): the console
+        // ceremony-gated (the ceremony column of `roles.rs`): the console
         // mints the gateway's closure token only once that gate has passed,
         // and journals every attempt into the console's own chain.
         "money_close_retained" => {
@@ -869,7 +869,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             genaryx_api::money::commands::money_status(&ctx.money).await,
         )),
         // Unit month caps: a read, and the signed cap change (admin, in
-        // SENSITIVE_COMMANDS, journaled like money_set_budget).
+        // the ceremony column, journaled like money_set_budget).
         // Which gateways the Cloud still hears from: a read.
         "money_gateways" => Ok(reply(
             genaryx_api::money::gateways::money_gateways(&ctx.money).await,

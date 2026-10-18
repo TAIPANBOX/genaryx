@@ -24,7 +24,7 @@
 //!
 //! `money_set_unit_budget` is the same class of act as `money_set_budget`: a
 //! break-glass override of Cloud state with a mandatory reason, admin only,
-//! a fresh passkey assertion per action (`SENSITIVE_COMMANDS`), signed with
+//! a fresh passkey assertion per action (the ceremony column), signed with
 //! the paired device, one journal entry per attempt whatever the Cloud
 //! answers. It refuses before the network an amount that is not a finite,
 //! non-negative number, and the literal `unassigned`, which is the Cloud's

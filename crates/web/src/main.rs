@@ -43,6 +43,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 
 #[derive(Parser)]
 #[command(
@@ -310,7 +311,8 @@ async fn serve(cfg: Config) {
         }
     };
     tracing::info!(bind = %ctx.cfg.bind, "genaryx-web ready");
-    if let Err(e) = axum::serve(listener, app).await {
+    let make = app.into_make_service_with_connect_info::<SocketAddr>();
+    if let Err(e) = axum::serve(listener, make).await {
         tracing::error!(error = %e, "server stopped");
     }
 }
@@ -348,7 +350,36 @@ fn app(ctx: Arc<Ctx>) -> Router {
     // a WebAuthn attestation, and a lower explicit cap here is the one that
     // actually reflects what this console expects to receive, rather than a
     // number chosen for something else.
-    app.layer(DefaultBodyLimit::max(1 << 20)).with_state(ctx)
+    app.layer(DefaultBodyLimit::max(1 << 20))
+        .layer(security_header(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            CONTENT_SECURITY_POLICY,
+        ))
+        .layer(security_header(axum::http::header::X_FRAME_OPTIONS, "DENY"))
+        .layer(security_header(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            "nosniff",
+        ))
+        .layer(security_header(
+            axum::http::header::REFERRER_POLICY,
+            "no-referrer",
+        ))
+        .with_state(ctx)
+}
+
+/// What every response may load and where it may be framed (F-017). The
+/// console is one page: its own script, style, image and font files, and its
+/// own API. Nothing may frame it, and nothing else may load. `style-src` keeps
+/// `'unsafe-inline'` for now, because the UI's component styles are not yet
+/// all in files. Tightening that is a separate change.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
+/// One response header, set on every response the router produces.
+fn security_header(
+    name: axum::http::HeaderName,
+    value: &'static str,
+) -> SetResponseHeaderLayer<axum::http::HeaderValue> {
+    SetResponseHeaderLayer::overriding(name, axum::http::HeaderValue::from_static(value))
 }
 
 /// Bridges the shared bus feeder onto this process's broadcast channel.
@@ -402,9 +433,45 @@ async fn session(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response {
     .into_response()
 }
 
+/// The client address the server recorded for this request. `serve` records
+/// it. A request driven through the router directly, as the tests drive it,
+/// has none, and is throttled as "unknown".
+struct Peer(Option<std::net::IpAddr>);
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Peer {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let ip = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip());
+        Ok(Peer(ip))
+    }
+}
+
+/// The answer to a password sign-in the throttle holds back (F-017): 429, with
+/// `Retry-After` in whole seconds.
+fn too_many_sign_ins(wait: std::time::Duration) -> Response {
+    let secs = wait.as_secs().max(1);
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(axum::http::header::RETRY_AFTER, secs.to_string())],
+        Json(json!({
+            "error": "too many failed sign-ins; wait before trying again",
+            "retry_after": secs,
+        })),
+    )
+        .into_response()
+}
+
 async fn login(
     State(ctx): State<Arc<Ctx>>,
     jar: CookieJar,
+    peer: Peer,
     Json(body): Json<Credentials>,
 ) -> Response {
     // An OIDC token takes precedence when present (and configured). The local
@@ -442,7 +509,30 @@ async fn login(
         };
         let username = body.username.as_deref().unwrap_or_default();
         let password = body.password.as_deref().unwrap_or_default();
+        // F-017: the keys are checked before the password is tried, so a held
+        // key costs no password hash. Every failure counts against both keys.
+        let now = std::time::Instant::now();
+        let account = throttle::login_key("user", username);
+        let address = throttle::login_key(
+            "addr",
+            &peer
+                .0
+                .map_or_else(|| "unknown".to_owned(), |ip| ip.to_string()),
+        );
+        let held = [
+            ctx.sign_in_accounts.check(&account, now),
+            ctx.sign_in_addresses.check(&address, now),
+        ]
+        .into_iter()
+        .filter_map(Result::err)
+        .max();
+        if let Some(wait) = held {
+            tracing::warn!(user = %username, "sign-in held back by the throttle");
+            return too_many_sign_ins(wait);
+        }
         if !auth::verify(&op, username, password) {
+            ctx.sign_in_accounts.record_failure(&account, now);
+            ctx.sign_in_addresses.record_failure(&address, now);
             tracing::warn!(user = %username, "sign-in refused");
             // One message for both failures: the endpoint must not say which
             // half was wrong.
@@ -452,6 +542,8 @@ async fn login(
             )
                 .into_response();
         }
+        ctx.sign_in_accounts.record_success(&account);
+        ctx.sign_in_addresses.record_success(&address);
         tracing::info!(user = %op.username, "signed in (local)");
         // The local owner account is the box's break-glass admin.
         (op.username, roles::Role::Admin, auth::Method::Local)
@@ -463,7 +555,10 @@ async fn login(
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Strict);
     cookie.set_path("/");
-    cookie.set_secure(ctx.cfg.secure_cookies);
+    cookie.set_secure(config::cookie_is_secure(
+        ctx.cfg.secure_cookies,
+        &ctx.webauthn_rp.origin,
+    ));
     (
         jar.add(cookie),
         Json(json!({
@@ -480,6 +575,10 @@ async fn logout(State(ctx): State<Arc<Ctx>>, jar: CookieJar) -> Response {
     }
     let mut gone = Cookie::from(auth::COOKIE);
     gone.set_path("/");
+    gone.set_secure(config::cookie_is_secure(
+        ctx.cfg.secure_cookies,
+        &ctx.webauthn_rp.origin,
+    ));
     (jar.remove(gone), Json(json!({"signed_in": false}))).into_response()
 }
 
@@ -506,45 +605,14 @@ fn guard(ctx: &Arc<Ctx>, jar: &CookieJar) -> Result<auth::SessionInfo, Response>
 // WebAuthn ceremony (docs/CONSOLE-IDP.md, B3/2)
 // ---------------------------------------------------------------------------
 
-/// The commands whose dispatch REQUIRES a fresh per-action assertion once the
-/// caller has a passkey enrolled: the kill and the budget mutation (the two
-/// break-glass carriers), the approval grant/deny, the two operator
-/// WireGuard commands, revoking a delegation, closing a retained
-/// reservation, and setting a unit's month cap. The policy PUT/DELETE
-/// editor joins this list the day it becomes routable (it is "v1, not built"
-/// today); an unknown name is already fail-closed to admin by the role gate.
-const SENSITIVE_COMMANDS: &[&str] = &[
-    "money_kill_run",
-    "money_set_budget",
-    "policy_decide_approval",
-    // Issuing a WireGuard peer hands out a road into the control plane, and
-    // revoking one takes an operator's access away mid-incident. Both are the
-    // same class of act as a kill: the role gate says who MAY, the ceremony
-    // says the human is present for THIS one. Without this, a stolen console
-    // session could quietly mint itself a permanent tunnel.
-    "remote_operator_wg_config",
-    "remote_operator_wg_revoke",
-    // Cutting an agent's or a user's delegated authority at vouchryx: the
-    // same class of act as a kill (it takes something away mid-incident, and
-    // a stolen session must not be able to pull this switch alone).
-    "delegation_revoke",
-    // D8: closing a retained reservation settles money on the gateway, and
-    // the console mints the token that lets it only after a person confirmed
-    // this exact closure. A stolen session must not be able to settle money.
-    "money_close_retained",
-    // A unit's central month cap moves what every gateway lets that unit
-    // spend, the same class of act as a run budget change.
-    "money_set_unit_budget",
-];
-
 /// The two ceremony names that are NOT dispatchable commands: each names an
 /// endpoint of the passkey lifecycle rather than something
 /// `POST /api/command/<name>` could ever run, and `action/start` mints a
 /// challenge bound to one exactly as it does for a sensitive command.
 ///
-/// Deliberately kept out of [`SENSITIVE_COMMANDS`], which is the DISPATCH
-/// list the command chokepoint reads: a name that cannot be dispatched has no
-/// business in a list of commands.
+/// Deliberately not rows of the command table in `roles.rs`, which is the
+/// DISPATCH list the command chokepoint reads: a name that cannot be dispatched
+/// has no business in it.
 const REMOVE_PASSKEY_CEREMONY: &str = "webauthn_remove_passkey";
 const ENROLL_PASSKEY_CEREMONY: &str = "webauthn_enroll_passkey";
 
@@ -980,7 +1048,7 @@ async fn webauthn_action_start(
     if keys.is_empty() {
         return bad_request("no passkey enrolled; enroll one before starting an action ceremony");
     }
-    let ceremonial = SENSITIVE_COMMANDS.contains(&body.command.as_str())
+    let ceremonial = roles::ceremony_commands().any(|c| c == body.command.as_str())
         || body.command == REMOVE_PASSKEY_CEREMONY
         || body.command == ENROLL_PASSKEY_CEREMONY;
     if !ceremonial {
@@ -1001,7 +1069,7 @@ async fn webauthn_action_start(
         "challenge": challenge,
         "rp_id": ctx.webauthn_rp.rp_id,
         "timeout": 120000,
-        "user_verification": "preferred",
+        "user_verification": "required",
         "allow_credentials": keys
             .iter()
             .map(|k| json!({ "type": "public-key", "id": k.credential_id }))
@@ -1011,7 +1079,7 @@ async fn webauthn_action_start(
 }
 
 /// The per-action gate. Runs AFTER the role gate and BEFORE dispatch, only
-/// for [`SENSITIVE_COMMANDS`]. Fail-closed everywhere: a corrupt store, a
+/// for the commands whose row carries the ceremony. Fail-closed everywhere: a corrupt store, a
 /// stale/foreign/replayed challenge, a binding mismatch, or a bad signature
 /// all refuse. The only pass-throughs are a verified assertion, or a caller
 /// with no passkey enrolled at all - the documented trial fallback, which the
@@ -1248,7 +1316,7 @@ async fn command(
     // the command journal as sig_alg/sig_fpr (the assertion's algorithm +
     // credential id); the no-passkey trial fallback keeps the plane's own
     // honest "software-signed" fields.
-    let webauthn_signature = if SENSITIVE_COMMANDS.contains(&name.as_str()) {
+    let webauthn_signature = if roles::requires_ceremony(&name) {
         match webauthn_gate(&ctx, &session, &name, &args, &headers) {
             Ok(sig) => sig,
             Err(refusal) => return refusal,
@@ -1556,7 +1624,7 @@ mod tests {
     fn assertion_header(ctx: &Arc<Ctx>, challenge: &str) -> String {
         let s = test_support::signer();
         let cd = test_support::client_data("webauthn.get", challenge, &ctx.webauthn_rp.origin);
-        let ad = test_support::auth_data(&ctx.webauthn_rp.rp_id, 0x01, 1, None);
+        let ad = test_support::auth_data(&ctx.webauthn_rp.rp_id, 0x05, 1, None);
         let sig = test_support::assert_sign(&s, &ad, &cd);
         let envelope = json!({
             "credential_id": test_support::enrolled(&s, 0).credential_id,
@@ -1592,7 +1660,7 @@ mod tests {
     fn assertion_header_for(ctx: &Arc<Ctx>, challenge: &str, cred_id: &[u8]) -> String {
         let s = test_support::signer();
         let cd = test_support::client_data("webauthn.get", challenge, &ctx.webauthn_rp.origin);
-        let ad = test_support::auth_data(&ctx.webauthn_rp.rp_id, 0x01, 1, None);
+        let ad = test_support::auth_data(&ctx.webauthn_rp.rp_id, 0x05, 1, None);
         let sig = test_support::assert_sign(&s, &ad, &cd);
         let envelope = json!({
             "credential_id": test_support::enrolled_with_id(&s, cred_id, 0).credential_id,
@@ -1915,7 +1983,7 @@ mod tests {
         let ctx = strict_ctx();
         let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
 
-        for command in SENSITIVE_COMMANDS {
+        for command in roles::ceremony_commands() {
             let (status, body) = post_api(
                 &ctx,
                 &format!("/api/command/{command}"),

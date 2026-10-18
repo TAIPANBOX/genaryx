@@ -185,7 +185,7 @@ paths (set => named actor; unset => OS-user default).
 
 Signing in gets you the console; it does not get you the kill. SIX
 privileged commands carry the ceremony today
-(`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`): `money_kill_run`,
+(the ceremony column of `crates/web/src/roles.rs`): `money_kill_run`,
 `money_set_budget`, `policy_decide_approval`, `remote_operator_wg_config`,
 `remote_operator_wg_revoke` and `delegation_revoke`. The middle two joined
 because issuing a WireGuard peer hands out a road into the control plane and
@@ -248,7 +248,7 @@ throughout: any parse or verify failure is a refusal, never a pass.
   with different arguments. `command` is one of the six sensitive commands,
   or one of the two lifecycle ceremony names above
   (`webauthn_enroll_passkey`, `webauthn_remove_passkey`), which are
-  deliberately NOT in `SENSITIVE_COMMANDS`: they name an endpoint of this
+  deliberately NOT in the ceremony column: they name an endpoint of this
   module, and a name that cannot be dispatched has no business in a list of
   commands.
 
