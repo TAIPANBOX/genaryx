@@ -3,7 +3,7 @@
 //! A signed-in session gets you the console; it does not get you the kill.
 //! The seven privileged commands additionally require a fresh, per-action
 //! WebAuthn assertion, and they are exactly the seven names in `main.rs`'s
-//! `SENSITIVE_COMMANDS`: `money_kill_run`, `money_set_budget`,
+//! the ceremony column: `money_kill_run`, `money_set_budget`,
 //! `policy_decide_approval`, `remote_operator_wg_config`,
 //! `remote_operator_wg_revoke`, `delegation_revoke` and
 //! `money_close_retained`. (This list used to
@@ -75,6 +75,9 @@ pub enum WebAuthnError {
     Mismatch(&'static str),
     /// The authenticator did not assert user presence.
     UserNotPresent,
+    /// A ceremony requires user verification (F-017), and the assertion did
+    /// not carry it. A tap is not enough for a sensitive command.
+    UserNotVerified,
     /// Attestation format other than "none" (out of scope by design).
     UnsupportedAttestation,
     /// COSE key is not the ES256 / P-256 shape this module supports.
@@ -105,6 +108,7 @@ impl std::fmt::Display for WebAuthnError {
             WebAuthnError::Malformed(what) => write!(f, "malformed {what}"),
             WebAuthnError::Mismatch(what) => write!(f, "{what} mismatch"),
             WebAuthnError::UserNotPresent => write!(f, "user presence not asserted"),
+            WebAuthnError::UserNotVerified => write!(f, "user verification not asserted"),
             WebAuthnError::UnsupportedAttestation => {
                 write!(f, "unsupported attestation format (only \"none\")")
             }
@@ -642,6 +646,9 @@ pub fn verify_assertion(
     if auth.flags & FLAG_UP == 0 {
         return Err(WebAuthnError::UserNotPresent);
     }
+    if auth.flags & FLAG_UV == 0 {
+        return Err(WebAuthnError::UserNotVerified);
+    }
 
     // message = authenticatorData || SHA-256(clientDataJSON)
     let mut message = authenticator_data.to_vec();
@@ -935,6 +942,21 @@ mod tests {
     // ---- assertion ----
 
     #[test]
+    fn an_assertion_without_user_verification_is_refused() {
+        let s = signer();
+        let rec = enrolled(&s, 5);
+        let cd = client_data("webauthn.get", "chal-uv", ORIGIN);
+        // Presence only: the person tapped, nobody was verified.
+        let ad = auth_data(RP, FLAG_UP, 6, None);
+        let sig = assert_sign(&s, &ad, &cd);
+        let refused = verify_assertion(&rp(), "chal-uv", &rec, &cd, &ad, &sig);
+        assert!(
+            matches!(refused, Err(WebAuthnError::UserNotVerified)),
+            "a tap without verification must not pass a ceremony: {refused:?}"
+        );
+    }
+
+    #[test]
     fn assertion_round_trips_and_updates_the_counter() {
         let s = signer();
         let rec = enrolled(&s, 5);
@@ -951,12 +973,12 @@ mod tests {
     fn assertion_rejects_tampering_wrong_key_and_replay_shapes() {
         let s = signer();
         let rec = enrolled(&s, 5);
-        let ad = auth_data(RP, FLAG_UP, 6, None);
+        let ad = auth_data(RP, FLAG_UP | FLAG_UV, 6, None);
         let cd = client_data("webauthn.get", "chal", ORIGIN);
         let sig = assert_sign(&s, &ad, &cd);
 
         // signature over different authData must fail
-        let other_ad = auth_data(RP, FLAG_UP, 99, None);
+        let other_ad = auth_data(RP, FLAG_UP | FLAG_UV, 99, None);
         assert_eq!(
             verify_assertion(&rp(), "chal", &rec, &cd, &other_ad, &sig).unwrap_err(),
             WebAuthnError::BadSignature
@@ -990,7 +1012,7 @@ mod tests {
         let s = signer();
         // regression: stored 5, asserted 5 (not greater) -> refuse
         let rec = enrolled(&s, 5);
-        let ad = auth_data(RP, FLAG_UP, 5, None);
+        let ad = auth_data(RP, FLAG_UP | FLAG_UV, 5, None);
         let cd = client_data("webauthn.get", "chal", ORIGIN);
         let sig = assert_sign(&s, &ad, &cd);
         assert_eq!(
@@ -999,7 +1021,7 @@ mod tests {
         );
         // an authenticator that never counts (0) stays acceptable
         let rec0 = enrolled(&s, 0);
-        let ad0 = auth_data(RP, FLAG_UP, 0, None);
+        let ad0 = auth_data(RP, FLAG_UP | FLAG_UV, 0, None);
         let sig0 = assert_sign(&s, &ad0, &cd);
         assert!(verify_assertion(&rp(), "chal", &rec0, &cd, &ad0, &sig0).is_ok());
     }

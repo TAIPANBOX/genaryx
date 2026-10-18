@@ -567,7 +567,7 @@ pub async fn admission_check(
 /// Run a Verdryx eval THROUGH the gateway under the newcomer's own key, then
 /// snapshot it as a baseline, then read the result back through the
 /// EXISTING read-only `VerdryxClient` - admin-only (real provider spend
-/// under a fresh key, `crates/web/src/roles.rs`'s `ADMIN_COMMANDS`). See this
+/// under a fresh key, the admin rows of `crates/web/src/roles.rs`). See this
 /// module's doc comment for the exact secret-hygiene contract on `api_key`.
 pub async fn admission_baseline(
     evalset_path: String,

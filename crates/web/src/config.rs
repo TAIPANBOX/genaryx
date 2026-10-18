@@ -46,7 +46,7 @@ pub struct Config {
     /// missing was any way to STOP standing on it. An operator who wants the
     /// invariant enforced ("a sensitive command requires a per-action
     /// ceremony", CLAUDE.md 2) sets `GENARYX_WEB_REQUIRE_PASSKEY=1` and the
-    /// fallback is gone for every command in `SENSITIVE_COMMANDS`.
+    /// fallback is gone for every command whose row carries the ceremony.
     pub require_passkey: bool,
     /// Where `delegation_revoke` sends a revocation, resolved ONCE at
     /// startup (`GENARYX_VOUCHRYX_URL` + `GENARYX_VOUCHRYX_REVOKE_KEY_FILE`).
@@ -142,6 +142,15 @@ impl Config {
     }
 }
 
+/// Whether the session cookie is marked Secure (F-017). It is, when the
+/// operator asks for it, and whenever the console's own origin is https: that
+/// is a person reaching the console over TLS, directly or through the proxy
+/// the origin names. A plain http origin, the tunnel case, keeps its cookie as
+/// it was.
+pub fn cookie_is_secure(explicit: bool, origin: &str) -> bool {
+    explicit || origin.starts_with("https://")
+}
+
 /// The words that turn the strict mode on, split out of
 /// [`Config::require_passkey_from_env`] so the decision has a seam a test can
 /// reach. Reading the variable is I/O and setting one is process-global; which
@@ -175,6 +184,13 @@ mod tests {
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
         }
+    }
+
+    #[test]
+    fn the_cookie_is_secure_when_the_origin_is_https_or_asked_for() {
+        assert!(cookie_is_secure(false, "https://console.example"));
+        assert!(cookie_is_secure(true, "http://10.0.0.2:7420"));
+        assert!(!cookie_is_secure(false, "http://localhost:7420"));
     }
 
     #[test]

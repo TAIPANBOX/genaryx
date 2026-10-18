@@ -153,7 +153,7 @@ are in docs/CONSOLE-IDP.md.
 
 ## The per-action passkey ceremony
 
-Six commands carry it (`crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`):
+Eight commands carry it (the ceremony column of `crates/web/src/roles.rs`):
 `money_kill_run`, `money_set_budget`, `policy_decide_approval`,
 `remote_operator_wg_config`, `remote_operator_wg_revoke` and
 `delegation_revoke`. Each needs a fresh assertion from the operator's own

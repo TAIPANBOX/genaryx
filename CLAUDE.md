@@ -79,8 +79,8 @@ an absent invariant.
    change, approval, the two operator WireGuard commands (issue a peer,
    revoke a peer), revoking a delegation, closing a retained reservation,
    and setting a unit's month cap, each need a fresh passkey confirmation.
-   Eight, not three: `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS` is the
-   list, and this file said three until 2026-08-05, five until 2026-09-24,
+   Eight, not three: the `ceremony` column of `crates/web/src/roles.rs`'s command
+   table is the list (invariant 31), and this file said three until 2026-08-05, five until 2026-09-24,
    six until 2026-10-12, seven until 2026-10-14. Not a session, not a role
    check alone:
    the ceremony is per action, because the whole point is that a stolen
@@ -1604,6 +1604,55 @@ an absent invariant.
     per fingerprint; a call that claimed no agent is skipped by the gateway
     and never reaches the bus; no notification is raised by this console for
     either.)*
+
+31. **A sensitive command, a passkey enrolment and a passkey removal each need
+    a passkey that verified the person, and the commands that need that
+    ceremony are one column of the command table.** `@decided 2026-10-17`: a
+    per-action assertion for these is accepted only when the authenticator
+    verified the person (a biometric or a PIN), not a bare tap, and the
+    challenge asks for that verification. The ceremony set is the `ceremony`
+    column of `crates/web/src/roles.rs`'s `COMMANDS`. The router keeps no list
+    of its own, and a command the table does not know asks for the ceremony,
+    as it already asks for the admin role.
+    *(test: `crates/web/src/main.rs`'s `a_ceremony_refuses_a_presence_only_assertion`,
+    `a_ceremony_accepts_a_verified_assertion` and
+    `the_action_start_asks_the_authenticator_to_verify_the_user`;
+    `crates/web/src/webauthn.rs`'s `an_assertion_without_user_verification_is_refused`;
+    `crates/web/src/roles.rs`'s `the_ceremony_is_a_column_of_the_command_table`,
+    `an_unknown_command_is_treated_as_a_ceremony_command` and
+    `the_ceremony_list_is_written_once_in_the_command_table`. Red first: the
+    red run of PR #127 failed fifteen tests on assertions against the unfixed
+    tree, after the new names were stubbed so the tests could compile.)*
+
+32. **Password sign-in is throttled per account and per client address, every
+    response carries the security headers, and the session cookie is Secure
+    whenever the console's origin is https.** `@decided 2026-10-17`: a failed
+    password is counted against the account it named and the address it came
+    from. A key that has used its failures inside a window is held back, and
+    the answer is 429 with `Retry-After` in seconds. A successful sign-in
+    clears its keys, and the memory for them is bounded. Every response,
+    including the health probe, the static pages and a not-found answer,
+    carries a content security policy that forbids framing and every source
+    the console does not use, plus `X-Frame-Options: DENY`,
+    `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. The
+    cookie is Secure when the origin is https or `--secure-cookies` is given.
+    *(test: `crates/web/src/throttle.rs`'s
+    `a_key_is_refused_after_its_limit_and_admitted_after_the_window`,
+    `a_success_clears_the_key`, `one_key_does_not_throttle_another`,
+    `memory_stays_bounded_under_a_flood_of_distinct_keys` and
+    `a_hostile_username_is_keyed_in_bounded_space`; `crates/web/src/main.rs`'s
+    `the_sign_in_is_throttled_per_account_after_repeated_failures`,
+    `the_sign_in_is_throttled_per_client_address`,
+    `every_response_carries_the_security_headers`,
+    `the_session_cookie_is_secure_over_tls` and
+    `the_session_cookie_stays_plain_over_plain_http`; `crates/web/src/config.rs`'s
+    `the_cookie_is_secure_when_the_origin_is_https_or_asked_for`.)*
+    Where it says nothing: the address is the one the connection came from, so
+    behind a TLS proxy every client shares the proxy's address and that address
+    limit is shared with all of them; the OIDC sign-in is not throttled; the
+    `style-src` policy keeps `'unsafe-inline'`; and a console behind TLS whose
+    `GENARYX_WEB_ORIGIN` is still http needs `--secure-cookies` for its cookie
+    to be Secure.
 
 ## Decisions that have no gate yet
 

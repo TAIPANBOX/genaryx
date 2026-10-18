@@ -104,6 +104,10 @@ pub struct Ctx {
     /// once from `GENARYX_WEB_RP_ID`/`GENARYX_WEB_ORIGIN` with loopback
     /// defaults.
     pub webauthn_rp: crate::webauthn::RpConfig,
+    /// Failed password sign-ins per account name (F-017, see `throttle`).
+    pub sign_in_accounts: crate::throttle::LoginThrottle,
+    /// Failed password sign-ins per client address (F-017, see `throttle`).
+    pub sign_in_addresses: crate::throttle::LoginThrottle,
     /// Enrolled passkeys, or WHY the store is unusable. Held as the error
     /// rather than unwrapped or defaulted: a corrupt store must make the
     /// privileged-command gate refuse (fail closed), never quietly behave as
@@ -143,6 +147,16 @@ impl Ctx {
         Self {
             operator: RwLock::new(crate::auth::load(&cfg.operator_file())),
             webauthn_rp: crate::webauthn::RpConfig::from_env(cfg.bind.port()),
+            sign_in_accounts: crate::throttle::LoginThrottle::new(
+                crate::throttle::ACCOUNT_LIMIT,
+                crate::throttle::WINDOW,
+                crate::throttle::MAX_KEYS,
+            ),
+            sign_in_addresses: crate::throttle::LoginThrottle::new(
+                crate::throttle::ADDRESS_LIMIT,
+                crate::throttle::WINDOW,
+                crate::throttle::MAX_KEYS,
+            ),
             passkeys: crate::webauthn::PasskeyStore::open(cfg.passkeys_file())
                 .map_err(|e| e.to_string()),
             webauthn_pending: crate::webauthn::PendingCeremonies::default(),

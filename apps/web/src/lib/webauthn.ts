@@ -529,7 +529,7 @@ async function runCeremonyAndDispatch<T>(
 /**
  * Dispatch a sensitive command through the per-action WebAuthn ceremony
  * (docs/CONSOLE-IDP.md B3/2; the six commands in
- * `crates/web/src/main.rs`'s `SENSITIVE_COMMANDS`).
+ * the ceremony column of `crates/web/src/roles.rs`).
  *
  * Two paths, matching the two outcomes `webauthn_gate` has for a caller who
  * can still act at all (a box with `GENARYX_WEB_REQUIRE_PASSKEY` on refuses
