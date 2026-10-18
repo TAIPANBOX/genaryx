@@ -192,7 +192,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn the_strict_passkey_mode_turns_on_for_the_words_an_operator_would_type() {
         for on in ["1", "true", "yes", "on", "TRUE", "Yes", " ON ", "\ttrue\n"] {
             assert!(

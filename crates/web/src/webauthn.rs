@@ -955,7 +955,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn assertion_round_trips_and_updates_the_counter() {
         let s = signer();
         let rec = enrolled(&s, 5);
