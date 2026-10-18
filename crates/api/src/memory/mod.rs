@@ -29,6 +29,7 @@
 
 pub mod commands;
 pub mod env;
+pub mod pool;
 pub mod state;
 
 pub use state::{MemoryState, bootstrap};

@@ -103,6 +103,12 @@ pub enum McpError {
     #[error("mcp tool error: {0}")]
     Tool(String),
 
+    /// A read named an agent other than the one this server is scoped to. The
+    /// call is never sent: Engram refuses a named agent that is not the
+    /// server's own identity (its F-007 scope), so the connector says so first.
+    #[error("mcp scope: {0}")]
+    Scope(String),
+
     /// The server did not answer within [`McpStdioClient::timeout`], or its
     /// stdout closed (the reader thread ended) before the response arrived.
     #[error("mcp timeout/closed after {0:?}")]

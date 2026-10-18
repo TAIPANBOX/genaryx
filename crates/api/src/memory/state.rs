@@ -31,21 +31,24 @@
 //! (app shutdown, or a future reconnect that replaces `MemoryState.inner`).
 
 use super::env::{self, EnvSource, ResolvedEnv};
+use super::pool::{IDLE_AFTER, MAX_SCOPED_SERVERS, ScopePool};
 use genaryx_connectors::EngramClient;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// A live, ready-to-use Memory connection: the long-lived `EngramClient`
-/// behind a blocking mutex, plus enough of the resolved environment for the
-/// status DTO and error messages. Cheap to clone (an `Arc`ed mutex plus a
-/// tagged source and two paths) - mirrors every other panel's `XxxClient`
-/// clone-out-of-the-lock convention.
+/// A live, ready-to-use Memory connection: the long-lived whole-file
+/// `EngramClient` behind a blocking mutex, the pool of per-agent servers the
+/// panel reads through for one agent (see [`super::pool`]), plus enough of the
+/// resolved environment for the status DTO and error messages. Cheap to clone
+/// (`Arc`ed mutexes plus a tagged source and two paths) - mirrors every other
+/// panel's `XxxClient` clone-out-of-the-lock convention.
 #[derive(Clone)]
 pub struct MemoryClient {
     pub source: EnvSource,
     pub engram_mcp_bin: PathBuf,
     pub db_path: PathBuf,
     pub client: Arc<Mutex<EngramClient>>,
+    pub scoped: Arc<Mutex<ScopePool<Mutex<EngramClient>>>>,
 }
 
 /// The Memory panel's whole state machine - mirrors `IdentityInner`'s four
@@ -125,6 +128,7 @@ async fn spawn_client(resolved: ResolvedEnv) -> MemoryInner {
             engram_mcp_bin: resolved.engram_mcp_bin,
             db_path: resolved.db_path,
             client: Arc::new(Mutex::new(client)),
+            scoped: Arc::new(Mutex::new(ScopePool::new(MAX_SCOPED_SERVERS, IDLE_AFTER))),
         }),
         Ok(Err(e)) => MemoryInner::Unreachable {
             source: resolved.source,
