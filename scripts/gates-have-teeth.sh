@@ -354,7 +354,7 @@ run_case "invariant 20: output read from completion_tokens alone again" fail \
 # 200 alone is not a closure.
 run_case "invariant 22: money_close_retained dropped from the ceremony list" fail \
 	'cargo test -q -p genaryx-web --bin genaryx-web money_close_retained' \
-	"$(py 'edit("crates/web/src/main.rs", "    \"money_close_retained\",\n", "")')" \
+	"$(py 'edit("crates/web/src/roles.rs", "    gate(\"money_close_retained\", Role::Admin, true),", "    gate(\"money_close_retained\", Role::Admin, false),")')" \
 	"money_close_retained_without_an_assertion_is_428"
 
 retained_gate='cargo test -q -p genaryx-api --test it retained_close_test'
@@ -458,13 +458,12 @@ run_case "api_key_ref: the resolution's own comment reworded" pass \
 # mutants; the gate is the tests that hold each half.
 run_case "invariant 26: money_set_unit_budget dropped from the ceremony list" fail \
 	'cargo test -q -p genaryx-web --bin genaryx-web money_set_unit_budget' \
-	"$(py 'edit("crates/web/src/main.rs", "    \"money_set_unit_budget\",\n];", "];")')" \
+	"$(py 'edit("crates/web/src/roles.rs", "    gate(\"money_set_unit_budget\", Role::Admin, true),", "    gate(\"money_set_unit_budget\", Role::Admin, false),")')" \
 	"money_set_unit_budget_without_an_assertion_is_428"
 
 run_case "invariant 26: setting a unit cap becomes a viewer read" fail \
 	'cargo test -q -p genaryx-web --bin genaryx-web unit_cap' \
-	"$(py 'edit("crates/web/src/roles.rs", "    \"money_set_unit_budget\",\n    // Lifecycle", "    // Lifecycle")
-edit("crates/web/src/roles.rs", "    \"money_units\",", "    \"money_units\",\n    \"money_set_unit_budget\",")')" \
+	"$(py 'edit("crates/web/src/roles.rs", "    gate(\"money_set_unit_budget\", Role::Admin, true),", "    gate(\"money_set_unit_budget\", Role::Viewer, true),")')" \
 	"setting_a_unit_cap_is_admin_and_reading_caps_is_a_read"
 
 units_gate='cargo test -q -p genaryx-api --test it money_units_test'
