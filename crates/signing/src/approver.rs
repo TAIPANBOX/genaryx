@@ -291,12 +291,12 @@ pub fn signer_from_pkcs8_pem(pem: &str) -> Result<SoftwareSigner, StatementError
     let signer = SoftwareSigner::from_scalar(&scalar).map_err(|_| {
         StatementError::Malformed("the approver key's scalar is not a P-256 scalar")
     })?;
-    if let Some(public) = public {
-        if signer.public_key_x963()? != public {
-            return Err(StatementError::Malformed(
-                "the approver key's public half does not match its scalar",
-            ));
-        }
+    if let Some(public) = public
+        && signer.public_key_x963()? != public
+    {
+        return Err(StatementError::Malformed(
+            "the approver key's public half does not match its scalar",
+        ));
     }
     Ok(signer)
 }
