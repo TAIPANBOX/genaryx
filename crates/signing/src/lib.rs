@@ -13,6 +13,7 @@
 //! assurance vocabulary because the labels describe KEY RESIDENCY, not a
 //! shell. Live-cloud driver: `examples/verify_es256_blob.rs`.
 
+pub mod approver;
 pub mod es256;
 pub mod mldsa;
 
