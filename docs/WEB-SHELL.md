@@ -174,17 +174,17 @@ rides on the session:
   enrols its replacement.
 
 ```sh
-# Refuse a sensitive command outright when the caller has no passkey,
-# instead of running it on the session and journaling it software-signed.
-export GENARYX_WEB_REQUIRE_PASSKEY=1
+# Off by default: a sensitive command from a caller with no passkey is refused.
+# Set this to allow the software-signed fallback instead (the session alone,
+# journaled software-signed). Announced at startup, and logged on every use.
+export GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY=1
 ```
 
-Off by default, so an upgrade changes nothing on a running box. With it off,
-a caller with no enrolled passkey still runs those six commands and the
-journal records them honestly as software-signed: a weaker state, deliberately
-kept as the bridge for an operator who has not enrolled yet. With it on, that
-bridge is gone and the refusal says to enrol a passkey. `genaryx-web serve`
-states which way it read the variable at startup.
+On by default. An install that never enrolled a passkey has those six commands
+refused until it enrols one: enrol one under Session > Passkeys, then run the
+command again. The software-signed fallback, which ran them on the session
+alone, is off unless the variable above is set. `genaryx-web serve` states
+which way it read the variable at startup.
 
 The browser needs a secure context for any of this: reach the console as
 `localhost` (the loopback bind, or an `ssh -L` forward over the tunnel) or
@@ -315,6 +315,5 @@ carries what the bus receives, and a stack nobody is calling receives nothing.
 
 Signing in opens the console, at whatever role the session carries. It does
 not by itself run a destructive action: those six re-sign in the moment they
-happen, with the operator's passkey, whenever one is enrolled (always, with
-`GENARYX_WEB_REQUIRE_PASSKEY=1`). docs/CONSOLE-IDP.md has the full contract
+happen, with the operator's passkey, whenever one is enrolled (always, by default). docs/CONSOLE-IDP.md has the full contract
 and the honest limits.

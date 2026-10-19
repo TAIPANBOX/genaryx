@@ -30,6 +30,7 @@
 //! same "parallel, not shared" precedent `crates/connectors/src/wardryx.rs`
 //! already set relative to `cloud_rest.rs`.
 
+pub mod approver;
 pub mod commands;
 pub mod env;
 pub mod state;

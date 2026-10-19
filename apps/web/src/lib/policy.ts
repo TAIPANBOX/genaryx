@@ -101,6 +101,8 @@ export function describePolicyError(err: PolicyError, currentRole?: ConsoleRole 
       return "No Wardryx policy plane found.";
     case "unreachable":
       return `Could not reach Wardryx: ${err.reason}`;
+    case "approver_statement":
+      return `Refused before it reached Wardryx: ${err.reason}`;
     case "wardryx":
       return err.status !== null ? `Wardryx error ${err.status}: ${err.message}` : err.message;
     case "role_required": {

@@ -48,6 +48,9 @@
         "listen_default": "127.0.0.1:7420",
         "health_path": "/healthz",
         "env": {
+          "GENARYX_APPROVER_KEY_FILE": {
+            "required": false
+          },
           "GENARYX_CLOSURE_SECRET_FILE": {
             "required": false
           },
@@ -91,6 +94,9 @@
             "required": false
           },
           "GENARYX_VOUCHRYX_URL": {
+            "required": false
+          },
+          "GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY": {
             "required": false
           },
           "GENARYX_WEB_OIDC_ADMIN_ROLE": {

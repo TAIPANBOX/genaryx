@@ -35,9 +35,10 @@ because an assumption nobody stated is the one that bites.
   session.** Sign-in is a password against an Argon2id hash. The per-action
   WebAuthn ceremony is bound to the exact command and its exact arguments, and
   it exists so a stolen session cannot mint a kill. Where no passkey is
-  enrolled, the action still proceeds and is journaled software-signed and
-  labelled as such; that is deliberate, and it is a weaker state. Set
-  `GENARYX_WEB_REQUIRE_PASSKEY=1` to refuse the action instead. Enrolling a
+  enrolled, the action is refused until one is enrolled. An operator can set
+  `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY=1` to allow a software-signed fallback
+  instead: the action then proceeds, journaled software-signed and labelled as
+  such. That is a weaker state, and it is chosen and announced. Enrolling a
   passkey and removing one are part of the same control and neither rides on
   the session: the operator password is the factor for the first enrollment
   and the last removal, an assertion from an enrolled key for everything

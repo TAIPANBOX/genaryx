@@ -57,6 +57,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Print the public JWKS of an approver key file: the key set wardryx reads
+    /// as its approver keys (`WARDRYX_APPROVER_JWKS`).
+    ApproverJwks {
+        /// The PKCS#8 PEM key file the console signs approver statements with.
+        #[arg(long)]
+        key_file: PathBuf,
+    },
     /// Serve the console.
     Serve {
         /// Address to listen on. Default is loopback: bind your tunnel's
@@ -131,6 +138,15 @@ async fn main() {
         .init();
 
     match Cli::parse().cmd {
+        Cmd::ApproverJwks { key_file } => {
+            match genaryx_api::policy::approver::jwks_for_key_file(&key_file) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("genaryx-web: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Cmd::Doctor => {
             let report = doctor::run();
             doctor::print(&report);
@@ -253,7 +269,13 @@ async fn main() {
                 require_passkey: Config::require_passkey_from_env(),
                 delegation,
                 closure,
+                approver_key_file: Config::approver_key_file_from_env(),
             };
+            if let Some(note) = config::legacy_require_passkey_notice(
+                std::env::var_os(config::LEGACY_REQUIRE_PASSKEY_ENV).is_some(),
+            ) {
+                tracing::warn!("{note}");
+            }
             serve(cfg).await;
         }
     }
@@ -895,8 +917,8 @@ async fn webauthn_register_finish(
 /// - **The last one**: the operator password (`genaryx-web set-password`),
 ///   and only that. An assertion from the key being removed is a fine proof
 ///   of possession, and still not enough: this is the removal that takes the
-///   whole box back to session-only (or, with `GENARYX_WEB_REQUIRE_PASSKEY`,
-///   to refusing outright), so it is the box owner's decision. It is also the
+///   whole box back to session-only (or, by default, to refusing outright),
+///   so it is the box owner's decision. It is also the
 ///   only rule that works in the case that matters, a lost key, where no
 ///   assertion can be produced at all.
 /// - The password is accepted for a non-last removal too. That adds no
@@ -1099,34 +1121,34 @@ fn webauthn_gate(
         Err(e) => return Err(store_unavailable(e)),
     };
     if !store.has_any(&session.user) {
-        // The strict console (`GENARYX_WEB_REQUIRE_PASSKEY`): no enrolled
-        // passkey means no ceremony is possible, and an operator who asked for
-        // the ceremony to be mandatory asked for the command to be REFUSED
-        // rather than quietly run on the session. Say what to do about it: a
+        // The default: no enrolled passkey means no ceremony is possible, so
+        // the command is REFUSED, and the refusal says how to enrol one. A
         // bare 403 here would read as a role problem, which it is not.
         if ctx.cfg.require_passkey {
             tracing::warn!(
                 user = %session.user, command = %name,
-                "webauthn: required by configuration and nothing enrolled; refused"
+                "webauthn: a passkey is required and none is enrolled; refused"
             );
             return Err((
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": format!(
-                        "this console requires a passkey for {name} \
-                         (GENARYX_WEB_REQUIRE_PASSKEY is on) and you have none enrolled: \
-                         enrol one under Session > Passkeys, then run this again"
+                        "this console requires a passkey for {name}, and you have none \
+                         enrolled: enrol one under Session > Passkeys, then run this again"
                     ),
                     "webauthn": "enrollment_required",
                 })),
             )
                 .into_response());
         }
-        // No override: the plane's own transport-signing fields stay, which
-        // on this shell honestly read "software-signed".
-        tracing::info!(
+        // The explicit fallback (GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY): the
+        // plane's own transport-signing fields stay, which on this shell
+        // honestly read "software-signed". Logged at warning level on every
+        // use, because it is a downgrade the operator chose.
+        tracing::warn!(
             user = %session.user, command = %name,
-            "webauthn: no passkey enrolled; software-signed fallback"
+            "webauthn: software-signed fallback, because GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY \
+             is set and no passkey is enrolled"
         );
         return Ok(None);
     }
@@ -1447,6 +1469,7 @@ mod tests {
             require_passkey,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+            approver_key_file: None,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
@@ -1463,9 +1486,10 @@ mod tests {
         ctx_at(test_dir(), false)
     }
 
-    /// A console configured the strict way (`GENARYX_WEB_REQUIRE_PASSKEY`):
-    /// the ceremony is mandatory, and a sensitive command with nobody enrolled
-    /// is refused rather than falling back. Set on the resolved `Config` here
+    /// A console configured the strict way (the default, which is what
+    /// `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY` being unset means): the ceremony
+    /// is mandatory, and a sensitive command with nobody enrolled is refused
+    /// rather than falling back. Set on the resolved `Config` here
     /// rather than through the environment on purpose: the env is
     /// process-global and cargo runs these tests on parallel threads, so an
     /// env-var switch would leak between them.
@@ -2008,6 +2032,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn by_default_a_sensitive_command_with_nobody_enrolled_is_refused() {
+        // The production default, read through the seam the binary uses:
+        // with the fallback switch unset, the passkey is required. The gate
+        // is called directly, so no command is dispatched while the default
+        // is still wrong.
+        let ctx = ctx_at(test_dir(), crate::config::require_passkey_from_switch(""));
+        let session = auth::SessionInfo {
+            user: "alice".into(),
+            role: Role::Admin,
+            method: Method::Local,
+        };
+        for command in roles::ceremony_commands() {
+            let refusal = webauthn_gate(&ctx, &session, command, &json!({}), &HeaderMap::new());
+            let Err(response) = refusal else {
+                panic!(
+                    "{command}: the default let a sensitive command through with nobody enrolled"
+                );
+            };
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{command}");
+        }
+    }
+
+    #[tokio::test]
+    async fn by_default_the_probe_says_the_passkey_policy_is_on() {
+        let ctx = ctx_at(test_dir(), crate::config::require_passkey_from_switch(""));
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        let (status, body) = get_api(&ctx, "/api/webauthn/passkeys", &sid).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["policy_requires_passkey"], true);
+    }
+
+    #[tokio::test]
+    async fn by_default_the_first_passkey_enrols_on_the_password_and_then_the_ceremony_runs() {
+        let ctx = ctx_at(test_dir(), crate::config::require_passkey_from_switch(""));
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        set_test_operator(&ctx, "correct horse battery");
+
+        // Before any enrolment the default refuses the command and says how
+        // to get out of the refusal.
+        let (status, body) =
+            post_api(&ctx, "/api/command/money_kill_run", &sid, None, json!({})).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "enrollment_required");
+
+        // The enrolment path: the first passkey needs the operator password,
+        // not the session alone.
+        let (status, body) = register_start(&ctx, &sid, None, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "password_required");
+        let (status, body) = register_start(&ctx, &sid, Some("correct horse battery"), None).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        let challenge = body["challenge"].as_str().expect("a challenge").to_string();
+        let (status, body) = register_finish(&ctx, &sid, &challenge, b"cred-1").await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+
+        // Enrolled: the same command now asks for the assertion, which is the
+        // ordinary retry signal and not the enrolment refusal.
+        let (status, body) =
+            post_api(&ctx, "/api/command/money_kill_run", &sid, None, json!({})).await;
+        assert_eq!(status, StatusCode::PRECONDITION_REQUIRED, "body: {body}");
+        assert_eq!(body["webauthn"], "required");
+    }
+
+    #[tokio::test]
     async fn with_the_ceremony_optional_the_fallback_still_runs_and_is_still_software_signed() {
         let ctx = test_ctx();
         let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
@@ -2527,6 +2615,7 @@ mod tests {
             require_passkey: false,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+            approver_key_file: None,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {

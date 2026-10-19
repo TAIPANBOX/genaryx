@@ -31,6 +31,7 @@ export type PolicyError =
   | { kind: "bootstrapping" }
   | { kind: "no_environment" }
   | { kind: "unreachable"; reason: string }
+  | { kind: "approver_statement"; reason: string }
   | { kind: "wardryx"; status: number | null; message: string }
   | { kind: "role_required"; role: "viewer" | "approver" | "admin" };
 

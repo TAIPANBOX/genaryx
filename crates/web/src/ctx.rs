@@ -74,6 +74,9 @@ pub struct Ctx {
     pub lifecycle: RwLock<crate::lifecycle::LifecycleStore>,
     pub money: MoneyState,
     pub policy: PolicyState,
+    /// The key the console signs approver statements with, read once from
+    /// `GENARYX_APPROVER_KEY_FILE` at startup (CLAUDE.md invariant 35).
+    pub approver: genaryx_api::policy::approver::ApproverKey,
     pub identity: IdentityState,
     /// I15 "key lifecycle health": the gateway's key-lifecycle report, an
     /// entirely independent plane from `identity` above (different
@@ -165,6 +168,9 @@ impl Ctx {
             lifecycle: RwLock::new(crate::lifecycle::LifecycleStore::default()),
             money: MoneyState::pending(),
             policy: PolicyState::pending(),
+            approver: genaryx_api::policy::approver::ApproverKey::load(
+                cfg.approver_key_file.as_deref(),
+            ),
             identity: IdentityState::pending(),
             credentials: CredentialsState::pending(),
             admission: AdmissionState::pending(),

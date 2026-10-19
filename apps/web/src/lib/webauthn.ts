@@ -125,7 +125,8 @@ export interface PasskeysProbe {
    * is simply whether they have enrolled anything. */
   webauthn_required: boolean;
   /** Whether this BOX refuses a sensitive command from a caller with no
-   * enrolled passkey (`GENARYX_WEB_REQUIRE_PASSKEY`), instead of running it
+   * enrolled passkey (the default; `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY` turns
+   * that off), instead of running it
    * software-signed. Independent of the flag above: the policy is the box's,
    * the enrollment is the caller's. */
   policy_requires_passkey: boolean;
@@ -532,7 +533,7 @@ async function runCeremonyAndDispatch<T>(
  * the ceremony column of `crates/web/src/roles.rs`).
  *
  * Two paths, matching the two outcomes `webauthn_gate` has for a caller who
- * can still act at all (a box with `GENARYX_WEB_REQUIRE_PASSKEY` on refuses
+ * can still act at all (a box that requires a passkey, which is the default, refuses
  * outright, with a shape this deliberately does not retry):
  * - The common case: {@link listPasskeys}'s cached probe already says a
  *   ceremony is required, and this browser can run one - get the header

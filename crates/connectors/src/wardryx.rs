@@ -377,7 +377,27 @@ impl WardryxClient {
         let body = ApprovalDecideRequestBody {
             decision: verdict.as_wire(),
             decided_by: decided_by.to_string(),
+            approver_statement: None,
         };
+        let approval = path_segment(id)?;
+        self.send_json(
+            reqwest::Method::POST,
+            &format!("/v1/approvals/{approval}/decide"),
+            &body,
+        )
+        .await
+    }
+
+    /// `POST /v1/approvals/{id}/decide` with the console's approver statement
+    /// (CLAUDE.md invariant 35) when one was made; `None` sends none.
+    pub async fn decide_approval_with_statement(
+        &self,
+        id: &str,
+        verdict: ApprovalVerdict,
+        decided_by: &str,
+        approver_statement: Option<&str>,
+    ) -> Result<ApprovalDecideResponse, WardryxError> {
+        let body = decide_request_body(verdict, decided_by, approver_statement);
         let approval = path_segment(id)?;
         self.send_json(
             reqwest::Method::POST,
@@ -575,6 +595,44 @@ impl ApprovalVerdict {
 struct ApprovalDecideRequestBody {
     decision: &'static str,
     decided_by: String,
+    /// The console's approver statement (CLAUDE.md invariant 35), omitted when
+    /// no statement was made.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approver_statement: Option<String>,
+}
+
+/// The decide body for a verdict, with the approver statement when one was made.
+fn decide_request_body(
+    verdict: ApprovalVerdict,
+    decided_by: &str,
+    approver_statement: Option<&str>,
+) -> ApprovalDecideRequestBody {
+    ApprovalDecideRequestBody {
+        decision: verdict.as_wire(),
+        decided_by: decided_by.to_string(),
+        approver_statement: approver_statement.map(str::to_owned),
+    }
+}
+
+#[cfg(test)]
+mod approver_statement_tests {
+    use super::*;
+
+    #[test]
+    fn a_statement_is_sent_as_approver_statement_when_one_was_made() {
+        let body = decide_request_body(ApprovalVerdict::Grant, "user://acme/alice", Some("a.b.c"));
+        let v = serde_json::to_value(&body).unwrap();
+        assert_eq!(v["approver_statement"], "a.b.c");
+        assert_eq!(v["decision"], "grant");
+    }
+
+    #[test]
+    fn no_statement_means_the_field_is_absent_from_the_body() {
+        let body = decide_request_body(ApprovalVerdict::Deny, "user://acme/alice", None);
+        let v = serde_json::to_value(&body).unwrap();
+        assert!(v.get("approver_statement").is_none());
+        assert_eq!(v["decision"], "deny");
+    }
 }
 
 /// `POST /v1/approvals/{id}/decide` response body. Exact shape of

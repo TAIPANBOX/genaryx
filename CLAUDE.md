@@ -89,13 +89,13 @@ an absent invariant.
    *(partly gated: router-level tests in `crates/web/src/main.rs` drive the
    real axum router through the whole ceremony, and hold that an enrolled
    caller is refused without an assertion, that the command and argument
-   bindings are enforced, that enrolling and removing a passkey each need a
-   factor the session does not carry, and that with
-   `GENARYX_WEB_REQUIRE_PASSKEY=1` all ten are refused when nobody is
-   enrolled. What is NOT held is the default configuration: with the setting
-   off and no passkey enrolled, a sensitive command still runs and is
-   journaled software-signed. So the invariant holds on a box that enrolled a
-   passkey or set the variable, and is a documented fallback otherwise.)*
+   bindings are enforced, and that enrolling and removing a passkey each need
+   a factor the session does not carry. The default is held by the tests named
+   in invariant 34: with nobody enrolled, every row of the ceremony column is
+   refused. What is NOT held is the explicit exception: a box that sets
+   `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY` runs a sensitive command with no
+   passkey on the session alone, journaled software-signed, and says so in
+   its startup announcement and in a warning on every use.)*
 3. **Every privileged action is journaled into a verified hash chain.** An
    action that happened without a chain entry is indistinguishable from one that
    did not happen. And it must be the CONSOLE's chain: a console_command
@@ -1731,6 +1731,78 @@ an absent invariant.
     ban at all; no live vouchryx, Cloud or gateway has been exercised by
     this build, and the time from stop to refusal at a door is not
     measured here.)*
+
+34. **The passkey ceremony is required by default, and the software-signed
+    fallback is an explicit choice that the console announces.**
+    `@decided 2026-10-19`: a console with nobody enrolled refuses every
+    sensitive command and says how to enrol a passkey, rather than running it
+    on the session alone and journaling it software-signed. The first passkey
+    is enrolled on the operator password, and the ceremony applies after it.
+    The fallback is off unless the operator sets
+    `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY` to a true word. A value nobody meant,
+    a typo included, leaves the ceremony enforced, which is the safe direction.
+    With the switch on, the startup announcement is a warning, and every use
+    of the fallback is logged at warning level.
+
+    Where it says nothing: an install that never enrolled a passkey now has
+    its sensitive commands refused until it enrols one, which is a change for
+    such a box; the way out is to enrol, or to set the switch deliberately.
+    The variable `GENARYX_WEB_REQUIRE_PASSKEY` is no longer read for its
+    setting, and a stack that sets it still gets the required mode, because
+    that is now the default. The console reads it only to log, at startup,
+    that it is ignored.
+    *(test: `crates/web/src/config.rs`'s
+    `the_passkey_is_required_when_the_fallback_switch_is_unset_or_blank`,
+    `the_fallback_switch_drops_the_requirement_only_for_the_words_an_operator_would_type`,
+    `a_typo_or_a_value_nobody_meant_keeps_the_passkey_required` and
+    `the_fallback_switch_has_its_own_name_in_the_environment`;
+    `crates/web/src/main.rs`'s
+    `by_default_a_sensitive_command_with_nobody_enrolled_is_refused`,
+    `by_default_the_probe_says_the_passkey_policy_is_on` and
+    `by_default_the_first_passkey_enrols_on_the_password_and_then_the_ceremony_runs`.
+    Scenarios: `features/a-passkey-is-required-by-default.feature`, seven, each
+    bound; gate: `scripts/features-are-bound.sh`. Red first: the test-only
+    commit `ab9577a` came before the fix that made these pass.)*
+
+35. **A decision on an approval is made by a person only with a statement the
+    console signs after a passkey assertion confirmed it, and a decision that
+    cannot carry one is refused.** `@decided 2026-10-19`: when the operator
+    gives the console an approver key file (`GENARYX_APPROVER_KEY_FILE`, a
+    PKCS#8 P-256 private key in PEM), each approval is sent to wardryx with a
+    compact ES256 statement. The statement names the person, the passkey
+    credential that confirmed the decision, the approval and the decision, and
+    wardryx verifies it against its copy of the console's public key set. The
+    statement is made only after the passkey assertion of the decision has
+    verified. With a key file configured, a decision that cannot carry a
+    statement is refused, and nothing is sent to wardryx. With no key file
+    configured, no statement is sent, and each decision logs a warning that
+    wardryx records it as decided by a key. The key file is read once at
+    startup, and an unusable one refuses every decision until it is fixed and
+    the console restarts. `genaryx-web approver-jwks --key-file <file>` prints
+    the public key set that wardryx reads (`WARDRYX_APPROVER_JWKS`).
+
+    Where it says nothing: the key file is trusted as the operator placed it,
+    and its public key set is only as current as the copy the operator gives
+    wardryx; a refused decision is journaled with decision `refused` and
+    `http_status` 0; no test sends a decision to a live wardryx.
+    *(test: `crates/signing/src/approver.rs`'s
+    `a_statement_verifies_under_the_console_key_and_carries_its_claims`,
+    `claims_outside_what_wardryx_accepts_are_refused_before_anything_is_signed`,
+    `a_pkcs8_pem_key_loads_to_the_scalar_it_holds`,
+    `a_key_whose_public_half_differs_from_its_scalar_is_refused`;
+    `crates/api/src/policy/approver.rs`'s
+    `a_confirmed_grant_is_signed_for_this_approval_and_decision`,
+    `with_a_key_file_a_decision_no_passkey_confirmed_is_refused`,
+    `an_unusable_key_file_refuses_the_decision_and_says_why`,
+    `with_no_key_file_no_statement_is_made_and_nothing_is_refused`,
+    `the_jwks_of_a_key_file_names_the_key_the_statements_use`;
+    `crates/connectors/src/wardryx.rs`'s
+    `a_statement_is_sent_as_approver_statement_when_one_was_made`;
+    `crates/web/src/config.rs`'s
+    `the_approver_key_file_comes_from_its_own_variable`.
+    Scenarios: `features/an-approver-key-decides-only-with-a-passkey.feature`,
+    and `features/an-approver-statement-proves-a-person-decided.feature`, each
+    bound; gate: `scripts/features-are-bound.sh`.)*
 
 ## Decisions that have no gate yet
 
