@@ -11,6 +11,7 @@
 use crate::es256::{Es256Signer, SigningError, verify_es256};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use p256::ecdsa::VerifyingKey;
 use sha2::{Digest, Sha256};
 
 /// The JWS `typ` a statement pins.
@@ -58,43 +59,216 @@ pub enum StatementError {
     Key(#[from] SigningError),
 }
 
-/// RFC 7638 thumbprint of a P-256 public key given as SEC1 uncompressed bytes.
-///
-/// Red-first scaffold: returns an error until the fix lands.
-pub fn thumbprint(_x963: &[u8]) -> Result<String, StatementError> {
-    Err(StatementError::Malformed(
-        "red-first scaffold: not implemented",
+/// Check that a SEC1 uncompressed P-256 point is one, and return its affine
+/// coordinates as base64url text.
+fn coordinates(x963: &[u8]) -> Result<(String, String), StatementError> {
+    if x963.len() != 65 || x963[0] != 0x04 {
+        return Err(StatementError::Malformed(
+            "the console key is not an uncompressed P-256 point",
+        ));
+    }
+    VerifyingKey::from_sec1_bytes(x963)
+        .map_err(|_| StatementError::Malformed("the console key is not a point on P-256"))?;
+    Ok((
+        URL_SAFE_NO_PAD.encode(&x963[1..33]),
+        URL_SAFE_NO_PAD.encode(&x963[33..65]),
     ))
+}
+
+/// RFC 7638 thumbprint of a P-256 public key given as SEC1 uncompressed bytes.
+pub fn thumbprint(x963: &[u8]) -> Result<String, StatementError> {
+    let (x, y) = coordinates(x963)?;
+    // RFC 7638 section 3.2: the required members of an EC key, in
+    // lexicographic order, with no whitespace, hashed with SHA-256.
+    let canonical = format!(r#"{{"crv":"P-256","kty":"EC","x":"{x}","y":"{y}"}}"#);
+    Ok(URL_SAFE_NO_PAD.encode(Sha256::digest(canonical.as_bytes())))
 }
 
 /// The public half of the console key as a JWKS, the file wardryx reads as its
 /// approver key set.
-///
-/// Red-first scaffold: returns an error until the fix lands.
-pub fn public_jwks(_x963: &[u8]) -> Result<serde_json::Value, StatementError> {
-    Err(StatementError::Malformed(
-        "red-first scaffold: not implemented",
-    ))
+pub fn public_jwks(x963: &[u8]) -> Result<serde_json::Value, StatementError> {
+    let (x, y) = coordinates(x963)?;
+    let kid = thumbprint(x963)?;
+    Ok(serde_json::json!({
+        "keys": [{
+            "kty": "EC",
+            "crv": "P-256",
+            "alg": "ES256",
+            "use": "sig",
+            "kid": kid,
+            "x": x,
+            "y": y,
+        }]
+    }))
 }
 
 /// Make a statement with the console key. The claims are checked first, so a
 /// statement wardryx would refuse is never made.
-///
-/// Red-first scaffold: returns an error until the fix lands.
-pub fn sign(_signer: &dyn Es256Signer, _claims: &Claims) -> Result<String, StatementError> {
-    Err(StatementError::Malformed(
-        "red-first scaffold: not implemented",
-    ))
+pub fn sign(signer: &dyn Es256Signer, claims: &Claims) -> Result<String, StatementError> {
+    check_claims(claims)?;
+    let kid = thumbprint(&signer.public_key_x963()?)?;
+    let header = serde_json::json!({ "alg": "ES256", "kid": kid, "typ": TYP });
+    let payload = serde_json::json!({
+        "v": 1,
+        "sub": claims.sub,
+        "cred": claims.cred,
+        "aid": claims.aid,
+        "dec": claims.dec,
+        "iat": claims.iat,
+        "exp": claims.exp,
+        "jti": claims.jti,
+    });
+    let signing_input = format!(
+        "{}.{}",
+        URL_SAFE_NO_PAD.encode(header.to_string()),
+        URL_SAFE_NO_PAD.encode(payload.to_string())
+    );
+    let raw = signer.sign_raw(signing_input.as_bytes())?;
+    Ok(format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(raw)))
 }
 
 /// Verify a statement against the console public key at time `now`, and
 /// return its claims.
-///
-/// Red-first scaffold: returns an error until the fix lands.
-pub fn verify(_x963: &[u8], _statement: &str, _now: i64) -> Result<Claims, StatementError> {
-    Err(StatementError::Malformed(
-        "red-first scaffold: not implemented",
-    ))
+pub fn verify(x963: &[u8], statement: &str, now: i64) -> Result<Claims, StatementError> {
+    let (header_b64, payload_b64, sig_b64) =
+        match statement.split('.').collect::<Vec<_>>().as_slice() {
+            [h, p, s] => (*h, *p, *s),
+            _ => {
+                return Err(StatementError::Malformed(
+                    "not a compact JWS of three parts",
+                ));
+            }
+        };
+
+    let header: serde_json::Value =
+        serde_json::from_slice(&decode(header_b64, "the header is not base64url")?)
+            .map_err(|_| StatementError::Malformed("the header is not JSON"))?;
+    if header.get("alg").and_then(|v| v.as_str()) != Some("ES256") {
+        return Err(StatementError::Malformed("the algorithm is not ES256"));
+    }
+    if header.get("typ").and_then(|v| v.as_str()) != Some(TYP) {
+        return Err(StatementError::Malformed(
+            "the type is not the approver statement type",
+        ));
+    }
+    if header.get("jwk").is_some() || header.get("x5c").is_some() {
+        return Err(StatementError::Malformed(
+            "the header carries a key of its own",
+        ));
+    }
+    let want_kid = thumbprint(x963)?;
+    if header.get("kid").and_then(|v| v.as_str()) != Some(want_kid.as_str()) {
+        return Err(StatementError::Malformed(
+            "the key id is not the console key's thumbprint",
+        ));
+    }
+
+    let sig = decode(sig_b64, "the signature is not base64url")?;
+    verify_es256(x963, format!("{header_b64}.{payload_b64}").as_bytes(), &sig)
+        .map_err(|_| StatementError::Unverified)?;
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&decode(payload_b64, "the payload is not base64url")?)
+            .map_err(|_| StatementError::Malformed("the payload is not JSON"))?;
+    if payload.get("v").and_then(|v| v.as_i64()) != Some(1) {
+        return Err(StatementError::Malformed("the claim version is not 1"));
+    }
+    let claims = Claims {
+        sub: text_claim(&payload, "sub")?,
+        cred: text_claim(&payload, "cred")?,
+        aid: text_claim(&payload, "aid")?,
+        dec: text_claim(&payload, "dec")?,
+        iat: number_claim(&payload, "iat")?,
+        exp: number_claim(&payload, "exp")?,
+        jti: text_claim(&payload, "jti")?,
+    };
+    check_claims(&claims)?;
+    if claims.iat > now + MAX_FUTURE_SKEW_SECS {
+        return Err(StatementError::Claims(
+            "the statement is issued in the future",
+        ));
+    }
+    if claims.exp <= now {
+        return Err(StatementError::Claims("the statement has expired"));
+    }
+    Ok(claims)
+}
+
+fn decode(part: &str, why: &'static str) -> Result<Vec<u8>, StatementError> {
+    URL_SAFE_NO_PAD
+        .decode(part)
+        .map_err(|_| StatementError::Malformed(why))
+}
+
+fn text_claim(payload: &serde_json::Value, name: &str) -> Result<String, StatementError> {
+    payload
+        .get(name)
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .ok_or(StatementError::Malformed(
+            "a required text claim is missing",
+        ))
+}
+
+fn number_claim(payload: &serde_json::Value, name: &str) -> Result<i64, StatementError> {
+    payload
+        .get(name)
+        .and_then(|v| v.as_i64())
+        .ok_or(StatementError::Malformed(
+            "a required number claim is missing",
+        ))
+}
+
+/// The rules wardryx applies to the claims, checked on both sides of the wire.
+fn check_claims(c: &Claims) -> Result<(), StatementError> {
+    let sub_ok = !c.sub.is_empty()
+        && c.sub.len() <= 256
+        && !c
+            .sub
+            .chars()
+            .any(|ch| ch.is_control() || is_bidi_control(ch));
+    if !sub_ok {
+        return Err(StatementError::Claims(
+            "sub must be a non-empty label of at most 256 bytes, with no control or bidi character",
+        ));
+    }
+    let cred_ok = !c.cred.is_empty()
+        && c.cred.len() <= 512
+        && c.cred
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_');
+    if !cred_ok {
+        return Err(StatementError::Claims(
+            "cred must be base64url text of at most 512 bytes",
+        ));
+    }
+    if c.aid.is_empty() {
+        return Err(StatementError::Claims("aid must name the approval"));
+    }
+    if c.dec != "grant" && c.dec != "deny" {
+        return Err(StatementError::Claims("dec must be grant or deny"));
+    }
+    if c.jti.is_empty() || c.jti.len() > 128 {
+        return Err(StatementError::Claims(
+            "jti must be a non-empty id of at most 128 bytes",
+        ));
+    }
+    let lifetime = c.exp - c.iat;
+    if lifetime <= 0 || lifetime > MAX_LIFETIME_SECS {
+        return Err(StatementError::Claims(
+            "the lifetime must be positive and at most five minutes",
+        ));
+    }
+    Ok(())
+}
+
+/// Bidirectional control characters, which can make a label read as something
+/// other than what it is.
+fn is_bidi_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 #[cfg(test)]
