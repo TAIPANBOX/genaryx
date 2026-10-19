@@ -530,6 +530,8 @@ pub async fn policy_decide_approval(
     id: String,
     decision: DecisionDto,
     state: &PolicyState,
+    // Red-first scaffold: the approver key is accepted and not yet used.
+    _approver: &crate::policy::approver::ApproverKey,
 ) -> Result<DecideOutcome, PolicyError> {
     let client = ready_client(&state).await?;
     // The web shell's signed-in principal when set (docs/CONSOLE-IDP.md), else

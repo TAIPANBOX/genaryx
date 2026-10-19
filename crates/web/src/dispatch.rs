@@ -983,6 +983,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                     a.id,
                     a.decision,
                     &ctx.policy,
+                    &ctx.approver,
                 )
                 .await,
             ))

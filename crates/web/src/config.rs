@@ -58,9 +58,41 @@ pub struct Config {
     /// struct: `main.rs`'s `Cmd::Serve` refuses to start first. See
     /// `genaryx_api::money::closure`'s module doc.
     pub closure: genaryx_api::money::closure::ClosureConfig,
+    /// The PKCS#8 PEM key file the console signs approver statements with
+    /// (`GENARYX_APPROVER_KEY_FILE`), or `None` when none is configured
+    /// (CLAUDE.md invariant 35).
+    pub approver_key_file: Option<PathBuf>,
+}
+
+/// The environment variable that names the approver key file.
+pub const APPROVER_KEY_FILE_ENV: &str = "GENARYX_APPROVER_KEY_FILE";
+
+/// The variable invariant 34 retired. It is read only to say that it is no
+/// longer read, so an operator who still sets it is told why nothing changed.
+pub const LEGACY_REQUIRE_PASSKEY_ENV: &str = "GENARYX_WEB_REQUIRE_PASSKEY";
+
+/// The approver key file named by `raw`, the value of
+/// [`APPROVER_KEY_FILE_ENV`]. Blank, or only whitespace, names none.
+///
+/// Red-first scaffold: names no file until the fix lands.
+pub fn approver_key_file_from(_raw: &str) -> Option<PathBuf> {
+    None
+}
+
+/// The notice to log at startup when the retired variable is set, or `None`
+/// when it is not.
+///
+/// Red-first scaffold: never gives a notice until the fix lands.
+pub fn legacy_require_passkey_notice(_set: bool) -> Option<&'static str> {
+    None
 }
 
 impl Config {
+    /// Read [`Config::approver_key_file`] from `GENARYX_APPROVER_KEY_FILE`.
+    pub fn approver_key_file_from_env() -> Option<PathBuf> {
+        approver_key_file_from(&std::env::var(APPROVER_KEY_FILE_ENV).unwrap_or_default())
+    }
+
     /// The default state directory, beside the descriptors the planes already
     /// read (`~/.taipan/`), so an operator backing up one backs up both.
     pub fn default_state_dir() -> PathBuf {
@@ -197,7 +229,31 @@ mod tests {
             require_passkey: false,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+            approver_key_file: None,
         }
+    }
+
+    #[test]
+    fn the_approver_key_file_comes_from_its_own_variable() {
+        assert_eq!(APPROVER_KEY_FILE_ENV, "GENARYX_APPROVER_KEY_FILE");
+        assert_eq!(approver_key_file_from(""), None);
+        assert_eq!(approver_key_file_from("   "), None);
+        assert_eq!(
+            approver_key_file_from(" /etc/genaryx/approver.pem \n"),
+            Some(PathBuf::from("/etc/genaryx/approver.pem"))
+        );
+    }
+
+    #[test]
+    fn a_leftover_require_passkey_variable_is_announced_as_no_longer_read() {
+        let note =
+            legacy_require_passkey_notice(true).expect("a notice when the retired variable is set");
+        assert!(note.contains("GENARYX_WEB_REQUIRE_PASSKEY"), "{note}");
+        assert!(
+            note.contains("GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY"),
+            "{note}"
+        );
+        assert_eq!(legacy_require_passkey_notice(false), None);
     }
 
     #[test]

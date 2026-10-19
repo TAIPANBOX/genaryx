@@ -8,7 +8,7 @@
 //! no key of its own. The claim names below are the names wardryx checks, so
 //! changing one is a change to the proposal first.
 
-use crate::es256::{Es256Signer, SigningError, verify_es256};
+use crate::es256::{Es256Signer, SigningError, SoftwareSigner, verify_es256};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use p256::ecdsa::VerifyingKey;
@@ -271,6 +271,58 @@ fn is_bidi_control(ch: char) -> bool {
     )
 }
 
+/// Read a P-256 private key from a PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`).
+///
+/// Red-first scaffold: refuses every key until the fix lands.
+pub fn signer_from_pkcs8_pem(_pem: &str) -> Result<SoftwareSigner, StatementError> {
+    Err(StatementError::Malformed(
+        "red-first scaffold: not implemented",
+    ))
+}
+
+/// Encode a P-256 private key as a PKCS#8 PEM, the inverse of
+/// [`signer_from_pkcs8_pem`]. `public` is the SEC1 public key to carry beside
+/// the scalar, or `None` to leave it out.
+pub fn pkcs8_pem(scalar: &[u8; 32], public: Option<&[u8]>) -> String {
+    let der = pkcs8_der(scalar, public);
+    let body = base64::engine::general_purpose::STANDARD.encode(der);
+    format!("-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n")
+}
+
+/// One DER element: a tag, its length in the short or long form, and its value.
+fn der_tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    match body.len() {
+        n if n < 0x80 => out.push(n as u8),
+        n if n < 0x100 => out.extend_from_slice(&[0x81, n as u8]),
+        n => out.extend_from_slice(&[0x82, (n >> 8) as u8, n as u8]),
+    }
+    out.extend_from_slice(body);
+    out
+}
+
+/// RFC 5208 PrivateKeyInfo for a P-256 key, with the RFC 5915 ECPrivateKey
+/// inside it, carrying the public key only when one is given.
+fn pkcs8_der(scalar: &[u8; 32], public: Option<&[u8]>) -> Vec<u8> {
+    let mut ec_private = der_tlv(0x02, &[1]);
+    ec_private.extend(der_tlv(0x04, scalar));
+    if let Some(p) = public {
+        let mut bits = vec![0u8];
+        bits.extend_from_slice(p);
+        ec_private.extend(der_tlv(0xA1, &der_tlv(0x03, &bits)));
+    }
+    // ecPublicKey 1.2.840.10045.2.1 and prime256v1 1.2.840.10045.3.1.7.
+    let mut algorithm = der_tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]);
+    algorithm.extend(der_tlv(
+        0x06,
+        &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07],
+    ));
+    let mut info = der_tlv(0x02, &[0]);
+    info.extend(der_tlv(0x30, &algorithm));
+    info.extend(der_tlv(0x04, &der_tlv(0x30, &ec_private)));
+    der_tlv(0x30, &info)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +488,66 @@ mod tests {
         assert_eq!(entry["kid"], thumbprint(&x).unwrap());
         let jws = sign(&k, &claims()).unwrap();
         assert_eq!(verify(&x, &jws, 1_010).unwrap(), claims());
+    }
+}
+
+#[cfg(test)]
+mod loader_tests {
+    use super::*;
+
+    fn key_der_pem(scalar: [u8; 32], public: Option<&[u8]>) -> String {
+        pkcs8_pem(&scalar, public)
+    }
+
+    #[test]
+    fn a_pkcs8_pem_key_loads_to_the_scalar_it_holds() {
+        let pem = key_der_pem([7u8; 32], None);
+        let signer = signer_from_pkcs8_pem(&pem).expect("a P-256 PKCS#8 key loads");
+        assert_eq!(signer.to_scalar_bytes(), [7u8; 32]);
+    }
+
+    #[test]
+    fn a_pkcs8_key_with_its_public_half_loads_when_the_two_match() {
+        let public = SoftwareSigner::from_scalar(&[7u8; 32])
+            .unwrap()
+            .public_key_x963()
+            .unwrap();
+        let pem = key_der_pem([7u8; 32], Some(&public));
+        let signer = signer_from_pkcs8_pem(&pem).expect("the public half matches the scalar");
+        assert_eq!(signer.public_key_x963().unwrap(), public);
+    }
+
+    #[test]
+    fn a_key_whose_public_half_differs_from_its_scalar_is_refused() {
+        let other = SoftwareSigner::from_scalar(&[8u8; 32])
+            .unwrap()
+            .public_key_x963()
+            .unwrap();
+        let pem = key_der_pem([7u8; 32], Some(&other));
+        assert!(matches!(
+            signer_from_pkcs8_pem(&pem),
+            Err(StatementError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn a_key_that_is_not_p256_pkcs8_pem_is_refused() {
+        let pem = key_der_pem([7u8; 32], None);
+        let rsa_label = pem.replace("BEGIN PRIVATE KEY", "BEGIN RSA PRIVATE KEY");
+        let sec1_label = pem.replace("BEGIN PRIVATE KEY", "BEGIN EC PRIVATE KEY");
+        for (name, bad) in [
+            ("not PEM at all", "just some text".to_string()),
+            ("an RSA label", rsa_label),
+            ("a SEC1 EC label", sec1_label),
+            (
+                "an empty body",
+                "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n".to_string(),
+            ),
+        ] {
+            assert!(
+                signer_from_pkcs8_pem(&bad).is_err(),
+                "{name} must be refused, not loaded"
+            );
+        }
     }
 }

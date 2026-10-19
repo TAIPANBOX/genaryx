@@ -57,6 +57,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Print the public JWKS of an approver key file: the key set wardryx reads
+    /// as its approver keys (`WARDRYX_APPROVER_JWKS`).
+    ApproverJwks {
+        /// The PKCS#8 PEM key file the console signs approver statements with.
+        #[arg(long)]
+        key_file: PathBuf,
+    },
     /// Serve the console.
     Serve {
         /// Address to listen on. Default is loopback: bind your tunnel's
@@ -131,6 +138,15 @@ async fn main() {
         .init();
 
     match Cli::parse().cmd {
+        Cmd::ApproverJwks { key_file } => {
+            match genaryx_api::policy::approver::jwks_for_key_file(&key_file) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("genaryx-web: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Cmd::Doctor => {
             let report = doctor::run();
             doctor::print(&report);
@@ -253,7 +269,13 @@ async fn main() {
                 require_passkey: Config::require_passkey_from_env(),
                 delegation,
                 closure,
+                approver_key_file: Config::approver_key_file_from_env(),
             };
+            if let Some(note) = config::legacy_require_passkey_notice(
+                std::env::var_os(config::LEGACY_REQUIRE_PASSKEY_ENV).is_some(),
+            ) {
+                tracing::warn!("{note}");
+            }
             serve(cfg).await;
         }
     }
@@ -1447,6 +1469,7 @@ mod tests {
             require_passkey,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+            approver_key_file: None,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
@@ -2592,6 +2615,7 @@ mod tests {
             require_passkey: false,
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+            approver_key_file: None,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
