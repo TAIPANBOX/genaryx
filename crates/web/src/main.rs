@@ -2008,6 +2008,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn by_default_a_sensitive_command_with_nobody_enrolled_is_refused() {
+        // The production default, read through the seam the binary uses:
+        // with the fallback switch unset, the passkey is required. The gate
+        // is called directly, so no command is dispatched while the default
+        // is still wrong.
+        let ctx = ctx_at(test_dir(), crate::config::require_passkey_from_switch(""));
+        let session = auth::SessionInfo {
+            user: "alice".into(),
+            role: Role::Admin,
+            method: Method::Local,
+        };
+        for command in roles::ceremony_commands() {
+            let refusal = webauthn_gate(&ctx, &session, command, &json!({}), &HeaderMap::new());
+            let Err(response) = refusal else {
+                panic!(
+                    "{command}: the default let a sensitive command through with nobody enrolled"
+                );
+            };
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{command}");
+        }
+    }
+
+    #[tokio::test]
+    async fn by_default_the_probe_says_the_passkey_policy_is_on() {
+        let ctx = ctx_at(test_dir(), crate::config::require_passkey_from_switch(""));
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        let (status, body) = get_api(&ctx, "/api/webauthn/passkeys", &sid).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["policy_requires_passkey"], true);
+    }
+
+    #[tokio::test]
+    async fn by_default_the_first_passkey_enrols_on_the_password_and_then_the_ceremony_runs() {
+        let ctx = ctx_at(test_dir(), crate::config::require_passkey_from_switch(""));
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);
+        set_test_operator(&ctx, "correct horse battery");
+
+        // Before any enrolment the default refuses the command and says how
+        // to get out of the refusal.
+        let (status, body) =
+            post_api(&ctx, "/api/command/money_kill_run", &sid, None, json!({})).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "enrollment_required");
+
+        // The enrolment path: the first passkey needs the operator password,
+        // not the session alone.
+        let (status, body) = register_start(&ctx, &sid, None, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert_eq!(body["webauthn"], "password_required");
+        let (status, body) = register_start(&ctx, &sid, Some("correct horse battery"), None).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        let challenge = body["challenge"].as_str().expect("a challenge").to_string();
+        let (status, body) = register_finish(&ctx, &sid, &challenge, b"cred-1").await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+
+        // Enrolled: the same command now asks for the assertion, which is the
+        // ordinary retry signal and not the enrolment refusal.
+        let (status, body) =
+            post_api(&ctx, "/api/command/money_kill_run", &sid, None, json!({})).await;
+        assert_eq!(status, StatusCode::PRECONDITION_REQUIRED, "body: {body}");
+        assert_eq!(body["webauthn"], "required");
+    }
+
+    #[tokio::test]
     async fn with_the_ceremony_optional_the_fallback_still_runs_and_is_still_software_signed() {
         let ctx = test_ctx();
         let sid = ctx.sessions.create("alice", Role::Admin, Method::Local);

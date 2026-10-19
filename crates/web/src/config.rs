@@ -91,7 +91,7 @@ impl Config {
     /// silently lock an operator out of their own kill switch, and the console
     /// says at startup which way it read.
     pub fn require_passkey_from_env() -> bool {
-        parse_require_passkey(&std::env::var("GENARYX_WEB_REQUIRE_PASSKEY").unwrap_or_default())
+        require_passkey_from_switch(&std::env::var(ALLOW_SOFTWARE_CEREMONY_ENV).unwrap_or_default())
     }
 
     /// Say which way [`Config::require_passkey`] was read, both ways.
@@ -149,6 +149,16 @@ impl Config {
 /// it was.
 pub fn cookie_is_secure(explicit: bool, origin: &str) -> bool {
     explicit || origin.starts_with("https://")
+}
+
+/// The environment variable that turns the software-signed fallback on.
+/// Red-first scaffold: it keeps today's name and behaviour until the fix lands.
+pub const ALLOW_SOFTWARE_CEREMONY_ENV: &str = "GENARYX_WEB_REQUIRE_PASSKEY";
+
+/// Whether the passkey is required, given the raw value of the fallback switch.
+/// Red-first scaffold: it keeps today's behaviour (required only on a true word).
+pub fn require_passkey_from_switch(raw: &str) -> bool {
+    parse_require_passkey(raw)
 }
 
 /// The words that turn the strict mode on, split out of
@@ -219,6 +229,45 @@ mod tests {
                  refuse the commands an operator needs in an incident"
             );
         }
+    }
+
+    #[test]
+    fn the_passkey_is_required_when_the_fallback_switch_is_unset_or_blank() {
+        // The default. An operator who sets nothing gets the ceremony
+        // enforced, and the software-signed fallback is an explicit choice.
+        assert!(require_passkey_from_switch(""));
+        assert!(require_passkey_from_switch("   "));
+    }
+
+    #[test]
+    fn the_fallback_switch_drops_the_requirement_only_for_the_words_an_operator_would_type() {
+        for on in ["1", "true", "yes", "on", "TRUE", " On "] {
+            assert!(
+                !require_passkey_from_switch(on),
+                "{on:?} must allow the software-signed fallback, which is announced loudly"
+            );
+        }
+    }
+
+    #[test]
+    fn a_typo_or_a_value_nobody_meant_keeps_the_passkey_required() {
+        // The direction is safe: a typo can only leave the ceremony enforced.
+        for off in [
+            "0", "false", "no", "off", "y", "enable", "enabled", "ON!", "truthy", "2",
+        ] {
+            assert!(
+                require_passkey_from_switch(off),
+                "{off:?} must not drop the passkey requirement"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fallback_switch_has_its_own_name_in_the_environment() {
+        assert_eq!(
+            ALLOW_SOFTWARE_CEREMONY_ENV,
+            "GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY"
+        );
     }
 
     #[test]
