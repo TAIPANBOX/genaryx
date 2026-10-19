@@ -176,10 +176,10 @@ paths (set => named actor; unset => OS-user default).
 - Roles gate the console's command surface; they are NOT a second signature
   by themselves. Part 2 (WebAuthn, below) re-signs all six sensitive
   commands with a hardware-backed passkey once the operator has enrolled one;
-  a caller with none enrolled still has the part-1 exposure only - "session
-  opens the console" (docs/WEB-SHELL.md), narrowed by role - the documented
-  trial fallback, not a bypass. `GENARYX_WEB_REQUIRE_PASSKEY=1` removes that
-  fallback for a box that wants the ceremony unconditional.
+  a caller with none enrolled is refused a sensitive command until it enrols
+  a passkey, which is the default. Only `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY=1`
+  restores the software-signed trial fallback, which then runs the command on
+  the session alone, narrowed by role.
 
 ## Part 2: WebAuthn per-action ceremony (built, branch `feat/webauthn-per-action`)
 
@@ -299,21 +299,20 @@ of showing an "Add passkey" button that would only fail.
 A caller with no enrolled passkey passes the gate without a ceremony -
 `CommandRecord`'s own transport-signing fields stay exactly as they already
 are on this shell, which read honestly as "software-signed". Nothing is
-silently weakened: this is the documented, intentional bridge for an
-operator who has not yet enrolled a passkey, not a bypass.
+silently weakened: with the switch on, this is the documented, intentional
+bridge for an operator who has not yet enrolled a passkey, not a bypass.
 `PasskeySettings` explains exactly this to an operator with zero passkeys,
 so enrolling the first one is framed as an upgrade, not a chore.
 
-What was missing until 2026-08-05 was any way to STOP standing on the bridge:
-an operator who wanted the ceremony unconditional had no setting to say so.
-`GENARYX_WEB_REQUIRE_PASSKEY=1` (read once at startup, like the RP and OIDC
-configuration beside it) makes it mandatory: a sensitive command from a
-caller with nothing enrolled is refused with `403 {"webauthn":
-"enrollment_required"}` and a message naming the command, the setting and
-what to do about it. Deliberately NOT the `"required"` shape the frontend
-retries on: re-running a ceremony that cannot exist yet would only fail
-again. Off by default, so an upgrade changes nothing about a running box, and
-`serve` states which way it read the variable at startup.
+Until 2026-10-19 the ceremony was mandatory only on a box that set a variable.
+It is mandatory by default now. A sensitive command from a caller with nothing
+enrolled is refused with `403 {"webauthn": "enrollment_required"}` and a
+message naming the command and how to enrol a passkey. Deliberately NOT the
+`"required"` shape the frontend retries on: re-running a ceremony that cannot
+exist yet would only fail again. `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY=1`, read
+once at startup like the RP and OIDC configuration beside it, is the one way
+back to the software-signed fallback, and `serve` announces it at warning
+level. `serve` states which way it read the variable at startup.
 
 ### The journal
 

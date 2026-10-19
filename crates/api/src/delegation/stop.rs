@@ -226,7 +226,8 @@ fn record_ceremony(s: &mut Steps<'_>, subject: &str, warnings: &mut Vec<String>)
     } else {
         warnings.push(
             "no passkey confirmed this action: the caller has none enrolled, so it ran on \
-             the session alone (GENARYX_WEB_REQUIRE_PASSKEY makes a passkey mandatory)"
+             the session alone (GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY is set; the default \
+             refuses such an action)"
                 .to_string(),
         );
         "not_confirmed:no_passkey_enrolled".to_string()

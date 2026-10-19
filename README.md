@@ -292,9 +292,9 @@ box; these frames are not it, and say so here rather than in a footnote.
   dependency), and the assertion's algorithm and credential id journaled into
   the same `CommandRecord` the action already writes
   (`sig_alg=webauthn-es256`, `sig_fpr=<credential id>`). An operator with no
-  enrolled passkey still passes, journaled software-signed (the documented
-  trial fallback), unless the box sets `GENARYX_WEB_REQUIRE_PASSKEY=1`, which
-  refuses the command instead. Enrolling and removing a passkey each need a
+  enrolled passkey is refused until one is enrolled (the default). The
+  software-signed trial fallback runs the command on the session alone and
+  journals it so, but only when the box sets `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY=1`. Enrolling and removing a passkey each need a
   factor the session does not carry: the operator password for the first
   enrollment and the last removal, an assertion from an enrolled key for
   everything between. Frontend (`lib/webauthn.ts`, the passkey panel in the

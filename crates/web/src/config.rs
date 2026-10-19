@@ -36,17 +36,15 @@ pub struct Config {
     /// out with no explanation. Turn it on the moment anything terminates
     /// TLS in front of this.
     pub secure_cookies: bool,
-    /// Make the per-action passkey ceremony MANDATORY: a sensitive command
-    /// from a caller with no enrolled passkey is refused, instead of running
-    /// on the session alone and being journaled software-signed.
+    /// Make the per-action passkey ceremony MANDATORY, which is the default: a
+    /// sensitive command from a caller with no enrolled passkey is refused
+    /// with the way to enrol one, instead of running on the session alone and
+    /// being journaled software-signed.
     ///
-    /// Off by default, so an upgrade changes nothing about a running box: the
-    /// software-signed fallback is documented, journaled honestly, and the
-    /// bridge an operator who has not enrolled yet is standing on. What was
-    /// missing was any way to STOP standing on it. An operator who wants the
-    /// invariant enforced ("a sensitive command requires a per-action
-    /// ceremony", CLAUDE.md 2) sets `GENARYX_WEB_REQUIRE_PASSKEY=1` and the
-    /// fallback is gone for every command whose row carries the ceremony.
+    /// The software-signed fallback is still there, but only as an explicit
+    /// choice: `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY=1` turns it on, the
+    /// console announces it at startup, and every use of it is logged as a
+    /// warning. See [`require_passkey_from_switch`] for the reading.
     pub require_passkey: bool,
     /// Where `delegation_revoke` sends a revocation, resolved ONCE at
     /// startup (`GENARYX_VOUCHRYX_URL` + `GENARYX_VOUCHRYX_REVOKE_KEY_FILE`).
@@ -81,36 +79,35 @@ impl Config {
         self.state_dir.join("passkeys.json")
     }
 
-    /// Read [`Config::require_passkey`] from `GENARYX_WEB_REQUIRE_PASSKEY`.
+    /// Read [`Config::require_passkey`] from `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY`.
     ///
     /// An environment variable rather than a flag, matching the other two
     /// pieces of WebAuthn configuration this console already reads that way
     /// (`GENARYX_WEB_RP_ID` / `GENARYX_WEB_ORIGIN`) and the OIDC block beside
-    /// them: they belong to the deployment, not to one invocation. Absent, or
-    /// any value other than the accepted true words, is off - a typo must not
-    /// silently lock an operator out of their own kill switch, and the console
-    /// says at startup which way it read.
+    /// them: they belong to the deployment, not to one invocation. Absent is
+    /// the default, which requires the passkey. The console says at startup
+    /// which way it read.
     pub fn require_passkey_from_env() -> bool {
         require_passkey_from_switch(&std::env::var(ALLOW_SOFTWARE_CEREMONY_ENV).unwrap_or_default())
     }
 
     /// Say which way [`Config::require_passkey`] was read, both ways.
     ///
-    /// Stated at startup rather than discovered: on a strict box a sensitive
-    /// command from a caller with nothing enrolled is refused, and on a
-    /// permissive one it runs software-signed. Either is a legitimate
-    /// deployment, and neither should be a surprise to whoever is on call.
+    /// Stated at startup rather than discovered. The default refuses a
+    /// sensitive command from a caller with nothing enrolled. The switch
+    /// allows the software-signed fallback instead, and that is a downgrade of
+    /// the ceremony, so it is announced at warning level.
     pub fn announce_passkey_policy(&self) {
         if self.require_passkey {
             tracing::info!(
-                "GENARYX_WEB_REQUIRE_PASSKEY is on: a sensitive command from a caller with no \
-                 enrolled passkey is REFUSED, not run software-signed"
+                "the passkey is required for sensitive commands (the default): a caller with \
+                 no enrolled passkey is refused until one is enrolled"
             );
         } else {
-            tracing::info!(
-                "GENARYX_WEB_REQUIRE_PASSKEY is off (the default): a caller with no enrolled \
-                 passkey still runs sensitive commands, journaled software-signed. Set it to 1 \
-                 to require the ceremony."
+            tracing::warn!(
+                "GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY is set: a sensitive command from a caller \
+                 with no enrolled passkey runs on the session alone and is journaled \
+                 software-signed. This is an explicit downgrade of the per-action ceremony."
             );
         }
     }
@@ -151,22 +148,29 @@ pub fn cookie_is_secure(explicit: bool, origin: &str) -> bool {
     explicit || origin.starts_with("https://")
 }
 
-/// The environment variable that turns the software-signed fallback on.
-/// Red-first scaffold: it keeps today's name and behaviour until the fix lands.
-pub const ALLOW_SOFTWARE_CEREMONY_ENV: &str = "GENARYX_WEB_REQUIRE_PASSKEY";
+/// The environment variable that allows the software-signed fallback. It is
+/// off unless an operator sets it to a true word.
+pub const ALLOW_SOFTWARE_CEREMONY_ENV: &str = "GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY";
 
 /// Whether the passkey is required, given the raw value of the fallback switch.
-/// Red-first scaffold: it keeps today's behaviour (required only on a true word).
+///
+/// The passkey is required unless the switch names the fallback. A value
+/// nobody meant, a typo included, leaves the ceremony enforced: that is the
+/// safe direction, and the opposite of what an unmeant value did before.
 pub fn require_passkey_from_switch(raw: &str) -> bool {
-    parse_require_passkey(raw)
+    !allow_software_ceremony(raw)
 }
 
-/// The words that turn the strict mode on, split out of
-/// [`Config::require_passkey_from_env`] so the decision has a seam a test can
-/// reach. Reading the variable is I/O and setting one is process-global; which
-/// words count is the part worth pinning, and it is the part that decides
-/// whether an operator can be locked out of their own kill switch by a typo.
-fn parse_require_passkey(raw: &str) -> bool {
+/// Whether the raw switch value names the software-signed fallback.
+fn allow_software_ceremony(raw: &str) -> bool {
+    parse_switch_on(raw)
+}
+
+/// The words that turn a switch on, split out of
+/// [`require_passkey_from_switch`] so the decision has a seam a test can reach.
+/// Reading the variable is I/O and setting one is process-global; which words
+/// count is the part worth pinning.
+fn parse_switch_on(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
@@ -201,34 +205,6 @@ mod tests {
         assert!(cookie_is_secure(false, "https://console.example"));
         assert!(cookie_is_secure(true, "http://10.0.0.2:7420"));
         assert!(!cookie_is_secure(false, "http://localhost:7420"));
-    }
-
-    #[test]
-    fn the_strict_passkey_mode_turns_on_for_the_words_an_operator_would_type() {
-        for on in ["1", "true", "yes", "on", "TRUE", "Yes", " ON ", "\ttrue\n"] {
-            assert!(
-                parse_require_passkey(on),
-                "{on:?} should turn the strict mode on; an operator who typed it and \
-                 got the permissive mode has an invariant they believe is enforced"
-            );
-        }
-    }
-
-    #[test]
-    fn anything_else_leaves_the_strict_mode_off_including_a_typo() {
-        // The direction is deliberate. Strict mode REFUSES a sensitive command
-        // from a caller with no enrolled passkey, so a typo that turned it ON
-        // would lock an operator out of their own kill switch with no
-        // explanation. Off is the safe reading of a value nobody meant.
-        for off in [
-            "", " ", "0", "false", "no", "off", "y", "enable", "enabled", "ON!", "truthy", "2",
-        ] {
-            assert!(
-                !parse_require_passkey(off),
-                "{off:?} must leave the strict mode off: a value nobody meant must not \
-                 refuse the commands an operator needs in an incident"
-            );
-        }
     }
 
     #[test]

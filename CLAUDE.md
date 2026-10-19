@@ -89,13 +89,13 @@ an absent invariant.
    *(partly gated: router-level tests in `crates/web/src/main.rs` drive the
    real axum router through the whole ceremony, and hold that an enrolled
    caller is refused without an assertion, that the command and argument
-   bindings are enforced, that enrolling and removing a passkey each need a
-   factor the session does not carry, and that with
-   `GENARYX_WEB_REQUIRE_PASSKEY=1` all ten are refused when nobody is
-   enrolled. What is NOT held is the default configuration: with the setting
-   off and no passkey enrolled, a sensitive command still runs and is
-   journaled software-signed. So the invariant holds on a box that enrolled a
-   passkey or set the variable, and is a documented fallback otherwise.)*
+   bindings are enforced, and that enrolling and removing a passkey each need
+   a factor the session does not carry. The default is held by the tests named
+   in invariant 34: with nobody enrolled, every row of the ceremony column is
+   refused. What is NOT held is the explicit exception: a box that sets
+   `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY` runs a sensitive command with no
+   passkey on the session alone, journaled software-signed, and says so in
+   its startup announcement and in a warning on every use.)*
 3. **Every privileged action is journaled into a verified hash chain.** An
    action that happened without a chain entry is indistinguishable from one that
    did not happen. And it must be the CONSOLE's chain: a console_command
@@ -1731,6 +1731,36 @@ an absent invariant.
     ban at all; no live vouchryx, Cloud or gateway has been exercised by
     this build, and the time from stop to refusal at a door is not
     measured here.)*
+
+34. **The passkey ceremony is required by default, and the software-signed
+    fallback is an explicit choice that the console announces.**
+    `@decided 2026-10-19`: a console with nobody enrolled refuses every
+    sensitive command and says how to enrol a passkey, rather than running it
+    on the session alone and journaling it software-signed. The first passkey
+    is enrolled on the operator password, and the ceremony applies after it.
+    The fallback is off unless the operator sets
+    `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY` to a true word. A value nobody meant,
+    a typo included, leaves the ceremony enforced, which is the safe direction.
+    With the switch on, the startup announcement is a warning, and every use
+    of the fallback is logged at warning level.
+
+    Where it says nothing: an install that never enrolled a passkey now has
+    its sensitive commands refused until it enrols one, which is a change for
+    such a box; the way out is to enrol, or to set the switch deliberately.
+    The variable `GENARYX_WEB_REQUIRE_PASSKEY` is no longer read, and a stack
+    that sets it still runs the required mode, because that is now the default.
+    *(test: `crates/web/src/config.rs`'s
+    `the_passkey_is_required_when_the_fallback_switch_is_unset_or_blank`,
+    `the_fallback_switch_drops_the_requirement_only_for_the_words_an_operator_would_type`,
+    `a_typo_or_a_value_nobody_meant_keeps_the_passkey_required` and
+    `the_fallback_switch_has_its_own_name_in_the_environment`;
+    `crates/web/src/main.rs`'s
+    `by_default_a_sensitive_command_with_nobody_enrolled_is_refused`,
+    `by_default_the_probe_says_the_passkey_policy_is_on` and
+    `by_default_the_first_passkey_enrols_on_the_password_and_then_the_ceremony_runs`.
+    Scenarios: `features/a-passkey-is-required-by-default.feature`, seven, each
+    bound; gate: `scripts/features-are-bound.sh`. Red first: the test-only
+    commit `ab9577a` came before the fix that made these pass.)*
 
 ## Decisions that have no gate yet
 

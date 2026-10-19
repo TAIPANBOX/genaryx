@@ -47,16 +47,16 @@ function errorText(err: unknown): string {
  *   (`lib/webauthn.ts`'s own doc explains exactly why - not a secure
  *   context). Enrolling is impossible here, and the panel says so instead
  *   of showing a button that would only fail.
- * - No passkeys enrolled, on a permissive box: privileged actions (kill,
- *   budget, approval, tunnel) still go through, journaled software-signed
- *   (the documented trial fallback, `crates/web/src/main.rs`'s
- *   `webauthn_gate`) - enrolling the first one upgrades them to
- *   hardware-confirmed.
- * - No passkeys enrolled, on a box that requires one
- *   (`GENARYX_WEB_REQUIRE_PASSKEY`, reported by the probe's
- *   `policy_requires_passkey`): those actions are REFUSED until one is
- *   enrolled, and the panel says that rather than promising a fallback this
- *   box does not have.
+ * - No passkeys enrolled, on a box that allows the software-signed fallback
+ *   (`GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY`, reported by the probe's
+ *   `policy_requires_passkey` as false): privileged actions (kill, budget,
+ *   approval, tunnel) still go through, journaled software-signed (the
+ *   fallback in `crates/web/src/main.rs`'s `webauthn_gate`). Enrolling the
+ *   first one upgrades them to hardware-confirmed.
+ * - No passkeys enrolled, on a box that requires one (the default, reported
+ *   by the probe's `policy_requires_passkey`): those actions are REFUSED until
+ *   one is enrolled, and the panel says that rather than promising a fallback
+ *   this box does not have.
  * - One or more enrolled: the ceremony is REQUIRED from here on
  *   (`GET /api/webauthn/passkeys`'s own `webauthn_required` flag mirrors
  *   this exactly), so the list reads as what is already protecting those
@@ -181,8 +181,7 @@ export function PasskeySettings() {
 
         {passkeys && passkeys.length === 0 && policyRequires && (
           <div className="text-[11.5px]" style={{ color: "var(--sev-high)", lineHeight: 1.6 }}>
-            No passkey enrolled, and this console requires one (
-            <code className="mono">GENARYX_WEB_REQUIRE_PASSKEY</code>). Kill / budget / approval /
+            No passkey enrolled, and this console requires one. Kill / budget / approval /
             tunnel actions are refused until you enrol one here.
           </div>
         )}

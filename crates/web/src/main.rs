@@ -895,8 +895,8 @@ async fn webauthn_register_finish(
 /// - **The last one**: the operator password (`genaryx-web set-password`),
 ///   and only that. An assertion from the key being removed is a fine proof
 ///   of possession, and still not enough: this is the removal that takes the
-///   whole box back to session-only (or, with `GENARYX_WEB_REQUIRE_PASSKEY`,
-///   to refusing outright), so it is the box owner's decision. It is also the
+///   whole box back to session-only (or, by default, to refusing outright),
+///   so it is the box owner's decision. It is also the
 ///   only rule that works in the case that matters, a lost key, where no
 ///   assertion can be produced at all.
 /// - The password is accepted for a non-last removal too. That adds no
@@ -1099,34 +1099,34 @@ fn webauthn_gate(
         Err(e) => return Err(store_unavailable(e)),
     };
     if !store.has_any(&session.user) {
-        // The strict console (`GENARYX_WEB_REQUIRE_PASSKEY`): no enrolled
-        // passkey means no ceremony is possible, and an operator who asked for
-        // the ceremony to be mandatory asked for the command to be REFUSED
-        // rather than quietly run on the session. Say what to do about it: a
+        // The default: no enrolled passkey means no ceremony is possible, so
+        // the command is REFUSED, and the refusal says how to enrol one. A
         // bare 403 here would read as a role problem, which it is not.
         if ctx.cfg.require_passkey {
             tracing::warn!(
                 user = %session.user, command = %name,
-                "webauthn: required by configuration and nothing enrolled; refused"
+                "webauthn: a passkey is required and none is enrolled; refused"
             );
             return Err((
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": format!(
-                        "this console requires a passkey for {name} \
-                         (GENARYX_WEB_REQUIRE_PASSKEY is on) and you have none enrolled: \
-                         enrol one under Session > Passkeys, then run this again"
+                        "this console requires a passkey for {name}, and you have none \
+                         enrolled: enrol one under Session > Passkeys, then run this again"
                     ),
                     "webauthn": "enrollment_required",
                 })),
             )
                 .into_response());
         }
-        // No override: the plane's own transport-signing fields stay, which
-        // on this shell honestly read "software-signed".
-        tracing::info!(
+        // The explicit fallback (GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY): the
+        // plane's own transport-signing fields stay, which on this shell
+        // honestly read "software-signed". Logged at warning level on every
+        // use, because it is a downgrade the operator chose.
+        tracing::warn!(
             user = %session.user, command = %name,
-            "webauthn: no passkey enrolled; software-signed fallback"
+            "webauthn: software-signed fallback, because GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY \
+             is set and no passkey is enrolled"
         );
         return Ok(None);
     }
@@ -1463,9 +1463,10 @@ mod tests {
         ctx_at(test_dir(), false)
     }
 
-    /// A console configured the strict way (`GENARYX_WEB_REQUIRE_PASSKEY`):
-    /// the ceremony is mandatory, and a sensitive command with nobody enrolled
-    /// is refused rather than falling back. Set on the resolved `Config` here
+    /// A console configured the strict way (the default, which is what
+    /// `GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY` being unset means): the ceremony
+    /// is mandatory, and a sensitive command with nobody enrolled is refused
+    /// rather than falling back. Set on the resolved `Config` here
     /// rather than through the environment on purpose: the env is
     /// process-global and cargo runs these tests on parallel threads, so an
     /// env-var switch would leak between them.

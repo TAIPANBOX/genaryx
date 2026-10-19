@@ -93,6 +93,9 @@
           "GENARYX_VOUCHRYX_URL": {
             "required": false
           },
+          "GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY": {
+            "required": false
+          },
           "GENARYX_WEB_OIDC_ADMIN_ROLE": {
             "required": false
           },
@@ -118,9 +121,6 @@
             "required": false
           },
           "GENARYX_WEB_ORIGIN": {
-            "required": false
-          },
-          "GENARYX_WEB_REQUIRE_PASSKEY": {
             "required": false
           },
           "GENARYX_WEB_RP_ID": {
