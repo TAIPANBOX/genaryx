@@ -254,7 +254,7 @@ fn check_claims(c: &Claims) -> Result<(), StatementError> {
         ));
     }
     let lifetime = c.exp - c.iat;
-    if lifetime <= 0 || lifetime > MAX_LIFETIME_SECS {
+    if !(1..=MAX_LIFETIME_SECS).contains(&lifetime) {
         return Err(StatementError::Claims(
             "the lifetime must be positive and at most five minutes",
         ));
