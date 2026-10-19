@@ -190,10 +190,13 @@ pub const ALLOW_SOFTWARE_CEREMONY_ENV: &str = "GENARYX_WEB_ALLOW_SOFTWARE_CEREMO
 /// nobody meant, a typo included, leaves the ceremony enforced: that is the
 /// safe direction, and the opposite of what an unmeant value did before.
 pub fn require_passkey_from_switch(raw: &str) -> bool {
-    !allow_software_ceremony(raw)
+    // Red-first scaffold: today's behaviour, which requires the passkey only
+    // on a true word. The fix requires it unless the switch names the fallback.
+    parse_switch_on(raw)
 }
 
 /// Whether the raw switch value names the software-signed fallback.
+#[allow(dead_code)] // Red-first scaffold: not called until the fix lands.
 fn allow_software_ceremony(raw: &str) -> bool {
     parse_switch_on(raw)
 }

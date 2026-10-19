@@ -14,8 +14,7 @@
 //! decision, the key file could not be read, or the statement's claims or
 //! signature failed.
 
-use genaryx_signing::approver as statement;
-use genaryx_signing::{Es256Signer, SoftwareSigner};
+use genaryx_signing::Es256Signer;
 use std::fmt;
 use std::path::Path;
 
@@ -108,6 +107,8 @@ pub fn jwks_for_key_file(_path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use genaryx_signing::SoftwareSigner;
+    use genaryx_signing::approver as statement;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn scratch_file(contents: &str) -> std::path::PathBuf {
