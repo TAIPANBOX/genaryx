@@ -602,17 +602,15 @@ struct ApprovalDecideRequestBody {
 }
 
 /// The decide body for a verdict, with the approver statement when one was made.
-///
-/// Red-first scaffold: never carries the statement yet.
 fn decide_request_body(
     verdict: ApprovalVerdict,
     decided_by: &str,
-    _approver_statement: Option<&str>,
+    approver_statement: Option<&str>,
 ) -> ApprovalDecideRequestBody {
     ApprovalDecideRequestBody {
         decision: verdict.as_wire(),
         decided_by: decided_by.to_string(),
-        approver_statement: None,
+        approver_statement: approver_statement.map(str::to_owned),
     }
 }
 

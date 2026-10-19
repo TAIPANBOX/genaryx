@@ -1747,8 +1747,10 @@ an absent invariant.
     Where it says nothing: an install that never enrolled a passkey now has
     its sensitive commands refused until it enrols one, which is a change for
     such a box; the way out is to enrol, or to set the switch deliberately.
-    The variable `GENARYX_WEB_REQUIRE_PASSKEY` is no longer read, and a stack
-    that sets it still runs the required mode, because that is now the default.
+    The variable `GENARYX_WEB_REQUIRE_PASSKEY` is no longer read for its
+    setting, and a stack that sets it still gets the required mode, because
+    that is now the default. The console reads it only to log, at startup,
+    that it is ignored.
     *(test: `crates/web/src/config.rs`'s
     `the_passkey_is_required_when_the_fallback_switch_is_unset_or_blank`,
     `the_fallback_switch_drops_the_requirement_only_for_the_words_an_operator_would_type`,
@@ -1761,6 +1763,46 @@ an absent invariant.
     Scenarios: `features/a-passkey-is-required-by-default.feature`, seven, each
     bound; gate: `scripts/features-are-bound.sh`. Red first: the test-only
     commit `ab9577a` came before the fix that made these pass.)*
+
+35. **A decision on an approval is made by a person only with a statement the
+    console signs after a passkey assertion confirmed it, and a decision that
+    cannot carry one is refused.** `@decided 2026-10-19`: when the operator
+    gives the console an approver key file (`GENARYX_APPROVER_KEY_FILE`, a
+    PKCS#8 P-256 private key in PEM), each approval is sent to wardryx with a
+    compact ES256 statement. The statement names the person, the passkey
+    credential that confirmed the decision, the approval and the decision, and
+    wardryx verifies it against its copy of the console's public key set. The
+    statement is made only after the passkey assertion of the decision has
+    verified. With a key file configured, a decision that cannot carry a
+    statement is refused, and nothing is sent to wardryx. With no key file
+    configured, no statement is sent, and each decision logs a warning that
+    wardryx records it as decided by a key. The key file is read once at
+    startup, and an unusable one refuses every decision until it is fixed and
+    the console restarts. `genaryx-web approver-jwks --key-file <file>` prints
+    the public key set that wardryx reads (`WARDRYX_APPROVER_JWKS`).
+
+    Where it says nothing: the key file is trusted as the operator placed it,
+    and its public key set is only as current as the copy the operator gives
+    wardryx; a refused decision is journaled with decision `refused` and
+    `http_status` 0; no test sends a decision to a live wardryx.
+    *(test: `crates/signing/src/approver.rs`'s
+    `a_statement_verifies_under_the_console_key_and_carries_its_claims`,
+    `claims_outside_what_wardryx_accepts_are_refused_before_anything_is_signed`,
+    `a_pkcs8_pem_key_loads_to_the_scalar_it_holds`,
+    `a_key_whose_public_half_differs_from_its_scalar_is_refused`;
+    `crates/api/src/policy/approver.rs`'s
+    `a_confirmed_grant_is_signed_for_this_approval_and_decision`,
+    `with_a_key_file_a_decision_no_passkey_confirmed_is_refused`,
+    `an_unusable_key_file_refuses_the_decision_and_says_why`,
+    `with_no_key_file_no_statement_is_made_and_nothing_is_refused`,
+    `the_jwks_of_a_key_file_names_the_key_the_statements_use`;
+    `crates/connectors/src/wardryx.rs`'s
+    `a_statement_is_sent_as_approver_statement_when_one_was_made`;
+    `crates/web/src/config.rs`'s
+    `the_approver_key_file_comes_from_its_own_variable`.
+    Scenarios: `features/an-approver-key-decides-only-with-a-passkey.feature`,
+    and `features/an-approver-statement-proves-a-person-decided.feature`, each
+    bound; gate: `scripts/features-are-bound.sh`.)*
 
 ## Decisions that have no gate yet
 

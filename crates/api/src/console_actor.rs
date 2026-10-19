@@ -72,6 +72,12 @@ where
     SIGNATURE.scope(signature, fut).await
 }
 
+/// The ceremony that confirmed the current request, if one did. `None` outside
+/// a [`with_signature`] scope, and for a request no passkey confirmed.
+pub fn current_signature() -> Option<ConsoleSignature> {
+    SIGNATURE.try_with(|s| s.clone()).ok().flatten()
+}
+
 /// The effective `(sig_alg, sig_fpr)` for a journaled command: the ceremony
 /// override when the request carried one, else the plane client's own
 /// transport-signing fallbacks unchanged.

@@ -73,18 +73,22 @@ pub const LEGACY_REQUIRE_PASSKEY_ENV: &str = "GENARYX_WEB_REQUIRE_PASSKEY";
 
 /// The approver key file named by `raw`, the value of
 /// [`APPROVER_KEY_FILE_ENV`]. Blank, or only whitespace, names none.
-///
-/// Red-first scaffold: names no file until the fix lands.
-pub fn approver_key_file_from(_raw: &str) -> Option<PathBuf> {
-    None
+pub fn approver_key_file_from(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
 }
 
 /// The notice to log at startup when the retired variable is set, or `None`
 /// when it is not.
-///
-/// Red-first scaffold: never gives a notice until the fix lands.
-pub fn legacy_require_passkey_notice(_set: bool) -> Option<&'static str> {
-    None
+pub fn legacy_require_passkey_notice(set: bool) -> Option<&'static str> {
+    set.then_some(
+        "GENARYX_WEB_REQUIRE_PASSKEY is set but no longer read: passkeys are required for \
+         sensitive commands unless GENARYX_WEB_ALLOW_SOFTWARE_CEREMONY is set",
+    )
 }
 
 impl Config {

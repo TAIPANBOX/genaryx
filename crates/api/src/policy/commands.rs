@@ -136,6 +136,15 @@ pub enum DecisionDto {
 }
 
 impl DecisionDto {
+    /// The wire word wardryx uses for this decision, which a statement's `dec`
+    /// must equal.
+    fn wire(self) -> &'static str {
+        match self {
+            DecisionDto::Grant => "grant",
+            DecisionDto::Deny => "deny",
+        }
+    }
+
     fn to_verdict(self) -> ApprovalVerdict {
         match self {
             DecisionDto::Grant => ApprovalVerdict::Grant,
@@ -209,6 +218,11 @@ pub enum PolicyStatusDto {
 pub enum PolicyError {
     /// Discovery/liveness-check has not finished yet; retry shortly.
     Bootstrapping,
+    /// The decision was refused before it was sent to Wardryx, because the
+    /// console's approver statement could not be made (CLAUDE.md invariant 35).
+    ApproverStatement {
+        reason: String,
+    },
     NoEnvironment,
     Unreachable {
         reason: String,
@@ -334,6 +348,31 @@ async fn ready_client(state: &&PolicyState) -> Result<PolicyClient, PolicyError>
 /// never panics and never blocks the caller from learning Wardryx's own
 /// verdict) - mirrors `money::commands::journal` exactly, typed against
 /// [`PolicyClient`].
+/// Journal a decision refused before it reached Wardryx: the record a decision
+/// writes, with `decision` `refused` and `http_status` 0, since nothing was sent.
+fn journal_refusal(
+    client: &PolicyClient,
+    decision: DecisionDto,
+    id: &str,
+    operator: &str,
+    reason: &str,
+) -> (bool, Option<String>) {
+    let (sig_alg, sig_fpr) = crate::console_actor::signature_or(client.sig_alg, client.sig_fpr);
+    let rec = CommandRecord {
+        operator: operator.to_string(),
+        env: "local".to_string(),
+        action: decision.action().to_string(),
+        target: id.to_string(),
+        params: json!({}),
+        decision: "refused".to_string(),
+        sig_alg,
+        sig_fpr,
+        http_status: 0,
+        verify_result: format!("refused before wardryx: {reason}"),
+    };
+    journal(client, &rec)
+}
+
 fn journal(client: &PolicyClient, rec: &CommandRecord) -> (bool, Option<String>) {
     // Logged as well as returned, for the same reason as the money plane's
     // twin: the returned pair only reaches the operator when the plane call
@@ -530,17 +569,47 @@ pub async fn policy_decide_approval(
     id: String,
     decision: DecisionDto,
     state: &PolicyState,
-    // Red-first scaffold: the approver key is accepted and not yet used.
-    _approver: &crate::policy::approver::ApproverKey,
+    approver: &crate::policy::approver::ApproverKey,
 ) -> Result<DecideOutcome, PolicyError> {
     let client = ready_client(&state).await?;
     // The web shell's signed-in principal when set (docs/CONSOLE-IDP.md), else
     // this client's own default. Used both as the approver Wardryx records and
     // as the journaled operator, so the two never disagree.
     let operator = crate::console_actor::operator_or(&client.operator);
+    // The approver statement (CLAUDE.md invariant 35): made only from a passkey
+    // assertion that confirmed this decision, and required only when a key file
+    // is configured.
+    let confirmed = crate::console_actor::current_signature()
+        .filter(|sig| sig.alg == "webauthn-es256")
+        .map(|sig| sig.fpr);
+    let request = crate::policy::approver::Request {
+        approval_id: &id,
+        decision: decision.wire(),
+        approver: &operator,
+        passkey_credential: confirmed.as_deref(),
+    };
+    let statement = match crate::policy::approver::statement_for(
+        approver,
+        &request,
+        crate::policy::approver::now_unix(),
+    ) {
+        Ok(statement) => statement,
+        Err(refusal) => {
+            // Refused before anything is sent to Wardryx, and journaled like any
+            // other attempt (CLAUDE.md invariant 3).
+            let reason = refusal.to_string();
+            let _ = journal_refusal(&client, decision, &id, &operator, &reason);
+            return Err(PolicyError::ApproverStatement { reason });
+        }
+    };
+    if statement.is_none() {
+        eprintln!(
+            "genaryx: WARNING: approval {id} is sent without an approver statement, because no approver key file is configured (GENARYX_APPROVER_KEY_FILE): wardryx records it as decided by a key"
+        );
+    }
     let result = client
         .client
-        .decide_approval(&id, decision.to_verdict(), &operator)
+        .decide_approval_with_statement(&id, decision.to_verdict(), &operator, statement.as_deref())
         .await;
 
     let (http_status, verify_result, token, summary) =

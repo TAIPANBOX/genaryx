@@ -49,7 +49,7 @@ pub enum StatementError {
     #[error("the approver statement's claims are refused: {0}")]
     Claims(&'static str),
     /// The statement is not a well-formed statement of this shape.
-    #[error("the approver statement is malformed: {0}")]
+    #[error("{0}")]
     Malformed(&'static str),
     /// The signature does not verify under the console key.
     #[error("the approver statement does not verify under the console key")]
@@ -273,11 +273,130 @@ fn is_bidi_control(ch: char) -> bool {
 
 /// Read a P-256 private key from a PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`).
 ///
-/// Red-first scaffold: refuses every key until the fix lands.
-pub fn signer_from_pkcs8_pem(_pem: &str) -> Result<SoftwareSigner, StatementError> {
-    Err(StatementError::Malformed(
-        "red-first scaffold: not implemented",
-    ))
+/// Only that label and only P-256 are accepted: an RSA or SEC1 `EC PRIVATE KEY`
+/// is refused rather than guessed at. When the PEM carries the public half, it
+/// must be the public key of the scalar, or the key is refused.
+pub fn signer_from_pkcs8_pem(pem: &str) -> Result<SoftwareSigner, StatementError> {
+    let body = pem
+        .trim()
+        .strip_prefix("-----BEGIN PRIVATE KEY-----")
+        .and_then(|rest| rest.strip_suffix("-----END PRIVATE KEY-----"))
+        .ok_or(StatementError::Malformed(
+            "the approver key file is not a PKCS#8 PRIVATE KEY PEM",
+        ))?;
+    let der = base64::engine::general_purpose::STANDARD
+        .decode(body.split_whitespace().collect::<String>())
+        .map_err(|_| StatementError::Malformed("the approver key file's PEM body is not base64"))?;
+    let (scalar, public) = parse_p256_pkcs8(&der)?;
+    let signer = SoftwareSigner::from_scalar(&scalar).map_err(|_| {
+        StatementError::Malformed("the approver key's scalar is not a P-256 scalar")
+    })?;
+    if let Some(public) = public {
+        if signer.public_key_x963()? != public {
+            return Err(StatementError::Malformed(
+                "the approver key's public half does not match its scalar",
+            ));
+        }
+    }
+    Ok(signer)
+}
+
+/// `ecPublicKey` 1.2.840.10045.2.1, as its DER content octets.
+const OID_EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+/// `prime256v1` 1.2.840.10045.3.1.7, as its DER content octets.
+const OID_PRIME256V1: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+
+/// One DER element, read strictly: its tag, its value, and what follows it.
+fn der_read(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+    let (&tag, rest) = input.split_first()?;
+    let (&first, rest) = rest.split_first()?;
+    let (len, rest) = if first < 0x80 {
+        (usize::from(first), rest)
+    } else {
+        let n = usize::from(first & 0x7f);
+        if n == 0 || n > 4 || rest.len() < n {
+            return None;
+        }
+        let len = rest[..n]
+            .iter()
+            .fold(0usize, |acc, &b| (acc << 8) | usize::from(b));
+        (len, &rest[n..])
+    };
+    if rest.len() < len {
+        return None;
+    }
+    let (value, tail) = rest.split_at(len);
+    Some((tag, value, tail))
+}
+
+/// The scalar and the optional public half of a P-256 PKCS#8 key: RFC 5208's
+/// PrivateKeyInfo around RFC 5915's ECPrivateKey. Every element is checked for
+/// its tag, and anything outside that shape is refused.
+fn parse_p256_pkcs8(der: &[u8]) -> Result<([u8; 32], Option<Vec<u8>>), StatementError> {
+    let bad = || StatementError::Malformed("the approver key is not a P-256 PKCS#8 structure");
+    // PrivateKeyInfo ::= SEQUENCE { version INTEGER 0, algorithm, privateKey }
+    let (tag, info, rest) = der_read(der).ok_or_else(bad)?;
+    if tag != 0x30 || !rest.is_empty() {
+        return Err(bad());
+    }
+    let (tag, version, info) = der_read(info).ok_or_else(bad)?;
+    if tag != 0x02 || version != &[0u8][..] {
+        return Err(bad());
+    }
+    let (tag, algorithm, info) = der_read(info).ok_or_else(bad)?;
+    if tag != 0x30 {
+        return Err(bad());
+    }
+    let (tag, oid, algorithm) = der_read(algorithm).ok_or_else(bad)?;
+    if tag != 0x06 || oid != OID_EC_PUBLIC_KEY {
+        return Err(bad());
+    }
+    let (tag, curve, algorithm) = der_read(algorithm).ok_or_else(bad)?;
+    if tag != 0x06 || curve != OID_PRIME256V1 || !algorithm.is_empty() {
+        return Err(bad());
+    }
+    let (tag, key, info) = der_read(info).ok_or_else(bad)?;
+    if tag != 0x04 || !info.is_empty() {
+        return Err(bad());
+    }
+    // ECPrivateKey ::= SEQUENCE { version INTEGER 1, privateKey OCTET STRING,
+    //   parameters [0] OPTIONAL, publicKey [1] OPTIONAL }
+    let (tag, ec, key_rest) = der_read(key).ok_or_else(bad)?;
+    if tag != 0x30 || !key_rest.is_empty() {
+        return Err(bad());
+    }
+    let (tag, version, ec) = der_read(ec).ok_or_else(bad)?;
+    if tag != 0x02 || version != &[1u8][..] {
+        return Err(bad());
+    }
+    let (tag, scalar, ec) = der_read(ec).ok_or_else(bad)?;
+    if tag != 0x04 || scalar.len() != 32 {
+        return Err(bad());
+    }
+    let scalar: [u8; 32] = scalar.try_into().map_err(|_| bad())?;
+    let mut ec = ec;
+    if let Some((0xA0, _, after)) = der_read(ec) {
+        ec = after;
+    }
+    let mut public = None;
+    if let Some((0xA1, wrapped, after)) = der_read(ec) {
+        // [1] EXPLICIT BIT STRING: no unused bits, then 0x04 || X || Y.
+        let (tag, bits, _) = der_read(wrapped).ok_or_else(bad)?;
+        if tag != 0x03 {
+            return Err(bad());
+        }
+        match bits.split_first() {
+            Some((0, point)) if point.len() == 65 && point[0] == 0x04 => {
+                public = Some(point.to_vec());
+            }
+            _ => return Err(bad()),
+        }
+        ec = after;
+    }
+    if !ec.is_empty() {
+        return Err(bad());
+    }
+    Ok((scalar, public))
 }
 
 /// Encode a P-256 private key as a PKCS#8 PEM, the inverse of

@@ -14,8 +14,9 @@
 //! decision, the key file could not be read, or the statement's claims or
 //! signature failed.
 
+use genaryx_signing::Es256Signer;
 use genaryx_signing::approver as statement;
-use genaryx_signing::{Es256Signer, SoftwareSigner};
+use genaryx_signing::es256::random_hex;
 use std::fmt;
 use std::path::Path;
 
@@ -28,15 +29,6 @@ pub enum ApproverKey {
     /// A key file is configured but could not be used. The reason names the
     /// file and what was wrong with it, never key material.
     Failed(String),
-}
-
-impl ApproverKey {
-    /// Read the key file named by `path`, or report that none is configured.
-    ///
-    /// Red-first scaffold: reports `NotConfigured` until the fix lands.
-    pub fn load(_path: Option<&Path>) -> Self {
-        ApproverKey::NotConfigured
-    }
 }
 
 /// How long a statement is valid after it is made. The statement is sent at
@@ -84,30 +76,87 @@ impl fmt::Display for Refusal {
     }
 }
 
+impl ApproverKey {
+    /// Read the key file named by `path`, or report that none is configured.
+    /// A file that is named but cannot be used is `Failed`, and says so at once:
+    /// every decision is then refused until the file is fixed and the console
+    /// restarted.
+    pub fn load(path: Option<&Path>) -> Self {
+        let Some(path) = path else {
+            return ApproverKey::NotConfigured;
+        };
+        let loaded = std::fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|pem| statement::signer_from_pkcs8_pem(&pem).map_err(|e| e.to_string()));
+        match loaded {
+            Ok(signer) => ApproverKey::Ready(Box::new(signer)),
+            Err(reason) => {
+                let reason = format!("{}: {reason}", path.display());
+                eprintln!(
+                    "genaryx: WARNING: the approver key file cannot be used, so approvals are refused until it can: {reason}"
+                );
+                ApproverKey::Failed(reason)
+            }
+        }
+    }
+}
+
+/// The current time in unix seconds.
+pub fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
+}
+
 /// The statement to send with a decision, or `None` when no key file is
 /// configured. A configured key file that cannot make a statement refuses the
 /// decision instead.
-///
-/// Red-first scaffold: makes no statement until the fix lands.
 pub fn statement_for(
-    _key: &ApproverKey,
-    _request: &Request<'_>,
-    _now: i64,
+    key: &ApproverKey,
+    request: &Request<'_>,
+    now: i64,
 ) -> Result<Option<String>, Refusal> {
-    Ok(None)
+    match key {
+        ApproverKey::NotConfigured => Ok(None),
+        ApproverKey::Failed(reason) => Err(Refusal::KeyUnusable(reason.clone())),
+        ApproverKey::Ready(signer) => {
+            let Some(credential) = request.passkey_credential else {
+                return Err(Refusal::NoPasskeyConfirmed);
+            };
+            let jti = random_hex(16).map_err(|e| Refusal::Statement(e.to_string()))?;
+            let claims = statement::Claims {
+                sub: request.approver.to_string(),
+                cred: credential.to_string(),
+                aid: request.approval_id.to_string(),
+                dec: request.decision.to_string(),
+                iat: now,
+                exp: now + STATEMENT_LIFETIME_SECS,
+                jti,
+            };
+            statement::sign(signer.as_ref(), &claims)
+                .map(Some)
+                .map_err(|e| Refusal::Statement(e.to_string()))
+        }
+    }
 }
 
 /// Read a key file and return the public JWKS of its key, the file wardryx
 /// reads as its approver key set (`WARDRYX_APPROVER_JWKS`).
-///
-/// Red-first scaffold: refuses every file until the fix lands.
-pub fn jwks_for_key_file(_path: &Path) -> Result<String, String> {
-    Err("red-first scaffold: not implemented".to_string())
+pub fn jwks_for_key_file(path: &Path) -> Result<String, String> {
+    let pem = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let signer =
+        statement::signer_from_pkcs8_pem(&pem).map_err(|e| format!("{}: {e}", path.display()))?;
+    let public = signer.public_key_x963().map_err(|e| e.to_string())?;
+    let jwks = statement::public_jwks(&public).map_err(|e| e.to_string())?;
+    serde_json::to_string_pretty(&jwks).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use genaryx_signing::SoftwareSigner;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn scratch_file(contents: &str) -> std::path::PathBuf {
