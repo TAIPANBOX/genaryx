@@ -20,6 +20,7 @@ import {
   planesPresent,
   busPlaneLabel,
   busPlaneView,
+  BUS_PLANE_VIEW,
   isIncidentEvent,
   INCIDENT_BANDS,
   TAB_BANDS,
@@ -445,5 +446,70 @@ describe("an identity refusal is filed under the key, never the claimed agent", 
   it("every_other_bus_event_keeps_its_envelope_agent_as_subject", () => {
     const rows = agg([ev({ data: { key_id: "some-key" } })]);
     expect(incidentSubject(rows[0])).toBe("agent://acme.example/support/bot");
+  });
+});
+
+describe("the Keyryx witness's findings", () => {
+  // What keyryx's witness writes (agent-passport SPEC 6.2, source keyryx):
+  // agent-event v1.0, every finding under the witness's own synthetic subject,
+  // `data` naming the stream or the record's tenant, counts and clipped hashes.
+  function finding(over: Partial<UiEvent> = {}): UiEvent {
+    return ev({
+      source: "keyryx",
+      type: "witness_stream_rewritten",
+      agent_id: "agent://keyryx.internal/witness",
+      run_id: null,
+      severity: "high",
+      data: { stream: "wardryx.ndjson", lines: 12, bytes: 3456, prefix_seen: "sha384:ab12", prefix_now: "sha384:cd34" },
+      ...over,
+    });
+  }
+
+  it("a_keyryx_high_finding_becomes_an_incident_that_names_its_stream", () => {
+    const rows = agg([finding()]);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.source).toBe("bus");
+    expect(row.severity).toBe("high");
+    expect(row.title).toBe("witness stream rewritten");
+    expect(busPlaneLabel(row.raw as UiEvent)).toBe("via keyryx");
+    expect(incidentSubject(row)).toBe("agent://keyryx.internal/witness");
+    // The subject is the witness itself, so the stream it names is what an
+    // operator needs on the row.
+    expect(row.detail).toContain("stream wardryx.ndjson");
+  });
+
+  it("a_keyryx_finding_opens_the_bus_explorer_by_decision_not_by_falling_through", () => {
+    expect(BUS_PLANE_VIEW.keyryx).toBe("bus");
+    expect(busPlaneView(finding())).toBe("bus");
+  });
+
+  it("two_streams_rewritten_are_two_incidents", () => {
+    // Every finding has the same subject and no run, so grouping on those
+    // alone folded two rewritten streams into one row naming only the last.
+    const rows = agg([
+      finding({ id: 1, data: { stream: "wardryx.ndjson", lines: 12 } }),
+      finding({ id: 2, data: { stream: "tokenfuse.ndjson", lines: 40 } }),
+      finding({ id: 3, ts: "2026-08-26T10:05:00Z", data: { stream: "wardryx.ndjson", lines: 13 } }),
+    ]);
+    expect(rows).toHaveLength(2);
+    const byStream = new Map(rows.map((r) => [((r.raw as UiEvent).data as { stream: string }).stream, r.occurrences]));
+    expect(byStream.get("wardryx.ndjson")).toBe(2);
+    expect(byStream.get("tokenfuse.ndjson")).toBe(1);
+  });
+
+  it("a_record_root_finding_names_its_tenant", () => {
+    const rows = agg([
+      finding({ type: "witness_root_equivocated", data: { tenant: "local", shard: 0, segments: 3, reason: "a sealed manifest was rewritten" } }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("witness root equivocated");
+    expect(rows[0].detail).toContain("tenant local");
+  });
+
+  it("a_medium_keyryx_finding_is_not_an_incident_on_the_card", () => {
+    // The band decides, as for every plane: an unsigned checkpoint is medium
+    // (SPEC 6.2) and belongs on the Anomalies tab, not on the fire card.
+    expect(agg([finding({ type: "witness_checkpoint_unsigned", severity: "medium", data: { stream: "wardryx.ndjson", count: 4 } })])).toHaveLength(0);
   });
 });

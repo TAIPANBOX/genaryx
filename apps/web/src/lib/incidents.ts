@@ -94,6 +94,12 @@ export const BUS_PLANE_VIEW: Readonly<Record<string, ViewId>> = {
   scopyx: "egress",
   console: "routines",
   heraldyx: "bus",
+  // The Keyryx witness's findings. Each one names a stream on the bus that was
+  // rewritten, cut short or restarted, or a sealed record root, and says
+  // nothing changed it. There is no Keyryx panel, and the place to read the
+  // stream it names is the Bus Explorer, so the chip goes there by decision,
+  // not by falling through.
+  keyryx: "bus",
 };
 
 interface UnifiedIncidentBase {
@@ -356,7 +362,11 @@ function busGroupKey(e: UiEvent): string {
   // keys are two incidents, and a missing key is not an unknown one.
   const refusal = keyRefusal(e);
   const cause = refusal ? `|${refusal.reason}|${refusal.fingerprint ?? ""}` : "";
-  return `${e.source}|${e.type}|${filedUnder(e)}|${e.run_id ?? ""}${cause}`;
+  // A producer that files every finding under its own synthetic subject (the
+  // Keyryx witness) names what the finding is about in `data`: two streams
+  // rewritten are two incidents, not one row whose detail names only the last.
+  const about = `${dataString(e.data, "stream") ?? ""}|${dataString(e.data, "tenant") ?? ""}`;
+  return `${e.source}|${e.type}|${filedUnder(e)}|${e.run_id ?? ""}${cause}|${about}`;
 }
 
 /** The type a PII finding the gateway let through (or masked) is written as:
@@ -429,6 +439,11 @@ const BUS_DETAIL_KEYS: readonly string[] = [
   // Which credential made the call. A gateway event that names one says who
   // actually called, which is not always the agent on the envelope.
   "key_id",
+  // What a finding is about when its subject is the producer itself: the
+  // Keyryx witness files every finding under its own synthetic agent and names
+  // the stream, or the record's tenant, in `data` (agent-passport SPEC 6.2).
+  "stream",
+  "tenant",
 ];
 
 function fromQualityDrift(events: readonly UiEvent[]): UnifiedIncident[] {

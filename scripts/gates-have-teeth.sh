@@ -529,6 +529,40 @@ run_case "invariant 33: the stop module's own comment reworded" pass \
 	"$stop_gate" \
 	"$(py 'edit("crates/api/src/delegation/stop.rs", "/// The most runs one stop kills.", "/// The largest number of runs one stop kills.")')"
 
+# invariant 36: the console tails the streams GENARYX_EVENTS_EXTRA names beside
+# its events directory, read only, so the Keyryx witness's findings reach it.
+# Product mutants; the gate is the bus feed's tests whose names carry "extra".
+extra_gate='cargo test -q --no-fail-fast -p genaryx-api --lib extra'
+
+run_case "invariant 36: the extra streams are named and never tailed" fail \
+	"$extra_gate" \
+	"$(py 'edit("crates/api/src/bus/feed.rs", "    for extra in &paths.extra {\n        if !is_regular_file(extra)", "    for extra in paths.extra.iter().take(0) {\n        if !is_regular_file(extra)")')" \
+	"a_keyryx_finding_in_an_extra_stream_outside_the_events_dir_reaches_the_store"
+
+run_case "invariant 36: a relative entry is taken instead of named" fail \
+	"$extra_gate" \
+	"$(py 'edit("crates/api/src/bus/feed.rs", "        if !path.is_absolute() {", "        if false {")')" \
+	"the_extra_streams_setting_keeps_absolute_paths_and_names_every_entry_it_skips"
+
+run_case "invariant 36: a stream named twice is tailed twice" fail \
+	"$extra_gate" \
+	"$(py 'edit("crates/api/src/bus/feed.rs", "        if !out.contains(&path) {\n            out.push(path);\n        }\n    }\n    out\n}\n\n/// True only", "        if true {\n            out.push(path);\n        }\n    }\n    out\n}\n\n/// True only")')" \
+	"a_stream_named_both_in_the_events_dir_and_as_an_extra_is_tailed_once"
+
+run_case "invariant 36: a line claiming another plane in an extra stream is stored as that plane" fail \
+	"$extra_gate" \
+	"$(py 'edit("crates/core/src/ingest.rs", ".filter(|want| event.source != **want)", ".filter(|_| false)")')" \
+	"a_line_claiming_another_source_in_an_extra_stream_is_quarantined_not_stored"
+
+run_case "invariant 36: an extra stream is listed through a symlink" fail \
+	"$extra_gate" \
+	"$(py 'edit("crates/api/src/bus/feed.rs", "    std::fs::symlink_metadata(path)\n", "    std::fs::metadata(path)\n")')" \
+	"an_extra_stream_that_is_a_symlink_or_a_directory_is_not_read"
+
+run_case "invariant 36: the sources function's own comment reworded" pass \
+	"$extra_gate" \
+	"$(py 'edit("crates/api/src/bus/feed.rs", "/// Every stream the bus should tail right now:", "/// Every stream the bus ought to tail right now:")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"
