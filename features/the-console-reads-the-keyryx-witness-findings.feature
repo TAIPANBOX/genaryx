@@ -13,11 +13,11 @@ Feature: The console reads the Keyryx witness's findings, read only, and turns a
   naming streams it tails beside its events directory and never writes.
 
   # @test:the_extra_streams_setting_keeps_absolute_paths_and_names_every_entry_it_skips
-  Scenario: The setting takes absolute paths and names what it will not read
+  Scenario: The setting takes absolute stream files and names what it will not read
     Given GENARYX_EVENTS_EXTRA lists a file, a directory, a relative path and a path with ".."
     When the console reads the setting
-    Then it keeps the absolute file and directory, once each
-    And it names the relative entry and the ".." entry as not read, and resolves neither
+    Then it keeps the absolute file, once
+    And it names the relative entry, the ".." entry and the directory as not read, and resolves none of them
 
   # @test:a_keyryx_finding_in_an_extra_stream_outside_the_events_dir_reaches_the_store
   Scenario: A witness finding outside the events directory reaches the console's store
@@ -32,11 +32,17 @@ Feature: The console reads the Keyryx witness's findings, read only, and turns a
     When the witness creates it with a finding
     Then the console tails it on the next tick, and that was not an error before
 
-  # @test:an_extra_directory_is_tailed_for_every_ndjson_file_in_it
-  Scenario: A directory named as an extra stream is read for its stream files only
-    Given GENARYX_EVENTS_EXTRA names a directory holding keyryx.ndjson and a text file
+  # @test:an_extra_stream_that_is_a_symlink_or_a_directory_is_not_read
+  Scenario: An extra stream that is a symlink or a directory is not read
+    Given the findings file has been swapped for a link to wardryx.ndjson, and another entry is a directory
     When the console lists what to tail
-    Then it lists keyryx.ndjson and not the text file
+    Then it lists neither, and only the bus's own streams
+
+  # @test:a_line_claiming_another_source_in_an_extra_stream_is_quarantined_not_stored
+  Scenario: A line in the findings file that claims another plane is quarantined
+    Given keyryx.ndjson holds a line claiming source wardryx and a witness finding
+    When the console tails it
+    Then the wardryx line is quarantined with one fixed reason and nothing from that file is stored as wardryx
 
   # @test:a_stream_named_both_in_the_events_dir_and_as_an_extra_is_tailed_once
   Scenario: A stream named twice is read once

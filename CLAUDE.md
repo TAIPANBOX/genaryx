@@ -1813,12 +1813,19 @@ an absent invariant.
     console read `events.dir` and nothing else, so no finding reached it.
 
     `GENARYX_EVENTS_EXTRA` (`crates/api/src/bus/feed.rs`, `EVENTS_EXTRA_ENV`) is a
-    comma separated list of absolute paths, each an `*.ndjson` file or a directory
-    of them, read once at startup. The live tailer lists them every tick with the
-    events directory (`collect_sources`): a file that is not there yet is picked
-    up when it appears, a path named twice is tailed once, and a relative entry or
-    one with `..` is named on stderr and not read, never resolved against the
-    working directory. The console writes none of them: `console.ndjson` still goes
+    comma separated list of absolute paths, each one `*.ndjson` file, read once at
+    startup. The live tailer lists them every tick with the events directory
+    (`collect_sources`): a file that is not there yet is picked up when it
+    appears, a path named twice is tailed once, and a relative entry, one with
+    `..`, or one that is not an `*.ndjson` file (a directory) is named on stderr
+    and not read, never resolved against the working directory. An extra stream
+    is taken up only while it is a regular file, read without following a
+    symlink (`is_regular_file`). And each is pinned to the source its file is
+    named for, heraldyx's stem rule: `IngestService::add_pinned_file_source`
+    quarantines a conforming line that claims another source under one fixed
+    reason, `PINNED_SOURCE_REFUSED`, so the witness, or anything that can write
+    its file or swap it for a link, cannot make the console show a line as
+    another plane's. The console writes none of them: `console.ndjson` still goes
     to `events.dir` alone. Demo mode reads no extra stream. On the web side,
     `BUS_PLANE_VIEW` maps `keyryx` to the Bus Explorer by name: there is no Keyryx
     panel, and each finding is about a stream on the bus, whose lines are read
@@ -1834,21 +1841,24 @@ an absent invariant.
     `the_extra_streams_setting_keeps_absolute_paths_and_names_every_entry_it_skips`,
     `a_keyryx_finding_in_an_extra_stream_outside_the_events_dir_reaches_the_store`,
     `an_extra_stream_that_appears_after_startup_is_picked_up`,
-    `an_extra_directory_is_tailed_for_every_ndjson_file_in_it` and
+    `an_extra_stream_that_is_a_symlink_or_a_directory_is_not_read`,
+    `a_line_claiming_another_source_in_an_extra_stream_is_quarantined_not_stored` and
     `a_stream_named_both_in_the_events_dir_and_as_an_extra_is_tailed_once`;
     `apps/web/src/lib/incidents.test.ts`'s five in "the Keyryx witness's findings";
     `apps/web/src/lib/mockPreview.keyryx.test.ts`'s two. Red first: four of the five
     incident tests failed on assertions against the unfixed `incidents.ts` (the
     medium control is green by design), and both demo tests against the unfixed
-    `mockPreview.ts`. Three product mutants and one non-fault in
+    `mockPreview.ts`. Five product mutants and one non-fault in
     `scripts/gates-have-teeth.sh` hold the Rust half: the extra streams never
-    tailed, a relative entry taken, a stream named twice listed twice. Scenarios:
+    tailed, a relative entry taken, a stream named twice listed twice, the
+    source pin removed, a symlink followed. Scenarios:
     `features/the-console-reads-the-keyryx-witness-findings.feature`, twelve, each
     bound; gate: `scripts/features-are-bound.sh`.
 
-    Where it says nothing: the console does not judge which `source` an extra
-    stream may carry (heraldyx does, by its stem); the file's own permissions are
-    the launcher's, and the console trusts the path it was given. No running
+    Where it says nothing: the streams in `events.dir` are not pinned (only the
+    extra ones are); a symlink swapped in after a file was taken up is read
+    through, and the pin is what holds then; the file's own permissions are the
+    launcher's. No running
     console has read a live witness's findings, and no launcher pins a console
     image that reads the setting yet.)*
 

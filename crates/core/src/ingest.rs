@@ -161,6 +161,12 @@ pub struct IngestStats {
 /// countable gap), never a hang.
 const BROADCAST_CAPACITY: usize = 1024;
 
+/// The one reason a line is quarantined when it arrives in a pinned stream
+/// claiming a source that stream may not carry ([`IngestService::add_pinned_file_source`]).
+/// One fixed string, so the quarantine panel groups every such line into one
+/// row with a count, as it does for a claimed subject.
+pub const PINNED_SOURCE_REFUSED: &str = "the line claims a source its stream may not carry (a pinned stream carries only its own source)";
+
 /// Owns a [`Store`] and one compiled [`Conformer`]; turns registered
 /// [`EventSource`]s into stored + broadcast [`ConsoleEvent`]s (06 §2).
 ///
@@ -172,6 +178,9 @@ pub struct IngestService {
     conformer: Conformer,
     env: String,
     sources: Vec<Box<dyn EventSource + Send>>,
+    /// File key (the path as `FileTail` records it) -> the one source a line
+    /// read from that file may claim. Files not in here are read as before.
+    pinned: HashMap<String, String>,
     sender: broadcast::Sender<ConsoleEvent>,
 }
 
@@ -186,6 +195,7 @@ impl IngestService {
             conformer,
             env: env.into(),
             sources: Vec::new(),
+            pinned: HashMap::new(),
             sender,
         })
     }
@@ -263,6 +273,26 @@ impl IngestService {
         Ok(())
     }
 
+    /// [`IngestService::add_file_source`], and every line read from `path`
+    /// must claim `source`: a conforming line that claims any other source is
+    /// quarantined under [`PINNED_SOURCE_REFUSED`], never stored as that source.
+    ///
+    /// For a stream the console is pointed at from outside its events
+    /// directory (the Keyryx witness's findings): whoever can write that file
+    /// must not be able to make the console show a line as another plane's.
+    pub fn add_pinned_file_source(
+        &mut self,
+        id: impl Into<String>,
+        path: impl AsRef<Path>,
+        source: impl Into<String>,
+    ) -> Result<()> {
+        let path = path.as_ref();
+        self.add_file_source(id, path)?;
+        self.pinned
+            .insert(path.to_string_lossy().into_owned(), source.into());
+        Ok(())
+    }
+
     /// Subscribe to the live broadcast of newly ingested (conforming) events.
     /// Call this before the first [`IngestService::poll_once`] /
     /// [`IngestService::run_blocking`] tick to avoid missing its batch.
@@ -298,6 +328,24 @@ impl IngestService {
 
                 match self.conformer.parse_valid(&record.raw) {
                     Ok(event) => {
+                        let refused = record
+                            .file
+                            .as_ref()
+                            .and_then(|f| self.pinned.get(f))
+                            .filter(|want| event.source != **want)
+                            .is_some();
+                        if refused {
+                            self.store.quarantine(
+                                &self.env,
+                                record.file.as_deref(),
+                                record.offset,
+                                &record.raw,
+                                PINNED_SOURCE_REFUSED,
+                                &received_ts,
+                            )?;
+                            stats.quarantined += 1;
+                            continue;
+                        }
                         let schema_version = event.schema_version().ok_or_else(|| {
                             Error::Conform(format!(
                                 "event passed conformance under an unrecognized schema: {:?}",

@@ -89,8 +89,12 @@ pub struct BusBootstrap {
 const FEEDER_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Streams the live bus tails beside the environment's `events.dir`: a comma
-/// separated list of absolute paths, each an `*.ndjson` file or a directory of
-/// them. Read only. Unset or empty, the bus is `events.dir` alone, as before.
+/// separated list of absolute paths, each one `*.ndjson` file. Read only, and
+/// pinned: a line in `<name>.ndjson` is stored only when it claims source
+/// `<name>`, the rule heraldyx applies by the file's stem, so whoever can write
+/// the file cannot make the console show a line as another plane's. A path
+/// that is not a regular file when it is listed (a directory, a symlink) is not
+/// read. Unset or empty, the bus is `events.dir` alone, as before.
 ///
 /// It exists for a stream a launcher keeps OFF the bus on purpose: the Keyryx
 /// witness's findings, which a witness that never writes the bus it witnesses
@@ -108,13 +112,13 @@ struct BusPaths {
 /// Read [`EVENTS_EXTRA_ENV`]'s value into paths, and say which entries were
 /// not taken.
 ///
-/// An entry is kept only when it is an absolute path with no `..` in it: the
-/// console resolves nothing against its own working directory, and a value a
-/// person mistyped is named rather than guessed at. An entry ending in
-/// `.ndjson` is a file, anything else a directory whose `*.ndjson` files are
-/// tailed. Whether either exists is not asked here: a stream that appears
-/// later is picked up on the tick after it does ([`collect_sources`]). A
-/// repeated entry is kept once. A refused entry costs that entry, never the
+/// An entry is kept only when it is an absolute path with no `..` in it that
+/// names one `*.ndjson` file: the console resolves nothing against its own
+/// working directory, a directory is not read (its files would carry whatever
+/// stems their writer chose), and a value a person mistyped is named rather
+/// than guessed at. Whether the file exists is not asked here: a stream that
+/// appears later is picked up on the tick after it does ([`collect_sources`]).
+/// A repeated entry is kept once. A refused entry costs that entry, never the
 /// bus: the reasons go back to the caller to print.
 fn parse_extra_streams(raw: &str) -> (Vec<PathBuf>, Vec<String>) {
     let mut kept: Vec<PathBuf> = Vec::new();
@@ -128,6 +132,16 @@ fn parse_extra_streams(raw: &str) -> (Vec<PathBuf>, Vec<String>) {
             .any(|c| matches!(c, std::path::Component::ParentDir))
         {
             refused.push(format!("{entry:?} climbs out of its directory with `..`"));
+        } else if path.extension().and_then(|e| e.to_str()) != Some("ndjson")
+            || path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .is_empty()
+        {
+            refused.push(format!(
+                "{entry:?} is not one *.ndjson file; a directory is not read"
+            ));
         } else if !kept.contains(&path) {
             kept.push(path);
         }
@@ -136,29 +150,49 @@ fn parse_extra_streams(raw: &str) -> (Vec<PathBuf>, Vec<String>) {
 }
 
 /// Every stream the bus should tail right now: each `*.ndjson` in `events.dir`
-/// ([`collect_ndjson_files`]), then each extra stream that exists, a file as
-/// itself and a directory as its `*.ndjson` files. A path is listed once, so a
-/// stream named both ways is tailed once. Missing paths are skipped in silence
-/// here, because the tailer asks again every tick.
+/// ([`collect_ndjson_files`]), then each extra stream that is a regular file
+/// right now ([`is_regular_file`]). A path is listed once, so a stream named
+/// both ways is tailed once. A missing path is skipped in silence here,
+/// because the tailer asks again every tick.
 fn collect_sources(paths: &BusPaths) -> Vec<PathBuf> {
     let mut out = collect_ndjson_files(&paths.dir).unwrap_or_default();
     for extra in &paths.extra {
-        let found = if extra.extension().and_then(|e| e.to_str()) == Some("ndjson") {
-            if extra.is_file() {
-                vec![extra.clone()]
-            } else {
-                Vec::new()
-            }
-        } else {
-            collect_ndjson_files(extra).unwrap_or_default()
-        };
-        for path in found {
-            if !out.contains(&path) {
-                out.push(path);
-            }
+        if !is_regular_file(extra) {
+            continue;
+        }
+        let path = extra.clone();
+        if !out.contains(&path) {
+            out.push(path);
         }
     }
     out
+}
+
+/// True only for a regular file, read without following a symlink: an extra
+/// stream swapped for a link to another plane's file, or for a directory, is
+/// not taken up. A link swapped in after the file was taken up is read through
+/// by the tail, and the source pin ([`add_bus_source`]) is what holds then.
+fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_file())
+        .unwrap_or(false)
+}
+
+/// Register one stream of a live bus: a file in `events.dir` as before, an
+/// extra stream pinned to the source its file is named for.
+fn add_bus_source(
+    ingest: &mut IngestService,
+    paths: &BusPaths,
+    path: &Path,
+) -> genaryx_core::Result<()> {
+    if !paths.extra.iter().any(|e| e == path) {
+        return add_source(ingest, path);
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    ingest.add_pinned_file_source(format!("filetail:{stem}"), path, stem)
 }
 
 /// Open the console's bus and start the background thread that feeds it.
@@ -242,7 +276,7 @@ fn bootstrap_live<S: EventSink>(
     };
     let mut tailed = Vec::new();
     for path in collect_sources(&paths) {
-        add_source(&mut ingest, &path)?;
+        add_bus_source(&mut ingest, &paths, &path)?;
         tailed.push(path);
     }
 
@@ -346,7 +380,7 @@ fn pick_up_new_sources(ingest: &mut IngestService, paths: &BusPaths, tailed: &mu
         if tailed.contains(&path) {
             continue;
         }
-        match add_source(ingest, &path) {
+        match add_bus_source(ingest, paths, &path) {
             Ok(()) => {
                 eprintln!("genaryx: bus picked up a new source: {}", path.display());
                 tailed.push(path);
@@ -1068,15 +1102,12 @@ mod tests {
         );
         assert_eq!(
             kept,
-            vec![
-                PathBuf::from("/var/lib/keyryx-alerts/keyryx.ndjson"),
-                PathBuf::from("/srv/streams"),
-            ],
-            "absolute entries are kept once, in order; blanks are nothing"
+            vec![PathBuf::from("/var/lib/keyryx-alerts/keyryx.ndjson")],
+            "an absolute *.ndjson file is kept once; blanks are nothing"
         );
         assert_eq!(
             refused.len(),
-            2,
+            3,
             "one reason per refused entry: {refused:?}"
         );
         assert!(
@@ -1086,6 +1117,10 @@ mod tests {
         assert!(
             refused[1].contains(".."),
             "an entry that climbs out with `..` is named: {refused:?}"
+        );
+        assert!(
+            refused[2].contains("/srv/streams") && refused[2].contains("directory"),
+            "a directory is not read, so its files cannot choose their own stems: {refused:?}"
         );
         assert_eq!(parse_extra_streams(""), (Vec::new(), Vec::new()));
     }
@@ -1156,22 +1191,66 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A directory named as an extra stream is read for every `*.ndjson` in it,
-    /// the way `events.dir` is, and nothing else in it.
+    /// An extra stream that is a symlink, or a directory, when the bus lists it
+    /// is not taken up: the witness could otherwise swap its findings file for
+    /// a link to another plane's stream, or a directory of files named as it
+    /// chose.
+    #[cfg(unix)]
     #[test]
-    fn an_extra_directory_is_tailed_for_every_ndjson_file_in_it() {
-        let root = scratch("extra-dir");
+    fn an_extra_stream_that_is_a_symlink_or_a_directory_is_not_read() {
+        let root = scratch("extra-link");
         let bus = root.join("events");
         let alerts = root.join("keyryx-alerts");
         std::fs::create_dir_all(&bus).unwrap();
         std::fs::create_dir_all(&alerts).unwrap();
-        std::fs::write(alerts.join("keyryx.ndjson"), WITNESS_FINDING).unwrap();
-        std::fs::write(alerts.join("notes.txt"), "not a stream\n").unwrap();
+        std::fs::write(bus.join("wardryx.ndjson"), BUS_LINE).unwrap();
+        std::os::unix::fs::symlink(bus.join("wardryx.ndjson"), alerts.join("keyryx.ndjson"))
+            .unwrap();
+        std::fs::create_dir_all(alerts.join("other.ndjson")).unwrap();
+        let paths = BusPaths {
+            dir: bus.clone(),
+            extra: vec![alerts.join("keyryx.ndjson"), alerts.join("other.ndjson")],
+        };
+        assert_eq!(collect_sources(&paths), vec![bus.join("wardryx.ndjson")]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A line in an extra stream that claims another plane's source is
+    /// quarantined, never stored as that plane: the file is pinned to the
+    /// source it is named for.
+    #[test]
+    fn a_line_claiming_another_source_in_an_extra_stream_is_quarantined_not_stored() {
+        let root = scratch("extra-pin");
+        let bus = root.join("events");
+        let alerts = root.join("keyryx-alerts");
+        std::fs::create_dir_all(&bus).unwrap();
+        std::fs::create_dir_all(&alerts).unwrap();
+        let mixed = format!("{BUS_LINE}{WITNESS_FINDING}");
+        std::fs::write(alerts.join("keyryx.ndjson"), mixed).unwrap();
         let paths = BusPaths {
             dir: bus,
-            extra: vec![alerts.clone()],
+            extra: vec![alerts.join("keyryx.ndjson")],
         };
-        assert_eq!(collect_sources(&paths), vec![alerts.join("keyryx.ndjson")]);
+        let mut ingest = live_ingest(&root);
+        let mut tailed = Vec::new();
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
+        let stats = ingest.poll_once().expect("poll_once");
+        assert_eq!(stats.quarantined, 1, "the wardryx line is refused");
+        let stored = ingest.store().recent_events(10).expect("recent_events");
+        assert!(
+            stored.iter().all(|e| e.source == "keyryx"),
+            "nothing from keyryx.ndjson is stored as another plane: {:?}",
+            stored.iter().map(|e| e.source.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(stored.len(), 1, "the witness's own line is stored");
+        let reasons = ingest
+            .store()
+            .quarantine_by_reason(10)
+            .expect("quarantine_by_reason");
+        assert_eq!(
+            reasons[0].reason,
+            genaryx_core::ingest::PINNED_SOURCE_REFUSED
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1185,7 +1264,7 @@ mod tests {
         std::fs::write(bus.join("keyryx.ndjson"), WITNESS_FINDING).unwrap();
         let paths = BusPaths {
             dir: bus.clone(),
-            extra: vec![bus.join("keyryx.ndjson"), bus.clone()],
+            extra: vec![bus.join("keyryx.ndjson"), bus.join("keyryx.ndjson")],
         };
         // Listed once, so the startup registration, which takes the list as
         // it is, registers it once too.
