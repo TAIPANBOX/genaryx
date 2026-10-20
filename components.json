@@ -78,6 +78,9 @@
           "GENARYX_COPILOT_PROVIDER": {
             "required": false
           },
+          "GENARYX_EVENTS_EXTRA": {
+            "required": false
+          },
           "GENARYX_HISTORY_DAYS": {
             "required": false
           },

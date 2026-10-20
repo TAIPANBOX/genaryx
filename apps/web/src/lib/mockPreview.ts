@@ -2669,6 +2669,49 @@ function mockRefusedKeyAndPiiEvents(): UiEvent[] {
   ] as UiEvent[];
 }
 
+/** Two findings of the Keyryx witness, SYNTHETIC like every row here: the
+ * witness that watches the bus noticed that a stream it had already read was
+ * rewritten (high, so the Overview's fire card shows it), and that a
+ * checkpoint arrived unsigned (medium, so only the Incidents tab does). Shaped
+ * as keyryx writes them (agent-passport SPEC 6.2): agent-event v1.0, source
+ * `keyryx`, every finding under the witness's own synthetic subject, `data`
+ * naming the stream with counts and clipped hashes and never record content.
+ * The file is the witness's own findings stream, which the launchers keep off
+ * the bus and give the console read only. */
+function mockKeyryxWitnessEvents(): UiEvent[] {
+  const base = {
+    env: "live",
+    source: "keyryx",
+    agent_id: "agent://keyryx.internal/witness",
+    run_id: null,
+    schema: "taipanbox.dev/agent-event/v1.0",
+    on_behalf_of: [],
+    prev_hash: null,
+    raw: "",
+    file: "/var/lib/keyryx-alerts/keyryx.ndjson",
+  };
+  return [
+    {
+      ...base,
+      id: 900_301,
+      ts: ago(5 * 60_000),
+      type: "witness_stream_rewritten",
+      severity: "high",
+      data: { stream: "wardryx.ndjson", lines: 1840, bytes: 912_384, prefix_seen: "3f2a9c1e07b4", prefix_now: "8d0e55a1c3f9" },
+      off: 900_301,
+    },
+    {
+      ...base,
+      id: 900_302,
+      ts: ago(2 * 60_000),
+      type: "witness_checkpoint_unsigned",
+      severity: "medium",
+      data: { stream: "tokenfuse.ndjson", count: 4096, reason: "the producer has no signing key yet" },
+      off: 900_302,
+    },
+  ] as UiEvent[];
+}
+
 function mockQualityDriftEvent(): UiEvent {
   return {
     id: 900_001,
@@ -4004,7 +4047,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // exactly as many as the seed makes, so anything appended after it is cut
     // before it is ever seen. The drift event was appended, and so the demo's
     // one bus incident with no run id never reached Incident 360.
-    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...seedEvents(Number(args?.limit ?? 60))]);
+    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...mockKeyryxWitnessEvents(), ...seedEvents(Number(args?.limit ?? 60))]);
     case "run_events": return r(seedEvents(20));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });

@@ -246,6 +246,13 @@ it wrong:
 - `events.dir` is what puts the Bus Explorer into live mode. Without it the
   console runs a synthetic demo feeder and says so, rather than showing
   invented numbers as if they were real.
+- `GENARYX_EVENTS_EXTRA` names streams the live bus tails beside `events.dir`:
+  absolute paths separated by commas, each an `*.ndjson` file or a directory of
+  them. The console reads them and writes none of them (its own
+  `console.ndjson` still goes to `events.dir`). The launchers name the Keyryx
+  witness's findings file here, which is kept off the bus and mounted into the
+  console read only. A relative path, or one with `..`, is named at startup and
+  not read. A file that is not there yet is picked up when it appears.
 - Newest descriptor wins when several exist, by modification time.
 
 ## When a panel is empty, ask why

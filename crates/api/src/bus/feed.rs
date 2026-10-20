@@ -19,6 +19,13 @@
 //!    ~2s. Useful for a first look and for screenshots, and labelled as demo
 //!    everywhere it surfaces.
 //!
+//! A live bus can also tail streams that are NOT in `events.dir`, named in
+//! [`EVENTS_EXTRA_ENV`]. The one in use is the Keyryx witness's findings: the
+//! witness reads the bus and must never write it, so its findings are a file
+//! of their own, which a launcher mounts here read only. The console reads
+//! those streams and writes none of them: its own `console.ndjson` still goes
+//! to `events.dir` alone ([`BusBootstrap::source_events_dir`]).
+//!
 //! Until 2026-07-21 only path 2 existed, unconditionally, in every shell this
 //! project shipped at the time: the Phase-0 scaffold was never replaced, so
 //! every console on every machine
@@ -80,6 +87,79 @@ pub struct BusBootstrap {
 /// Cadence of the background tick, for both the live tailer and the demo
 /// feeder (spec: "every ~2s").
 const FEEDER_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Streams the live bus tails beside the environment's `events.dir`: a comma
+/// separated list of absolute paths, each an `*.ndjson` file or a directory of
+/// them. Read only. Unset or empty, the bus is `events.dir` alone, as before.
+///
+/// It exists for a stream a launcher keeps OFF the bus on purpose: the Keyryx
+/// witness's findings, which a witness that never writes the bus it witnesses
+/// cannot put there.
+pub const EVENTS_EXTRA_ENV: &str = "GENARYX_EVENTS_EXTRA";
+
+/// What a bus tails: the environment's `events.dir`, and the extra streams the
+/// operator named in [`EVENTS_EXTRA_ENV`]. Demo mode has no extras.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct BusPaths {
+    dir: PathBuf,
+    extra: Vec<PathBuf>,
+}
+
+/// Read [`EVENTS_EXTRA_ENV`]'s value into paths, and say which entries were
+/// not taken.
+///
+/// An entry is kept only when it is an absolute path with no `..` in it: the
+/// console resolves nothing against its own working directory, and a value a
+/// person mistyped is named rather than guessed at. An entry ending in
+/// `.ndjson` is a file, anything else a directory whose `*.ndjson` files are
+/// tailed. Whether either exists is not asked here: a stream that appears
+/// later is picked up on the tick after it does ([`collect_sources`]). A
+/// repeated entry is kept once. A refused entry costs that entry, never the
+/// bus: the reasons go back to the caller to print.
+fn parse_extra_streams(raw: &str) -> (Vec<PathBuf>, Vec<String>) {
+    let mut kept: Vec<PathBuf> = Vec::new();
+    let mut refused = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let path = PathBuf::from(entry);
+        if !path.is_absolute() {
+            refused.push(format!("{entry:?} is not an absolute path"));
+        } else if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            refused.push(format!("{entry:?} climbs out of its directory with `..`"));
+        } else if !kept.contains(&path) {
+            kept.push(path);
+        }
+    }
+    (kept, refused)
+}
+
+/// Every stream the bus should tail right now: each `*.ndjson` in `events.dir`
+/// ([`collect_ndjson_files`]), then each extra stream that exists, a file as
+/// itself and a directory as its `*.ndjson` files. A path is listed once, so a
+/// stream named both ways is tailed once. Missing paths are skipped in silence
+/// here, because the tailer asks again every tick.
+fn collect_sources(paths: &BusPaths) -> Vec<PathBuf> {
+    let mut out = collect_ndjson_files(&paths.dir).unwrap_or_default();
+    for extra in &paths.extra {
+        let found = if extra.extension().and_then(|e| e.to_str()) == Some("ndjson") {
+            if extra.is_file() {
+                vec![extra.clone()]
+            } else {
+                Vec::new()
+            }
+        } else {
+            collect_ndjson_files(extra).unwrap_or_default()
+        };
+        for path in found {
+            if !out.contains(&path) {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
 
 /// Open the console's bus and start the background thread that feeds it.
 ///
@@ -151,8 +231,17 @@ fn bootstrap_live<S: EventSink>(
     // is configured, the products that write into it simply have not run.
     // `collect_ndjson_files` reports none, the tailer rescans every tick, and
     // the Bus Explorer shows an honest empty bus until something arrives.
+    let (extra, refused) =
+        parse_extra_streams(&std::env::var(EVENTS_EXTRA_ENV).unwrap_or_default());
+    for reason in &refused {
+        eprintln!("genaryx: {EVENTS_EXTRA_ENV}: {reason}; that entry is not read");
+    }
+    let paths = BusPaths {
+        dir: resolved.events_dir.clone(),
+        extra,
+    };
     let mut tailed = Vec::new();
-    for path in collect_ndjson_files(&resolved.events_dir).unwrap_or_default() {
+    for path in collect_sources(&paths) {
         add_source(&mut ingest, &path)?;
         tailed.push(path);
     }
@@ -167,9 +256,14 @@ fn bootstrap_live<S: EventSink>(
         stats.inserted,
         stats.quarantined
     );
+    for extra in &paths.extra {
+        eprintln!(
+            "genaryx: bus also reads {} ({EVENTS_EXTRA_ENV}), read only",
+            extra.display()
+        );
+    }
 
-    let events_dir = resolved.events_dir.clone();
-    std::thread::spawn(move || run_tailer(ingest, receiver, events_dir, tailed, sink));
+    std::thread::spawn(move || run_tailer(ingest, receiver, paths, tailed, sink));
 
     Ok(BusBootstrap {
         events_dir: store_dir,
@@ -247,8 +341,8 @@ fn add_source(ingest: &mut IngestService, path: &Path) -> genaryx_core::Result<(
 /// A file that cannot be registered is logged and retried on the next tick
 /// rather than ending the loop: a bus that stops reading is much worse than
 /// a bus that skips a cycle.
-fn pick_up_new_sources(ingest: &mut IngestService, dir: &Path, tailed: &mut Vec<PathBuf>) {
-    for path in collect_ndjson_files(dir).unwrap_or_default() {
+fn pick_up_new_sources(ingest: &mut IngestService, paths: &BusPaths, tailed: &mut Vec<PathBuf>) {
+    for path in collect_sources(paths) {
         if tailed.contains(&path) {
             continue;
         }
@@ -474,14 +568,14 @@ fn collect_ndjson_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
 fn run_tailer<S: EventSink>(
     mut ingest: IngestService,
     mut receiver: broadcast::Receiver<ConsoleEvent>,
-    events_dir: PathBuf,
+    paths: BusPaths,
     mut tailed: Vec<PathBuf>,
     sink: S,
 ) {
     loop {
         std::thread::sleep(FEEDER_INTERVAL);
 
-        pick_up_new_sources(&mut ingest, &events_dir, &mut tailed);
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
 
         if let Err(e) = ingest.poll_once() {
             eprintln!("genaryx: bus poll_once failed: {e}");
@@ -519,11 +613,16 @@ fn run_feeder<S: EventSink>(
 ) {
     let mut tailed = files.clone();
     let mut tick: u64 = 0;
+    // Demo mode reads its own fixtures and nothing named from outside.
+    let paths = BusPaths {
+        dir: events_dir,
+        extra: Vec::new(),
+    };
     loop {
         std::thread::sleep(FEEDER_INTERVAL);
         tick += 1;
 
-        pick_up_new_sources(&mut ingest, &events_dir, &mut tailed);
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
 
         let (source, line) = feeder_line(tick);
         match pick_file(&files, source) {
@@ -919,7 +1018,11 @@ mod tests {
         )
         .expect("write the console events file");
 
-        pick_up_new_sources(&mut ingest, &dir, &mut tailed);
+        let paths = BusPaths {
+            dir: dir.clone(),
+            extra: Vec::new(),
+        };
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
         ingest.poll_once().expect("poll after rescan");
 
         assert!(
@@ -933,5 +1036,166 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// One line of the Keyryx witness's findings, as keyryx's `EventAlerter`
+    /// writes it: agent-event v1.0, source `keyryx`, the witness's own
+    /// synthetic subject, `data` naming the stream (agent-passport SPEC 6.2).
+    const WITNESS_FINDING: &str = "{\"schema\":\"taipanbox.dev/agent-event/v1.0\",\
+        \"ts\":\"2026-10-20T09:00:00.000Z\",\"source\":\"keyryx\",\
+        \"type\":\"witness_stream_rewritten\",\
+        \"agent_id\":\"agent://keyryx.internal/witness\",\"severity\":\"high\",\
+        \"data\":{\"stream\":\"wardryx.ndjson\",\"lines\":12,\"bytes\":3456,\
+        \"prefix_seen\":\"sha384:ab12cd34\",\"prefix_now\":\"sha384:ef56ab78\"}}\n";
+
+    /// A wardryx line for the events directory, so a test can tell the bus's
+    /// own streams from the extra one.
+    const BUS_LINE: &str = "{\"schema\":\"taipanbox.dev/agent-event/v0.2\",\
+        \"ts\":\"2026-10-20T08:59:00.000Z\",\"source\":\"wardryx\",\
+        \"type\":\"policy_allow\",\"agent_id\":\"agent://acme.example/agents/a\",\
+        \"severity\":\"info\",\"data\":{\"policy\":\"default-allow\"}}\n";
+
+    fn live_ingest(dir: &Path) -> IngestService {
+        let store = Store::open(&dir.join("console.sqlite")).expect("Store::open");
+        IngestService::new(store, "single").expect("IngestService::new")
+    }
+
+    #[test]
+    fn the_extra_streams_setting_keeps_absolute_paths_and_names_every_entry_it_skips() {
+        let (kept, refused) = parse_extra_streams(
+            " /var/lib/keyryx-alerts/keyryx.ndjson , ,relative/keyryx.ndjson,\
+             /var/lib/keyryx-alerts/../stack/events,/srv/streams,\
+             /var/lib/keyryx-alerts/keyryx.ndjson",
+        );
+        assert_eq!(
+            kept,
+            vec![
+                PathBuf::from("/var/lib/keyryx-alerts/keyryx.ndjson"),
+                PathBuf::from("/srv/streams"),
+            ],
+            "absolute entries are kept once, in order; blanks are nothing"
+        );
+        assert_eq!(
+            refused.len(),
+            2,
+            "one reason per refused entry: {refused:?}"
+        );
+        assert!(
+            refused[0].contains("relative/keyryx.ndjson") && refused[0].contains("absolute"),
+            "a relative entry is named, never resolved against the working directory: {refused:?}"
+        );
+        assert!(
+            refused[1].contains(".."),
+            "an entry that climbs out with `..` is named: {refused:?}"
+        );
+        assert_eq!(parse_extra_streams(""), (Vec::new(), Vec::new()));
+    }
+
+    /// The Keyryx witness's findings live outside `events.dir` on purpose, and
+    /// a high finding read from there reaches the store like any bus event.
+    #[test]
+    fn a_keyryx_finding_in_an_extra_stream_outside_the_events_dir_reaches_the_store() {
+        let root = scratch("extra-stream");
+        let bus = root.join("events");
+        let alerts = root.join("keyryx-alerts");
+        std::fs::create_dir_all(&bus).unwrap();
+        std::fs::create_dir_all(&alerts).unwrap();
+        std::fs::write(bus.join("wardryx.ndjson"), BUS_LINE).unwrap();
+        std::fs::write(alerts.join("keyryx.ndjson"), WITNESS_FINDING).unwrap();
+
+        let paths = BusPaths {
+            dir: bus.clone(),
+            extra: vec![alerts.join("keyryx.ndjson")],
+        };
+        let mut ingest = live_ingest(&root);
+        let mut tailed = Vec::new();
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
+        let stats = ingest.poll_once().expect("poll_once");
+
+        assert_eq!(stats.quarantined, 0, "the witness's line conforms to v1.0");
+        assert_eq!(
+            tailed,
+            vec![bus.join("wardryx.ndjson"), alerts.join("keyryx.ndjson")],
+            "the bus's own streams first, then the extra one"
+        );
+        let stored = ingest.store().recent_events(10).expect("recent_events");
+        let finding = stored
+            .iter()
+            .find(|e| e.source == "keyryx")
+            .expect("the witness's finding must reach the store");
+        assert_eq!(finding.type_, "witness_stream_rewritten");
+        assert_eq!(finding.severity.as_deref(), Some("high"));
+        assert_eq!(finding.agent_id, "agent://keyryx.internal/witness");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The witness creates its file lazily on a launcher that does not
+    /// pre-create it, so a named stream that is not there yet is not an error
+    /// and is tailed on the first tick after it appears.
+    #[test]
+    fn an_extra_stream_that_appears_after_startup_is_picked_up() {
+        let root = scratch("extra-late");
+        let bus = root.join("events");
+        let alerts = root.join("keyryx-alerts");
+        std::fs::create_dir_all(&bus).unwrap();
+        std::fs::create_dir_all(&alerts).unwrap();
+        let file = alerts.join("keyryx.ndjson");
+        let paths = BusPaths {
+            dir: bus,
+            extra: vec![file.clone()],
+        };
+        let mut ingest = live_ingest(&root);
+        let mut tailed = Vec::new();
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
+        assert!(tailed.is_empty(), "nothing exists yet: {tailed:?}");
+
+        std::fs::write(&file, WITNESS_FINDING).unwrap();
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
+        ingest.poll_once().expect("poll_once");
+        assert_eq!(tailed, vec![file]);
+        assert_eq!(ingest.store().event_count().expect("event_count"), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory named as an extra stream is read for every `*.ndjson` in it,
+    /// the way `events.dir` is, and nothing else in it.
+    #[test]
+    fn an_extra_directory_is_tailed_for_every_ndjson_file_in_it() {
+        let root = scratch("extra-dir");
+        let bus = root.join("events");
+        let alerts = root.join("keyryx-alerts");
+        std::fs::create_dir_all(&bus).unwrap();
+        std::fs::create_dir_all(&alerts).unwrap();
+        std::fs::write(alerts.join("keyryx.ndjson"), WITNESS_FINDING).unwrap();
+        std::fs::write(alerts.join("notes.txt"), "not a stream\n").unwrap();
+        let paths = BusPaths {
+            dir: bus,
+            extra: vec![alerts.clone()],
+        };
+        assert_eq!(collect_sources(&paths), vec![alerts.join("keyryx.ndjson")]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A stream the operator also names as an extra, although it is already in
+    /// `events.dir`, is tailed once, so its events are stored once.
+    #[test]
+    fn a_stream_named_both_in_the_events_dir_and_as_an_extra_is_tailed_once() {
+        let root = scratch("extra-twice");
+        let bus = root.join("events");
+        std::fs::create_dir_all(&bus).unwrap();
+        std::fs::write(bus.join("keyryx.ndjson"), WITNESS_FINDING).unwrap();
+        let paths = BusPaths {
+            dir: bus.clone(),
+            extra: vec![bus.join("keyryx.ndjson"), bus.clone()],
+        };
+        // Listed once, so the startup registration, which takes the list as
+        // it is, registers it once too.
+        assert_eq!(collect_sources(&paths), vec![bus.join("keyryx.ndjson")]);
+        let mut ingest = live_ingest(&root);
+        let mut tailed = Vec::new();
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
+        ingest.poll_once().expect("poll_once");
+        assert_eq!(tailed, vec![bus.join("keyryx.ndjson")]);
+        assert_eq!(ingest.store().event_count().expect("event_count"), 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
