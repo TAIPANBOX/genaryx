@@ -8,7 +8,7 @@
 //!   exactly CryptoKit's `ECDSASignature.rawRepresentation`. NOT DER: Apple's
 //!   `SecKeyCreateSignature` hands back DER, convert with [`der_to_raw_rs`].
 //! - No low-S normalization anywhere: the Secure Enclave emits both S
-//!   polarities (measured ~50/50) and the server's `p256 v0.13` verify accepts
+//!   polarities (measured ~50/50) and the server's `p256 v0.14` verify accepts
 //!   both; this module's tests pin that acceptance so a future crate upgrade
 //!   that started rejecting high-S would fail loudly here, not in the field.
 //!
@@ -283,7 +283,7 @@ impl Es256Signer for SoftwareSigner {
         Ok(self
             .key
             .verifying_key()
-            .to_encoded_point(false)
+            .to_sec1_point(false)
             .as_bytes()
             .to_vec())
     }
