@@ -51,7 +51,7 @@ futures-util = "0.3.32"
 # Phase-0 spike #2 (06 §7): ES256 device-pairing signatures in genaryx-signing.
 # `p256` is pinned to the exact version tokenfuse-cloud's devices.rs verifies
 # with, so the unit tests here exercise the server's own verification path.
-p256 = "0.13.2"
+p256 = "0.14.0"
 # Phase-4 wave 4 (crates/connectors/src/wg.rs): Curve25519 (X25519) keys for the
 # WireGuard console peer (decision D11). Pure Rust, no C/kernel dep, matching
 # the "small auditable attack surface" reason Genaryx is Rust in the first

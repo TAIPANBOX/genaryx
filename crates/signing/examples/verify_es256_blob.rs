@@ -36,7 +36,7 @@ fn main() {
     match genaryx_signing::verify_es256_b64(pubkey_b64, &message, sig_b64) {
         Ok(()) => {
             println!(
-                "VERIFIED: {assurance} signature accepted by the devices.rs verify path (p256 0.13)"
+                "VERIFIED: {assurance} signature accepted by the devices.rs verify path (p256 0.14)"
             );
         }
         Err(e) => {

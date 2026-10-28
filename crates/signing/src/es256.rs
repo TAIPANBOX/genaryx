@@ -8,7 +8,7 @@
 //!   exactly CryptoKit's `ECDSASignature.rawRepresentation`. NOT DER: Apple's
 //!   `SecKeyCreateSignature` hands back DER, convert with [`der_to_raw_rs`].
 //! - No low-S normalization anywhere: the Secure Enclave emits both S
-//!   polarities (measured ~50/50) and the server's `p256 v0.13` verify accepts
+//!   polarities (measured ~50/50) and the server's `p256 v0.14` verify accepts
 //!   both; this module's tests pin that acceptance so a future crate upgrade
 //!   that started rejecting high-S would fail loudly here, not in the field.
 //!
@@ -283,7 +283,7 @@ impl Es256Signer for SoftwareSigner {
         Ok(self
             .key
             .verifying_key()
-            .to_encoded_point(false)
+            .to_sec1_point(false)
             .as_bytes()
             .to_vec())
     }
@@ -459,6 +459,67 @@ mod tests {
         let flipped = Signature::from_scalars(*sig.r(), *flipped_s).expect("valid scalars");
         verify_es256(&pk, msg.as_bytes(), &flipped.to_bytes())
             .expect("opposite polarity must also verify (no low-S enforcement)");
+    }
+
+    // RFC 6979 appendix A.2.5: a published P-256 private scalar, its public
+    // point, and the deterministic ECDSA-SHA-256 signatures over "sample" and
+    // "test". They are bytes from outside this repository, which is what
+    // every other test in this module lacks: each of them signs and verifies
+    // with the same crate, so a crate upgrade that wrote a compressed point
+    // or swapped r and s would still round-trip and pass. The signature over
+    // "sample" has s above n/2, so it also pins that nothing normalises s.
+    const RFC_D: &str = "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721";
+    const RFC_UX: &str = "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6";
+    const RFC_UY: &str = "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299";
+    const SAMPLE_R: &str = "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716";
+    const SAMPLE_S: &str = "f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8";
+    const TEST_R: &str = "f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367";
+    const TEST_S: &str = "019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083";
+    // The same bytes in the base64 the wire carries (`pubkey_b64`, `X-Fuse-Sig`),
+    // computed outside Rust.
+    const RFC_POINT_B64: &str =
+        "BGD+1LolWp0xyWHrdMY1bWjASbiSO2H6bOZpYi5g8p+2eQP+EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk=";
+    const SAMPLE_SIG_B64: &str =
+        "79SLKqy2qP0RQN2c1F6B1p0sh3tWqvmRw00OqE6vNxb3yxyULWV8QdQ2x6G24p9l8+kA27mv9AZNxKsvhDrNqA==";
+    const TEST_SIG_B64: &str =
+        "8auwI1GDUc1x2IFWex6mY+0+/PbFEys1TyjTsLfTg2cBn0ETdCorFL0lkmtJxkkVXyZ+YNOBS0wMyEJQ5G8Agw==";
+
+    fn unhex(s: &str) -> Vec<u8> {
+        assert_eq!(s.len() % 2, 0, "hex is whole bytes");
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("a hex digit pair"))
+            .collect()
+    }
+
+    #[test]
+    fn the_rfc_6979_key_puts_its_published_point_on_the_wire() {
+        let signer = SoftwareSigner::from_scalar(&unhex(RFC_D)).unwrap();
+        let point = signer.public_key_x963().unwrap();
+        assert_eq!(point.len(), 65, "uncompressed X9.63 is 0x04 || X || Y");
+        assert_eq!(hex_lower(&point), format!("04{RFC_UX}{RFC_UY}"));
+        assert_eq!(signer.public_key_b64().unwrap(), RFC_POINT_B64);
+        assert_eq!(hex_lower(&signer.to_scalar_bytes()), RFC_D);
+    }
+
+    #[test]
+    fn the_rfc_6979_signatures_are_what_sign_raw_writes_as_r_then_s() {
+        let signer = SoftwareSigner::from_scalar(&unhex(RFC_D)).unwrap();
+
+        let sample = signer.sign_raw(b"sample").unwrap();
+        assert_eq!(hex_lower(&sample), format!("{SAMPLE_R}{SAMPLE_S}"));
+        assert_eq!(signer.sign_b64(b"sample").unwrap(), SAMPLE_SIG_B64);
+        let test = signer.sign_raw(b"test").unwrap();
+        assert_eq!(hex_lower(&test), format!("{TEST_R}{TEST_S}"));
+        assert_eq!(signer.sign_b64(b"test").unwrap(), TEST_SIG_B64);
+
+        // And the published signatures, decoded from the RFC's bytes rather than
+        // taken from the signer, verify under the published point.
+        let point = unhex(&format!("04{RFC_UX}{RFC_UY}"));
+        verify_es256(&point, b"sample", &unhex(&format!("{SAMPLE_R}{SAMPLE_S}")))
+            .expect("the RFC's high-S signature verifies");
+        verify_es256(&point, b"test", &unhex(&format!("{TEST_R}{TEST_S}")))
+            .expect("the RFC's low-S signature verifies");
     }
 
     #[test]
