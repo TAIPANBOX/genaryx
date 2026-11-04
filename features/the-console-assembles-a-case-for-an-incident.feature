@@ -36,6 +36,18 @@ Feature: The console assembles one case for an incident, with no model, and says
     And the case has a line for the policy question saying why it was not asked
     And no question is missing from the case, even when nothing answered at all
 
+  # @test:the_subject_agents_identity_and_blast_radius_come_from_idryx
+  # @test:wardryx_gives_the_policy_status_and_the_approvals_of_the_run
+  # @test:an_agent_idryx_does_not_know_is_an_empty_answer_not_a_failure
+  Scenario: Idryx and Wardryx give the subject's identity and blast radius, the policy status and the run's approvals
+    Given idryx holds the subject with an admin permission and an identity that acts through it
+    And wardryx runs a policy version and holds two approvals of this run and one of another
+    When the console assembles the case
+    Then the identity section holds the record and the alerts on this subject only
+    And the blast radius counts the permissions and names who acts through the subject
+    And the policy section names the version and the decisions section the two approvals of this run
+    And an agent idryx does not know is an empty answer, not a failure
+
   # @test:a_plane_that_answered_with_no_rows_is_empty_and_not_unavailable
   Scenario: A plane that answered with nothing is told apart from one that did not answer
     Given the memory plane answered and holds no prior ruling for this kind of incident
@@ -55,6 +67,7 @@ Feature: The console assembles one case for an incident, with no model, and says
   # @test:an_identity_refusal_case_is_filed_under_its_key
   # @test:a_refusal_asks_no_plane_about_the_claimed_agent
   # @test:an_identity_refusal_incident_is_filed_under_its_key_end_to_end
+  # @test:an_identity_refusal_asks_idryx_nothing_at_all
   Scenario: An identity refusal is filed under the key and no agent question is asked about the agent it claimed
     Given the key forge-imposter was refused while claiming to be flint
     When the console works out what to ask for the incident

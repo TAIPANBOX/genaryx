@@ -1905,15 +1905,17 @@ an absent invariant.
     independent sha256; determinism; filing under the key; no question about the
     claimed agent; text as data), `crates/api/src/case/commands.rs` (incident id
     parsing with a 200-seed hostile sweep; the blast radius),
-    `crates/api/tests/it/case_file_test.rs` (against a real store, with the real
-    planes unresolved, and the shared stub Cloud for spend),
+    `crates/api/tests/it/case_file_test.rs` (against a real store: the planes
+    unresolved, the shared stub Cloud for spend, stub idryx and wardryx for the
+    identity, blast radius, policy and decisions, and a recording stub that holds
+    idryx is never asked about a refusal's claimed agent),
     `crates/core/tests/it/store_test.rs`'s `an_event_is_read_back_by_its_id` and
     `similar_events_are_the_earlier_events_of_the_same_type_newest_first`,
     `crates/web/src/roles.rs`'s `reading_a_case_is_a_viewer_read`, web:
     `CaseView.test.ts`, `caseFile.test.ts`, `sha256.test.ts`,
     `mockPreview.case.test.ts`. Red first: the test commit of genaryx#137 failed
     against stubs. Scenarios:
-    `features/the-console-assembles-a-case-for-an-incident.feature`, thirteen, each
+    `features/the-console-assembles-a-case-for-an-incident.feature`, fourteen, each
     bound; gate: seven product mutants and one non-fault in
     `scripts/gates-have-teeth.sh` (a plane that did not answer left out of the
     case, a refusal filed under the agent it claimed, a digest of something other

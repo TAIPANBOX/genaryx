@@ -8,17 +8,23 @@
 //! there. The pure shape of a case (every question has a line, every fact a
 //! digest) is held in `crates/api/src/case/mod.rs`.
 
-use crate::cloud_stub::{money_at, spawn_cloud};
+use crate::cloud_stub::{money_at, spawn_cloud, spawn_recording_cloud};
 use genaryx_api::bus::{AppState, BusMode};
 use genaryx_api::case::commands::{CaseError, CasePlanes, case_file};
 use genaryx_api::case::{CaseFile, LineState, Plane, Section, digest_of, label, words};
 use genaryx_api::identity::IdentityState;
+use genaryx_api::identity::env::EnvSource as IdentityEnv;
+use genaryx_api::identity::state::{IdentityClient, IdentityInner};
 use genaryx_api::memory::MemoryState;
 use genaryx_api::money::MoneyState;
 use genaryx_api::policy::PolicyState;
+use genaryx_api::policy::env::EnvSource as PolicyEnv;
+use genaryx_api::policy::state::{PolicyClient, PolicyInner};
+use genaryx_connectors::{IdryxClient, WardryxClient};
 use genaryx_core::store::Store;
 use genaryx_core::{AgentEvent, ConsoleEvent, Provenance, SchemaVersion};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 const FLINT: &str = "agent://taipanbox.dev/routers/flint";
 const OTHER: &str = "agent://taipanbox.dev/routers/brume";
@@ -508,4 +514,242 @@ async fn an_unknown_event_row_is_refused_not_emptied() {
         case_of(&none, &pending(), "bus:1").await.err(),
         Some(CaseError::NoStore { .. })
     ));
+}
+
+/// A Ready identity panel pointed at a stub idryx.
+async fn identity_at(base: &str) -> IdentityState {
+    let state = IdentityState::pending();
+    *state.inner.lock().await = IdentityInner::Ready(IdentityClient {
+        client: Arc::new(IdryxClient::new(base).expect("idryx client")),
+        source: IdentityEnv::Taipan {
+            name: "test".to_string(),
+        },
+        idryx_url: base.to_string(),
+        idryx_bin: None,
+        rescan_loads: Vec::new(),
+    });
+    state
+}
+
+/// A Ready policy panel pointed at a stub wardryx. Reads only.
+async fn policy_at(base: &str) -> PolicyState {
+    let state = PolicyState::pending();
+    *state.inner.lock().await = PolicyInner::Ready(PolicyClient {
+        client: Arc::new(WardryxClient::new(base, "test-token").expect("wardryx client")),
+        source: PolicyEnv::EnvFallback,
+        wardryx_url: base.to_string(),
+        org_domain: "wardryx.local".to_string(),
+        operator: "user://wardryx.local/test".to_string(),
+        host: "test".to_string(),
+        sig_alg: "none",
+        sig_fpr: "bearer-admin",
+        bus: None,
+    });
+    state
+}
+
+const CHILD: &str = "agent://taipanbox.dev/routers/child";
+const ALERT_TIME: &str = "2026-10-08T10:05:30Z";
+
+/// flint holds an admin permission and acts for an owner; a child acts through
+/// flint; brume is unrelated.
+fn idryx_identities() -> String {
+    json!([
+        {
+            "id": FLINT, "type": "agent", "privileged": true, "source": "agents",
+            "owner": "ops", "on_behalf_of": ["user://taipanbox.dev/owner"],
+            "permissions": [
+                {"name": "s3:*", "admin": true, "used": false},
+                {"name": "sqs:send", "admin": false, "used": true}
+            ],
+            "events": 12, "alerts": 1
+        },
+        {
+            "id": CHILD, "type": "agent", "privileged": false, "source": "agents",
+            "owner": "ops", "on_behalf_of": [FLINT], "events": 3, "alerts": 0
+        },
+        {
+            "id": OTHER, "type": "agent", "privileged": false, "source": "agents",
+            "owner": "ops", "events": 1, "alerts": 1
+        }
+    ])
+    .to_string()
+}
+
+fn idryx_alerts() -> String {
+    json!([
+        {"detector": "runaway_agent", "identity": FLINT, "severity": "high",
+         "time": ALERT_TIME, "summary": "spend rose"},
+        {"detector": "attestation_missing", "identity": OTHER, "severity": "medium",
+         "time": ALERT_TIME, "summary": "no attestation"}
+    ])
+    .to_string()
+}
+
+#[tokio::test]
+async fn the_subject_agents_identity_and_blast_radius_come_from_idryx() {
+    let (bus, ids) = run_with_history("idryx");
+    let (base, _seen) = spawn_recording_cloud(vec![
+        ("/api/identities", "200 OK", idryx_identities()),
+        ("/api/alerts", "200 OK", idryx_alerts()),
+    ]);
+    let planes = Planes {
+        identity: identity_at(&base).await,
+        ..pending()
+    };
+    let case = case_of(&bus, &planes, &format!("bus:{}", ids[4]))
+        .await
+        .expect("a case");
+
+    // The record and the one alert on this subject, not brume's.
+    assert_eq!(line(&case, Section::Identity).state, LineState::Answered);
+    let identity: Vec<(&str, &str)> = case
+        .facts
+        .iter()
+        .filter(|f| f.section == Section::Identity)
+        .map(|f| (f.row_id.as_str(), f.label.as_str()))
+        .collect();
+    assert_eq!(
+        identity,
+        vec![
+            (FLINT, label::IDENTITY),
+            ("runaway_agent:2026-10-08T10:05:30Z", label::IDENTITY_ALERT)
+        ]
+    );
+
+    // What flint can reach, computed from its record and the others'.
+    assert_eq!(line(&case, Section::BlastRadius).state, LineState::Answered);
+    let blast = case
+        .facts
+        .iter()
+        .find(|f| f.section == Section::BlastRadius)
+        .expect("a blast radius fact");
+    assert_eq!(blast.plane, Plane::Idryx);
+    assert_eq!(blast.row_id, format!("{FLINT}#blast_radius"));
+    assert_eq!(blast.row["permissions"], 2);
+    assert_eq!(blast.row["admin_permissions"], 1);
+    assert_eq!(blast.row["unused_permissions"], 1);
+    assert_eq!(blast.row["delegated_by"], json!(["user://taipanbox.dev/owner"]));
+    assert_eq!(blast.row["delegates_to"], json!([CHILD]));
+    assert_eq!(blast.row["alerts"], 1);
+    for fact in &case.facts {
+        assert_eq!(fact.digest, digest_of(&fact.row), "{fact:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_agent_idryx_does_not_know_is_an_empty_answer_not_a_failure() {
+    let (bus, ids) = bus_with(
+        vec![event(
+            1,
+            "tokenfuse",
+            "spend_spike",
+            "agent://taipanbox.dev/routers/unknown",
+            Some("run-1"),
+            "2026-10-07T10:00:00Z",
+            json!({}),
+        )],
+        "idryx-unknown",
+    );
+    let base = spawn_cloud(vec![
+        ("/api/identities", "200 OK", idryx_identities()),
+        ("/api/alerts", "200 OK", idryx_alerts()),
+    ]);
+    let planes = Planes {
+        identity: identity_at(&base).await,
+        ..pending()
+    };
+    let case = case_of(&bus, &planes, &format!("bus:{}", ids[0]))
+        .await
+        .expect("a case");
+    assert_eq!(line(&case, Section::Identity).state, LineState::Empty);
+    assert_eq!(line(&case, Section::BlastRadius).state, LineState::Empty);
+}
+
+#[tokio::test]
+async fn an_identity_refusal_asks_idryx_nothing_at_all() {
+    let (bus, ids) = bus_with(
+        vec![event(
+            1,
+            "tokenfuse",
+            "identity_mismatch",
+            FLINT,
+            Some("run-3"),
+            "2026-10-07T10:00:00Z",
+            json!({"key_id": "forge-imposter", "agent_id": FLINT}),
+        )],
+        "refusal-idryx",
+    );
+    let (base, seen) = spawn_recording_cloud(vec![
+        ("/api/identities", "200 OK", idryx_identities()),
+        ("/api/alerts", "200 OK", idryx_alerts()),
+    ]);
+    let planes = Planes {
+        identity: identity_at(&base).await,
+        ..pending()
+    };
+    let case = case_of(&bus, &planes, &format!("bus:{}", ids[0]))
+        .await
+        .expect("a case");
+
+    assert_eq!(line(&case, Section::Identity).state, LineState::NotAsked);
+    assert_eq!(line(&case, Section::BlastRadius).state, LineState::NotAsked);
+    let requests = seen.lock().expect("request log").clone();
+    assert!(
+        requests.is_empty(),
+        "idryx was asked about a refusal: {requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn wardryx_gives_the_policy_status_and_the_approvals_of_the_run() {
+    let (bus, ids) = run_with_history("wardryx");
+    let approvals = json!([
+        {"approval_id": "ap-1", "agent_id": FLINT, "run_id": "run-7",
+         "requested_at": "2026-10-08T10:03:00Z", "pending": true,
+         "context": {"tool_names": ["shell"], "policy_version": "v7"}},
+        {"approval_id": "ap-2", "agent_id": FLINT, "run_id": "run-7",
+         "requested_at": "2026-10-08T10:04:00Z", "decided_at": "2026-10-08T10:04:30Z",
+         "decided_by": "user://taipanbox.dev/owner", "decision": "deny", "pending": false},
+        {"approval_id": "ap-3", "agent_id": OTHER, "run_id": "run-9",
+         "requested_at": "2026-10-08T10:05:00Z", "pending": true}
+    ]);
+    let status = json!({
+        "policy_version": "v7", "base_policies": 2, "store_policies": 1, "effective_policies": 3
+    });
+    let base = spawn_cloud(vec![
+        ("/v1/status", "200 OK", status.to_string()),
+        ("/v1/approvals", "200 OK", approvals.to_string()),
+    ]);
+    let planes = Planes {
+        policy: policy_at(&base).await,
+        ..pending()
+    };
+    let case = case_of(&bus, &planes, &format!("bus:{}", ids[4]))
+        .await
+        .expect("a case");
+
+    // The policy wardryx runs.
+    assert_eq!(line(&case, Section::Policy).state, LineState::Answered);
+    let policy = case
+        .facts
+        .iter()
+        .find(|f| f.section == Section::Policy)
+        .expect("a policy fact");
+    assert_eq!(policy.plane, Plane::Wardryx);
+    assert_eq!(policy.row_id, "v7");
+    assert_eq!(policy.row["effective_policies"], 3);
+
+    // The two approvals of this run, how each was decided, and not the third.
+    assert_eq!(row_ids(&case, Section::Decisions), vec!["ap-1", "ap-2"]);
+    let denied = case
+        .facts
+        .iter()
+        .find(|f| f.section == Section::Decisions && f.row_id == "ap-2")
+        .expect("the decided approval");
+    assert_eq!(denied.row["decision"], "deny");
+    assert_eq!(denied.row["pending"], false);
+    for fact in &case.facts {
+        assert_eq!(fact.digest, digest_of(&fact.row), "{fact:?}");
+    }
 }
