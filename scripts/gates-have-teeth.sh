@@ -605,6 +605,21 @@ run_case "invariant 37: reading a case becomes an admin act" fail \
 	"$(py 'edit("crates/web/src/roles.rs", "gate(\"case_file\", Role::Viewer, false)", "gate(\"case_file\", Role::Admin, false)")')" \
 	"reading_a_case_is_a_viewer_read"
 
+run_case "invariant 37: idryx is asked about the agent an identity refusal claimed" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/mod.rs", "    let agent = (!is_key).then(|| subject.clone());", "    let agent = Some(event.agent_id.clone());")')" \
+	"an_identity_refusal_asks_idryx_nothing_at_all"
+
+run_case "invariant 37: the alerts of other identities are listed as the subject's" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/commands.rs", "                .filter(|a| a.identity == agent)", "                .filter(|_| true)")')" \
+	"the_subject_agents_identity_and_blast_radius_come_from_idryx"
+
+run_case "invariant 37: the approvals of other runs are listed as this run's decisions" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/commands.rs", "                .filter(|a| a.run_id == run_id)", "                .filter(|_| true)")')" \
+	"wardryx_gives_the_policy_status_and_the_approvals_of_the_run"
+
 run_case "invariant 37: the error-text bound's own comment reworded" pass \
 	"$case_gate" \
 	"$(py 'edit("crates/api/src/case/mod.rs", "/// The longest piece of a plane'"'"'s own error text a case keeps.", "/// The largest piece of a plane'"'"'s own error text a case keeps.")')"

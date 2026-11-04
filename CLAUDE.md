@@ -1916,12 +1916,14 @@ an absent invariant.
     `mockPreview.case.test.ts`. Red first: the test commit of genaryx#137 failed
     against stubs. Scenarios:
     `features/the-console-assembles-a-case-for-an-incident.feature`, fourteen, each
-    bound; gate: seven product mutants and one non-fault in
+    bound; gate: ten product mutants and one non-fault in
     `scripts/gates-have-teeth.sh` (a plane that did not answer left out of the
-    case, a refusal filed under the agent it claimed, a digest of something other
-    than the row, a failed read reported as empty, the timeline in insertion
-    order, the similar incidents including the incident itself, reading a case
-    made an admin act).)*
+    case, a refusal filed under the agent it claimed, idryx asked about the agent
+    a refusal claimed, a digest of something other than the row, a failed read
+    reported as empty, the timeline in insertion order, the similar incidents
+    including the incident itself, other identities' alerts listed as the
+    subject's, other runs' approvals listed as this run's decisions, reading a
+    case made an admin act).)*
 
 ## Decisions that have no gate yet
 
