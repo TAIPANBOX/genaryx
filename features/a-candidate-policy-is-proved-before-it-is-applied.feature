@@ -84,3 +84,15 @@ Feature: A candidate policy is run against the decisions already taken, and the 
     Given the command table of the web shell
     When it is asked about the policy proof command
     Then it needs the viewer role and no passkey ceremony
+
+  # @test:slots_hand_out_exactly_their_limit
+  # @test:a_released_slot_is_taken_again
+  # @test:a_limit_of_zero_refuses_everything
+  # @test:two_hundred_threads_never_hold_more_than_the_limit
+  # @test:a_busy_slot_is_an_answer_not_a_queue
+  Scenario: Only a few proofs run at once, and a full house is an answer, not a queue
+    Given every proof slot in the console process is taken
+    When another operator asks for a proof
+    Then the answer is a busy error naming the limit, at once, and no child process is started
+    And when a slot is given back the next ask is served
+    And many threads taking and giving slots never hold more than the limit and leak none

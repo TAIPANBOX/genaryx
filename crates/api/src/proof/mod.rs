@@ -39,6 +39,7 @@
 //! timeout and a report that does not parse are each an error that says so.
 
 pub mod commands;
+pub mod slots;
 
 use crate::case::Data;
 use serde::Serialize;
