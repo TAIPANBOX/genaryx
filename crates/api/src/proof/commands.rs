@@ -25,7 +25,7 @@ use super::{ParseError, PolicyProof, ReplayReport, judge, parse_report};
 use crate::bus::AppState;
 use crate::case::Data;
 use crate::case::commands::{CaseError, event_id_of};
-use genaryx_core::store::Store;
+use genaryx_core::store::{Store, StoredEvent};
 use serde::Serialize;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -120,6 +120,14 @@ pub struct ProofRequest {
 
 /// The run an incident happened in, from the console's own store.
 pub(super) fn run_of(bus: &AppState, incident_id: &str) -> Result<String, ProofError> {
+    event_of(bus, incident_id)?
+        .run_id
+        .filter(|r| !r.is_empty())
+        .ok_or(ProofError::NoRun)
+}
+
+/// The event row an incident is, from the console's own store.
+pub(crate) fn event_of(bus: &AppState, incident_id: &str) -> Result<StoredEvent, ProofError> {
     let incident = |e: CaseError| ProofError::Incident {
         reason: e.describe(),
     };
@@ -134,21 +142,17 @@ pub(super) fn run_of(bus: &AppState, incident_id: &str) -> Result<String, ProofE
             reason: e.to_string(),
         })
     })?;
-    let event = store
+    store
         .event_by_id(event_id)
         .map_err(|e| {
             incident(CaseError::NoStore {
                 reason: e.to_string(),
             })
         })?
-        .ok_or_else(|| incident(CaseError::NotFound { event_id }))?;
-    event
-        .run_id
-        .filter(|r| !r.is_empty())
-        .ok_or(ProofError::NoRun)
+        .ok_or_else(|| incident(CaseError::NotFound { event_id }))
 }
 
-fn check_candidate(candidate: &str) -> Result<(), ProofError> {
+pub(crate) fn check_candidate(candidate: &str) -> Result<(), ProofError> {
     let refused = |reason| Err(ProofError::CandidateRefused { reason });
     if candidate.trim().is_empty() {
         return refused("the candidate policy is empty");

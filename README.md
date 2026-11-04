@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1394-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1411-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -480,6 +480,15 @@ box; these frames are not it, and say so here rather than in a footnote.
   names another cause, one that cites a run nobody holds, one that names nothing);
   the same incidents can be put to a real model through an endpoint named by the
   environment.
+- **Typed remedies (2026-11-04, invariant 44).** `remedy_check` takes an incident
+  and one of four typed remedies (a policy candidate, a budget or step limit, a
+  stop of an agent, a revocation of a delegation) and says whether it fits the
+  incident's class, proves it with the policy or budget proof where one exists,
+  names the Mockryx drill that rehearses the failure and whether this box has it,
+  and names the ceremony command a person would apply it with. A stop or a
+  revocation has no proof and says so. An identity refusal is offered no remedy,
+  since it is filed under the key that made the call. It proves, names and
+  routes, and applies nothing.
 - **Felyx reads the case (2026-11-04, invariant 39).** On an incident with an
   event row, Incident 360 has an "Ask Felyx to read this case" button. Felyx is
   handed the case file (invariant 37) and no tool: it cannot look anything else

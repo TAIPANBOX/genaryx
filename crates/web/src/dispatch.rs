@@ -1081,6 +1081,36 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 .await,
             ))
         }
+        // A typed remedy checked against an incident: whether it fits, its proof
+        // where one exists, the Mockryx scenario that rehearses the failure, and
+        // the command a person would apply it with. A read, and classified as
+        // one in roles.rs: it applies nothing and starts no drill.
+        "remedy_check" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                incident_id: String,
+                remedy: genaryx_api::remedy::Remedy,
+            }
+            let a: A = decode(args)?;
+            let scenario_dir = match genaryx_api::drills::commands::drills_status(&ctx.drills).await
+            {
+                Ok(genaryx_api::drills::commands::DrillsStatusDto::Ready {
+                    scenario_dir, ..
+                }) => scenario_dir.map(std::path::PathBuf::from),
+                _ => None,
+            };
+            Ok(reply(
+                genaryx_api::remedy::commands::remedy_check(
+                    genaryx_api::remedy::commands::RemedyRequest {
+                        incident_id: a.incident_id,
+                        remedy: a.remedy,
+                    },
+                    &ctx.bus,
+                    scenario_dir,
+                )
+                .await,
+            ))
+        }
         // A sealed pack handed back, only if it is still the pack its digest names.
         "case_pack" => {
             #[derive(serde::Deserialize)]

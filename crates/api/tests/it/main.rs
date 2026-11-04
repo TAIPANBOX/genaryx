@@ -28,5 +28,6 @@ mod money_runs_status_test;
 mod money_units_test;
 mod policy_proof_test;
 mod quarantine_is_visible_test;
+mod remedy_check_test;
 mod retained_close_test;
 mod stats_scale;
