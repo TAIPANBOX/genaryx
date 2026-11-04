@@ -735,7 +735,10 @@ fn similar_events_are_the_earlier_events_of_the_same_type_newest_first() {
     let capped = store
         .similar_events("spend_spike", ids[3], 1)
         .expect("similar_events");
-    assert_eq!(capped.iter().map(|e| e.id).collect::<Vec<_>>(), vec![ids[2]]);
+    assert_eq!(
+        capped.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![ids[2]]
+    );
 
     assert!(
         store

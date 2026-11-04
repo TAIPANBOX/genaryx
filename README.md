@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1168-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1193-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -419,6 +419,18 @@ box; these frames are not it, and say so here rather than in a footnote.
   whatever the gateway sends. Verified against a stub gateway
   (`crates/api/tests/it/gateway_posture_test.rs`); no gateway ships the
   settings route yet.
+- **A case for an incident (2026-11-04, invariant 37).** Incident 360 has a Case
+  section: everything the console can say about an event-row incident, joined
+  from reads it already makes and assembled with no model. The event row, the
+  run's timeline in time order, the run's spend and gateway decisions, the
+  subject's identity record and blast radius from Idryx, the policy status and
+  approvals from Wardryx, earlier incidents of the same type, and what Engram
+  recalls for that kind. Every fact names its plane, that plane's own row id
+  and a digest of the row. A plane that did not answer is a line in the case,
+  never a gap, and a question that could not be asked says why. An identity
+  refusal is filed under its key, so nothing is asked about the agent it
+  claimed. Text from events and memory is shown as data. Read with
+  `case_file`, a viewer read; the demo shows one on invented rows.
 - **Refused client keys and PII findings (2026-10-14, invariant 30).** When
   TokenFuse reports a call refused for its client key (an `identity_mismatch`
   with `reason: missing_key` or `unknown_key`), the incident centre reads it

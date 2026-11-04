@@ -41,7 +41,7 @@ export type CaseResult =
  * Null for a source that has no event row, which the view says in words
  * rather than asking and being refused. */
 export function caseIncidentId(row: Pick<UnifiedIncident, "id" | "source">): string | null {
-  return row.id.slice(0, 0) === "x" ? null : null;
+  return row.source === "bus" || row.source === "verdryx" ? row.id : null;
 }
 
 function isCaseError(v: unknown): v is CaseError {
@@ -69,11 +69,20 @@ function isCaseFile(v: unknown): v is CaseFile {
 
 /** Ask the box for one incident's case. */
 export async function fetchCase(incidentId: string): Promise<CaseResult> {
-  void hasBackend;
-  void invokeBackend;
-  void isCaseError;
-  void isCaseFile;
-  return { kind: "unreachable", message: incidentId.slice(0, 0) };
+  if (!hasBackend()) return { kind: "no_backend" };
+  try {
+    const raw = await invokeBackend<unknown>("case_file", { incident_id: incidentId });
+    if (!isCaseFile(raw)) {
+      return { kind: "unreachable", message: "the box answered with something that is not a case" };
+    }
+    return { kind: "case", case: raw };
+  } catch (err) {
+    if (isCaseError(err)) return { kind: "refused", error: err };
+    return {
+      kind: "unreachable",
+      message: err instanceof Error ? err.message : "the box did not answer the case command",
+    };
+  }
 }
 
 /** The console's name for each plane. */
@@ -105,7 +114,22 @@ export function planeName(plane: string): string {
 
 /** The console's sentence for one line of the case. */
 export function lineSentence(line: CaseLine): string {
-  return line.reason ? "" : "";
+  const plane = planeName(line.plane);
+  switch (line.state) {
+    case "answered": {
+      const n = `${line.facts} ${line.facts === 1 ? "fact" : "facts"} from ${plane}`;
+      return line.reason ? `${n}. ${line.reason}.` : `${n}.`;
+    }
+    case "empty":
+      return `${plane} answered and holds nothing for this incident.`;
+    case "unavailable":
+      return `${plane} did not answer.`;
+    case "not_asked":
+      return line.reason ? `Not asked: ${line.reason}.` : "Not asked.";
+    default:
+      // A state a newer console sends. Said as unknown, never as answered.
+      return "This build does not know this state.";
+  }
 }
 
 export interface CaseCoverage {
@@ -115,33 +139,55 @@ export interface CaseCoverage {
   not_asked: number;
 }
 
-/** How the case's lines fared, counted. */
+/** How the case's lines fared, counted. Every line is in exactly one count. */
 export function coverage(c: Pick<CaseFile, "lines">): CaseCoverage {
-  const state: CaseLineState = "answered";
-  return { answered: c.lines.length * 0, empty: 0, unavailable: 0, not_asked: state.length * 0 };
+  const out: CaseCoverage = { answered: 0, empty: 0, unavailable: 0, not_asked: 0 };
+  for (const line of c.lines) {
+    const state: CaseLineState = line.state;
+    if (state in out) out[state] += 1;
+  }
+  return out;
 }
 
 /** The one sentence over the whole case. */
 export function coverageSentence(c: Pick<CaseFile, "lines">): string {
-  return c.lines.length ? "" : "";
+  const n = coverage(c);
+  const parts = [`${n.answered} of ${c.lines.length} questions answered`];
+  if (n.empty > 0) parts.push(`${n.empty} answered with nothing`);
+  if (n.unavailable > 0) parts.push(`${n.unavailable} did not answer`);
+  if (n.not_asked > 0) parts.push(`${n.not_asked} not asked`);
+  return `${parts.join(", ")}.`;
 }
 
-/** The lines the case could not fill. */
+/** The lines the case could not fill: a plane that did not answer, and a
+ * question that could not be asked. What is missing, in the case's own order. */
 export function missingLines(c: Pick<CaseFile, "lines">): CaseLine[] {
-  return c.lines.slice(0, 0);
+  return c.lines.filter((l) => l.state === "unavailable" || l.state === "not_asked");
 }
 
 /** This section's facts, in the case's order. */
 export function factsOf(c: Pick<CaseFile, "facts">, section: CaseSection): CaseFact[] {
-  return c.facts.slice(0, section.length * 0);
+  return c.facts.filter((f) => f.section === section);
 }
 
 /** The short form of a digest, for a line a person reads. */
 export function shortDigest(digest: string): string {
-  return digest;
+  const hex = digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest;
+  return `sha256:${hex.slice(0, 12)}`;
 }
 
 /** What a refused case says. */
 export function refusalSentence(error: CaseError): string {
-  return error.kind.slice(0, 0);
+  switch (error.kind) {
+    case "unsupported_source":
+      return `No case for this incident: a ${error.source} incident has no event row to start from.`;
+    case "not_found":
+      return `No case: the console's store holds no event row ${error.event_id}.`;
+    case "bad_incident_id":
+      return "No case: this is not an incident id the case command reads.";
+    case "no_store":
+      return "No case: the console has no readable event store on this box.";
+    default:
+      return "No case: the box refused it for a reason this build does not know.";
+  }
 }

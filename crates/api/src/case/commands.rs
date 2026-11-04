@@ -38,7 +38,8 @@ use crate::memory::MemoryState;
 use crate::money::MoneyState;
 use crate::policy::PolicyState;
 use genaryx_connectors::IdryxIdentity;
-use genaryx_core::store::{Store, StoredEvent};
+use genaryx_core::attribution::filed_under;
+use genaryx_core::store::{Store, StoredEvent, parse_ts_ms};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -86,14 +87,29 @@ pub enum CaseError {
 /// Anything else is not an id this command reads. Only ASCII digits make a row
 /// id: no sign, no space, no overflow.
 pub fn event_id_of(incident_id: &str) -> Result<i64, CaseError> {
-    Err(CaseError::BadIncidentId {
+    let bad = || CaseError::BadIncidentId {
         incident_id: incident_id.chars().take(80).collect(),
-    })
+    };
+    let (source, rest) = match incident_id.split_once(':') {
+        Some((source, rest)) => (Some(source), rest),
+        None => (None, incident_id),
+    };
+    match source {
+        None | Some("bus") | Some("verdryx") => {
+            if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+                return Err(bad());
+            }
+            rest.parse::<i64>().map_err(|_| bad())
+        }
+        Some(other @ ("money" | "idryx" | "posture")) => Err(CaseError::UnsupportedSource {
+            source: other.to_string(),
+        }),
+        Some(_) => Err(bad()),
+    }
 }
 
 fn row_value<T: Serialize>(value: &T) -> Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|e| json!({ "unserialisable": e.to_string() }))
+    serde_json::to_value(value).unwrap_or_else(|e| json!({ "unserialisable": e.to_string() }))
 }
 
 /// A plane's own error, as text. Serialised rather than formatted, so the case
@@ -122,16 +138,105 @@ pub fn store_sections(
     event: &StoredEvent,
     questions: &Questions,
 ) -> Vec<(Section, Answer)> {
-    let _ = (store, event, questions);
-    Vec::new()
+    let mut out = Vec::new();
+
+    out.push((
+        Section::Event,
+        one(Row {
+            plane: Plane::Bus,
+            row_id: event.id.to_string(),
+            label: label::EVENT,
+            value: row_value(event),
+        }),
+    ));
+
+    let timeline = match &questions.run_id {
+        None => Answer::NotAsked {
+            reason: words::NO_RUN,
+        },
+        Some(run_id) => match store.events_for_run(run_id, TIMELINE_CAP) {
+            Err(e) => Answer::Unavailable {
+                reason: e.to_string(),
+            },
+            Ok(mut events) => {
+                // The store returns insertion order, which groups a run by the
+                // source that was ingested first. A timeline is in the order
+                // things happened, so it is put in time order here, with the
+                // row id to settle a tie and an unreadable time first.
+                events.sort_by_key(|e| (parse_ts_ms(&e.ts).unwrap_or(i64::MIN), e.id));
+                let capped = events.len() >= TIMELINE_CAP;
+                Answer::Rows {
+                    rows: events
+                        .iter()
+                        .map(|e| Row {
+                            plane: Plane::Bus,
+                            row_id: e.id.to_string(),
+                            label: label::TIMELINE,
+                            value: row_value(e),
+                        })
+                        .collect(),
+                    note: capped.then_some(words::TIMELINE_CAPPED),
+                }
+            }
+        },
+    };
+    out.push((Section::RunTimeline, timeline));
+
+    let similar = match store.similar_events(&event.type_, event.id, SIMILAR_LIMIT) {
+        Err(e) => Answer::Unavailable {
+            reason: e.to_string(),
+        },
+        Ok(events) => Answer::Rows {
+            rows: events
+                .iter()
+                .map(|e| {
+                    let same =
+                        filed_under(&e.type_, &e.agent_id, e.data.as_ref()) == questions.subject;
+                    Row {
+                        plane: Plane::Bus,
+                        row_id: e.id.to_string(),
+                        label: if same {
+                            label::SIMILAR_SAME_SUBJECT
+                        } else {
+                            label::SIMILAR_OTHER_SUBJECT
+                        },
+                        value: row_value(e),
+                    }
+                })
+                .collect(),
+            note: None,
+        },
+    };
+    out.push((Section::SimilarIncidents, similar));
+    out
 }
 
 /// What the identity can reach, computed from idryx's own records: its
 /// permissions (how many, how many admin, how many unused), who it acts for,
 /// and which identities act through it.
 pub fn blast_radius(me: &IdryxIdentity, all: &[IdryxIdentity], alerts: usize) -> Value {
-    let _ = (me, all, alerts);
-    Value::Null
+    let admin = me.permissions.iter().filter(|p| p.admin).count();
+    let unused = me.permissions.iter().filter(|p| !p.used).count();
+    let mut delegates: Vec<&str> = all
+        .iter()
+        .filter(|i| i.id != me.id && i.on_behalf_of.iter().any(|o| *o == me.id))
+        .map(|i| i.id.as_str())
+        .collect();
+    delegates.sort_unstable();
+    let total = delegates.len();
+    delegates.truncate(BLAST_LIST_CAP);
+    json!({
+        "identity": me.id,
+        "identity_type": me.identity_type,
+        "privileged": me.privileged,
+        "permissions": me.permissions.len(),
+        "admin_permissions": admin,
+        "unused_permissions": unused,
+        "delegated_by": me.on_behalf_of,
+        "delegates_to": delegates,
+        "delegates_to_total": total,
+        "alerts": alerts,
+    })
 }
 
 async fn spend(money: &MoneyState, run_id: &str) -> Answer {
@@ -267,10 +372,14 @@ async fn rulings(state: &MemoryState, event_type: &str) -> Answer {
 pub async fn case_file(incident_id: String, planes: CasePlanes<'_>) -> Result<CaseFile, CaseError> {
     let event_id = event_id_of(&incident_id)?;
 
-    let (event, questions, mut answers) = {
-        let dir = planes.bus.events_dir.as_ref().ok_or_else(|| CaseError::NoStore {
-            reason: "the console has no event store on this box".to_string(),
-        })?;
+    let (questions, mut answers) = {
+        let dir = planes
+            .bus
+            .events_dir
+            .as_ref()
+            .ok_or_else(|| CaseError::NoStore {
+                reason: "the console has no event store on this box".to_string(),
+            })?;
         let store = Store::open(&dir.join("console.sqlite")).map_err(|e| CaseError::NoStore {
             reason: e.to_string(),
         })?;
@@ -282,58 +391,63 @@ pub async fn case_file(incident_id: String, planes: CasePlanes<'_>) -> Result<Ca
             .ok_or(CaseError::NotFound { event_id })?;
         let questions = questions_for(&event);
         let answers = store_sections(&store, &event, &questions);
-        (event, questions, answers)
+        (questions, answers)
     };
 
+    // The questions `questions_for` decided cannot be asked, with the console's
+    // sentence for each. Every plane read below consults it first, so there is
+    // one place that decides what is asked.
     let not_asked = |section: Section| -> Option<&'static str> {
         questions
             .not_asked
             .iter()
             .find(|(s, _)| *s == section)
-            .map(|(_, why)| *why)
-    };
-    let held = |section: Section| match not_asked(section) {
-        Some(reason) => Err(Answer::NotAsked { reason }),
-        None => Ok(()),
+            .map(|(_, reason)| *reason)
     };
 
     let spend_answer = async {
-        match (held(Section::Spend), questions.run_id.as_deref()) {
-            (Err(answer), _) => answer,
-            (Ok(()), Some(run_id)) => spend(planes.money, run_id).await,
-            (Ok(()), None) => Answer::NotAsked {
+        if let Some(reason) = not_asked(Section::Spend) {
+            return Answer::NotAsked { reason };
+        }
+        match questions.run_id.as_deref() {
+            Some(run_id) => spend(planes.money, run_id).await,
+            None => Answer::NotAsked {
                 reason: words::NO_RUN,
             },
         }
     };
     let identity_answers = async {
-        match (held(Section::Identity), questions.agent.as_deref()) {
-            (Err(answer), _) => {
-                let blast = held(Section::BlastRadius).err().unwrap_or_else(nothing);
-                (answer, blast)
-            }
-            (Ok(()), Some(agent)) => identity(planes.identity, agent).await,
-            (Ok(()), None) => (
+        match questions.agent.as_deref() {
+            Some(agent) => identity(planes.identity, agent).await,
+            None => (
                 Answer::NotAsked {
-                    reason: words::FILED_UNDER_A_KEY,
+                    reason: not_asked(Section::Identity).unwrap_or(words::FILED_UNDER_A_KEY),
                 },
                 Answer::NotAsked {
-                    reason: words::FILED_UNDER_A_KEY,
+                    reason: not_asked(Section::BlastRadius).unwrap_or(words::FILED_UNDER_A_KEY),
                 },
             ),
         }
     };
     let decisions_answer = async {
-        match (held(Section::Decisions), questions.run_id.as_deref()) {
-            (Err(answer), _) => answer,
-            (Ok(()), Some(run_id)) => decisions(planes.policy, run_id).await,
-            (Ok(()), None) => Answer::NotAsked {
+        if let Some(reason) = not_asked(Section::Decisions) {
+            return Answer::NotAsked { reason };
+        }
+        match questions.run_id.as_deref() {
+            Some(run_id) => decisions(planes.policy, run_id).await,
+            None => Answer::NotAsked {
                 reason: words::NO_RUN,
             },
         }
     };
 
-    let (spend_answer, (identity_answer, blast_answer), policy_answer, decisions_answer, rulings_answer) = tokio::join!(
+    let (
+        spend_answer,
+        (identity_answer, blast_answer),
+        policy_answer,
+        decisions_answer,
+        rulings_answer,
+    ) = tokio::join!(
         spend_answer,
         identity_answers,
         policy_status(planes.policy),
@@ -404,10 +518,14 @@ mod tests {
             '\n', '\0', 'é',
         ];
         for seed in 0..200u64 {
-            let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let mut x = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let mut id = String::new();
             for _ in 0..(seed % 40) {
-                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                x = x
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 id.push(ALPHABET[(x >> 33) as usize % ALPHABET.len()]);
             }
             match event_id_of(&id) {
@@ -423,7 +541,11 @@ mod tests {
         }
     }
 
-    fn identity_record(id: &str, on_behalf_of: &[&str], permissions: Vec<IdryxPermission>) -> IdryxIdentity {
+    fn identity_record(
+        id: &str,
+        on_behalf_of: &[&str],
+        permissions: Vec<IdryxPermission>,
+    ) -> IdryxIdentity {
         IdryxIdentity {
             id: id.to_string(),
             identity_type: "agent".to_string(),
@@ -462,7 +584,8 @@ mod tests {
             ],
         );
         let downstream_b = identity_record("agent://x/b", &["agent://x/a"], vec![]);
-        let downstream_c = identity_record("agent://x/c", &["user://x/owner", "agent://x/a"], vec![]);
+        let downstream_c =
+            identity_record("agent://x/c", &["user://x/owner", "agent://x/a"], vec![]);
         let unrelated = identity_record("agent://x/d", &["user://x/owner"], vec![]);
         let all = vec![me.clone(), downstream_c, downstream_b, unrelated];
 
@@ -485,7 +608,11 @@ mod tests {
         let me = identity_record("agent://x/a", &[], vec![]);
         let mut all = vec![me.clone()];
         for n in 0..(BLAST_LIST_CAP + 5) {
-            all.push(identity_record(&format!("agent://x/d{n:03}"), &["agent://x/a"], vec![]));
+            all.push(identity_record(
+                &format!("agent://x/d{n:03}"),
+                &["agent://x/a"],
+                vec![],
+            ));
         }
         let blast = blast_radius(&me, &all, 0);
         assert_eq!(

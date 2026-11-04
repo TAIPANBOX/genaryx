@@ -95,7 +95,8 @@ pub mod words {
     pub const NO_RUN: &str = "the event names no run, so there is no run to read";
     pub const FILED_UNDER_A_KEY: &str = "the incident is filed under a key, not an agent: asking about the agent it claimed would charge that agent with the attempt";
     pub const ALERTS_UNREAD: &str = "the identity record was read; idryx's alert list could not be, so alerts are missing from this line";
-    pub const TIMELINE_CAPPED: &str = "the run has at least this many events; the timeline stops at the cap";
+    pub const TIMELINE_CAPPED: &str =
+        "the run has at least this many events; the timeline stops at the cap";
 }
 
 /// The service that gave a row. `Bus` is the console's own event store, which
@@ -300,16 +301,82 @@ pub fn digest_of(value: &Value) -> String {
 /// is not in `answers` is a line saying nothing was recorded, so the case can
 /// never be shorter than its list of questions.
 pub fn assemble(head: Head, answers: Vec<(Section, Answer)>) -> CaseFile {
-    drop(answers);
-    CaseFile {
+    let mut lines = Vec::with_capacity(Section::ALL.len());
+    let mut facts = Vec::new();
+
+    for section in Section::ALL {
+        let plane = section.plane();
+        let answer = answers.iter().find(|(s, _)| *s == section).map(|(_, a)| a);
+        let line = match answer {
+            Some(Answer::Rows { rows, note }) if !rows.is_empty() => {
+                for row in rows {
+                    facts.push(Fact {
+                        section,
+                        plane: row.plane,
+                        row_id: row.row_id.clone(),
+                        digest: digest_of(&row.value),
+                        label: row.label.to_string(),
+                        trust: Trust::Data,
+                        row: row.value.clone(),
+                    });
+                }
+                CaseLine {
+                    section,
+                    plane,
+                    state: LineState::Answered,
+                    facts: rows.len(),
+                    reason: note.map(str::to_string),
+                    upstream: None,
+                }
+            }
+            Some(Answer::Rows { note, .. }) => CaseLine {
+                section,
+                plane,
+                state: LineState::Empty,
+                facts: 0,
+                reason: Some(note.unwrap_or(words::EMPTY).to_string()),
+                upstream: None,
+            },
+            Some(Answer::Unavailable { reason }) => CaseLine {
+                section,
+                plane,
+                state: LineState::Unavailable,
+                facts: 0,
+                reason: Some(words::UNAVAILABLE.to_string()),
+                upstream: Some(Data::bounded(reason)),
+            },
+            Some(Answer::NotAsked { reason }) => CaseLine {
+                section,
+                plane,
+                state: LineState::NotAsked,
+                facts: 0,
+                reason: Some((*reason).to_string()),
+                upstream: None,
+            },
+            None => CaseLine {
+                section,
+                plane,
+                state: LineState::Unavailable,
+                facts: 0,
+                reason: Some(words::UNRECORDED.to_string()),
+                upstream: None,
+            },
+        };
+        lines.push(line);
+    }
+
+    let mut case = CaseFile {
         incident_id: head.incident_id,
         subject: head.subject,
         claimed_agent: head.claimed_agent,
         run_id: head.run_id,
-        lines: Vec::new(),
-        facts: Vec::new(),
+        lines,
+        facts,
         digest: String::new(),
-    }
+    };
+    let body = serde_json::to_value(&case).unwrap_or(Value::Null);
+    case.digest = digest_of(&body);
+    case
 }
 
 /// What to ask, and about whom, for one event row.
@@ -336,15 +403,31 @@ pub struct Questions {
 /// agent-shaped planes may be asked about; the claimed agent of a refusal is
 /// kept as `claimed_agent` and is never a lookup key.
 pub fn questions_for(event: &StoredEvent) -> Questions {
-    let _ = (filed_under, KEY_PREFIX);
+    let subject = filed_under(&event.type_, &event.agent_id, event.data.as_ref());
+    let is_key = subject.starts_with(KEY_PREFIX);
+    let claimed_agent = is_key.then(|| event.agent_id.clone());
+    let agent = (!is_key).then(|| subject.clone());
+    let run_id = event.run_id.clone().filter(|r| !r.is_empty());
+
+    let mut not_asked = Vec::new();
+    if agent.is_none() {
+        not_asked.push((Section::Identity, words::FILED_UNDER_A_KEY));
+        not_asked.push((Section::BlastRadius, words::FILED_UNDER_A_KEY));
+    }
+    if run_id.is_none() {
+        not_asked.push((Section::RunTimeline, words::NO_RUN));
+        not_asked.push((Section::Spend, words::NO_RUN));
+        not_asked.push((Section::Decisions, words::NO_RUN));
+    }
+
     Questions {
         event_id: event.id,
         event_type: event.type_.clone(),
-        subject: event.agent_id.clone(),
-        claimed_agent: None,
-        agent: Some(event.agent_id.clone()),
-        run_id: event.run_id.clone().filter(|r| !r.is_empty()),
-        not_asked: Vec::new(),
+        subject,
+        claimed_agent,
+        agent,
+        run_id,
+        not_asked,
     }
 }
 
@@ -404,7 +487,12 @@ mod tests {
             ),
             (
                 Section::Identity,
-                rows(vec![row(Plane::Idryx, FLINT, label::IDENTITY, json!({"id": FLINT}))]),
+                rows(vec![row(
+                    Plane::Idryx,
+                    FLINT,
+                    label::IDENTITY,
+                    json!({"id": FLINT}),
+                )]),
             ),
             (
                 Section::BlastRadius,
@@ -671,7 +759,12 @@ mod tests {
         assert_eq!(q.agent, None);
 
         // Every other type is about its own agent.
-        let own = stored("policy_deny", FLINT, Some("run-9"), Some(json!({"key_id": "x"})));
+        let own = stored(
+            "policy_deny",
+            FLINT,
+            Some("run-9"),
+            Some(json!({"key_id": "x"})),
+        );
         let q = questions_for(&own);
         assert_eq!(q.subject, FLINT);
         assert_eq!(q.claimed_agent, None);
@@ -749,13 +842,19 @@ mod tests {
             assert_eq!(fact["trust"], "data");
             assert!(label::ALL.contains(&fact["label"].as_str().expect("label")));
             assert!(
-                !fact["label"].as_str().unwrap_or_default().contains("IGNORE"),
+                !fact["label"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("IGNORE"),
                 "a fact's label took a row's words"
             );
         }
         for l in wire["lines"].as_array().expect("lines") {
             let reason = l["reason"].as_str().unwrap_or_default();
-            assert!(!reason.contains("IGNORE"), "a line's reason took a plane's words: {l}");
+            assert!(
+                !reason.contains("IGNORE"),
+                "a line's reason took a plane's words: {l}"
+            );
             if !l["upstream"].is_null() {
                 assert_eq!(l["upstream"]["trust"], "data");
             }

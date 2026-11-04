@@ -29,10 +29,8 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!(
-        "genaryx-case-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("genaryx-case-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create_dir_all");
     dir
 }
@@ -118,7 +116,11 @@ fn pending() -> Planes {
     }
 }
 
-async fn case_of(bus: &AppState, planes: &Planes, incident_id: &str) -> Result<CaseFile, CaseError> {
+async fn case_of(
+    bus: &AppState,
+    planes: &Planes,
+    incident_id: &str,
+) -> Result<CaseFile, CaseError> {
     case_file(
         incident_id.to_string(),
         CasePlanes {
@@ -154,19 +156,75 @@ fn run_with_history(tag: &str) -> (AppState, Vec<i64>) {
     bus_with(
         vec![
             // 0: earlier, same type, same subject, another run.
-            event(1, "tokenfuse", "spend_spike", FLINT, Some("run-1"), "2026-10-07T10:00:00Z", json!({"n": 1})),
+            event(
+                1,
+                "tokenfuse",
+                "spend_spike",
+                FLINT,
+                Some("run-1"),
+                "2026-10-07T10:00:00Z",
+                json!({"n": 1}),
+            ),
             // 1: earlier, same type, another subject.
-            event(2, "tokenfuse", "spend_spike", OTHER, Some("run-2"), "2026-10-07T09:00:00Z", json!({"n": 2})),
+            event(
+                2,
+                "tokenfuse",
+                "spend_spike",
+                OTHER,
+                Some("run-2"),
+                "2026-10-07T09:00:00Z",
+                json!({"n": 2}),
+            ),
             // 2: the run's start, ingested first and stamped later than the deny.
-            event(3, "tokenfuse", "run_started", FLINT, Some("run-7"), "2026-10-08T10:05:00Z", json!({})),
+            event(
+                3,
+                "tokenfuse",
+                "run_started",
+                FLINT,
+                Some("run-7"),
+                "2026-10-08T10:05:00Z",
+                json!({}),
+            ),
             // 3: the wardryx deny, ingested after it and stamped before it.
-            event(4, "wardryx", "policy_deny", FLINT, Some("run-7"), "2026-10-08T10:04:00Z", json!({"rule": "deny-tool"})),
+            event(
+                4,
+                "wardryx",
+                "policy_deny",
+                FLINT,
+                Some("run-7"),
+                "2026-10-08T10:04:00Z",
+                json!({"rule": "deny-tool"}),
+            ),
             // 4: the incident.
-            event(5, "tokenfuse", "spend_spike", FLINT, Some("run-7"), "2026-10-08T10:06:00Z", json!({"spent_usd": 9.5})),
+            event(
+                5,
+                "tokenfuse",
+                "spend_spike",
+                FLINT,
+                Some("run-7"),
+                "2026-10-08T10:06:00Z",
+                json!({"spent_usd": 9.5}),
+            ),
             // 5: a later event of the same type: not "past".
-            event(6, "tokenfuse", "spend_spike", FLINT, Some("run-8"), "2026-10-08T10:07:00Z", json!({"n": 6})),
+            event(
+                6,
+                "tokenfuse",
+                "spend_spike",
+                FLINT,
+                Some("run-8"),
+                "2026-10-08T10:07:00Z",
+                json!({"n": 6}),
+            ),
             // 6: another type, another run.
-            event(7, "verdryx", "quality_drift", OTHER, Some("run-9"), "2026-10-08T10:08:00Z", json!({})),
+            event(
+                7,
+                "verdryx",
+                "quality_drift",
+                OTHER,
+                Some("run-9"),
+                "2026-10-08T10:08:00Z",
+                json!({}),
+            ),
         ],
         tag,
     )
@@ -198,11 +256,7 @@ async fn the_case_for_a_bus_incident_reads_its_event_the_run_timeline_and_simila
     // them first: the deny (10:04) was ingested after the start (10:05).
     assert_eq!(
         row_ids(&case, Section::RunTimeline),
-        vec![
-            ids[3].to_string(),
-            ids[2].to_string(),
-            ids[4].to_string()
-        ],
+        vec![ids[3].to_string(), ids[2].to_string(), ids[4].to_string()],
         "time order, not insertion order"
     );
 

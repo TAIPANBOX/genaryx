@@ -570,8 +570,19 @@ impl Store {
     /// is a fault, and a row that is not there is a fact. The case file keeps
     /// them apart, and a caller must not fold one into the other.
     pub fn event_by_id(&self, id: i64) -> Result<Option<StoredEvent>> {
-        let _ = (&self.conn, id);
-        Ok(None)
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, env, ts, source, type, agent_id, run_id, severity, schema, \
+                 on_behalf_of, data, prev_hash, raw, file, off \
+                 FROM events WHERE id = ?1",
+            )
+            .map_err(store_err)?;
+        let mut rows = stmt.query(params![id]).map_err(store_err)?;
+        match rows.next().map_err(store_err)? {
+            Some(row) => Ok(Some(stored_event_from_row(row)?)),
+            None => Ok(None),
+        }
     }
 
     /// The earlier events of `type_`, newest first by `id`, never the event
@@ -586,8 +597,23 @@ impl Store {
         before_id: i64,
         limit: usize,
     ) -> Result<Vec<StoredEvent>> {
-        let _ = (&self.conn, type_, before_id, limit);
-        Ok(Vec::new())
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, env, ts, source, type, agent_id, run_id, severity, schema, \
+                 on_behalf_of, data, prev_hash, raw, file, off \
+                 FROM events WHERE type = ?1 AND id < ?2 ORDER BY id DESC LIMIT ?3",
+            )
+            .map_err(store_err)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = stmt
+            .query(params![type_, before_id, limit])
+            .map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            out.push(stored_event_from_row(row)?);
+        }
+        Ok(out)
     }
 
     /// The delegation-relevant columns of every event, oldest-first (by `id`),
