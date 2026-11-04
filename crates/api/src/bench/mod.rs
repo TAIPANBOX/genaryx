@@ -72,7 +72,11 @@ impl Cause {
     fn groups(self) -> &'static [&'static [&'static str]] {
         match self {
             Cause::RetryLoop => &[&["retry", "loop"], &["repeat", "same tool"], &["loop"]],
-            Cause::DeniedTool => &[&["denied", "tool"], &["denies", "tool"], &["policy", "denied"]],
+            Cause::DeniedTool => &[
+                &["denied", "tool"],
+                &["denies", "tool"],
+                &["policy", "denied"],
+            ],
             Cause::UnknownKey => &[
                 &["unknown", "key"],
                 &["key", "not held"],
@@ -137,7 +141,11 @@ pub fn named_cause(text: &str) -> Named {
 /// The first word in `packet` that gives `cause` away, if there is one.
 pub fn gives_away(packet: &str, cause: Cause) -> Option<&'static str> {
     let lower = packet.to_lowercase();
-    cause.giveaways().iter().copied().find(|w| lower.contains(w))
+    cause
+        .giveaways()
+        .iter()
+        .copied()
+        .find(|w| lower.contains(w))
 }
 
 /// The first question: the named cause is the true one.
@@ -193,7 +201,8 @@ fn mark(pass: bool) -> &'static str {
 
 /// The report, as text: one line per case, the three questions, and the totals.
 pub fn render(scores: &[CaseScore]) -> String {
-    let mut out = String::from("case                 truth        named        cause  ids  remedy\n");
+    let mut out =
+        String::from("case                 truth        named        cause  ids  remedy\n");
     for s in scores {
         let named = match s.named {
             Named::Cause(c) => c.label(),

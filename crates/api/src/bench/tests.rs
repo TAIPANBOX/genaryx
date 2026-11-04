@@ -105,13 +105,22 @@ fn the_remedy_a_cause_calls_for_is_the_one_that_follows_from_it() {
 
 #[test]
 fn the_first_two_questions_are_judged_on_the_cause_named_and_on_what_was_left_unsupported() {
-    assert!(cause_right(Named::Cause(Cause::RetryLoop), Cause::RetryLoop));
-    assert!(!cause_right(Named::Cause(Cause::DeniedTool), Cause::RetryLoop));
+    assert!(cause_right(
+        Named::Cause(Cause::RetryLoop),
+        Cause::RetryLoop
+    ));
+    assert!(!cause_right(
+        Named::Cause(Cause::DeniedTool),
+        Cause::RetryLoop
+    ));
     assert!(!cause_right(Named::Nothing, Cause::RetryLoop));
     assert!(!cause_right(Named::Several, Cause::RetryLoop));
 
     assert!(ids_exist(&[], "Run `run-1` spent $9.97."));
-    assert!(!ids_exist(&["run-ghost-9".to_string()], "Run `run-1` spent $9.97."));
+    assert!(!ids_exist(
+        &["run-ghost-9".to_string()],
+        "Run `run-1` spent $9.97."
+    ));
     assert!(!ids_exist(
         &[],
         &format!("{WITHHELD_PREFIX}: what the draft rested on is not in the case.")
@@ -121,9 +130,27 @@ fn the_first_two_questions_are_judged_on_the_cause_named_and_on_what_was_left_un
 #[test]
 fn a_remedy_that_does_not_apply_is_counted_as_neither_a_pass_nor_a_miss() {
     let scores = [
-        score("a", Cause::RetryLoop, Named::Cause(Cause::RetryLoop), true, Some(true)),
-        score("b", Cause::DeniedTool, Named::Cause(Cause::DeniedTool), true, Some(false)),
-        score("c", Cause::UnknownKey, Named::Cause(Cause::UnknownKey), true, None),
+        score(
+            "a",
+            Cause::RetryLoop,
+            Named::Cause(Cause::RetryLoop),
+            true,
+            Some(true),
+        ),
+        score(
+            "b",
+            Cause::DeniedTool,
+            Named::Cause(Cause::DeniedTool),
+            true,
+            Some(false),
+        ),
+        score(
+            "c",
+            Cause::UnknownKey,
+            Named::Cause(Cause::UnknownKey),
+            true,
+            None,
+        ),
         score("d", Cause::RetryLoop, Named::Nothing, false, None),
     ];
     assert_eq!(
@@ -151,8 +178,20 @@ fn a_remedy_that_does_not_apply_is_counted_as_neither_a_pass_nor_a_miss() {
 #[test]
 fn the_report_names_every_case_and_every_question() {
     let scores = [
-        score("spend-loop", Cause::RetryLoop, Named::Cause(Cause::RetryLoop), true, Some(true)),
-        score("unknown-key", Cause::UnknownKey, Named::Several, false, None),
+        score(
+            "spend-loop",
+            Cause::RetryLoop,
+            Named::Cause(Cause::RetryLoop),
+            true,
+            Some(true),
+        ),
+        score(
+            "unknown-key",
+            Cause::UnknownKey,
+            Named::Several,
+            false,
+            None,
+        ),
     ];
     let text = render(&scores);
     for needle in [
@@ -205,7 +244,10 @@ fn a_200_seed_sweep_of_text_never_panics_and_never_names_two_ways() {
         // cause named is a cause whose words are in it.
         if let Named::Cause(cause) = named_cause(&text) {
             assert!(
-                cause.groups().iter().any(|g| g.iter().all(|w| text.to_lowercase().contains(w))),
+                cause
+                    .groups()
+                    .iter()
+                    .any(|g| g.iter().all(|w| text.to_lowercase().contains(w))),
                 "seed {seed}: {text:?}"
             );
         }

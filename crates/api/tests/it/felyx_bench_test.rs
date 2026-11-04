@@ -14,7 +14,7 @@
 
 use async_trait::async_trait;
 use genaryx_api::bench::{
-    CAUSES, Cause, CaseScore, Named, RemedyFor, cause_right, gives_away, ids_exist, named_cause,
+    CAUSES, CaseScore, Cause, Named, RemedyFor, cause_right, gives_away, ids_exist, named_cause,
     render, tally,
 };
 use genaryx_api::proof::budget::{BudgetCandidate, judge_budget, parse_backtest};
@@ -264,10 +264,7 @@ fn replay_stops(case: &Case, remedy: RemedyFor) -> bool {
 
 /// Put one case to one analyst and score the three questions.
 async fn score(case: &Case, felyx: &Felyx) -> CaseScore {
-    let answer = felyx
-        .explain_case(&case.packet)
-        .await
-        .expect("an answer");
+    let answer = felyx.explain_case(&case.packet).await.expect("an answer");
     let named = named_cause(&answer.text);
     let remedy_stops = match named {
         Named::Cause(cause) => cause.remedy().map(|remedy| replay_stops(case, remedy)),
@@ -309,7 +306,10 @@ fn the_packets_hide_the_cause_and_every_cause_has_a_case() {
         }
     }
     for cause in CAUSES {
-        assert!(all.iter().any(|c| c.truth == cause), "{cause:?} has no case");
+        assert!(
+            all.iter().any(|c| c.truth == cause),
+            "{cause:?} has no case"
+        );
     }
 }
 
@@ -338,10 +338,19 @@ async fn an_oracle_that_reads_the_case_scores_every_question_it_is_asked() {
     }
     assert_eq!(scores[0].remedy_stops, Some(true));
     assert_eq!(scores[1].remedy_stops, Some(true));
-    assert_eq!(scores[2].remedy_stops, None, "a refused key calls for no remedy");
+    assert_eq!(
+        scores[2].remedy_stops, None,
+        "a refused key calls for no remedy"
+    );
     let t = tally(&scores);
     assert_eq!(
-        (t.cases, t.cause_right, t.ids_exist, t.remedy_applicable, t.remedy_stops),
+        (
+            t.cases,
+            t.cause_right,
+            t.ids_exist,
+            t.remedy_applicable,
+            t.remedy_stops
+        ),
         (3, 3, 3, 2, 2)
     );
 }
@@ -352,7 +361,11 @@ async fn a_rival_cause_misses_the_cause_and_the_remedy_but_not_the_ids() {
     println!("{}", render(&scores));
     for s in &scores {
         assert!(!s.cause_right, "{}: named {:?}", s.case, s.named);
-        assert!(s.ids_exist, "{}: the rival cites only what the case holds", s.case);
+        assert!(
+            s.ids_exist,
+            "{}: the rival cites only what the case holds",
+            s.case
+        );
         assert_eq!(
             s.remedy_stops,
             Some(false),
@@ -374,7 +387,11 @@ async fn an_answer_that_cites_a_run_nobody_holds_misses_the_ids_and_is_withheld(
     println!("{}", render(&scores));
     for s in &scores {
         assert!(!s.ids_exist, "{}", s.case);
-        assert!(!s.cause_right, "{}: a withheld chain names no cause", s.case);
+        assert!(
+            !s.cause_right,
+            "{}: a withheld chain names no cause",
+            s.case
+        );
         assert_eq!(s.remedy_stops, None, "{}", s.case);
     }
 }
