@@ -383,6 +383,9 @@ mod tests {
         assert!(!requires_ceremony("case_seal"));
         assert_eq!(required_role("case_pack"), Role::Viewer);
         assert!(!requires_ceremony("case_pack"));
+    }
+
+    #[test]
     fn checking_a_remedy_is_a_viewer_read() {
         assert_eq!(required_role("remedy_check"), Role::Viewer);
         assert!(!requires_ceremony("remedy_check"));

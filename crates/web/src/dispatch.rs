@@ -1077,6 +1077,10 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                         memory: &ctx.memory,
                     },
                     wg_journal(ctx).as_ref(),
+                )
+                .await,
+            ))
+        }
         // A typed remedy checked against an incident: whether it fits, its proof
         // where one exists, the Mockryx scenario that rehearses the failure, and
         // the command a person would apply it with. A read, and classified as
