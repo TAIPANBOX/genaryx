@@ -206,7 +206,10 @@ fn a_replay_in_which_something_could_be_replayed_still_answers() {
         .replace("0 of 0 replayable", "0 of 1 replayable");
     let report = parse_report(&text).expect("parses");
     assert_eq!(report.outcomes.replayable(), 1);
-    assert_eq!(judge(&report, "r-incident").stops_this_incident, Some(false));
+    assert_eq!(
+        judge(&report, "r-incident").stops_this_incident,
+        Some(false)
+    );
 }
 
 #[test]
