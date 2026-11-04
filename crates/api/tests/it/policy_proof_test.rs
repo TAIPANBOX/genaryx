@@ -193,8 +193,13 @@ fn the_proof_runs_wardryx_replay_with_exactly_its_arguments_and_removes_the_cand
     let bin = fake_wardryx(&dir, REPORT, "", 0, 0);
     let (bus, ids) = bus(&dir);
     let config = config(&dir, bin);
-    prove_again(&config, &bus, &request(ids[0], CANDIDATE), Duration::from_secs(10))
-        .expect("a proof");
+    prove_again(
+        &config,
+        &bus,
+        &request(ids[0], CANDIDATE),
+        Duration::from_secs(10),
+    )
+    .expect("a proof");
 
     let args = std::fs::read_to_string(dir.join("args.txt")).expect("the arguments");
     let args: Vec<&str> = args.lines().collect();
@@ -306,7 +311,12 @@ fn an_unconfigured_proof_names_what_is_missing_and_is_never_a_proof() {
     let mut no_events = config(&dir, bin);
     no_events.events = None;
     assert!(matches!(
-        prove(&no_events, &bus, &request(ids[0], CANDIDATE), Duration::from_secs(5)),
+        prove(
+            &no_events,
+            &bus,
+            &request(ids[0], CANDIDATE),
+            Duration::from_secs(5)
+        ),
         Err(ProofError::NotConfigured { .. })
     ));
     assert!(
@@ -329,7 +339,12 @@ fn a_candidate_that_cannot_be_given_is_refused_before_anything_runs() {
     ] {
         assert!(
             matches!(
-                prove(&config, &bus, &request(ids[0], &candidate), Duration::from_secs(5)),
+                prove(
+                    &config,
+                    &bus,
+                    &request(ids[0], &candidate),
+                    Duration::from_secs(5)
+                ),
                 Err(ProofError::CandidateRefused { .. })
             ),
             "{} bytes",
@@ -346,12 +361,23 @@ fn an_incident_with_no_run_or_no_row_is_refused() {
     let (bus, ids) = bus(&dir);
     let config = config(&dir, bin);
     assert_eq!(
-        prove(&config, &bus, &request(ids[1], CANDIDATE), Duration::from_secs(5)).err(),
+        prove(
+            &config,
+            &bus,
+            &request(ids[1], CANDIDATE),
+            Duration::from_secs(5)
+        )
+        .err(),
         Some(ProofError::NoRun),
         "an event with no run has no run to ask about"
     );
     assert!(matches!(
-        prove(&config, &bus, &request(ids[1] + 1000, CANDIDATE), Duration::from_secs(5)),
+        prove(
+            &config,
+            &bus,
+            &request(ids[1] + 1000, CANDIDATE),
+            Duration::from_secs(5)
+        ),
         Err(ProofError::Incident { .. })
     ));
     assert!(matches!(
@@ -393,7 +419,13 @@ fn a_replay_that_hangs_is_killed_at_its_deadline() {
 #[test]
 fn a_replay_that_fails_without_a_report_says_so() {
     let dir = temp_dir("failed");
-    let bin = fake_wardryx(&dir, "usage: wardryx replay\n", "policy archive unreadable", 3, 0);
+    let bin = fake_wardryx(
+        &dir,
+        "usage: wardryx replay\n",
+        "policy archive unreadable",
+        3,
+        0,
+    );
     let (bus, ids) = bus(&dir);
     let result = prove_again(
         &config(&dir, bin),
@@ -416,7 +448,12 @@ fn a_missing_binary_is_a_spawn_error() {
     let (bus, ids) = bus(&dir);
     let config = config(&dir, dir.join("no-such-wardryx"));
     assert!(matches!(
-        prove(&config, &bus, &request(ids[0], CANDIDATE), Duration::from_secs(5)),
+        prove(
+            &config,
+            &bus,
+            &request(ids[0], CANDIDATE),
+            Duration::from_secs(5)
+        ),
         Err(ProofError::Spawn { .. })
     ));
 }

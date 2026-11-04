@@ -118,7 +118,11 @@ fn the_incident_is_stopped_only_by_turning_its_own_allow_into_a_deny_or_a_hold()
     // A replay that diverged is not to be relied on: the halves below are the
     // arithmetic, and the trustworthy flag is the verdict on it.
     let mut text = mixed_report();
-    text = text.replace("diverged               1   replaying their OWN version disagrees with the record", "diverged               0")
+    text = text
+        .replace(
+            "diverged               1   replaying their OWN version disagrees with the record",
+            "diverged               0",
+        )
         .replace("unreadable             2", "unreadable             3");
     let report = parse_report(&text).expect("parses");
     let proof = judge(&report, "r-incident");
@@ -258,10 +262,14 @@ fn text_that_is_not_a_report_is_refused_and_a_200_seed_sweep_never_panics() {
         "",
     ];
     for seed in 0..200u64 {
-        let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut x = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let mut text = String::new();
         for _ in 0..(seed % 12) {
-            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             text.push_str(pieces[(x >> 33) as usize % pieces.len()]);
             text.push('\n');
         }

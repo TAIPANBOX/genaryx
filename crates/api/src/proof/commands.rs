@@ -157,10 +157,8 @@ impl Scratch {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "genaryx-proof-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("genaryx-proof-{}-{nanos}", std::process::id()));
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -262,8 +260,35 @@ pub fn prove(
     request: &ProofRequest,
     timeout: Duration,
 ) -> Result<PolicyProof, ProofError> {
-    let _ = (config, bus, request, timeout);
-    Err(ProofError::NotConfigured { missing: "stub" })
+    check_candidate(&request.candidate)?;
+    let archive = config.archive.as_ref().ok_or(ProofError::NotConfigured {
+        missing: "the policy archive (WARDRYX_POLICY_ARCHIVE)",
+    })?;
+    let events = config.events.as_ref().ok_or(ProofError::NotConfigured {
+        missing: "the directory wardryx records its decisions in",
+    })?;
+    let run = run_of(bus, &request.incident_id)?;
+
+    let scratch = Scratch::new().map_err(|e| ProofError::Spawn {
+        detail: Data::bounded(&e.to_string()),
+    })?;
+    let candidate = scratch.0.join("candidate.yaml");
+    std::fs::write(&candidate, &request.candidate).map_err(|e| ProofError::Spawn {
+        detail: Data::bounded(&e.to_string()),
+    })?;
+
+    let finished = run_replay(&config.wardryx_bin, events, archive, &candidate, timeout)?;
+    let report: ReplayReport = match parse_report(&finished.stdout) {
+        Ok(report) => report,
+        Err(ParseError::Inconsistent(reason)) => return Err(ProofError::Unreadable { reason }),
+        Err(ParseError::Unrecognised) => {
+            return Err(ProofError::ReplayFailed {
+                exit: finished.exit,
+                detail: Data::bounded(&finished.stderr),
+            });
+        }
+    };
+    Ok(judge(&report, &run))
 }
 
 /// The command: prove a candidate policy against an incident, on this box.

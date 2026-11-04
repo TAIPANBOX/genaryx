@@ -148,8 +148,74 @@ fn counter(line: &str, label: &str) -> Option<u64> {
 /// first line, or whose listed rows are not as many as it says changed, is
 /// refused.
 pub fn parse_report(text: &str) -> Result<ReplayReport, ParseError> {
-    let _ = text;
-    Err(ParseError::Unrecognised)
+    let lines: Vec<&str> = text.lines().collect();
+    let first = lines.first().ok_or(ParseError::Unrecognised)?;
+    let replayed: u64 = first
+        .strip_prefix("Replayed ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .ok_or(ParseError::Unrecognised)?;
+
+    if replayed == 0 {
+        return if lines.iter().any(|l| l.contains("no decisions in this file")) {
+            Ok(ReplayReport {
+                replayed: 0,
+                outcomes: Outcomes::default(),
+                candidate: None,
+            })
+        } else {
+            Err(ParseError::Unrecognised)
+        };
+    }
+
+    let mut found = [None; 7];
+    for line in &lines[1..] {
+        for (slot, label) in found.iter_mut().zip(LABELS) {
+            if slot.is_none() {
+                *slot = counter(line, label);
+            }
+        }
+    }
+    let [
+        Some(reproduced),
+        Some(approval_decided),
+        Some(approval_spent),
+        Some(approval_refused),
+        Some(not_archived),
+        Some(unreadable),
+        Some(diverged),
+    ] = found
+    else {
+        return Err(ParseError::Unrecognised);
+    };
+    let outcomes = Outcomes {
+        reproduced,
+        approval_decided,
+        approval_spent,
+        approval_refused,
+        not_archived,
+        unreadable,
+        diverged,
+    };
+    if outcomes.total() != replayed {
+        return Err(ParseError::Inconsistent(
+            "the outcomes do not add up to the decisions replayed",
+        ));
+    }
+
+    let candidate = parse_candidate(&lines)?;
+    if let Some(c) = &candidate
+        && c.replayable != outcomes.replayable()
+    {
+        return Err(ParseError::Inconsistent(
+            "the replayable decisions differ from the outcomes that carry a counterfactual",
+        ));
+    }
+    Ok(ReplayReport {
+        replayed,
+        outcomes,
+        candidate,
+    })
 }
 
 /// The `Against ...` section, if there is one.
@@ -162,8 +228,14 @@ fn parse_candidate(lines: &[&str]) -> Result<Option<CandidateResult>, ParseError
         .ok_or(ParseError::Unrecognised)?;
     let (_, counts) = head.rsplit_once(", ").ok_or(ParseError::Unrecognised)?;
     let (changed, replayable) = counts.split_once(" of ").ok_or(ParseError::Unrecognised)?;
-    let changed: u64 = changed.trim().parse().map_err(|_| ParseError::Unrecognised)?;
-    let replayable: u64 = replayable.trim().parse().map_err(|_| ParseError::Unrecognised)?;
+    let changed: u64 = changed
+        .trim()
+        .parse()
+        .map_err(|_| ParseError::Unrecognised)?;
+    let replayable: u64 = replayable
+        .trim()
+        .parse()
+        .map_err(|_| ParseError::Unrecognised)?;
 
     let mut rows = Vec::new();
     let mut i = at + 1;
@@ -173,8 +245,12 @@ fn parse_candidate(lines: &[&str]) -> Result<Option<CandidateResult>, ParseError
             continue;
         };
         let (Some(was), Some(now)) = (
-            lines.get(i + 1).and_then(|l| l.trim_start().strip_prefix("was: ")),
-            lines.get(i + 2).and_then(|l| l.trim_start().strip_prefix("now: ")),
+            lines
+                .get(i + 1)
+                .and_then(|l| l.trim_start().strip_prefix("was: ")),
+            lines
+                .get(i + 2)
+                .and_then(|l| l.trim_start().strip_prefix("now: ")),
         ) else {
             i += 1;
             continue;
@@ -251,16 +327,44 @@ pub struct PolicyProof {
 /// everything else is elsewhere. The incident is stopped when the candidate
 /// turns one of its decisions from `allow` into `deny` or `hold`.
 pub fn judge(report: &ReplayReport, incident_run: &str) -> PolicyProof {
-    let _ = incident_run;
+    let trustworthy = report.outcomes.diverged == 0;
+    let Some(candidate) = &report.candidate else {
+        return PolicyProof {
+            replayed: report.replayed,
+            outcomes: report.outcomes,
+            trustworthy,
+            candidate_given: false,
+            stops_this_incident: None,
+            incident_changes: Vec::new(),
+            elsewhere: Elsewhere::default(),
+            elsewhere_changes: Vec::new(),
+        };
+    };
+    let (incident_changes, elsewhere_changes): (Vec<ChangedRow>, Vec<ChangedRow>) = candidate
+        .rows
+        .iter()
+        .cloned()
+        .partition(|row| row.run.text == incident_run);
+    let stops = incident_changes
+        .iter()
+        .any(|r| r.from == "allow" && (r.to == "deny" || r.to == "hold"));
+    let mut elsewhere = Elsewhere::default();
+    for row in &elsewhere_changes {
+        match (row.from.as_str(), row.to.as_str()) {
+            ("allow", _) => elsewhere.tightened += 1,
+            (_, "allow") => elsewhere.loosened += 1,
+            _ => elsewhere.reclassified += 1,
+        }
+    }
     PolicyProof {
         replayed: report.replayed,
-        outcomes: Outcomes::default(),
-        trustworthy: true,
-        candidate_given: false,
-        stops_this_incident: None,
-        incident_changes: Vec::new(),
-        elsewhere: Elsewhere::default(),
-        elsewhere_changes: Vec::new(),
+        outcomes: report.outcomes,
+        trustworthy,
+        candidate_given: true,
+        stops_this_incident: trustworthy.then_some(stops),
+        incident_changes,
+        elsewhere,
+        elsewhere_changes,
     }
 }
 
