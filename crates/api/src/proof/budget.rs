@@ -58,9 +58,36 @@ const AMOUNT_UNREADABLE: &str = "the amount cannot be handed to tokenfuse exactl
 /// A dollar amount as whole micro-dollars. Digits, at most six decimals, no sign,
 /// no exponent, not zero, not more than a million dollars.
 pub fn parse_usd(text: &str) -> Result<i64, &'static str> {
-    text.parse::<f64>()
-        .map(|v| (v * 1e6) as i64)
-        .map_err(|_| AMOUNT_SHAPE)
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let all_digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    if whole.is_empty()
+        || !all_digits(whole)
+        || !all_digits(fraction)
+        || fraction.len() > 6
+        || (text.contains('.') && fraction.is_empty())
+    {
+        return Err(AMOUNT_SHAPE);
+    }
+    let whole: i64 = whole.parse().map_err(|_| AMOUNT_LARGE)?;
+    let mut decimals: i64 = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse().map_err(|_| AMOUNT_SHAPE)?
+    };
+    for _ in fraction.len()..6 {
+        decimals *= 10;
+    }
+    let micros = whole
+        .checked_mul(MICROS_PER_USD)
+        .and_then(|w| w.checked_add(decimals))
+        .ok_or(AMOUNT_LARGE)?;
+    if micros == 0 {
+        return Err(AMOUNT_ZERO);
+    }
+    if micros > MAX_LIMIT_MICROS {
+        return Err(AMOUNT_LARGE);
+    }
+    Ok(micros)
 }
 
 /// The text to hand `tokenfuse backtest --budget` so that it reads exactly
@@ -72,7 +99,14 @@ pub fn parse_usd(text: &str) -> Result<i64, &'static str> {
 /// every time, and the result is checked here with the same arithmetic, so an
 /// amount that could not be handed over exactly is refused and never run.
 pub fn cli_amount(micros: i64) -> Result<String, &'static str> {
-    Ok((micros as f64 / 1e6).to_string())
+    if !(1..=MAX_LIMIT_MICROS).contains(&micros) {
+        return Err(AMOUNT_LARGE);
+    }
+    let text = ((micros as f64 + 0.5) / 1e6).to_string();
+    match text.parse::<f64>() {
+        Ok(read) if (read * 1e6) as i64 == micros => Ok(text),
+        _ => Err(AMOUNT_UNREADABLE),
+    }
 }
 
 /// A candidate budget, in the units the trace keeps.
@@ -93,23 +127,56 @@ impl BudgetCandidate {
         per_step: Option<&str>,
         max_steps: Option<u32>,
     ) -> Result<Self, &'static str> {
+        let per_run_micros = per_run.map(parse_usd).transpose()?;
+        let per_step_micros = per_step.map(parse_usd).transpose()?;
+        if let Some(n) = max_steps
+            && (n == 0 || n > MAX_STEPS_LIMIT)
+        {
+            return Err("the step limit is between 1 and 1,000,000");
+        }
+        if per_run_micros.is_none() && per_step_micros.is_none() && max_steps.is_none() {
+            return Err("the candidate sets no limit");
+        }
         Ok(Self {
-            per_run_micros: per_run.and_then(|t| parse_usd(t).ok()),
-            per_step_micros: per_step.and_then(|t| parse_usd(t).ok()),
+            per_run_micros,
+            per_step_micros,
             max_steps,
         })
-}
+    }
 
     /// The flags `tokenfuse backtest` is run with, in the order it prints them.
     pub fn args(&self) -> Result<Vec<String>, &'static str> {
-        Ok(Vec::new())
-}
+        let mut args = Vec::new();
+        if let Some(micros) = self.per_run_micros {
+            args.push("--budget".to_string());
+            args.push(cli_amount(micros)?);
+        }
+        if let Some(micros) = self.per_step_micros {
+            args.push("--budget-per-step".to_string());
+            args.push(cli_amount(micros)?);
+        }
+        if let Some(n) = self.max_steps {
+            args.push("--max-steps".to_string());
+            args.push(n.to_string());
+        }
+        Ok(args)
+    }
 
     /// The line `tokenfuse backtest` prints for this candidate, which a report
     /// must carry to be taken as a report for it.
     pub fn describe(&self) -> String {
-        String::new()
-}
+        let mut parts = Vec::new();
+        if let Some(micros) = self.per_run_micros {
+            parts.push(format!("budget/run ${:.4}", micros as f64 / 1e6));
+        }
+        if let Some(micros) = self.per_step_micros {
+            parts.push(format!("budget/step ${:.4}", micros as f64 / 1e6));
+        }
+        if let Some(n) = self.max_steps {
+            parts.push(format!("max_steps {n}"));
+        }
+        parts.join(", ")
+    }
 }
 
 fn is_name_byte(b: u8) -> bool {
@@ -123,14 +190,26 @@ fn is_path_byte(b: u8) -> bool {
 /// A run id the proof will put in a query: a short name made of letters, digits
 /// and `. _ : -`. Anything else is refused, because the id is a producer's text.
 pub fn query_safe_run(run: &str) -> Result<(), &'static str> {
-    let _ = run;
+    if run.is_empty() || run.len() > RUN_ID_MAX_BYTES {
+        return Err("the run id is empty or longer than 128 bytes");
+    }
+    if !run.bytes().all(is_name_byte) {
+        return Err("the run id holds characters the proof will not put in a query");
+    }
     Ok(())
 }
 
 /// The statement that copies one run's calls, in the order they happened, into a
 /// trace of its own at `file`.
 pub fn copy_statement(run: &str, file: &str) -> Result<String, &'static str> {
-    Ok(format!("copy (select * from calls where run_id = '{run}') to '{file}'"))
+    query_safe_run(run)?;
+    if file.is_empty() || !file.bytes().all(is_path_byte) {
+        return Err("the scratch path holds characters the proof will not put in a query");
+    }
+    Ok(format!(
+        "copy (select * from calls where run_id = '{run}' order by ts_millis, step) \
+         to '{file}' stored as parquet"
+    ))
 }
 
 /// The statement that counts a trace's calls and the distinct steps among them.
@@ -140,8 +219,28 @@ pub const STEP_COUNT_STATEMENT: &str =
 /// A table `tokenfuse sql` prints: the header row, then each row, cells trimmed.
 /// Anything that is not that table is `None`.
 pub fn parse_table(text: &str) -> Option<Vec<Vec<String>>> {
-    let _ = text;
-    None
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < 4 {
+        return None;
+    }
+    let border = |l: &str| l.len() >= 3 && l.bytes().all(|b| b == b'+' || b == b'-');
+    if !border(lines[0]) || !border(lines[2]) || !border(lines[lines.len() - 1]) {
+        return None;
+    }
+    let cells = |l: &str| -> Option<Vec<String>> {
+        let inner = l.strip_prefix("| ")?.strip_suffix(" |")?;
+        Some(inner.split(" | ").map(|c| c.trim().to_string()).collect())
+    };
+    let header = cells(lines[1])?;
+    let mut table = vec![header.clone()];
+    for line in &lines[3..lines.len() - 1] {
+        let row = cells(line)?;
+        if row.len() != header.len() {
+            return None;
+        }
+        table.push(row);
+    }
+    Some(table)
 }
 
 fn count_of(cell: &str) -> Option<u64> {
@@ -153,14 +252,26 @@ fn count_of(cell: &str) -> Option<u64> {
 
 /// How many rows a `copy` reported writing.
 pub fn parse_copy_count(text: &str) -> Option<u64> {
-    let _ = text;
-    None
+    let table = parse_table(text)?;
+    let [header, row] = table.as_slice() else {
+        return None;
+    };
+    if header.len() != 1 || header[0] != "count" || row.len() != 1 {
+        return None;
+    }
+    count_of(&row[0])
 }
 
 /// How many calls a trace holds and how many distinct steps they carry.
 pub fn parse_step_counts(text: &str) -> Option<(u64, u64)> {
-    let _ = text;
-    None
+    let table = parse_table(text)?;
+    let [header, row] = table.as_slice() else {
+        return None;
+    };
+    if header.len() != 2 || header[0] != "n" || header[1] != "steps" || row.len() != 2 {
+        return None;
+    }
+    Some((count_of(&row[0])?, count_of(&row[1])?))
 }
 
 /// What `tokenfuse backtest` reported over one trace.
@@ -248,8 +359,57 @@ pub fn parse_backtest(
     text: &str,
     asked: &BudgetCandidate,
 ) -> Result<BacktestReport, BacktestParseError> {
-    let _ = (text, asked);
-    Err(BacktestParseError::Unrecognised)
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() == 1 && lines[0].starts_with("no calls in the trace at ") {
+        return Err(BacktestParseError::NoCalls);
+    }
+    if lines.len() != 7 || lines[0] != HEAD {
+        return Err(BacktestParseError::Unrecognised);
+    }
+    let unread = || BacktestParseError::Unrecognised;
+    let echoed = lines[1].strip_prefix(CANDIDATE_LINE).ok_or_else(unread)?;
+    let (runs_total, runs_affected) = lines[2]
+        .strip_prefix(RUNS_LINE)
+        .and_then(|v| pair(v, " affected)"))
+        .ok_or_else(unread)?;
+    let (calls_total, calls_blocked) = lines[3]
+        .strip_prefix(CALLS_LINE)
+        .and_then(|v| pair(v, " would be blocked)"))
+        .ok_or_else(unread)?;
+    let spent = lines[4]
+        .strip_prefix(SPEND_LINE)
+        .and_then(money)
+        .ok_or_else(unread)?;
+    let saved = lines[5]
+        .strip_prefix(SAVED_LINE)
+        .and_then(saved_amount)
+        .ok_or_else(unread)?;
+    let projected = lines[6]
+        .strip_prefix(PROJECTED_LINE)
+        .and_then(money)
+        .ok_or_else(unread)?;
+
+    let inconsistent = |reason| Err(BacktestParseError::Inconsistent(reason));
+    if echoed != asked.describe() {
+        return inconsistent("the report is for another candidate than the one that was asked");
+    }
+    if runs_affected > runs_total || calls_blocked > calls_total || runs_affected > calls_blocked {
+        return inconsistent("the report affects more runs or calls than it holds");
+    }
+    if (runs_affected > 0) != (calls_blocked > 0) {
+        return inconsistent("the report blocks calls in no run, or affects a run with none");
+    }
+    if Some(projected) != spent.checked_sub(saved) {
+        return inconsistent("the projected spend is not the spend less the saving");
+    }
+    Ok(BacktestReport {
+        runs_total,
+        runs_affected,
+        calls_total,
+        calls_blocked,
+        spent_micros: spent,
+        saved_micros: saved,
+    })
 }
 
 /// The incident's own run, replayed alone.
@@ -306,8 +466,44 @@ pub fn judge_budget(
     copied: u64,
     tied: bool,
 ) -> Result<BudgetProof, &'static str> {
-    let _ = (run_id, candidate, run, trace, copied, tied);
-    Err("a budget proof is not wired yet")
+    if run.runs_total != 1 {
+        return Err("the incident's run was replayed together with other runs");
+    }
+    if run.calls_total != copied {
+        return Err("the copy of the run and its replay disagree about how many calls it has");
+    }
+    if trace.runs_total < 1 {
+        return Err("the whole trace holds no run, and the incident's run was copied from it");
+    }
+    if trace.calls_total < run.calls_total {
+        return Err("the whole trace holds fewer calls than the incident's own run");
+    }
+    if trace.runs_affected < run.runs_affected || trace.calls_blocked < run.calls_blocked {
+        return Err("the whole trace blocks less than the incident's own run");
+    }
+    let stops = run.calls_blocked > 0;
+    Ok(BudgetProof {
+        run: Data::bounded(run_id),
+        candidate: *candidate,
+        stops_this_incident: stops,
+        incident: RunEffect {
+            calls: run.calls_total,
+            calls_blocked: run.calls_blocked,
+            spent_micros: run.spent_micros,
+            saved_micros: run.saved_micros,
+            spent_after_micros: run.spent_micros.saturating_sub(run.saved_micros),
+        },
+        elsewhere: BudgetElsewhere {
+            runs: trace.runs_total - run.runs_total,
+            runs_affected: trace.runs_affected - run.runs_affected,
+            calls: trace.calls_total - run.calls_total,
+            calls_blocked: trace.calls_blocked - run.calls_blocked,
+            saved_micros: trace.saved_micros.saturating_sub(run.saved_micros),
+        },
+        elsewhere_exact: !tied,
+        trace: *trace,
+        covers: BUDGET_COVERS,
+    })
 }
 
 #[cfg(test)]

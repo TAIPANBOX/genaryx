@@ -159,10 +159,70 @@ pub fn prove_budget_in(
     request: &BudgetRequest,
     timeout: Duration,
 ) -> Result<BudgetProof, ProofError> {
-    let _ = (slots, config, bus, request, timeout);
-    Err(ProofError::NotConfigured {
-        missing: "a budget proof is not wired yet",
-    })
+    let candidate = BudgetCandidate::from_parts(
+        request.per_run_usd.as_deref(),
+        request.per_step_usd.as_deref(),
+        request.max_steps,
+    )
+    .map_err(refused)?;
+    let mut backtest = vec!["backtest".to_string()];
+    backtest.extend(candidate.args().map_err(refused)?);
+    let trace = config.trace_dir.as_ref().ok_or(ProofError::NotConfigured {
+        missing: "the gateway's trace directory (TOKENFUSE_DATA_DIR)",
+    })?;
+    let run = run_of(bus, &request.incident_id)?;
+    query_safe_run(&run).map_err(|reason| ProofError::RunRefused { reason })?;
+
+    let _slot = slots
+        .try_acquire()
+        .map_err(|busy| ProofError::Busy { limit: busy.limit })?;
+
+    let started = Instant::now();
+    let scratch = Scratch::new().map_err(spawn_failed)?;
+    let part = scratch.0.join("part.parquet");
+    let part_text = part.to_str().ok_or(ProofError::RunRefused {
+        reason: "the scratch path is not text",
+    })?;
+    let statement = copy_statement(&run, part_text)
+        .map_err(|reason| ProofError::RunRefused { reason })?;
+
+    let copied = tokenfuse(
+        config,
+        &["sql".to_string(), statement],
+        trace,
+        started,
+        timeout,
+    )?;
+    let count = parse_copy_count(&copied.stdout).ok_or_else(|| failed(&copied))?;
+    if count == 0 {
+        return Err(ProofError::NotInTrace {
+            run: Data::bounded(&run),
+        });
+    }
+
+    let counting = ["sql".to_string(), STEP_COUNT_STATEMENT.to_string()];
+    let counted = tokenfuse(config, &counting, &scratch.0, started, timeout)?;
+    let (rows, steps) = parse_step_counts(&counted.stdout).ok_or_else(|| failed(&counted))?;
+    if rows != count {
+        return Err(ProofError::Unreadable {
+            reason: "the copy of the run and a count of it disagree",
+        });
+    }
+
+    let alone = tokenfuse(config, &backtest, &scratch.0, started, timeout)?;
+    let run_report = read_report(&alone, &candidate)?;
+    let whole = tokenfuse(config, &backtest, trace, started, timeout)?;
+    let trace_report = read_report(&whole, &candidate)?;
+
+    judge_budget(
+        &run,
+        &candidate,
+        &run_report,
+        &trace_report,
+        count,
+        steps < rows,
+    )
+    .map_err(|reason| ProofError::Unreadable { reason })
 }
 
 /// The command: prove a candidate budget against an incident, on this box.
