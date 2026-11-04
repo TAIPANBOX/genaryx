@@ -795,6 +795,11 @@ run_case "invariant 40: a busy slot runs its proof anyway" fail \
 	"$(py 'edit("crates/api/src/proof/commands.rs", "let _slot = slots\n        .try_acquire()\n        .map_err(|busy| ProofError::Busy { limit: busy.limit })?;", "let _slot = slots.try_acquire().ok();")')" \
 	"a_busy_slot_is_an_answer_not_a_queue"
 
+run_case "invariant 40: a replay that examined nothing answers no for the incident" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", "stops_this_incident: (trustworthy && candidate.replayable > 0).then_some(stops),", "stops_this_incident: trustworthy.then_some(stops),")')" \
+	"a_replay_in_which_nothing_could_be_replayed_says_nothing_about_the_incident"
+
 run_case "invariant 40: the outcomes' own doc comment reworded" pass \
 	"$proof_gate" \
 	"$(py 'edit("crates/api/src/proof/mod.rs", "/// The seven rows `wardryx replay` counts.", "/// The seven rows that `wardryx replay` counts.")')"
