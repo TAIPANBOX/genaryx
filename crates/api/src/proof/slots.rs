@@ -54,10 +54,15 @@ impl Slots {
 
     /// Take a slot, or say that none is free. Never waits.
     pub fn try_acquire(&self) -> Result<Slot, Busy> {
-        self.in_use.fetch_add(1, Ordering::AcqRel);
-        Ok(Slot {
-            in_use: Arc::clone(&self.in_use),
-        })
+        let limit = self.limit;
+        self.in_use
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < limit).then_some(n + 1)
+            })
+            .map(|_| Slot {
+                in_use: Arc::clone(&self.in_use),
+            })
+            .map_err(|_| Busy { limit })
     }
 }
 

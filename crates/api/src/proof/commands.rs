@@ -292,7 +292,9 @@ pub fn prove_in(
     })?;
     let run = run_of(bus, &request.incident_id)?;
 
-    let _slot = slots.try_acquire().map_err(|busy| ProofError::Busy { limit: busy.limit })?;
+    let _slot = slots
+        .try_acquire()
+        .map_err(|busy| ProofError::Busy { limit: busy.limit })?;
 
     let scratch = Scratch::new().map_err(|e| ProofError::Spawn {
         detail: Data::bounded(&e.to_string()),
