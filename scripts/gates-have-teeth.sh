@@ -634,6 +634,67 @@ run_case "invariant 36: the sources function's own comment reworded" pass \
 	"$extra_gate" \
 	"$(py 'edit("crates/api/src/bus/feed.rs", "/// Every stream the bus should tail right now:", "/// Every stream the bus ought to tail right now:")')"
 
+# invariant 37: the case file for an incident is assembled with no model, every
+# question has a line, every fact names its plane, its row and a digest, and an
+# identity refusal is filed under its key. Product mutants; the gates are the
+# case module's own tests and the integration test against a real store.
+case_gate='cargo test -q --no-fail-fast -p genaryx-api --lib case::'
+case_it_gate='cargo test -q --no-fail-fast -p genaryx-api --test it case_file_test'
+
+run_case "invariant 37: a plane that did not answer is left out of the case" fail \
+	"$case_gate" \
+	"$(py 'edit("crates/api/src/case/mod.rs", "        lines.push(line);\n    }\n\n    let mut case = CaseFile {", "        if line.state != LineState::Unavailable {\n            lines.push(line);\n        }\n    }\n\n    let mut case = CaseFile {")')" \
+	"a_plane_that_did_not_answer_is_a_line_in_the_case"
+
+run_case "invariant 37: an identity refusal is filed under the agent it claimed" fail \
+	"$case_gate" \
+	"$(py 'edit("crates/api/src/case/mod.rs", "    let subject = filed_under(&event.type_, &event.agent_id, event.data.as_ref());\n    let is_key", "    let subject = event.agent_id.clone();\n    let is_key")')" \
+	"an_identity_refusal_case_is_filed_under_its_key"
+
+run_case "invariant 37: a digest is taken of something other than the row" fail \
+	"$case_gate" \
+	"$(py 'edit("crates/api/src/case/mod.rs", "Sha256::digest(bytes)", "Sha256::digest(b\"\")")')" \
+	"a_digest_is_the_sha256_of_the_row_and_changes_with_it"
+
+run_case "invariant 37: a plane that failed to answer reads as one that had nothing" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/commands.rs", "        Err(e) => Answer::Unavailable { reason: why(&e) },", "        Err(_) => nothing(),")')" \
+	"a_case_with_no_reachable_plane_names_each_one"
+
+run_case "invariant 37: the run timeline is left in insertion order" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/commands.rs", "events.sort_by_key(|e| (parse_ts_ms(&e.ts).unwrap_or(i64::MIN), e.id));", "events.sort_by_key(|e| e.id);")')" \
+	"the_case_for_a_bus_incident_reads_its_event_the_run_timeline_and_similar_past_incidents"
+
+run_case "invariant 37: the similar incidents include the incident itself" fail \
+	'cargo test -q --no-fail-fast -p genaryx-core --test it similar_events' \
+	"$(py 'edit("crates/core/src/store.rs", "FROM events WHERE type = ?1 AND id < ?2 ORDER BY id DESC LIMIT ?3", "FROM events WHERE type = ?1 AND id <= ?2 ORDER BY id DESC LIMIT ?3")')" \
+	"similar_events_are_the_earlier_events_of_the_same_type_newest_first"
+
+run_case "invariant 37: reading a case becomes an admin act" fail \
+	'cargo test -q --no-fail-fast -p genaryx-web --bin genaryx-web reading_a_case' \
+	"$(py 'edit("crates/web/src/roles.rs", "gate(\"case_file\", Role::Viewer, false)", "gate(\"case_file\", Role::Admin, false)")')" \
+	"reading_a_case_is_a_viewer_read"
+
+run_case "invariant 37: idryx is asked about the agent an identity refusal claimed" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/mod.rs", "    let agent = (!is_key).then(|| subject.clone());", "    let agent = Some(event.agent_id.clone());")')" \
+	"an_identity_refusal_asks_idryx_nothing_at_all"
+
+run_case "invariant 37: the alerts of other identities are listed as the subject's" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/commands.rs", "                .filter(|a| a.identity == agent)", "                .filter(|_| true)")')" \
+	"the_subject_agents_identity_and_blast_radius_come_from_idryx"
+
+run_case "invariant 37: the approvals of other runs are listed as this run's decisions" fail \
+	"$case_it_gate" \
+	"$(py 'edit("crates/api/src/case/commands.rs", "                .filter(|a| a.run_id == run_id)", "                .filter(|_| true)")')" \
+	"wardryx_gives_the_policy_status_and_the_approvals_of_the_run"
+
+run_case "invariant 37: the error-text bound's own comment reworded" pass \
+	"$case_gate" \
+	"$(py 'edit("crates/api/src/case/mod.rs", "/// The longest piece of a plane'"'"'s own error text a case keeps.", "/// The largest piece of a plane'"'"'s own error text a case keeps.")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"

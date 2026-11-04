@@ -34,6 +34,7 @@ pub mod journal;
 pub mod replay;
 
 pub mod admission;
+pub mod case;
 pub mod copilot;
 pub mod credentials;
 pub mod crypto;
