@@ -513,7 +513,12 @@ fn reports_that_disagree_with_each_other_are_refused() {
         (
             "a report whose projection is not the spend less the saving",
             Script {
-                trace: report_text(LIMIT, (230, 15), (832, 70), ("0.256379", "0.204439", "0.100000")),
+                trace: report_text(
+                    LIMIT,
+                    (230, 15),
+                    (832, 70),
+                    ("0.256379", "0.204439", "0.100000"),
+                ),
                 ..Script::ok()
             },
         ),
