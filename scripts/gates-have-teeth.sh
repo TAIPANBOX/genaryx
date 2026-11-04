@@ -792,7 +792,7 @@ run_case "invariant 40: a slot is never given back" fail \
 
 run_case "invariant 40: a busy slot runs its proof anyway" fail \
 	"$proof_it_gate" \
-	"$(py 'edit("crates/api/src/proof/commands.rs", "let _slot = slots.try_acquire().map_err(|busy| ProofError::Busy { limit: busy.limit })?;", "let _slot = slots.try_acquire().ok();")')" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "let _slot = slots\n        .try_acquire()\n        .map_err(|busy| ProofError::Busy { limit: busy.limit })?;", "let _slot = slots.try_acquire().ok();")')" \
 	"a_busy_slot_is_an_answer_not_a_queue"
 
 run_case "invariant 40: the outcomes' own doc comment reworded" pass \
