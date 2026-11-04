@@ -131,14 +131,21 @@ async fn a_spend_incident_is_classified_offered_a_budget_and_a_drill() {
     let dir = temp_dir("spend");
     let (bus, id) = bus(&dir, "budget_exhausted");
     let scenarios = temp_dir("spend-scenarios");
-    std::fs::write(scenarios.join("runaway-budget.yaml"), "name: runaway-budget\n").unwrap();
+    std::fs::write(
+        scenarios.join("runaway-budget.yaml"),
+        "name: runaway-budget\n",
+    )
+    .unwrap();
 
     let found = check(&bus, id, stop(), Some(scenarios.clone()))
         .await
         .expect("a check");
     assert_eq!(found.class, IncidentClass::Spend);
     assert_eq!(found.event_type, Data::bounded("budget_exhausted"));
-    assert_eq!(found.offered, [RemedyKind::BudgetLimit, RemedyKind::StopAgent]);
+    assert_eq!(
+        found.offered,
+        [RemedyKind::BudgetLimit, RemedyKind::StopAgent]
+    );
     assert_eq!(found.why_none, None);
     assert!(found.fits_class);
     let drill = found.drill.expect("a scenario for spend");
@@ -245,7 +252,12 @@ async fn an_identity_refusal_is_offered_nothing_and_a_stop_of_its_claimed_agent_
     let revoke = Remedy::RevokeDelegation {
         subject: AGENT.to_string(),
     };
-    assert!(!check(&bus, id, revoke, None).await.expect("a check").fits_class);
+    assert!(
+        !check(&bus, id, revoke, None)
+            .await
+            .expect("a check")
+            .fits_class
+    );
 }
 
 #[tokio::test]

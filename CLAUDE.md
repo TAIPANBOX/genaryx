@@ -2177,7 +2177,7 @@ an absent invariant.
     the console container there has no mount of the trace directory and no
     `tokenfuse` binary.
 
-42. **A remedy is a typed value that is checked, proved where a proof exists,
+44. **A remedy is a typed value that is checked, proved where a proof exists,
     and routed to a person, and nothing here applies it.** `@decided
     2026-11-04`: slice 5 of the incident-to-proven-fix plan. `Remedy`
     (`crates/api/src/remedy`) is one of four kinds: a policy candidate, a budget

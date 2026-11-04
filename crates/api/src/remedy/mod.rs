@@ -116,8 +116,16 @@ const TABLE: &[Entry] = &[
     entry("loop_detected", IncidentClass::Loop, Some(RUNAWAY)),
     entry("policy_deny", IncidentClass::Policy, Some(DENIED_TOOL)),
     entry("policy_hold", IncidentClass::Approval, Some(APPROVAL)),
-    entry("approval_requested", IncidentClass::Approval, Some(APPROVAL)),
-    entry("approval_unanswered", IncidentClass::Approval, Some(APPROVAL)),
+    entry(
+        "approval_requested",
+        IncidentClass::Approval,
+        Some(APPROVAL),
+    ),
+    entry(
+        "approval_unanswered",
+        IncidentClass::Approval,
+        Some(APPROVAL),
+    ),
     entry("approval_denied", IncidentClass::Approval, Some(APPROVAL)),
     entry("dlp_pii", IncidentClass::Data, Some(PII)),
     entry("dlp_shadow", IncidentClass::Data, Some(PII)),

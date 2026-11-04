@@ -72,7 +72,10 @@ fn an_event_type_is_classified_by_the_table_and_any_other_is_unclassified() {
         (IncidentClass::Data, Some("dlp-secret-leak.yaml"))
     );
     // A refused key and a quality drift have no scenario that rehearses them.
-    assert_eq!(classify("identity_mismatch"), (IncidentClass::Identity, None));
+    assert_eq!(
+        classify("identity_mismatch"),
+        (IncidentClass::Identity, None)
+    );
     assert_eq!(classify("quality_drift"), (IncidentClass::Quality, None));
 
     // Nothing near a type is that type, and nothing else is guessed.
@@ -121,7 +124,11 @@ fn each_class_is_offered_the_kinds_that_fit_it() {
     for class in [IncidentClass::Spend, IncidentClass::Loop] {
         assert!(!offered(class).contains(&PolicyCandidate));
     }
-    for class in [IncidentClass::Policy, IncidentClass::Approval, IncidentClass::Data] {
+    for class in [
+        IncidentClass::Policy,
+        IncidentClass::Approval,
+        IncidentClass::Data,
+    ] {
         assert!(!offered(class).contains(&BudgetLimit));
     }
     assert_eq!(why_none(IncidentClass::Spend), None);
@@ -183,7 +190,14 @@ fn a_remedy_is_checked_before_anything_is_proved_or_routed() {
     ok(Remedy::StopAgent {
         subject: AGENT.to_string(),
     });
-    for bad in ["", "bot", "user://acme.example/alice", "agent://", "agent://Acme/a", "agent://a.b/"] {
+    for bad in [
+        "",
+        "bot",
+        "user://acme.example/alice",
+        "agent://",
+        "agent://Acme/a",
+        "agent://a.b/",
+    ] {
         refused(Remedy::StopAgent {
             subject: bad.to_string(),
         });
@@ -195,7 +209,15 @@ fn a_remedy_is_checked_before_anything_is_proved_or_routed() {
     ok(Remedy::RevokeDelegation {
         subject: "user://acme.example/alice".to_string(),
     });
-    for bad in ["", "alice", "user://", "user://a b", "user://a\"b", "user://a\\b", "user://a\nb"] {
+    for bad in [
+        "",
+        "alice",
+        "user://",
+        "user://a b",
+        "user://a\"b",
+        "user://a\\b",
+        "user://a\nb",
+    ] {
         refused(Remedy::RevokeDelegation {
             subject: bad.to_string(),
         });

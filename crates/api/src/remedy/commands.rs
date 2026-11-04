@@ -15,12 +15,12 @@ use super::{
 };
 use crate::bus::AppState;
 use crate::case::Data;
+use crate::proof::PolicyProof;
 use crate::proof::budget::BudgetProof;
 use crate::proof::budget_commands::{BUDGET_TIMEOUT, BudgetConfig, BudgetRequest, budget_proof_in};
 use crate::proof::commands::{
     PROOF_SLOTS, ProofConfig, ProofError, ProofRequest, REPLAY_TIMEOUT, event_of, policy_proof_in,
 };
-use crate::proof::PolicyProof;
 use crate::proof::slots::Slots;
 use serde::Serialize;
 use std::path::{Path, PathBuf};

@@ -461,7 +461,7 @@ box; these frames are not it, and say so here rather than in a footnote.
   child that timed out and a report that disagrees with the copy are each an
   error that says so. At most two proofs of any kind run at once. It applies
   nothing.
-- **Typed remedies (2026-11-04, invariant 42).** `remedy_check` takes an incident
+- **Typed remedies (2026-11-04, invariant 44).** `remedy_check` takes an incident
   and one of four typed remedies (a policy candidate, a budget or step limit, a
   stop of an agent, a revocation of a delegation) and says whether it fits the
   incident's class, proves it with the policy or budget proof where one exists,
