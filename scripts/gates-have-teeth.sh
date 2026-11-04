@@ -885,6 +885,50 @@ run_case "invariant 41: the children inherit the console's environment" fail \
 	"$(py 'edit("crates/api/src/proof/commands.rs", "        .env_clear()\n", "")')" \
 	"the_proof_runs_four_children_in_order_over_the_right_directories_and_removes_the_copy"
 
+# invariant 43: the bench scores a named cause, the ids an answer cites and the
+# remedy that follows from the cause against what is known to be true. Product
+# mutants; the gate is the bench module's own tests.
+bench_gate='cargo test -q --no-fail-fast -p genaryx-api --lib bench::'
+
+run_case "invariant 43: two causes named in one answer count as the first" fail \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", "[one] => Named::Cause(*one),", "[one, ..] => Named::Cause(*one),")')" \
+	"a_cause_is_named_when_one_cause_is_named_in_a_sentence_and_no_other"
+
+run_case "invariant 43: one word of a cause names it" fail \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", "group.iter().all(|word| sentence.contains(word))", "group.iter().any(|word| sentence.contains(word))")')" \
+	"a_cause_is_named_when_one_cause_is_named_in_a_sentence_and_no_other"
+
+run_case "invariant 43: a withheld chain still counts as citing ids that exist" fail \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", "unsupported.is_empty() && !text.starts_with(WITHHELD_PREFIX)", "unsupported.is_empty()")')" \
+	"the_first_two_questions_are_judged_on_the_cause_named_and_on_what_was_left_unsupported"
+
+run_case "invariant 43: any cause named counts as the true one" fail \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", "named == Named::Cause(truth)", "matches!(named, Named::Cause(_))")')" \
+	"the_first_two_questions_are_judged_on_the_cause_named_and_on_what_was_left_unsupported"
+
+run_case "invariant 43: a remedy that does not apply is counted as one that was replayed" fail \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", "remedy_applicable: scores.iter().filter(|s| s.remedy_stops.is_some()).count(),", "remedy_applicable: scores.len(),")')" \
+	"a_remedy_that_does_not_apply_is_counted_as_neither_a_pass_nor_a_miss"
+
+run_case "invariant 43: a packet never gives its cause away" fail \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", ".find(|w| lower.contains(w))", ".find(|w| w.is_empty())")')" \
+	"a_packet_gives_the_cause_away_only_by_its_words"
+
+run_case "invariant 43: a refused key calls for a policy" fail \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", "Cause::UnknownKey => None,", "Cause::UnknownKey => Some(RemedyFor::Policy),")')" \
+	"the_remedy_a_cause_calls_for_is_the_one_that_follows_from_it"
+
+run_case "invariant 43: the bench's own doc comment reworded" pass \
+	"$bench_gate" \
+	"$(py 'edit("crates/api/src/bench/mod.rs", "/// The causes the registry knows.", "/// The causes that the registry knows.")')"
+
 run_case "invariant 41: the candidate's own doc comment reworded" pass \
 	"$proof_gate" \
 	"$(py 'edit("crates/api/src/proof/budget.rs", "/// A candidate budget, in the units the trace keeps.", "/// A candidate budget, in the units that the trace keeps.")')"

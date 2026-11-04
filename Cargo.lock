@@ -925,6 +925,7 @@ dependencies = [
 name = "genaryx-api"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "base64",
  "chrono",
  "genaryx-connectors",

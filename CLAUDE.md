@@ -2189,6 +2189,53 @@ an absent invariant.
     the console container there has no mount of the trace directory and no
     `tokenfuse` binary.
 
+43. **The loop is scored against incidents whose cause is known, on three
+    questions, and a cause is judged on what the answer names.** `@decided
+    2026-11-04`: slice 7 of the incident-to-proven-fix plan, modelled on the
+    costcrew bench. `genaryx_api::bench` holds the scoring and the registry of
+    causes; `crates/api/tests/it/felyx_bench_test.rs` holds the incidents and
+    puts each to the real `Felyx::explain_case`. A case is a packet in the shape
+    of a case file whose cause is hidden (`gives_away` finds the words of a cause
+    in a packet, and the test holds that no packet has any), the true cause, and
+    the recorded replay of each kind of remedy over the incident's history. The
+    questions: (1) is the cause the answer NAMES the true one (`named_cause`: the
+    one cause with a sentence that holds all the words of one of its groups and
+    no other, so two causes named is none, the words of a cause spread over two
+    sentences are not the cause, and the true cause's words appearing somewhere in
+    a long answer prove nothing); (2) does every cited id exist (the reference
+    check left nothing unsupported and did not withhold the chain whole); (3) does
+    the remedy that follows from the named cause stop the replay (the recorded
+    output of `wardryx replay` or `tokenfuse backtest` for the incident, read by
+    the real parsers and judges of invariants 40 and 41, so a wrong cause replays
+    the wrong remedy and does not stop it). A cause that calls for no console
+    remedy (a refused key, invariant 19) is neither a pass nor a miss on the third
+    question and is counted as neither. The model in CI is scripted: an oracle that
+    reads the case, a rival that names another cause, one that cites a run nobody
+    holds, one that names nothing, one that names two. The same incidents can be
+    put to a real model, `live_bench_against_an_endpoint`, ignored by default,
+    through an OpenAI-compatible endpoint named by `GENARYX_BENCH_BASE_URL` and
+    `GENARYX_BENCH_MODEL`; it prints the report and asserts only that the
+    endpoint answered.
+    *(test: `crates/api/src/bench/tests.rs` (seven, one a 200-seed sweep),
+    `crates/api/tests/it/felyx_bench_test.rs` (seven, the real loop and the real
+    judges). Red first: the test commit of the pull request that added this
+    failed against stubs. Scenarios:
+    `features/the-bench-scores-a-named-cause-against-the-truth.feature`, eight,
+    each bound. Gate: seven product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (two causes counted as the first, one word of a
+    cause naming it, a withheld chain counted as citing real ids, any cause named
+    counted as the true one, a remedy that does not apply counted as replayed, a
+    packet that never gives its cause away, a refused key calling for a policy).)*
+
+    Where it says nothing: the registry holds three causes and three incidents,
+    which proves the machinery and not a model; the replays are recorded outputs of
+    the two engines for each incident, not runs of them, since the child processes
+    are held by invariants 40 and 41; the recognisers read English phrases, so an
+    answer in other words names no cause and scores as naming none; Felyx does not
+    yet propose a typed remedy, so the remedy scored is the one that follows from
+    the named cause, not one the model chose; and no real model has been put to
+    these incidents in this repository.
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
