@@ -2189,6 +2189,111 @@ an absent invariant.
     the console container there has no mount of the trace directory and no
     `tokenfuse` binary.
 
+42. **A case is sealed as one canonical document, and the digest of that
+    document is the target of a line in the console's own chain.** `@decided
+    2026-11-04`: slice 6 of the incident-to-proven-fix plan, and its first
+    decision held: no new service and no new event type. The console already emits
+    exactly one type, `console_command`, and a closed case fits it as the action
+    `console.case_close` with the pack's digest as the `target`, which the readers
+    of the bus already pack and sign. `case_seal` (`crates/api/src/seal`)
+    assembles the case again from the planes (never from the browser), asks again
+    for each proof the operator named (at most four, a policy candidate or a
+    budget limit, through the proofs of invariants 40 and 41, each recorded with
+    its request and either its result or the cause it could not be made), takes
+    the operator's decision (`applied`, `declined` or `deferred`, and a note of at
+    most 2000 characters in their words, with no control character but a line
+    break) and writes one pack: `format`, `case`, `proofs`, `decision`,
+    `sealed_by`, `sealed_at`, and no digest of itself. The pack is written in the
+    form RFC 8785 fixes (`seal::jcs`): no whitespace, members sorted by the UTF-16
+    code units of their names, strings escaped as `JSON.stringify` escapes them,
+    numbers written as ECMAScript's `Number::toString` writes them; an integer
+    past `2^53 - 1` has no such form and the pack is refused rather than rounded,
+    since a digest that depends on a rounding is one two honest readers can
+    disagree about. The digest is the sha256 of that text as `sha256:<hex>`, and a
+    pack past a mebibyte is not sealed. The chain line is written first and the
+    file second: a seal that cannot be journaled is refused and stores nothing,
+    because a file with no line in the chain claims a seal that never happened,
+    while a line with no file is a pack that was handed back in the answer and can
+    be stored again. The file is `case-packs/<hex>.json` beside the console's
+    store, private to its user, written by a temporary file renamed into place; a
+    file already there must hold the same text. `case_pack` hands one back only if
+    the text is JSON, in canonical form, of this format and hashes to the digest
+    asked for, and a digest that is not `sha256:` and 64 lowercase hex digits is
+    refused before it is ever made into a path. `applied` is the operator's
+    statement: an application outside the console (a policy loaded in the policy
+    plane, a limit set in the gateway) is not something the console sees, and the
+    pack names who said so. Sealing changes nothing in any plane, so it is an
+    approver's act with no ceremony; reading a pack is a read.
+    *(test: `crates/api/src/seal/jcs/tests.rs` (six, one a 200-seed sweep of
+    random documents), `crates/api/src/seal/tests.rs` (seven, one a 200-seed sweep
+    of digest-shaped text), `crates/api/tests/it/case_seal_test.rs` (eight, over a
+    real store and a real journal), `crates/web/src/roles.rs`'s
+    `sealing_a_case_is_an_approvers_act_and_reading_a_pack_is_a_read`. Red first:
+    the test commit of the pull request that added this failed against stubs.
+    Scenarios:
+    `features/a-sealed-case-is-one-canonical-document-with-its-digest-in-the-chain.feature`,
+    ten, each bound. Gate: ten product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (members sorted by bytes, an integer rounded, a
+    number written in positional form past 1e21, a control character left
+    unescaped, a pack not in canonical form accepted, a pack that hashes to
+    another digest accepted, a digest of any length made a file name, a note of any
+    length sealed, a seal stored though it was not journaled, a digest that is not
+    a digest looked up on disk).)*
+
+    Where it says nothing: the pack is verified by this console and by anything
+    that can compute RFC 8785 and sha256, but no second implementation has read
+    one yet, and the canonical form is tested against the published number and
+    ordering cases that matter here, not against every vector of the RFC; the
+    Evidence Center does not list sealed packs and has no button for sealing, only
+    the commands exist; a Trailryx pack of the bus contains the chain line, and
+    nothing here checks that it was read; `sealed_at` is this console's clock; and
+    the note and the decision are the operator's words, kept as they were said.
+43. **The loop is scored against incidents whose cause is known, on three
+    questions, and a cause is judged on what the answer names.** `@decided
+    2026-11-04`: slice 7 of the incident-to-proven-fix plan, modelled on the
+    costcrew bench. `genaryx_api::bench` holds the scoring and the registry of
+    causes; `crates/api/tests/it/felyx_bench_test.rs` holds the incidents and
+    puts each to the real `Felyx::explain_case`. A case is a packet in the shape
+    of a case file whose cause is hidden (`gives_away` finds the words of a cause
+    in a packet, and the test holds that no packet has any), the true cause, and
+    the recorded replay of each kind of remedy over the incident's history. The
+    questions: (1) is the cause the answer NAMES the true one (`named_cause`: the
+    one cause with a sentence that holds all the words of one of its groups and
+    no other, so two causes named is none, the words of a cause spread over two
+    sentences are not the cause, and the true cause's words appearing somewhere in
+    a long answer prove nothing); (2) does every cited id exist (the reference
+    check left nothing unsupported and did not withhold the chain whole); (3) does
+    the remedy that follows from the named cause stop the replay (the recorded
+    output of `wardryx replay` or `tokenfuse backtest` for the incident, read by
+    the real parsers and judges of invariants 40 and 41, so a wrong cause replays
+    the wrong remedy and does not stop it). A cause that calls for no console
+    remedy (a refused key, invariant 19) is neither a pass nor a miss on the third
+    question and is counted as neither. The model in CI is scripted: an oracle that
+    reads the case, a rival that names another cause, one that cites a run nobody
+    holds, one that names nothing, one that names two. The same incidents can be
+    put to a real model, `live_bench_against_an_endpoint`, ignored by default,
+    through an OpenAI-compatible endpoint named by `GENARYX_BENCH_BASE_URL` and
+    `GENARYX_BENCH_MODEL`; it prints the report and asserts only that the
+    endpoint answered.
+    *(test: `crates/api/src/bench/tests.rs` (seven, one a 200-seed sweep),
+    `crates/api/tests/it/felyx_bench_test.rs` (seven, the real loop and the real
+    judges). Red first: the test commit of the pull request that added this
+    failed against stubs. Scenarios:
+    `features/the-bench-scores-a-named-cause-against-the-truth.feature`, eight,
+    each bound. Gate: seven product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (two causes counted as the first, one word of a
+    cause naming it, a withheld chain counted as citing real ids, any cause named
+    counted as the true one, a remedy that does not apply counted as replayed, a
+    packet that never gives its cause away, a refused key calling for a policy).)*
+
+    Where it says nothing: the registry holds three causes and three incidents,
+    which proves the machinery and not a model; the replays are recorded outputs of
+    the two engines for each incident, not runs of them, since the child processes
+    are held by invariants 40 and 41; the recognisers read English phrases, so an
+    answer in other words names no cause and scores as naming none; Felyx does not
+    yet propose a typed remedy, so the remedy scored is the one that follows from
+    the named cause, not one the model chose; and no real model has been put to
+    these incidents in this repository.
 44. **A remedy is a typed value that is checked, proved where a proof exists,
     and routed to a person, and nothing here applies it.** `@decided
     2026-11-04`: slice 5 of the incident-to-proven-fix plan. `Remedy`

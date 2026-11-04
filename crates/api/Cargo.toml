@@ -50,6 +50,9 @@ qrcode = { workspace = true }
 reqwest = { workspace = true }
 
 [dev-dependencies]
+# The bench's scripted model implements the copilot crate's `LlmProvider`, whose
+# async method is declared through this macro (tests/it/felyx_bench_test.rs).
+async-trait = { workspace = true }
 # For tests that moved here with their planes: money/state.rs's gated
 # live-e2e spawns a real tokenfuse-cloud and polls its /healthz, and
 # quality/state.rs seeds a genuine SQLite file to prove the read-only re-open

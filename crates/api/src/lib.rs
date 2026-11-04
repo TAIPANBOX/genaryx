@@ -26,6 +26,7 @@
 //! stays in the shell. The DATA every plane reads ([`bus::AppState`], [`bus::BusMode`],
 //! [`events::UiEvent`]) lives here too, because every shell reads it.
 
+pub mod bench;
 pub mod bus;
 pub mod console_actor;
 pub mod events;
@@ -52,6 +53,7 @@ pub mod quality;
 pub mod remedy;
 pub mod remote;
 pub mod routines;
+pub mod seal;
 pub mod stats;
 
 pub use bus::{AppState, BusMode};

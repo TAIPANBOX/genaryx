@@ -131,6 +131,11 @@ const COMMANDS: &[Gate] = &[
     // The proof of a candidate budget: `tokenfuse backtest` run over the calls
     // the gateway recorded, read only. It changes no budget and applies nothing.
     gate("budget_proof", Role::Viewer, false),
+    // Sealing a case puts an operator's name to a decision in the console's own
+    // chain. It changes nothing in any plane, so it needs no ceremony, and it is
+    // an approver's act; reading a sealed pack back is a read.
+    gate("case_seal", Role::Approver, false),
+    gate("case_pack", Role::Viewer, false),
     // A typed remedy checked against an incident, read only: it proves where a
     // proof exists, names a drill and a route, and applies nothing.
     gate("remedy_check", Role::Viewer, false),
@@ -373,6 +378,11 @@ mod tests {
     }
 
     #[test]
+    fn sealing_a_case_is_an_approvers_act_and_reading_a_pack_is_a_read() {
+        assert_eq!(required_role("case_seal"), Role::Approver);
+        assert!(!requires_ceremony("case_seal"));
+        assert_eq!(required_role("case_pack"), Role::Viewer);
+        assert!(!requires_ceremony("case_pack"));
     fn checking_a_remedy_is_a_viewer_read() {
         assert_eq!(required_role("remedy_check"), Role::Viewer);
         assert!(!requires_ceremony("remedy_check"));
