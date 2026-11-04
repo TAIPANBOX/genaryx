@@ -128,7 +128,11 @@ const TABLE: &[Entry] = &[
 
 /// The class of an event type, and the Mockryx scenario that rehearses it.
 pub fn classify(event_type: &str) -> (IncidentClass, Option<&'static str>) {
-    let _ = event_type;
+    for e in TABLE {
+        if e.event_type == event_type {
+            return (e.class, e.scenario);
+        }
+    }
     (IncidentClass::Unclassified, None)
 }
 
@@ -144,14 +148,24 @@ pub enum RemedyKind {
 
 /// The kinds offered for an incident of `class`.
 pub fn offered(class: IncidentClass) -> &'static [RemedyKind] {
-    let _ = class;
-    &[]
+    use RemedyKind::{BudgetLimit, PolicyCandidate, StopAgent};
+    match class {
+        IncidentClass::Spend | IncidentClass::Loop => &[BudgetLimit, StopAgent],
+        IncidentClass::Policy | IncidentClass::Approval | IncidentClass::Data => {
+            &[PolicyCandidate, StopAgent]
+        }
+        IncidentClass::Quality => &[StopAgent],
+        IncidentClass::Identity | IncidentClass::Unclassified => &[],
+    }
 }
 
 /// Why `class` is offered nothing, if it is not.
 pub fn why_none(class: IncidentClass) -> Option<&'static str> {
-    let _ = class;
-    None
+    match class {
+        IncidentClass::Identity => Some(IDENTITY_IS_FILED_UNDER_THE_KEY),
+        IncidentClass::Unclassified => Some(NOT_CLASSIFIED),
+        _ => None,
+    }
 }
 
 /// A remedy, as a person or Felyx names it.
@@ -204,13 +218,62 @@ impl Remedy {
     /// Whether the remedy is well formed. A remedy that is not is refused before
     /// anything is proved or routed.
     pub fn check(&self) -> Result<(), &'static str> {
-    Ok(())
-}
+        match self {
+            Remedy::PolicyCandidate { candidate } => match check_candidate(candidate) {
+                Err(ProofError::CandidateRefused { reason }) => Err(reason),
+                _ => Ok(()),
+            },
+            Remedy::BudgetLimit {
+                per_run_usd,
+                per_step_usd,
+                max_steps,
+            } => BudgetCandidate::from_parts(
+                per_run_usd.as_deref(),
+                per_step_usd.as_deref(),
+                *max_steps,
+            )
+            .map(|_| ()),
+            Remedy::StopAgent { subject } => {
+                if is_agent_id(subject) {
+                    Ok(())
+                } else {
+                    Err("an agent to stop is named by its agent:// id")
+                }
+            }
+            Remedy::RevokeDelegation { subject } => {
+                if is_agent_id(subject) || is_user_id(subject) {
+                    Ok(())
+                } else {
+                    Err("a delegation to revoke is named by an agent:// or user:// id")
+                }
+            }
+        }
+    }
 
     /// How the remedy is applied.
     pub fn route(&self) -> ApplyRoute {
-    ApplyRoute::Outside { at: "" }
-}
+        match self {
+            Remedy::PolicyCandidate { .. } => ApplyRoute::Outside {
+                at: "the policy plane: this console decides approvals and writes block \
+                     policies, and has no command that loads a policy",
+            },
+            Remedy::BudgetLimit { .. } => ApplyRoute::Outside {
+                at: "the gateway's own configuration: this console sets one run's budget \
+                     and a unit's month cap, and has no command that sets a limit for \
+                     every run",
+            },
+            Remedy::StopAgent { subject } => ApplyRoute::Command {
+                command: "agent_stop",
+                arguments: json!({ "subject": subject }),
+                person_supplies: &["reason"],
+            },
+            Remedy::RevokeDelegation { subject } => ApplyRoute::Command {
+                command: "delegation_revoke",
+                arguments: json!({ "subject": subject }),
+                person_supplies: &["reason"],
+            },
+        }
+    }
 }
 
 fn is_user_id(s: &str) -> bool {

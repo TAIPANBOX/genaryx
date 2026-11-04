@@ -172,8 +172,24 @@ pub async fn remedy_check_in(
     bus: &AppState,
     scenario_dir: Option<PathBuf>,
 ) -> Result<RemedyCheck, RemedyError> {
-    let _ = (slots, policy, budget, request, bus, scenario_dir);
-    Err(RemedyError::Refused {
-        reason: "a remedy check is not wired yet",
+    request
+        .remedy
+        .check()
+        .map_err(|reason| RemedyError::Refused { reason })?;
+    let event = event_of(bus, &request.incident_id).map_err(incident_error)?;
+    let (class, scenario) = classify(&event.type_);
+    let fits_class = offered(class).contains(&request.remedy.kind());
+    let proof = prove(slots, policy, budget, &request, bus).await;
+    Ok(RemedyCheck {
+        incident_id: request.incident_id.clone(),
+        event_type: Data::bounded(&event.type_),
+        class,
+        offered: offered(class),
+        why_none: why_none(class),
+        fits_class,
+        proof,
+        drill: drill_for(scenario, scenario_dir.as_deref()),
+        apply: request.remedy.route(),
+        remedy: request.remedy,
     })
 }
