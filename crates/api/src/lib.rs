@@ -51,6 +51,7 @@ pub mod proof;
 pub mod quality;
 pub mod remote;
 pub mod routines;
+pub mod seal;
 pub mod stats;
 
 pub use bus::{AppState, BusMode};
