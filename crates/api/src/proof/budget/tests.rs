@@ -472,7 +472,8 @@ fn reports_that_cannot_describe_the_same_trace_are_refused() {
     let with_other_runs = judge_budget("r1", &candidate, &two_runs, &trace, 35, false);
     let no_runs = report((0, 0), (0, 0), 0, 0);
     let empty_trace = judge_budget("r1", &candidate, &run, &no_runs, 35, false);
-    let small = report((1, 1), (10, 5), 100, 50);
+    // Blocks and affected runs enough, so only the count of calls can refuse it.
+    let small = report((1, 1), (10, 18), 100, 50);
     let fewer_calls = judge_budget("r1", &candidate, &run, &small, 35, false);
     let few_blocks = report((20, 15), (832, 10), 256_379, 1);
     let blocks_less = judge_budget("r1", &candidate, &run, &few_blocks, 35, false);
