@@ -629,7 +629,10 @@ async fn the_subject_agents_identity_and_blast_radius_come_from_idryx() {
     assert_eq!(blast.row["permissions"], 2);
     assert_eq!(blast.row["admin_permissions"], 1);
     assert_eq!(blast.row["unused_permissions"], 1);
-    assert_eq!(blast.row["delegated_by"], json!(["user://taipanbox.dev/owner"]));
+    assert_eq!(
+        blast.row["delegated_by"],
+        json!(["user://taipanbox.dev/owner"])
+    );
     assert_eq!(blast.row["delegates_to"], json!([CHILD]));
     assert_eq!(blast.row["alerts"], 1);
     for fact in &case.facts {
