@@ -1862,6 +1862,69 @@ an absent invariant.
     console has read a live witness's findings, and no launcher pins a console
     image that reads the setting yet.)*
 
+37. **A case for an incident is assembled with no model, names what is missing,
+    and ties every statement to a plane, a row and a digest.** `@decided
+    2026-11-04`: slice 1 of the incident-to-proven-fix plan joins the reads the
+    console already makes into one `CaseFile` (`crates/api/src/case`), and
+    nothing else: no model call, no new service, no new event type, no write to
+    any plane. Reading the case with Felyx, proposing a remedy and proving it
+    are later slices.
+
+    The rules the shape holds. Assembly names what is missing: `assemble`
+    walks `Section::ALL` and emits one line per question whatever the gatherer
+    handed it, so a plane that did not answer is a line saying so (with the
+    plane's own error text, bounded, marked as data), a plane that answered
+    with nothing is a different line, a question that could not be framed is a
+    third, and a section nobody recorded an answer for is a line too. Every
+    fact carries its plane, that plane's own id for the row, and a
+    `sha256:<hex>` digest of the row. An identity refusal is filed under its key
+    (invariant 19): `questions_for` takes the subject from `filed_under`, keeps
+    the agent it claimed as `claimed_agent`, and does not ask the identity or
+    blast-radius questions at all, saying why in the console's own words,
+    because asking idryx about the claimed agent would charge it with an attempt
+    it did not make. Text from events, logs and memory is data: it lives only in
+    a fact's `row` (marked `trust: data`) and in a line's `upstream`, every
+    label is one of the fixed strings in `case::label`, and the web view prints
+    the text escaped inside a frame marked `data-trust="data"`.
+
+    The case is deterministic: the same inputs give byte-identical cases and the
+    same `CaseFile::digest`, which is the sha256 of the case serialised with its
+    own digest empty. The command `case_file` takes an incident id (`bus:<n>`,
+    `verdryx:<n>` or `<n>`, the store's row id), reads the console's own store
+    for the event row, the run's timeline in time order and the earlier events
+    of the same type, then asks the money, idryx, wardryx and engram planes only
+    what `questions_for` allows. An incident from money, identity or posture has
+    no event row and is refused by naming its source; a row the store does not
+    hold is refused as not found; neither is answered with an empty case. It is
+    a viewer read with no ceremony (`roles.rs`). Incident 360 shows the case and
+    what is missing from it; the demo transport builds one on invented rows,
+    including a plane that does not answer.
+    *(test: `crates/api/src/case/mod.rs` (eleven: every fact's plane, row and
+    digest; every question has a line, in a fixed order; an unanswered plane is
+    a line; an empty answer is not an unavailable one; the digest against an
+    independent sha256; determinism; filing under the key; no question about the
+    claimed agent; text as data), `crates/api/src/case/commands.rs` (incident id
+    parsing with a 200-seed hostile sweep; the blast radius),
+    `crates/api/tests/it/case_file_test.rs` (against a real store: the planes
+    unresolved, the shared stub Cloud for spend, stub idryx and wardryx for the
+    identity, blast radius, policy and decisions, and a recording stub that holds
+    idryx is never asked about a refusal's claimed agent),
+    `crates/core/tests/it/store_test.rs`'s `an_event_is_read_back_by_its_id` and
+    `similar_events_are_the_earlier_events_of_the_same_type_newest_first`,
+    `crates/web/src/roles.rs`'s `reading_a_case_is_a_viewer_read`, web:
+    `CaseView.test.ts`, `caseFile.test.ts`, `sha256.test.ts`,
+    `mockPreview.case.test.ts`. Red first: the test commit of genaryx#137 failed
+    against stubs. Scenarios:
+    `features/the-console-assembles-a-case-for-an-incident.feature`, fourteen, each
+    bound; gate: ten product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (a plane that did not answer left out of the
+    case, a refusal filed under the agent it claimed, idryx asked about the agent
+    a refusal claimed, a digest of something other than the row, a failed read
+    reported as empty, the timeline in insertion order, the similar incidents
+    including the incident itself, other identities' alerts listed as the
+    subject's, other runs' approvals listed as this run's decisions, reading a
+    case made an admin act).)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

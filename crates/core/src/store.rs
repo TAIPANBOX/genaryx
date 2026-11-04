@@ -564,6 +564,58 @@ impl Store {
         Ok(out)
     }
 
+    /// One event by its row id, or `None` when the store holds no such row.
+    ///
+    /// `None` and an error are different answers: a store that cannot be read
+    /// is a fault, and a row that is not there is a fact. The case file keeps
+    /// them apart, and a caller must not fold one into the other.
+    pub fn event_by_id(&self, id: i64) -> Result<Option<StoredEvent>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, env, ts, source, type, agent_id, run_id, severity, schema, \
+                 on_behalf_of, data, prev_hash, raw, file, off \
+                 FROM events WHERE id = ?1",
+            )
+            .map_err(store_err)?;
+        let mut rows = stmt.query(params![id]).map_err(store_err)?;
+        match rows.next().map_err(store_err)? {
+            Some(row) => Ok(Some(stored_event_from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The earlier events of `type_`, newest first by `id`, never the event
+    /// `before_id` itself and never a later one: the "similar past incidents"
+    /// of a case. Same type is the whole rule; the caller says whether the
+    /// subject matched. `limit` caps the rows, and the scan walks the primary
+    /// key backwards, so it stops at `limit` matches rather than reading the
+    /// table.
+    pub fn similar_events(
+        &self,
+        type_: &str,
+        before_id: i64,
+        limit: usize,
+    ) -> Result<Vec<StoredEvent>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, env, ts, source, type, agent_id, run_id, severity, schema, \
+                 on_behalf_of, data, prev_hash, raw, file, off \
+                 FROM events WHERE type = ?1 AND id < ?2 ORDER BY id DESC LIMIT ?3",
+            )
+            .map_err(store_err)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = stmt
+            .query(params![type_, before_id, limit])
+            .map_err(store_err)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(store_err)? {
+            out.push(stored_event_from_row(row)?);
+        }
+        Ok(out)
+    }
+
     /// The delegation-relevant columns of every event, oldest-first (by `id`),
     /// for batch-building the core [`crate::graph::DelegationGraph`] (PHASE3
     /// W1). Only the columns the graph needs, so it stays cheap over a large

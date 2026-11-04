@@ -1,5 +1,6 @@
 import { claimSentence, isKeySubject } from "../lib/attribution";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { CaseSection } from "./CaseView";
 import { SeverityBadge } from "./SeverityBadge";
 import { UserCard } from "./UserCard";
 import { UnitCard } from "./UnitCard";
@@ -513,6 +514,8 @@ export function Incident360({
             </div>
           ) : null}
         </Q>
+
+        <CaseSection row={row} />
 
         {onNavigate && (
           <div style={{ padding: "6px 16px 0" }}>

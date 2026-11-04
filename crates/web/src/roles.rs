@@ -78,6 +78,9 @@ const COMMANDS: &[Gate] = &[
     gate("agent_slice", Role::Viewer, false),
     gate("bus_quarantine", Role::Viewer, false),
     gate("bus_status", Role::Viewer, false),
+    // The case file for an incident: the reads the console already makes,
+    // joined, with no model in the path. A read, and a viewer may make it.
+    gate("case_file", Role::Viewer, false),
     gate("copilot_ask", Role::Viewer, false),
     gate("copilot_explain", Role::Viewer, false),
     gate("copilot_status", Role::Viewer, false),
@@ -328,6 +331,14 @@ mod tests {
             orphan.is_empty(),
             "classified names not in dispatch (stale): {orphan:?}"
         );
+    }
+
+    /// The case file only reads: the same floor as every other read, and no
+    /// ceremony, since nothing it does changes a plane.
+    #[test]
+    fn reading_a_case_is_a_viewer_read() {
+        assert_eq!(required_role("case_file"), Role::Viewer);
+        assert!(!requires_ceremony("case_file"));
     }
 
     #[test]

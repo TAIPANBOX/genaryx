@@ -667,3 +667,83 @@ fn an_identity_refusal_counts_as_the_keys_activity_from_the_store() {
     );
     assert_eq!(g.node("key:forge-imposter").map(|n| n.event_count), Some(1));
 }
+
+/// The case file starts from one event row, and a row the store does not hold
+/// must read as "not there", never as an empty row and never as an error.
+#[test]
+fn an_event_is_read_back_by_its_id() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+    store
+        .insert_batch(&canonical_events())
+        .expect("insert_batch");
+    let all = store.recent_events(100).expect("recent_events");
+    let target = &all[2];
+
+    let got = store
+        .event_by_id(target.id)
+        .expect("event_by_id")
+        .expect("the row is there");
+    assert_eq!(got.id, target.id);
+    assert_eq!(got.raw, target.raw);
+    assert_eq!(got.agent_id, target.agent_id);
+
+    assert!(
+        store
+            .event_by_id(target.id + 10_000)
+            .expect("event_by_id")
+            .is_none(),
+        "an id the store does not hold is None, not an empty row"
+    );
+    assert!(store.event_by_id(-1).expect("event_by_id").is_none());
+}
+
+/// A case lists the earlier events of the same type, newest first. It never
+/// lists the event itself, a later event, or another type.
+#[test]
+fn similar_events_are_the_earlier_events_of_the_same_type_newest_first() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+    let flint = "agent://taipanbox.dev/routers/flint";
+    let ts = "2026-10-07T10:00:00Z";
+    store
+        .insert_batch(&[
+            event_about(flint, "spend_spike", serde_json::json!({}), ts, 1),
+            event_about(flint, "policy_deny", serde_json::json!({}), ts, 2),
+            event_about(flint, "spend_spike", serde_json::json!({}), ts, 3),
+            event_about(flint, "spend_spike", serde_json::json!({}), ts, 4),
+            event_about(flint, "spend_spike", serde_json::json!({}), ts, 5),
+        ])
+        .expect("insert");
+    let ids: Vec<i64> = store
+        .recent_events(10)
+        .expect("recent_events")
+        .into_iter()
+        .rev()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(ids.len(), 5);
+
+    let similar = store
+        .similar_events("spend_spike", ids[3], 10)
+        .expect("similar_events");
+    let got: Vec<i64> = similar.iter().map(|e| e.id).collect();
+    assert_eq!(
+        got,
+        vec![ids[2], ids[0]],
+        "earlier spend_spike events, newest first: not itself, not the policy_deny, not the later one"
+    );
+
+    let capped = store
+        .similar_events("spend_spike", ids[3], 1)
+        .expect("similar_events");
+    assert_eq!(
+        capped.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![ids[2]]
+    );
+
+    assert!(
+        store
+            .similar_events("never_seen", ids[4], 10)
+            .expect("similar_events")
+            .is_empty()
+    );
+}

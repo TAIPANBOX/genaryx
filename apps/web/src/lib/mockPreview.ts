@@ -42,6 +42,9 @@ import type { EntityLifecycleState } from "./lifecycleTypes";
 import type { Session } from "./session";
 import type { EgressRow } from "../egressTypes";
 import { shortAgentLabel } from "./graph";
+import { filedUnder, isKeySubject } from "./attribution";
+import { sha256Hex } from "./sha256";
+import type { CaseFact, CaseFile, CaseLine, CasePlane, CaseSection } from "../caseTypes";
 
 export const MOCK = import.meta.env.VITE_GENARYX_MOCK === "1";
 
@@ -3702,6 +3705,214 @@ function mockRoutinesHistory(routine?: string, limit?: number) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/**
+ * `case_file` for the demo: the case of one demo incident, built from the demo
+ * transport's own rows and from nothing else (`recent_events`, `money_runs`,
+ * `identity_list_identities`, `policy_list_approvals` below), so every row in
+ * it is one the visitor can find in the tab it came from.
+ *
+ * It follows the real command's rules so the demo teaches them: an identity
+ * refusal is filed under its key, the agent it claimed is kept as a claim, and
+ * the questions about an agent are not asked; every question has a line; every
+ * fact carries its plane, its row id and a sha256 of the row. One plane in the
+ * demo case does not answer (the policy status), so a visitor sees what a
+ * missing plane looks like. The digests are real sha256 of the row as
+ * `JSON.stringify` writes it, not Rust's bytes, since the demo has no Rust.
+ *
+ * The sentences repeat `crates/api/src/case/mod.rs`'s `words` and `label`.
+ */
+const CASE_WORDS = {
+  empty: "the plane answered and holds nothing for this incident",
+  unavailable: "the plane did not answer",
+  noRun: "the event names no run, so there is no run to read",
+  filedUnderAKey:
+    "the incident is filed under a key, not an agent: asking about the agent it claimed would charge that agent with the attempt",
+};
+
+const CASE_SECTION_PLANE: Record<CaseSection, CasePlane> = {
+  event: "bus",
+  run_timeline: "bus",
+  spend: "tokenfuse",
+  identity: "idryx",
+  blast_radius: "idryx",
+  policy: "wardryx",
+  decisions: "wardryx",
+  similar_incidents: "bus",
+  prior_rulings: "engram",
+};
+
+async function mockCaseFile(incidentId: string): Promise<CaseFile> {
+  const id = /^(?:(?:bus|verdryx):)?(\d+)$/.exec(incidentId);
+  if (!id) {
+    const unsupported = /^(money|idryx|posture):/.exec(incidentId);
+    throw unsupported
+      ? { kind: "unsupported_source", source: unsupported[1] }
+      : { kind: "bad_incident_id", incident_id: incidentId.slice(0, 80) };
+  }
+  const eventId = Number(id[1]);
+  const bus = await mockInvoke<UiEvent[]>("recent_events", { limit: 500 });
+  const event = bus.find((e) => e.id === eventId);
+  if (!event) throw { kind: "not_found", event_id: eventId };
+
+  const subject = filedUnder(event);
+  const isKey = isKeySubject(subject);
+  const runId = event.run_id ? event.run_id : null;
+
+  const facts: CaseFact[] = [];
+  const lines: CaseLine[] = [];
+  const answered = (
+    section: CaseSection,
+    rows: { plane: CasePlane; row_id: string; label: string; row: unknown }[],
+  ) => {
+    for (const r of rows) {
+      facts.push({
+        section,
+        plane: r.plane,
+        row_id: r.row_id,
+        digest: `sha256:${sha256Hex(JSON.stringify(r.row))}`,
+        label: r.label,
+        trust: "data",
+        row: r.row,
+      });
+    }
+    lines.push({
+      section,
+      plane: CASE_SECTION_PLANE[section],
+      state: rows.length > 0 ? "answered" : "empty",
+      facts: rows.length,
+      reason: rows.length > 0 ? null : CASE_WORDS.empty,
+      upstream: null,
+    });
+  };
+  const notAsked = (section: CaseSection, reason: string) =>
+    lines.push({ section, plane: CASE_SECTION_PLANE[section], state: "not_asked", facts: 0, reason, upstream: null });
+
+  answered("event", [{ plane: "bus", row_id: String(event.id), label: "the incident's event row", row: event }]);
+
+  if (runId) {
+    const timeline = bus
+      .filter((e) => e.run_id === runId)
+      .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts) || a.id - b.id);
+    answered(
+      "run_timeline",
+      timeline.map((e) => ({ plane: "bus" as const, row_id: String(e.id), label: "an event of the same run", row: e })),
+    );
+    const runs = await mockInvoke<{ run_id: string }[]>("money_runs");
+    answered(
+      "spend",
+      runs
+        .filter((r) => r.run_id === runId)
+        .map((r) => ({
+          plane: "tokenfuse" as const,
+          row_id: r.run_id,
+          label: "the run's spend and gateway decisions",
+          row: r,
+        })),
+    );
+  } else {
+    notAsked("run_timeline", CASE_WORDS.noRun);
+    notAsked("spend", CASE_WORDS.noRun);
+  }
+
+  if (isKey) {
+    notAsked("identity", CASE_WORDS.filedUnderAKey);
+    notAsked("blast_radius", CASE_WORDS.filedUnderAKey);
+  } else {
+    const identities = await mockInvoke<
+      { id: string; permissions?: { admin: boolean; used: boolean }[]; on_behalf_of?: string[] }[]
+    >("identity_list_identities");
+    const me = identities.find((i) => i.id === subject);
+    answered(
+      "identity",
+      me ? [{ plane: "idryx", row_id: me.id, label: "the identity record", row: me }] : [],
+    );
+    const permissions = me?.permissions ?? [];
+    const delegates = identities
+      .filter((i) => me && i.id !== me.id && (i.on_behalf_of ?? []).includes(me.id))
+      .map((i) => i.id)
+      .sort();
+    answered(
+      "blast_radius",
+      me
+        ? [
+            {
+              plane: "idryx",
+              row_id: `${me.id}#blast_radius`,
+              label: "what the identity can reach, computed from its record",
+              row: {
+                identity: me.id,
+                permissions: permissions.length,
+                admin_permissions: permissions.filter((p) => p.admin).length,
+                unused_permissions: permissions.filter((p) => !p.used).length,
+                delegated_by: me.on_behalf_of ?? [],
+                delegates_to: delegates.slice(0, 20),
+                delegates_to_total: delegates.length,
+              },
+            },
+          ]
+        : [],
+    );
+  }
+
+  // The one plane that does not answer in the demo case.
+  lines.push({
+    section: "policy",
+    plane: "wardryx",
+    state: "unavailable",
+    facts: 0,
+    reason: CASE_WORDS.unavailable,
+    upstream: { trust: "data", text: '{"kind":"unreachable"}' },
+  });
+
+  if (runId) {
+    const approvals = await mockInvoke<{ approval_id: string; run_id: string }[]>("policy_list_approvals");
+    answered(
+      "decisions",
+      approvals
+        .filter((a) => a.run_id === runId)
+        .map((a) => ({
+          plane: "wardryx" as const,
+          row_id: a.approval_id,
+          label: "an approval of this run and how it was decided",
+          row: a,
+        })),
+    );
+  } else {
+    notAsked("decisions", CASE_WORDS.noRun);
+  }
+
+  const similar = bus
+    .filter((e) => e.type === event.type && e.id < event.id)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, 5);
+  answered(
+    "similar_incidents",
+    similar.map((e) => ({
+      plane: "bus" as const,
+      row_id: String(e.id),
+      label:
+        filedUnder(e) === subject
+          ? "an earlier event of the same type, same subject"
+          : "an earlier event of the same type, another subject",
+      row: e,
+    })),
+  );
+  answered("prior_rulings", []);
+
+  const order = Object.keys(CASE_SECTION_PLANE) as CaseSection[];
+  lines.sort((a, b) => order.indexOf(a.section) - order.indexOf(b.section));
+  const body: CaseFile = {
+    incident_id: incidentId,
+    subject,
+    claimed_agent: isKey ? event.agent_id : null,
+    run_id: runId,
+    lines,
+    facts,
+    digest: "",
+  };
+  return { ...body, digest: `sha256:${sha256Hex(JSON.stringify(body))}` };
+}
+
 export async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const r = (v: unknown) => v as T;
   switch (command) {
@@ -4049,6 +4260,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // one bus incident with no run id never reached Incident 360.
     case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...mockKeyryxWitnessEvents(), ...seedEvents(Number(args?.limit ?? 60))]);
     case "run_events": return r(seedEvents(20));
+    // The case for one demo incident, from the demo's own rows (see `mockCaseFile`).
+    case "case_file": return r(await mockCaseFile(String(args?.incident_id ?? "")));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });
 
