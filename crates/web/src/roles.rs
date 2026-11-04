@@ -125,6 +125,9 @@ const COMMANDS: &[Gate] = &[
     gate("policy_list_approvals", Role::Viewer, false),
     gate("policy_list_policies", Role::Viewer, false),
     gate("policy_status", Role::Viewer, false),
+    // The proof of a candidate policy: `wardryx replay` run over the recorded
+    // decisions, read only. It changes no policy and applies nothing.
+    gate("policy_proof", Role::Viewer, false),
     gate("quality_list_baselines", Role::Viewer, false),
     gate("quality_list_run_summaries", Role::Viewer, false),
     gate("quality_run_scores", Role::Viewer, false),
@@ -347,6 +350,14 @@ mod tests {
             required_role("copilot_explain")
         );
         assert!(!requires_ceremony("copilot_explain_case"));
+    }
+
+    /// A policy proof runs `wardryx replay` over the recorded decisions and
+    /// applies nothing: a read, with no ceremony.
+    #[test]
+    fn proving_a_policy_is_a_viewer_read() {
+        assert_eq!(required_role("policy_proof"), Role::Viewer);
+        assert!(!requires_ceremony("policy_proof"));
     }
 
     #[test]

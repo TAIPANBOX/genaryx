@@ -1047,6 +1047,27 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "policy_enforcement_status" => Ok(reply(
             genaryx_api::policy::commands::policy_enforcement_status(&ctx.policy).await,
         )),
+        // What a candidate policy would have done to the decisions already
+        // taken, from `wardryx replay`, in both halves. A read, and classified
+        // as one in roles.rs: it applies nothing.
+        "policy_proof" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                incident_id: String,
+                candidate: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::proof::commands::policy_proof(
+                    genaryx_api::proof::commands::ProofRequest {
+                        incident_id: a.incident_id,
+                        candidate: a.candidate,
+                    },
+                    &ctx.bus,
+                )
+                .await,
+            ))
+        }
         "policy_status" => Ok(reply(
             genaryx_api::policy::commands::policy_status(&ctx.policy).await,
         )),

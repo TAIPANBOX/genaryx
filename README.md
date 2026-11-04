@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1302-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1322-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -439,6 +439,15 @@ box; these frames are not it, and say so here rather than in a footnote.
   refusal is filed under its key, so nothing is asked about the agent it
   claimed. Text from events and memory is shown as data. Read with
   `case_file`, a viewer read; the demo shows one on invented rows.
+- **A policy proof (2026-11-04, invariant 40).** `policy_proof` runs `wardryx
+  replay` over the decisions already recorded against a candidate policy an
+  operator wrote, and says both halves: whether the candidate would have stopped
+  the incident, and how many other decisions it would have tightened, loosened or
+  reclassified. What wardryx could not replay (not archived, unreadable,
+  diverged, the approval rows) is shown by name and never folded into a count; a
+  diverged replay is marked as one that cannot be relied on. A proof that could
+  not be made, for want of the archive, the binary or a run, or because the
+  report does not add up, is an error that says so. It applies nothing.
 - **Felyx reads the case (2026-11-04, invariant 39).** On an incident with an
   event row, Incident 360 has an "Ask Felyx to read this case" button. Felyx is
   handed the case file (invariant 37) and no tool: it cannot look anything else

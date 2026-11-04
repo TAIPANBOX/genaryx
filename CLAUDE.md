@@ -2042,6 +2042,45 @@ an absent invariant.
     tool run while a case is read, a row's text left plain, the incident not
     checked against the case) and one for the gate itself.)*
 
+40. **A candidate policy is proved against the decisions already taken, in both
+    halves, by `wardryx replay`, and a proof that could not be made is never a
+    proof of nothing.** `@decided 2026-11-04`: slice 3 of the
+    incident-to-proven-fix plan. `policy_proof` (`crates/api/src/proof`) writes
+    the operator's candidate to a private file, runs `wardryx replay -events
+    <wardryx.ndjson on the bus> -archive <WARDRYX_POLICY_ARCHIVE> -policy <file>`
+    with no shell, an environment of `PATH` alone, a deadline and an output cap,
+    removes the file, and reads the report. The proof has two halves: whether the
+    candidate would have stopped this incident (it turns one of the incident's
+    run's decisions from `allow` into `deny` or `hold`), and how many other
+    decisions it changes, counted as tightened, loosened and reclassified and
+    listed. Wardryx's seven named outcomes (`reproduced`, the three approval rows,
+    `not archived`, `unreadable`, `diverged`) are carried as seven numbers and never
+    folded; a diverged replay is marked untrustworthy and says nothing about the
+    incident. The report is text with ids a producer chose, and a run id with a
+    newline in it can print a row nobody replayed, so the parser takes the counts
+    from the lines wardryx writes about itself and refuses a report whose rows are
+    not as many as it says changed, whose outcomes do not sum to the decisions
+    replayed, or whose replayable count differs from the outcomes that carry a
+    counterfactual; the text of every row is data. A missing archive, a missing
+    event file, an empty, oversized or NUL-bearing candidate, an incident with no
+    run, a timeout, a failed replay and a report that does not hold together are
+    each an error that names the cause. Nothing is applied. A viewer read.
+    `WARDRYX_POLICY_ARCHIVE` is wardryx's own name for the archive, declared in
+    `components.json`; the console image carries the `wardryx` binary and mounts
+    the archive read only, which `stack-k8s` and `stack-single` do (their own
+    repositories, their own invariants).
+    *(test: `crates/api/src/proof/tests.rs` (nine, one a 200-seed hostile sweep),
+    `crates/api/tests/it/policy_proof_test.rs` (ten, a stand-in `wardryx` that
+    records its arguments, its environment and its candidate),
+    `crates/web/src/roles.rs`'s `proving_a_policy_is_a_viewer_read`. Red first: the
+    test commit of the pull request that added this failed against stubs.
+    Scenarios: `features/a-candidate-policy-is-proved-before-it-is-applied.feature`,
+    nine, each bound. Gate: nine product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (another run's change counted as the incident's,
+    a loosening counted as stopping it, a diverged replay trusted, a forged row
+    believed, outcomes not summed, the child's environment inherited, the candidate
+    left behind, the deadline not enforced, an empty candidate run).)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
