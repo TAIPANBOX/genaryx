@@ -1345,7 +1345,11 @@ mod tests {
     #[test]
     fn an_instruction_refuses_the_action_on_any_target_it_may_have_meant() {
         let mut e = hostile();
-        read(&mut e, "list_runs", json!({"runs": [{"run_id": "p1-other"}]}));
+        read(
+            &mut e,
+            "list_runs",
+            json!({"runs": [{"run_id": "p1-other"}]}),
+        );
         // Not named by the text and not its row: the instruction alone.
         assert!(
             e.screen(&mut kill("p1-other", "runaway", &[]), None)
