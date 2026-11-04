@@ -138,17 +138,12 @@ pub fn store_sections(
     event: &StoredEvent,
     questions: &Questions,
 ) -> Vec<(Section, Answer)> {
-    let mut out = Vec::new();
-
-    out.push((
-        Section::Event,
-        one(Row {
-            plane: Plane::Bus,
-            row_id: event.id.to_string(),
-            label: label::EVENT,
-            value: row_value(event),
-        }),
-    ));
+    let event_answer = one(Row {
+        plane: Plane::Bus,
+        row_id: event.id.to_string(),
+        label: label::EVENT,
+        value: row_value(event),
+    });
 
     let timeline = match &questions.run_id {
         None => Answer::NotAsked {
@@ -180,7 +175,6 @@ pub fn store_sections(
             }
         },
     };
-    out.push((Section::RunTimeline, timeline));
 
     let similar = match store.similar_events(&event.type_, event.id, SIMILAR_LIMIT) {
         Err(e) => Answer::Unavailable {
@@ -207,8 +201,11 @@ pub fn store_sections(
             note: None,
         },
     };
-    out.push((Section::SimilarIncidents, similar));
-    out
+    vec![
+        (Section::Event, event_answer),
+        (Section::RunTimeline, timeline),
+        (Section::SimilarIncidents, similar),
+    ]
 }
 
 /// What the identity can reach, computed from idryx's own records: its
@@ -219,7 +216,7 @@ pub fn blast_radius(me: &IdryxIdentity, all: &[IdryxIdentity], alerts: usize) ->
     let unused = me.permissions.iter().filter(|p| !p.used).count();
     let mut delegates: Vec<&str> = all
         .iter()
-        .filter(|i| i.id != me.id && i.on_behalf_of.iter().any(|o| *o == me.id))
+        .filter(|i| i.id != me.id && i.on_behalf_of.contains(&me.id))
         .map(|i| i.id.as_str())
         .collect();
     delegates.sort_unstable();
