@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1197-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1293-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -229,7 +229,15 @@ box; these frames are not it, and say so here rather than in a footnote.
   that the tools returned under its budget, or an agent named as over budget
   when none of its runs is at or over, is sent back the same way, and the
   revision request asks for a fresh answer rather than an apology. Since
-  2026-10-13 (invariant 24) Felyx can present a gateway client key of its
+  2026-11-04 (invariant 38) every id and dollar amount in an answer must be
+  one a tool returned in that same answer: a statement with nothing behind it
+  goes back once and is then taken out and named, an explanation through an
+  invented id is withheld whole, and a card needs a target a tool returned.
+  Text from events, logs, incident messages and memory reaches the model
+  wrapped and escaped, as data; an instruction inside it never yields the card
+  it asks for, and an answer that rests on such text says so in its metadata.
+  Held by tests whose scripted model obeys the text. Since 2026-10-13
+  (invariant 24) Felyx can present a gateway client key of its
   own: `GENARYX_COPILOT_FUSE_KEY_REF` (`env:<NAME>` or `file:<path>`, like
   the provider key's reference) names it, Felyx sends it as `x-fuse-key`,
   and a TokenFuse gateway with client keys on admits its questions instead

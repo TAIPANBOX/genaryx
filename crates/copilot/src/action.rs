@@ -56,6 +56,15 @@ pub struct ProposedAction {
     pub policy_context: Vec<String>,
 }
 
+/// A proposal the answer check would not put on a card, with the reason. The
+/// model is told, and so is the shell: a card that never appeared is otherwise
+/// invisible, and the reason is often the most useful line of the answer.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WithheldProposal {
+    pub action: ProposedAction,
+    pub reason: String,
+}
+
 /// The optional `copilot` block that can be attached to an alert: a one-line
 /// summary, an optional recommended action, a confidence, and the cross-plane
 /// chain. It only ever ENRICHES an alert that was already going to fire. A

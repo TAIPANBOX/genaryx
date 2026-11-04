@@ -500,6 +500,77 @@ run_case "invariant 28: the phrase list's own comment reworded" pass \
 	"$model_gate" \
 	"$(py 'edit("crates/copilot/src/grounding.rs", "/// Phrases that make a model claim about a run", "/// Phrases that make a model claim about one run")')"
 
+# invariant 38: a plane's text reaches Felyx fenced, and nothing in an answer
+# points at what no tool returned. The first four read the source; the rest
+# are product mutants, against the tests that hold each.
+fence_gate='./scripts/felyx-fences-plane-text.sh'
+
+run_case "felyx-fences-plane-text: the event of a summary goes out bare" fail \
+	"$fence_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "Message::user(fence_text(\"event\", event))", "Message::user(event)")')" \
+	"a user message this gate does not know"
+
+run_case "felyx-fences-plane-text: a read tool's result goes through the console's constructor" fail \
+	"$fence_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "let fenced = FencedResult::plane(&call.name, &value);", "let fenced = FencedResult::console(&value);")')" \
+	"FencedResult::console( appears 2 times"
+
+run_case "felyx-fences-plane-text: the agent file is gone" fail \
+	"$fence_gate" \
+	"$(py 'import os; os.rename("crates/copilot/src/agent.rs", "crates/copilot/src/agent_moved.rs")')" \
+	"measured nothing"
+
+run_case "felyx-fences-plane-text: a comment reworded" pass \
+	"$fence_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "/// One draft, as far as the checks got with it.", "/// One draft, as far as the checks went with it.")')"
+
+fenced_gate='cargo test -q --no-fail-fast -p genaryx-copilot untrusted'
+references_gate='cargo test -q --no-fail-fast -p genaryx-copilot references'
+
+run_case "invariant 38: a field nobody listed stays plain" fail \
+	"$fenced_gate" \
+	"$(py 'edit("crates/copilot/src/untrusted.rs", "Value::String(s) => Value::String(self.fence(key, s, subjects)),", "Value::String(_) => value.clone(),")')" \
+	"event_text_reaches_the_model_fenced_and_cannot_close_the_fence"
+
+run_case "invariant 38: a closing tag passes through the escape" fail \
+	"$fenced_gate" \
+	"$(py 'edit("crates/copilot/src/untrusted.rs", "\x27<\x27 | \x27\\u{ff1c}\x27 | \x27\\u{fe64}\x27 => out.push_str(\"&lt;\"),", "\x27\\u{ff1c}\x27 | \x27\\u{fe64}\x27 => out.push_str(\"&lt;\"),")')" \
+	"hostile_text_never_closes_the_fence"
+
+run_case "invariant 38: an id that is a sentence stays plain" fail \
+	"$fenced_gate" \
+	"$(py 'edit("crates/copilot/src/untrusted.rs", "if STRUCTURED_KEYS.contains(&key) && token_shaped(s) => {", "if STRUCTURED_KEYS.contains(&key) => {")')" \
+	"a_run_id_that_is_a_sentence_is_fenced_and_grounds_nothing"
+
+run_case "invariant 38: an invented id passes" fail \
+	"$references_gate" \
+	"$(py 'edit("crates/copilot/src/references.rs", "let known = self.grounded(&reference.token)\n", "let known = true || self.grounded(&reference.token)\n")')" \
+	"an_invented_run_id_is_sent_back_once"
+
+run_case "invariant 38: an invented amount passes" fail \
+	"$references_gate" \
+	"$(py 'edit("crates/copilot/src/references.rs", "if self.supported(&amount) {", "if true || self.supported(&amount) {")')" \
+	"a_tool_amount_supports_itself_and_its_rounding_and_nothing_else"
+
+run_case "invariant 38: an explanation keeps its chain with an invented link" fail \
+	"$references_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "if self.no_incident.is_some() || (brief.incident.is_some() && !self.references.is_empty()) {", "if self.no_incident.is_some() {")')" \
+	"an_explanation_citing_an_invented_run_gives_no_chain_at_all"
+
+run_case "invariant 38: a card goes out whatever the text asked" fail \
+	"$references_gate" \
+	"$(py 'edit("crates/copilot/src/references.rs", "if let Some(span) = self.demanding_span(kind, &target) {\n                return Err", "if let Some(span) = self.demanding_span(kind, &target).filter(|_| false) {\n                return Err")')" \
+	"text_asking_for_the_action_refuses_it_even_on_a_real_target"
+
+run_case "invariant 38: a card on a run no tool returned goes out" fail \
+	"$references_gate" \
+	"$(py 'edit("crates/copilot/src/references.rs", "if !whole_fleet && !self.grounded_as(target_kind(kind), &target) {", "if false && !whole_fleet && !self.grounded_as(target_kind(kind), &target) {")')" \
+	"a_proposal_on_a_run_no_tool_returned_is_refused"
+
+run_case "invariant 38: the check's own comment reworded" pass \
+	"$references_gate" \
+	"$(py 'edit("crates/copilot/src/references.rs", "/// One statement the draft cannot support.", "/// A statement the draft cannot support.")')"
+
 # invariant 33: Stop agent bans the agent at vouchryx, kills its open runs and
 # takes the ceremony, and a step that fails is never a stop. Product mutants;
 # the gate is the tests that hold each, against the stub vouchryx and Cloud.

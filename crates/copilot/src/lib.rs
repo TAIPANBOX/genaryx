@@ -25,12 +25,14 @@ pub mod agent;
 pub mod config;
 mod grounding;
 pub mod provider;
+mod references;
 pub mod residency;
 pub mod resolver;
 pub mod service;
 pub mod tools;
+pub mod untrusted;
 
-pub use action::{ActionKind, CopilotAnnotation, ProposedAction};
+pub use action::{ActionKind, CopilotAnnotation, ProposedAction, WithheldProposal};
 pub use agent::{Answer, CopilotError, Felyx, ToolInvocation};
 pub use config::{ConfigError, CopilotConfig, ProviderKind, SecretRef};
 pub use provider::{
@@ -39,3 +41,4 @@ pub use provider::{
 };
 pub use service::CopilotService;
 pub use tools::{Clients, TokenfuseTraces, ToolError, ToolRegistry};
+pub use untrusted::{FencedResult, UntrustedText};

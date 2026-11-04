@@ -64,6 +64,16 @@ fn runs_body() -> String {
     .to_string()
 }
 
+/// The per-agent totals of that run, which the live answers quote.
+fn agents_body() -> String {
+    let r = "agent://taipanbox.dev/routers";
+    let row = |agent: &str, spent: i64| {
+        json!({"agent_id": format!("{r}/{agent}"), "spent_microusd": spent, "calls": 9,
+               "runs": 3, "last_seen_millis": 0})
+    };
+    json!([row("flint", 13250), row("beryl2", 6580), row("brume", 3290)]).to_string()
+}
+
 const ALERTS: &str = r#"[
   {"run_id":"p1-brume","spent_microusd":2008,"budget_micros":1000,"fraction":2.008,"killed":false},
   {"run_id":"mig-brume","spent_microusd":1278,"budget_micros":1278,"fraction":1.0,"killed":false}
@@ -71,12 +81,12 @@ const ALERTS: &str = r#"[
 
 /// One stub Cloud: path -> body, anything else 404. Records every
 /// `METHOD path` it was asked for.
-struct Stub {
-    base: String,
-    seen: Arc<Mutex<Vec<String>>>,
+pub(crate) struct Stub {
+    pub(crate) base: String,
+    pub(crate) seen: Arc<Mutex<Vec<String>>>,
 }
 
-fn spawn_cloud(routes: Vec<(&'static str, String)>) -> Stub {
+pub(crate) fn spawn_cloud(routes: Vec<(&'static str, String)>) -> Stub {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
     let base = format!("http://{}", listener.local_addr().unwrap());
     let routes: HashMap<&'static str, String> = routes.into_iter().collect();
@@ -139,6 +149,7 @@ fn forge_cloud() -> Stub {
     spawn_cloud(vec![
         ("/v1/budgets", BUDGETS.to_string()),
         ("/v1/runs", runs_body()),
+        ("/v1/agents", agents_body()),
         ("/v1/alerts", ALERTS.to_string()),
         ("/v1/unit-budgets", "{}".to_string()),
         ("/v1/units", "[]".to_string()),
@@ -317,9 +328,9 @@ async fn the_budgets_tool_only_reads() {
 // ---- the loop: no budget fact without a tool behind it ------------------
 
 /// A scripted provider, one turn per call, keeping every request it saw.
-struct Script {
-    turns: Mutex<Vec<ChatTurn>>,
-    seen: Arc<Mutex<Vec<ChatRequest>>>,
+pub(crate) struct Script {
+    pub(crate) turns: Mutex<Vec<ChatTurn>>,
+    pub(crate) seen: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
 #[async_trait]
@@ -342,7 +353,7 @@ impl LlmProvider for Script {
     }
 }
 
-fn calls(names: &[&str]) -> ChatTurn {
+pub(crate) fn calls(names: &[&str]) -> ChatTurn {
     ChatTurn {
         content: None,
         tool_calls: names
@@ -358,7 +369,7 @@ fn calls(names: &[&str]) -> ChatTurn {
     }
 }
 
-fn says(text: &str) -> ChatTurn {
+pub(crate) fn says(text: &str) -> ChatTurn {
     ChatTurn {
         content: Some(text.to_string()),
         tool_calls: vec![],
@@ -377,7 +388,7 @@ fn felyx(base: &str, turns: Vec<ChatTurn>) -> (Felyx, Arc<Mutex<Vec<ChatRequest>
 
 /// The last user message the loop sent, which is where a revision request
 /// lands.
-fn last_user_message(req: &ChatRequest) -> String {
+pub(crate) fn last_user_message(req: &ChatRequest) -> String {
     req.messages
         .iter()
         .rev()
@@ -467,7 +478,11 @@ async fn a_claim_that_survives_revision_reaches_the_operator_marked_unsupported(
     let cloud = forge_cloud();
     let (felyx, _) = felyx(
         &cloud.base,
-        vec![calls(&["budgets"]), says(Q1_WRONG), says(Q1_WRONG)],
+        vec![
+            calls(&["list_runs", "budgets"]),
+            says(Q1_WRONG),
+            says(Q1_WRONG),
+        ],
     );
     let answer = felyx.answer("router fleet").await.unwrap();
     assert!(answer.text.starts_with(Q1_WRONG));
@@ -542,7 +557,7 @@ async fn an_agent_said_to_be_over_budget_with_no_run_over_is_sent_back() {
     let (felyx, seen) = felyx(
         &cloud.base,
         vec![
-            calls(&["list_runs", "alerts", "budgets"]),
+            calls(&["list_agents", "list_runs", "alerts", "budgets"]),
             says(&wrong),
             says(&right),
         ],
@@ -565,7 +580,7 @@ async fn the_live_forge_rows_alone_raise_nothing() {
     let (felyx, seen) = felyx(
         &cloud.base,
         vec![
-            calls(&["list_runs", "alerts", "budgets"]),
+            calls(&["list_agents", "list_runs", "alerts", "budgets"]),
             says(LIVE_Q1_ROWS),
         ],
     );

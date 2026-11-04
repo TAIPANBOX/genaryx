@@ -337,8 +337,16 @@ mod tests {
                     },
                 ],
             ),
-            Message::tool_result("a", "alerts", &json!([1, 2])),
-            Message::tool_result("b", "incidents", &json!([])),
+            Message::tool_result(
+                "a",
+                "alerts",
+                &crate::untrusted::FencedResult::console(&json!([1, 2])),
+            ),
+            Message::tool_result(
+                "b",
+                "incidents",
+                &crate::untrusted::FencedResult::console(&json!([])),
+            ),
         ];
         let mapped = messages_to_anthropic(&messages);
         // user(q), assistant(tool_use x2), user(tool_result x2)

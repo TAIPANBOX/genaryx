@@ -25,6 +25,7 @@ use serde_json::Value;
 use crate::config::{ConfigError, CopilotConfig, ProviderKind};
 use crate::residency::{HostResidency, classify_host};
 use crate::resolver::{HostnameLookup, ResidencyDnsResolver, SystemLookup, resolve_all_local};
+use crate::untrusted::FencedResult;
 
 /// A provider-agnostic chat turn request. `tools` are advertised to the model;
 /// the loop, not the provider, decides what to do with any returned tool calls.
@@ -74,14 +75,16 @@ impl Message {
         }
     }
 
+    /// A tool's result, already fenced: nothing else may stand here, so a
+    /// path that hands a plane's text to the model unfenced does not compile.
     pub fn tool_result(
         call_id: impl Into<String>,
         name: impl Into<String>,
-        result: &Value,
+        result: &FencedResult,
     ) -> Self {
         Self {
             role: Role::Tool,
-            content: result.to_string(),
+            content: result.content().to_string(),
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id.into()),
             tool_name: Some(name.into()),

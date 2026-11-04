@@ -25,8 +25,10 @@
 //!
 //! What it deliberately does not check, to stay free of false alarms: a
 //! positive claim in a clause naming several runs (it cannot tell which run
-//! the budget word is about), a run id no tool returned, budget AMOUNTS, and
-//! unit budgets. Those are the model's and the prompt's.
+//! the budget word is about) and unit budgets. Those are the model's and the
+//! prompt's. An id no tool returned and an amount no tool returned are
+//! `crate::references`': this module reads what a clause says about a budget,
+//! that one what the draft points at.
 //!
 //! The same per-clause pass checks one claim about MODELS (2026-10-14): a
 //! clause that names exactly one run and exactly one model a tool returned,
@@ -392,7 +394,7 @@ fn is_budget_word(w: &str) -> bool {
     BUDGET_WORDS.contains(&w)
 }
 
-fn is_negator(w: &str) -> bool {
+pub(crate) fn is_negator(w: &str) -> bool {
     NEGATORS.contains(&w) || w.ends_with("n't")
 }
 
@@ -426,13 +428,14 @@ fn says_no_budget(words: &[String]) -> bool {
     })
 }
 
-/// Lowercased words: runs of letters, digits and apostrophes, so "over-budget"
-/// yields "budget" and "don't" stays one word.
-fn words(clause: &str) -> Vec<String> {
+/// Lowercased words: runs of letters, digits, apostrophes and underscores, so
+/// "over-budget" yields "budget", "don't" stays one word, and an incident kind
+/// or id written `budget_exhausted:p1` says nothing about a budget by itself.
+pub(crate) fn words(clause: &str) -> Vec<String> {
     clause
         .to_lowercase()
         .replace('\u{2019}', "'")
-        .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+        .split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '_'))
         .filter(|w| !w.is_empty())
         .map(str::to_string)
         .collect()
@@ -577,6 +580,14 @@ mod tests {
         let f = facts(&["p1-beryl2"], &[], true);
         let found = check("p1-beryl2 spent $0.004019 vs $0.001 cap.", &f, true);
         assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn an_incident_id_that_spells_budget_is_no_budget_statement() {
+        let f = facts(&["p1-brume"], &[], false);
+        let cited = "Run `p1-brume` opened incident `budget_exhausted:p1-brume`.";
+        assert!(check(cited, &f, true).is_empty());
+        assert_eq!(check("Run `p1-brume` hit its budget.", &f, true).len(), 2);
     }
 
     #[test]
