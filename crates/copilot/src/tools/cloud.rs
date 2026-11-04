@@ -161,9 +161,19 @@ impl Tool for Incidents {
     }
     fn description(&self) -> &'static str {
         "Open incidents for the org, newest first (id, kind, severity, run/agent, occurrences, \
-         acknowledged). Returns the most recent incidents plus the true total."
+         acknowledged). Returns the most recent incidents plus the true total. Give `id` to read \
+         one incident, however old."
     }
-    async fn run(&self, clients: &Clients, _args: &Value) -> Result<Value, ToolError> {
+    fn params_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "one incident's id, to read only that row"}
+            },
+            "additionalProperties": false
+        })
+    }
+    async fn run(&self, clients: &Clients, args: &Value) -> Result<Value, ToolError> {
         let incidents = cloud!(clients, "incidents")
             .incidents()
             .await
@@ -171,7 +181,24 @@ impl Tool for Incidents {
                 tool: "incidents",
                 detail: e.to_string(),
             })?;
-        Ok(cap_rows("incidents", to_result("incidents", incidents)?))
+        let rows = to_result("incidents", incidents)?;
+        Ok(match args.get("id").and_then(Value::as_str) {
+            Some(id) => only_incident(rows, id),
+            None => cap_rows("incidents", rows),
+        })
+    }
+}
+
+/// The one row with this id, or none. An explanation starts from one incident,
+/// and [`cap_rows`] keeps the newest: an older incident would read as absent.
+fn only_incident(data: Value, id: &str) -> Value {
+    match data {
+        Value::Array(rows) => Value::Array(
+            rows.into_iter()
+                .filter(|row| row.get("id").and_then(Value::as_str) == Some(id))
+                .collect(),
+        ),
+        other => other,
     }
 }
 
@@ -235,6 +262,17 @@ mod tests {
     // composition their `run` methods use - no live Cloud needed to prove
     // the shape. Each failed to compile against the unfixed tree
     // (`dollarize` did not exist yet).
+
+    #[test]
+    fn one_incident_is_read_by_id_past_the_page_and_an_unknown_id_finds_nothing() {
+        let rows: Vec<Value> = (0..MAX_ROWS + 5)
+            .map(|i| json!({"id": format!("budget_exhausted:r{i}")}))
+            .collect();
+        let found = only_incident(Value::Array(rows.clone()), "budget_exhausted:r33");
+        assert_eq!(found, json!([{"id": "budget_exhausted:r33"}]));
+        assert_eq!(only_incident(Value::Array(rows), "nope"), json!([]));
+        assert_eq!(only_incident(json!({"x": 1}), "nope"), json!({"x": 1}));
+    }
 
     #[test]
     fn money_summary_dollarizes_its_spend_field() {

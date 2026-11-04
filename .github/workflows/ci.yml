@@ -125,6 +125,10 @@ jobs:
       # whole dependency tree again, on every test run, on every machine.
       - name: one integration-test binary per crate
         run: ./scripts/one-test-binary-per-crate.sh
+      # Every path by which a plane's text can reach Felyx's model is fenced
+      # (invariant 38): the type holds tool results, this holds the rest.
+      - name: a plane's text reaches Felyx fenced
+        run: ./scripts/felyx-fences-plane-text.sh
       # This repository is public: a decision is recorded as @decided and a
       # paraphrase, never as the owner's own words or his name (invariant 21).
       - name: no tracked file quotes or names the owner

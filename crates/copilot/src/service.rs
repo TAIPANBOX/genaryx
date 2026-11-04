@@ -73,22 +73,17 @@ impl CopilotService {
     /// The C1 cross-plane "explain" flow (docs/PHASE6-C1.md, itrat-console/13
     /// D13.7 C1 / D13.4's example chain): seed the loop with an incident-focused
     /// instruction so it gathers the money, policy, and identity evidence plus
-    /// any prior ruling, then gives a root-cause chain with cited row ids. It is
-    /// just a focused [`Self::ask`]: the whole capability is the tools plus this
-    /// prompt, not new machinery. The tools it names are only run if their plane
-    /// is configured; whatever is missing, the model works with what it has.
+    /// any prior ruling, then gives a root-cause chain with cited row ids. The
+    /// whole capability is the tools plus that prompt
+    /// ([`Felyx::explain_incident`]), and a chain that rests on an incident or
+    /// an id no tool returned is withheld there. The tools it names are only
+    /// run if their plane is configured; whatever is missing, the model works
+    /// with what it has.
     pub async fn explain_incident(&self, incident_id: &str) -> Result<Answer, CopilotError> {
-        let prompt = format!(
-            "Explain incident `{incident_id}` as a cross-plane root-cause chain. Work through \
-             the tools you have: use `incidents` to find it; `alerts` and `list_runs` for the \
-             affected run's spend trajectory; `identity_alerts` for the agent's identity posture; \
-             `policies` for any governing policy; and `memory_recall` to check whether this \
-             pattern was ruled on before (e.g. a past false alarm). Then give a SHORT root-cause \
-             chain (cause -> effect -> effect) and one recommended action, citing the specific \
-             run / incident / policy ids you relied on. You can recommend but not act; a human \
-             must approve and sign any change."
-        );
-        self.ask(&prompt).await
+        match &self.felyx {
+            Some(felyx) => felyx.explain_incident(incident_id).await,
+            None => Err(CopilotError::NoProvider),
+        }
     }
 
     /// A fast, tool-free one-line summary of one event, or `None` when the

@@ -50,6 +50,7 @@ the names change per build and stale ones are served forever otherwise.
 ./scripts/features-are-bound.sh      # invariant 10
 ./scripts/one-test-binary-per-crate.sh  # invariant 18
 ./scripts/no-owner-quotes.sh         # invariant 21
+./scripts/felyx-fences-plane-text.sh # invariant 38
 ./scripts/readme-numbers.sh          # runs the whole suite; slow
 ./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
 ```
@@ -1861,6 +1862,81 @@ an absent invariant.
     launcher's. No running
     console has read a live witness's findings, and no launcher pins a console
     image that reads the setting yet.)*
+
+38. **Felyx points only at what a tool returned in the same answer, and a
+    plane's text reaches the model as data and changes nothing it does.**
+    `@decided 2026-11-04`: every run, incident, policy, agent and approval id
+    and every dollar amount in an answer must be in that answer's own tool
+    results; a claim with nothing behind it is taken out or plainly marked; an
+    explanation never gives a chain through an invented id; text from events,
+    logs, incident messages and memory reaches the model wrapped, marked as
+    data and escaped so it cannot close the wrapper; an instruction inside it
+    never yields the card it asks for; and an answer that rests on such text
+    says so in its metadata.
+
+    `crates/copilot/src/untrusted.rs` walks every read tool's result: a string
+    stays plain only under a key in `STRUCTURED_KEYS` while it is one token
+    (`token_shaped`), or in a sentence this crate wrote itself (`OWN_PROSE`,
+    named per tool); anything else, a field nobody has listed included, goes
+    inside `<untrusted-data field=...>` with `<`, `>` and `&` escaped, their
+    look-alikes too, and characters nobody can see written out by code point.
+    `Message::tool_result` takes a `FencedResult`, so a tool result that skips
+    the walk does not compile. The event of a one-line summary and the incident
+    id of an explanation go through `fence_text`. `FencedResult::console` is
+    the console speaking for itself, used only on the propose path.
+
+    `crates/copilot/src/references.rs` keeps the `Evidence`, fed from that same
+    walk: only a structured field grounds an id, because an id planted in an
+    event's text is in the tool result too. An amount is grounded by a number
+    under a `_usd` key, rounded to the places the draft wrote; `$0` is not a
+    rounding of `$0.002`. What the operator wrote in the question may be
+    repeated. A draft with findings goes back once; what stays is taken out
+    statement by statement and named in a note and in
+    `Answer::unsupported_claims`. An explanation (`Felyx::explain_incident`) is
+    withheld whole, since a chain with a link taken out reads as a shorter
+    chain, and so is one whose incident no tool returned, with any card raised
+    on the way. A statement that says the thing was not found is left alone,
+    and one that attributes an id to a text may name it, if the text does.
+
+    A proposal goes through `Evidence::screen` before it can be a card: its
+    target must be one a tool returned as that kind of thing, no plane text may
+    be asking for that action (`untrusted::demands`: by naming the target, by
+    sitting on the target's own row, or by reading like an instruction, which
+    then counts for any target), its rationale must pass the same check, and
+    evidence no tool returned is dropped from it. The operator's own request,
+    naming the action and the target, settles all of that; an explanation's
+    prompt is not the operator asking. A proposal that does not pass is in
+    `Answer::withheld_proposals` with its reason, and the model is told. A
+    recommendation in prose that repeats what a text asks for is a finding too.
+    `Answer::untrusted_text` lists the text the answer leans on (an id or amount
+    found only there, or five words in a row from it), and any that reads like
+    an instruction, whether the answer used it or not. Nothing here touches the
+    no-signer shape: Felyx still reads and proposes, and a person signs. The
+    shapes, the word and phrase lists and the five-word overlap are `@claude`
+    design choices, open to reversal; the requirement above is the decision.
+    *(test: `crates/copilot/src/untrusted.rs`'s and
+    `crates/copilot/src/references.rs`'s own, two of them 200-seed hostile
+    sweeps; `crates/copilot/tests/it/felyx_checks_references_test.rs` and
+    `crates/copilot/tests/it/felyx_reads_untrusted_text_test.rs` drive the whole
+    loop against a stub Cloud, Wardryx and Idryx, with a scripted model that
+    obeys what the text asks. Red first: every new test ran against the same
+    code with the checks stubbed out, in a throwaway CI run. Scenarios:
+    `features/felyx-states-only-what-its-tools-returned.feature` and
+    `features/felyx-reads-plane-text-as-data.feature`, bound; gate:
+    `scripts/felyx-fences-plane-text.sh` holds every path into the model by
+    name, and `scripts/gates-have-teeth.sh` has its cases plus product mutants
+    for the fence, the check and the screen.
+
+    Where it says nothing: an id written with no digit, no backticks and no kind
+    word is not seen as one; counts and percentages are not checked; an amount
+    is checked against every amount this answer's tools returned, not against
+    the run it is said of; a recommendation in prose that names no id is not
+    matched to a text; the screen reads words, so a text asking for an action in
+    other words, or in another language, is not seen as asking, and the fence is
+    what stands then; a run id an agent chose stays plain while it is one token,
+    whatever it spells; the web console does not render
+    `withheld_proposals` or `untrusted_text` yet, so only the note in `text`
+    reaches an operator there.)*
 
 ## Decisions that have no gate yet
 
