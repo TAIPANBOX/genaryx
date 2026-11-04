@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1380-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1394-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -471,6 +471,15 @@ box; these frames are not it, and say so here rather than in a footnote.
   stores nothing; a proof that could not be made is sealed as that; a stored pack
   is handed back by `case_pack` only if it still hashes to its name. Sealing
   changes nothing in any plane.
+- **A bench for the loop (2026-11-04, invariant 43).** Incidents whose cause is
+  known, with the cause hidden from the packet, are put to the real Felyx loop and
+  scored on three questions modelled on the costcrew bench: did the answer NAME the
+  true cause (two causes named is none), does every id it cites exist, and does the
+  remedy that follows from the named cause stop the replay of the incident's
+  recorded history. CI runs scripted models (one that reads the case, one that
+  names another cause, one that cites a run nobody holds, one that names nothing);
+  the same incidents can be put to a real model through an endpoint named by the
+  environment.
 - **Felyx reads the case (2026-11-04, invariant 39).** On an incident with an
   event row, Incident 360 has an "Ask Felyx to read this case" button. Felyx is
   handed the case file (invariant 37) and no tool: it cannot look anything else

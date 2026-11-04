@@ -20,6 +20,7 @@ mod case_file_test;
 mod case_seal_test;
 mod cloud_stub;
 mod delegation_revoke_test;
+mod felyx_bench_test;
 mod gateway_posture_test;
 mod money_gateways_test;
 mod money_runs_budgets_test;
