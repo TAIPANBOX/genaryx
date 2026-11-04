@@ -728,6 +728,62 @@ run_case "invariant 39: the case prompt's own doc comment reworded" pass \
 	"$case_read_gate" \
 	"$(py 'edit("crates/copilot/src/agent.rs", "/// The system prompt for reading one case file.", "/// The system prompt used for reading one case file.")')"
 
+# invariant 40: a candidate policy is proved by `wardryx replay`, in both halves,
+# and a proof that could not be made is never a proof of nothing. Product
+# mutants; the gates are the proof module's own tests and the integration test
+# with a stand-in wardryx.
+proof_gate='cargo test -q --no-fail-fast -p genaryx-api --lib proof::'
+proof_it_gate='cargo test -q --no-fail-fast -p genaryx-api --test it policy_proof_test'
+
+run_case "invariant 40: a change on another run is counted as the incident's" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", ".partition(|row| row.run.text == incident_run);", ".partition(|_| true);")')" \
+	"the_incident_is_stopped_only_by_turning_its_own_allow_into_a_deny_or_a_hold"
+
+run_case "invariant 40: a loosening of the incident's own decision counts as stopping it" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", ".any(|r| r.from == \"allow\" && (r.to == \"deny\" || r.to == \"hold\"));", ".any(|r| r.from != r.to);")')" \
+	"the_incident_is_stopped_only_by_turning_its_own_allow_into_a_deny_or_a_hold"
+
+run_case "invariant 40: a diverged replay is trusted" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", "let trustworthy = report.outcomes.diverged == 0;", "let trustworthy = true;")')" \
+	"a_diverged_replay_proves_nothing"
+
+run_case "invariant 40: a report with a forged row is believed" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", "if rows.len() as u64 != changed {", "if false {")')" \
+	"a_report_that_contradicts_itself_is_refused"
+
+run_case "invariant 40: outcomes that do not sum to the decisions replayed are believed" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", "if outcomes.total() != replayed {", "if false {")')" \
+	"a_report_that_contradicts_itself_is_refused"
+
+run_case "invariant 40: the child inherits the console's environment" fail \
+	"$proof_it_gate" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "        .env_clear()\n", "")')" \
+	"the_child_gets_no_environment_but_a_path"
+
+run_case "invariant 40: the candidate is left behind when the run ends" fail \
+	"$proof_it_gate" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "let _ = std::fs::remove_dir_all(&self.0);", "let _ = &self.0;")')" \
+	"the_proof_runs_wardryx_replay_with_exactly_its_arguments_and_removes_the_candidate"
+
+run_case "invariant 40: the replay's deadline is not enforced" fail \
+	"$proof_it_gate" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "Ok(None) if Instant::now() >= deadline => {", "Ok(None) if false => {")')" \
+	"a_replay_that_hangs_is_killed_at_its_deadline"
+
+run_case "invariant 40: an empty candidate is run" fail \
+	"$proof_it_gate" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "if candidate.trim().is_empty() {", "if false {")')" \
+	"a_candidate_that_cannot_be_given_is_refused_before_anything_runs"
+
+run_case "invariant 40: the outcomes' own doc comment reworded" pass \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", "/// The seven rows `wardryx replay` counts.", "/// The seven rows that `wardryx replay` counts.")')"
+
 echo
 echo "=== and the one this estate learned the hard way ==="
 echo "    a gate whose subject is gone must SAY so, not report OK on nothing"
