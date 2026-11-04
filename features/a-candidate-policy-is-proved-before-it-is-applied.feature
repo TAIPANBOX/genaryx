@@ -96,3 +96,12 @@ Feature: A candidate policy is run against the decisions already taken, and the 
     Then the answer is a busy error naming the limit, at once, and no child process is started
     And when a slot is given back the next ask is served
     And many threads taking and giving slots never hold more than the limit and leak none
+
+  # @test:a_replay_in_which_nothing_could_be_replayed_says_nothing_about_the_incident
+  # @test:a_replay_in_which_something_could_be_replayed_still_answers
+  # @test:an_archive_the_console_cannot_read_gives_a_proof_that_says_nothing
+  Scenario: A replay that could examine nothing does not answer for the incident
+    Given an archive the console cannot read, so wardryx reports every decision as not archived
+    When the proof is made
+    Then the seven outcomes are shown and the first half is answered neither yes nor no
+    And a replay that examined even one decision still answers

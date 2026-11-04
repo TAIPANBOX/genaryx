@@ -317,7 +317,10 @@ pub struct PolicyProof {
     /// Whether a candidate was given. Without one only replayability is known.
     pub candidate_given: bool,
     /// First half: would the candidate have stopped this incident. `None`
-    /// without a candidate and when the replay diverged.
+    /// without a candidate, when the replay diverged, and when no decision could
+    /// be replayed at all (an archive the console cannot read is reported by
+    /// wardryx as every decision "not archived"): a change that was not found
+    /// among decisions that were not examined is not a "no".
     pub stops_this_incident: Option<bool>,
     /// The incident's own decisions the candidate changes.
     pub incident_changes: Vec<ChangedRow>,
@@ -331,7 +334,9 @@ pub struct PolicyProof {
 ///
 /// A change counts as the incident's only when its run is the incident's run;
 /// everything else is elsewhere. The incident is stopped when the candidate
-/// turns one of its decisions from `allow` into `deny` or `hold`.
+/// turns one of its decisions from `allow` into `deny` or `hold`. When no
+/// decision was replayable the incident is neither stopped nor not stopped: the
+/// answer is `None`, and the outcomes beside it say why.
 pub fn judge(report: &ReplayReport, incident_run: &str) -> PolicyProof {
     let trustworthy = report.outcomes.diverged == 0;
     let Some(candidate) = &report.candidate else {
@@ -367,7 +372,7 @@ pub fn judge(report: &ReplayReport, incident_run: &str) -> PolicyProof {
         outcomes: report.outcomes,
         trustworthy,
         candidate_given: true,
-        stops_this_incident: trustworthy.then_some(stops),
+        stops_this_incident: (trustworthy && candidate.replayable > 0).then_some(stops),
         incident_changes,
         elsewhere,
         elsewhere_changes,

@@ -2056,7 +2056,10 @@ an absent invariant.
     listed. Wardryx's seven named outcomes (`reproduced`, the three approval rows,
     `not archived`, `unreadable`, `diverged`) are carried as seven numbers and never
     folded; a diverged replay is marked untrustworthy and says nothing about the
-    incident. The report is text with ids a producer chose, and a run id with a
+    incident, and neither does a replay in which no decision at all could be put
+    back to the engine (`replayable` is 0): the first half is then not answered,
+    neither yes nor no, since "no change to a decision" is a finding only about
+    decisions that were examined. The report is text with ids a producer chose, and a run id with a
     newline in it can print a row nobody replayed, so the parser takes the counts
     from the lines wardryx writes about itself and refuses a report whose rows are
     not as many as it says changed, whose outcomes do not sum to the decisions
@@ -2070,18 +2073,27 @@ an absent invariant.
     is `busy`, naming the limit, at once; the slot is a guard that is given back on
     every path out. Nothing is applied. A viewer read.
     `WARDRYX_POLICY_ARCHIVE` is wardryx's own name for the archive, declared in
-    `components.json`; the console image carries the `wardryx` binary and mounts
-    the archive read only, which `stack-k8s` and `stack-single` do (their own
-    repositories, their own invariants).
-    *(test: `crates/api/src/proof/tests.rs` (nine, one a 200-seed hostile sweep),
+    `components.json`. The console image has to carry the `wardryx` binary and the
+    console's uid has to be able to read the archive, and neither is arranged yet
+    in `stack-k8s` or `stack-single` (their own repositories, their own
+    invariants). @measured 2026-11-04 on the forge lab, wardryx v2.4.1, read only:
+    wardryx writes the archive with directory mode 0700 and file mode 0600
+    (`internal/archive`), so the files are `-rw------- 20001:10001`; the console
+    runs as uid 10001 and `cat` of one answers `Permission denied`; `wardryx replay`
+    over the same 490 recorded decisions answers `not archived 490` as uid 10001
+    and `reproduced 490` as uid 20001. An archive the console cannot read is thus
+    reported by wardryx as "never kept", which is why a replay that could examine
+    nothing is not answered for the incident.
+    *(test: `crates/api/src/proof/tests.rs` (eleven, one a 200-seed hostile sweep),
     `crates/api/src/proof/slots.rs` (four, one a 200-thread bound),
-    `crates/api/tests/it/policy_proof_test.rs` (eleven, a stand-in `wardryx` that
+    `crates/api/tests/it/policy_proof_test.rs` (thirteen, a stand-in `wardryx` that
     records its arguments, its environment and its candidate),
     `crates/web/src/roles.rs`'s `proving_a_policy_is_a_viewer_read`. Red first: the
     test commit of the pull request that added this failed against stubs.
     Scenarios: `features/a-candidate-policy-is-proved-before-it-is-applied.feature`,
-    ten, each bound. Gate: eleven product mutants and one non-fault in
-    `scripts/gates-have-teeth.sh` (a slot limit ignored, a slot never given back,
+    eleven, each bound. Gate: twelve product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (a replay that examined nothing answered no,
+    a slot limit ignored, a slot never given back,
     a busy slot run anyway, another run's change counted as the incident's,
     a loosening counted as stopping it, a diverged replay trusted, a forged row
     believed, outcomes not summed, the child's environment inherited, the candidate
