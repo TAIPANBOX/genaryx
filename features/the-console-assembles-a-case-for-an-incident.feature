@@ -144,3 +144,12 @@ Feature: The console assembles one case for an incident, with no model, and says
     Then the case is filed under the demo key and not under the claimed agent
     And one plane in it did not answer
     And every row in it comes from the demo transport's own rows
+
+  # @test:the_demo_finds_an_incident_it_served_from_the_synthetic_feed
+  # @test:the_demo_finds_an_incident_from_deep_in_a_long_read
+  # @test:the_demo_still_says_not_found_for_an_id_it_never_served
+  Scenario: The demo finds the incident it showed, wherever it sat in the feed
+    Given the demo's synthetic feed makes new events, with new ids, on every read
+    When a visitor opens the case of an incident that read showed them
+    Then the case is built from that very row, from a short read or a long one
+    And an id the demo never served is still reported as not found
