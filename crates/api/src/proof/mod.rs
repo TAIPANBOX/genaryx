@@ -157,7 +157,10 @@ pub fn parse_report(text: &str) -> Result<ReplayReport, ParseError> {
         .ok_or(ParseError::Unrecognised)?;
 
     if replayed == 0 {
-        return if lines.iter().any(|l| l.contains("no decisions in this file")) {
+        return if lines
+            .iter()
+            .any(|l| l.contains("no decisions in this file"))
+        {
             Ok(ReplayReport {
                 replayed: 0,
                 outcomes: Outcomes::default(),
