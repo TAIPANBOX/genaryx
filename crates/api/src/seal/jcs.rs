@@ -28,7 +28,9 @@ pub enum JcsError {
 
 /// The canonical text of `value`.
 pub fn canonical(value: &Value) -> Result<String, JcsError> {
-    Ok(serde_json::to_string(value).unwrap_or_default())
+    let mut out = String::new();
+    write_value(value, &mut out)?;
+    Ok(out)
 }
 
 fn write_value(value: &Value, out: &mut String) -> Result<(), JcsError> {
@@ -112,7 +114,34 @@ fn number(n: &Number) -> Result<String, JcsError> {
 /// back to an exponent. `n` below is the exponent of the first digit plus one,
 /// `k` how many digits there are.
 pub fn es6_number(x: f64) -> String {
-    x.to_string()
+    if x == 0.0 {
+        return "0".to_string();
+    }
+    let sign = if x < 0.0 { "-" } else { "" };
+    let scientific = format!("{:e}", x.abs());
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .unwrap_or((scientific.as_str(), "0"));
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let n: i32 = exponent.parse::<i32>().unwrap_or(0) + 1;
+    let k = digits.len() as i32;
+
+    let body = if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let e = n - 1;
+        let sign_e = if e < 0 { "-" } else { "+" };
+        if k == 1 {
+            format!("{digits}e{sign_e}{}", e.abs())
+        } else {
+            format!("{}.{}e{sign_e}{}", &digits[..1], &digits[1..], e.abs())
+        }
+    };
+    format!("{sign}{body}")
 }
 
 #[cfg(test)]

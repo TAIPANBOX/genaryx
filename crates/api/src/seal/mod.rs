@@ -90,8 +90,18 @@ impl Decision {
     /// The decision as it is sealed: the note trimmed, bounded, and free of
     /// control characters other than a line break.
     pub fn checked(&self) -> Result<Decision, &'static str> {
-    Ok(self.clone())
-}
+        let note = self.note.trim().to_string();
+        if note.chars().count() > NOTE_MAX_CHARS {
+            return Err("the note is longer than 2000 characters");
+        }
+        if note.chars().any(|c| c.is_control() && c != '\n') {
+            return Err("the note holds a control character");
+        }
+        Ok(Decision {
+            outcome: self.outcome,
+            note,
+        })
+    }
 }
 
 /// A proof the operator asks to have sealed with the case.
@@ -165,7 +175,12 @@ pub fn digest_of_text(text: &str) -> String {
 
 /// Canonicalise the pack and take its digest.
 pub fn seal_value(pack: &Value) -> Result<Sealed, SealError> {
-    let canonical = serde_json::to_string(pack).unwrap_or_default();
+    let canonical = canonical(pack).map_err(SealError::NotCanonical)?;
+    if canonical.len() > PACK_MAX_BYTES {
+        return Err(SealError::TooLarge {
+            bytes: canonical.len(),
+        });
+    }
     let digest = digest_of_text(&canonical);
     Ok(Sealed { canonical, digest })
 }
@@ -187,14 +202,26 @@ pub enum VerifyError {
 /// Whether `text` is the pack `digest` names: JSON, in canonical form, of this
 /// format, and hashing to `digest`.
 pub fn verify(text: &str, digest: &str) -> Result<(), VerifyError> {
-    let _ = (text, digest);
+    let value: Value = serde_json::from_str(text).map_err(|_| VerifyError::NotJson)?;
+    if canonical(&value).as_deref() != Ok(text) {
+        return Err(VerifyError::NotCanonical);
+    }
+    if value.get("format").and_then(Value::as_str) != Some(PACK_FORMAT) {
+        return Err(VerifyError::WrongFormat);
+    }
+    let found = digest_of_text(text);
+    if found != digest {
+        return Err(VerifyError::DigestDiffers { found });
+    }
     Ok(())
 }
 
 /// Whether `digest` is `sha256:` and 64 lowercase hex digits, the only shape that
 /// is ever turned into a file name.
 pub fn is_digest(digest: &str) -> bool {
-    digest.starts_with("sha256:")
+    digest.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
 }
 
 #[cfg(test)]

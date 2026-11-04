@@ -156,9 +156,60 @@ pub async fn case_seal_at(
     journal: Option<&BusHandle>,
     sealed_at: &str,
 ) -> Result<SealedCase, SealFailure> {
-    let _ = (request, planes, journal, sealed_at);
-    Err(SealFailure::Refused {
-        reason: "sealing is not wired yet",
+    let decision = request
+        .decision
+        .checked()
+        .map_err(|reason| SealFailure::Refused { reason })?;
+    if request.proofs.len() > PROOFS_MAX {
+        return Err(SealFailure::Refused {
+            reason: "a pack holds at most four proofs",
+        });
+    }
+    let bus = planes.bus;
+    let store_dir = bus.events_dir.clone();
+    let case = case_file(request.incident_id.clone(), planes)
+        .await
+        .map_err(|error| SealFailure::Case { error })?;
+    let records = run_proofs(&request.proofs, &request.incident_id, bus).await;
+    let by = sealed_by();
+    let pack = build_pack(&case, &records, &decision, &by, sealed_at);
+    let sealed = seal_value(&pack).map_err(|e| match e {
+        SealError::NotCanonical(_) => SealFailure::NotCanonical,
+        SealError::TooLarge { bytes } => SealFailure::TooLarge { bytes },
+    })?;
+
+    let (journaled, why) = record_console_action(
+        journal,
+        CASE_CLOSE_ACTION,
+        &sealed.digest,
+        json!({
+            "incident_id": request.incident_id,
+            "case_digest": case.digest,
+            "pack_bytes": sealed.canonical.len(),
+            "proofs": records.len(),
+            "outcome": decision.outcome.as_str(),
+        }),
+        format!("sealed:{}", decision.outcome.as_str()),
+    );
+    if !journaled {
+        return Err(SealFailure::NotJournaled {
+            reason: why.unwrap_or_default(),
+        });
+    }
+
+    let (stored, store_error) = match store_dir {
+        Some(dir) => match store_pack(&dir, &sealed) {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        },
+        None => (false, Some("the console has no store directory".to_string())),
+    };
+    Ok(SealedCase {
+        digest: sealed.digest,
+        bytes: sealed.canonical.len(),
+        stored,
+        store_error,
+        pack: sealed.canonical,
     })
 }
 
@@ -222,6 +273,28 @@ pub enum PackError {
 /// The command: read a sealed pack back, only if it is still the pack its digest
 /// names.
 pub fn case_pack(digest: &str, store_dir: Option<&Path>) -> Result<String, PackError> {
-    let _ = (digest, store_dir);
-    Err(PackError::NoStore)
+    if !is_digest(digest) {
+        return Err(PackError::BadDigest);
+    }
+    let dir = store_dir.ok_or(PackError::NoStore)?;
+    let hex = digest.strip_prefix("sha256:").unwrap_or_default();
+    let file = dir.join(PACKS_DIR).join(format!("{hex}.json"));
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(PackError::NotFound),
+        Err(e) => {
+            return Err(PackError::Unreadable {
+                reason: e.to_string(),
+            });
+        }
+    };
+    verify(&text, digest).map_err(|e| PackError::NotThePack {
+        why: match e {
+            VerifyError::NotJson => "the file is not JSON",
+            VerifyError::NotCanonical => "the file is not in canonical form",
+            VerifyError::WrongFormat => "the file is not a case pack",
+            VerifyError::DigestDiffers { .. } => "the file hashes to another digest",
+        },
+    })?;
+    Ok(text)
 }
