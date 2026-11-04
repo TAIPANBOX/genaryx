@@ -1913,7 +1913,7 @@ an absent invariant.
     `CaseView.test.ts`, `caseFile.test.ts`, `sha256.test.ts`,
     `mockPreview.case.test.ts`. Red first: the test commit of genaryx#137 failed
     against stubs. Scenarios:
-    `features/the-console-assembles-a-case-for-an-incident.feature`, twelve, each
+    `features/the-console-assembles-a-case-for-an-incident.feature`, thirteen, each
     bound; gate: seven product mutants and one non-fault in
     `scripts/gates-have-teeth.sh` (a plane that did not answer left out of the
     case, a refusal filed under the agent it claimed, a digest of something other
