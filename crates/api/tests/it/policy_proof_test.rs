@@ -443,6 +443,45 @@ fn a_replay_that_fails_without_a_report_says_so() {
     }
 }
 
+const NOTHING_REPLAYABLE_REPORT: &str = "Replayed 490 decision(s) from /e/wardryx.ndjson
+
+  reproduced             0
+  approval-decided       0
+  approval-spent         0
+  approval-refused       0
+  not archived         490   the version they name was never kept
+  unreadable             0
+  diverged               0
+
+Against /tmp/candidate.yaml, 0 of 0 replayable decision(s) change:
+  none.
+";
+
+/// Measured on the forge lab: the console's uid cannot read the policy archive
+/// (files 0600 owned by wardryx's uid), and wardryx then reports every decision
+/// as not archived. The proof must show that and must not answer for the incident.
+#[test]
+fn an_archive_the_console_cannot_read_gives_a_proof_that_says_nothing() {
+    let dir = temp_dir("unreadable-archive");
+    let bin = fake_wardryx(&dir, NOTHING_REPLAYABLE_REPORT, "", 0, 0);
+    let (bus, ids) = bus(&dir);
+    let proof = prove_again(
+        &config(&dir, bin),
+        &bus,
+        &request(ids[0], CANDIDATE),
+        Duration::from_secs(10),
+    )
+    .expect("a proof");
+    assert_eq!(proof.replayed, 490);
+    assert_eq!(proof.outcomes.not_archived, 490);
+    assert!(proof.trustworthy);
+    assert!(proof.candidate_given);
+    assert_eq!(
+        proof.stops_this_incident, None,
+        "a proof of nothing was given as a no"
+    );
+}
+
 #[test]
 fn a_missing_binary_is_a_spawn_error() {
     let dir = temp_dir("missing");

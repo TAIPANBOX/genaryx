@@ -795,6 +795,10 @@ run_case "invariant 40: a busy slot runs its proof anyway" fail \
 	"$(py 'edit("crates/api/src/proof/commands.rs", "let _slot = slots\n        .try_acquire()\n        .map_err(|busy| ProofError::Busy { limit: busy.limit })?;", "let _slot = slots.try_acquire().ok();")')" \
 	"a_busy_slot_is_an_answer_not_a_queue"
 
+run_case "invariant 40: a replay that examined nothing answers no for the incident" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/mod.rs", "stops_this_incident: (trustworthy && candidate.replayable > 0).then_some(stops),", "stops_this_incident: trustworthy.then_some(stops),")')" \
+	"a_replay_in_which_nothing_could_be_replayed_says_nothing_about_the_incident"
 # invariant 41: a candidate budget is proved by `tokenfuse backtest`, in both
 # halves, and a proof that could not be made is never a proof of nothing. Product
 # mutants; the gates are the budget module's own tests and the integration test

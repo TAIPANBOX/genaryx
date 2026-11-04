@@ -164,6 +164,54 @@ fn a_diverged_replay_proves_nothing() {
     );
 }
 
+/// What `wardryx replay` printed for 490 recorded decisions when it could not
+/// read the archive (every file mode 0600, owned by another uid), given a
+/// candidate: every decision "not archived", and nothing replayable.
+const NOTHING_REPLAYABLE: &str = "Replayed 490 decision(s) from /ev/wardryx.ndjson
+
+  reproduced             0
+  approval-decided       0
+  approval-spent         0
+  approval-refused       0
+  not archived         490   the version they name was never kept
+  unreadable             0
+  diverged               0
+
+Against /tmp/candidate.yaml, 0 of 0 replayable decision(s) change:
+  none.
+";
+
+#[test]
+fn a_replay_in_which_nothing_could_be_replayed_says_nothing_about_the_incident() {
+    let report = parse_report(NOTHING_REPLAYABLE).expect("parses");
+    assert_eq!(report.outcomes.not_archived, 490);
+    assert_eq!(report.outcomes.replayable(), 0);
+    let proof = judge(&report, "r-incident");
+    assert_eq!(proof.outcomes.not_archived, 490);
+    assert!(proof.candidate_given);
+    assert_eq!(
+        proof.stops_this_incident, None,
+        "no decision could be put back to the engine, so nothing is known about the incident"
+    );
+    assert!(proof.incident_changes.is_empty());
+}
+
+#[test]
+fn a_replay_in_which_something_could_be_replayed_still_answers() {
+    // The other side of the line: one decision replayed and the candidate does
+    // not change it. That is a measured "no", not a missing answer.
+    let text = NOTHING_REPLAYABLE
+        .replace("reproduced             0", "reproduced             1")
+        .replace("not archived         490", "not archived         489")
+        .replace("0 of 0 replayable", "0 of 1 replayable");
+    let report = parse_report(&text).expect("parses");
+    assert_eq!(report.outcomes.replayable(), 1);
+    assert_eq!(
+        judge(&report, "r-incident").stops_this_incident,
+        Some(false)
+    );
+}
+
 #[test]
 fn without_a_candidate_only_replayability_is_known() {
     let text = "Replayed 3 decision(s) from ./e.ndjson
