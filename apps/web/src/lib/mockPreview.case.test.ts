@@ -126,3 +126,39 @@ describe("the demo case", () => {
     );
   });
 });
+
+/**
+ * The demo's synthetic feed makes a fresh event, with a fresh id, every time
+ * `recent_events` is read. An incident the visitor was shown has an id from the
+ * read that showed it, so a case for it has to be found where it was served,
+ * and not in a second read that holds other events. Found on the live demo:
+ * "No case: the console's store holds no event row 101998".
+ */
+describe("the demo case finds what the demo showed", () => {
+  it("the_demo_finds_an_incident_it_served_from_the_synthetic_feed", async () => {
+    const served = await mockInvoke<UiEvent[]>("recent_events", { limit: 40 });
+    // The oldest row of a short read is from the synthetic seed, not a fixed demo row.
+    const shown = served[served.length - 1]!;
+    const c = await mockInvoke<CaseFile>("case_file", { incident_id: `bus:${shown.id}` });
+    const eventFact = c.facts.find((f) => f.section === "event")!;
+    expect(eventFact.row_id).toBe(String(shown.id));
+    expect(eventFact.row).toEqual(shown);
+    expect(c.lines.find((l) => l.section === "event")!.state).toBe("answered");
+  });
+
+  it("the_demo_finds_an_incident_from_deep_in_a_long_read", async () => {
+    const served = await mockInvoke<UiEvent[]>("recent_events", { limit: 700 });
+    // Past the 500 a case once looked through.
+    const shown = served[served.length - 1]!;
+    const c = await mockInvoke<CaseFile>("case_file", { incident_id: `bus:${shown.id}` });
+    expect(c.facts.find((f) => f.section === "event")!.row_id).toBe(String(shown.id));
+  });
+
+  it("the_demo_still_says_not_found_for_an_id_it_never_served", async () => {
+    await mockInvoke<UiEvent[]>("recent_events", { limit: 40 });
+    await expect(mockInvoke<CaseFile>("case_file", { incident_id: "bus:999999999" })).rejects.toMatchObject({
+      kind: "not_found",
+      event_id: 999999999,
+    });
+  });
+});

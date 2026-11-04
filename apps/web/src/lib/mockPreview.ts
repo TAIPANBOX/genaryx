@@ -764,6 +764,27 @@ const COMMAND_EVENTS_CAP = 12;
  * destructively drained, so it survives being read by more than one
  * caller. */
 const recentCommandEvents: UiEvent[] = [];
+/** Every event this transport has handed out, by id. The synthetic feed makes a
+ * fresh event, with a fresh id, every time it is read, so an incident a visitor
+ * was shown can only be found where it was served: a second read holds other
+ * events. `case_file` looks here. Bounded; the oldest are dropped first, and a
+ * fixed demo row served again is the newest again. */
+const SERVED_EVENTS_CAP = 10_000;
+const servedEvents = new Map<number, UiEvent>();
+
+function serve(events: UiEvent[]): UiEvent[] {
+  for (const e of events) {
+    servedEvents.delete(e.id);
+    servedEvents.set(e.id, e);
+  }
+  while (servedEvents.size > SERVED_EVENTS_CAP) {
+    const oldest = servedEvents.keys().next();
+    if (oldest.done) break;
+    servedEvents.delete(oldest.value);
+  }
+  return events;
+}
+
 /** FIFO, drained one-per-tick by the live bus subscription (`mockSubscribe`),
  * so a just-issued command shows up on the Bus tab within one tick instead of
  * waiting for the next random synthetic event to happen to cover it. */
@@ -3750,9 +3771,12 @@ async function mockCaseFile(incidentId: string): Promise<CaseFile> {
       : { kind: "bad_incident_id", incident_id: incidentId.slice(0, 80) };
   }
   const eventId = Number(id[1]);
-  const bus = await mockInvoke<UiEvent[]>("recent_events", { limit: 500 });
-  const event = bus.find((e) => e.id === eventId);
+  // The fixed demo rows are served by a read of the feed; an id the ledger does
+  // not hold yet is looked for once more after one, and is not found after that.
+  if (!servedEvents.has(eventId)) await mockInvoke<UiEvent[]>("recent_events", { limit: 500 });
+  const event = servedEvents.get(eventId);
   if (!event) throw { kind: "not_found", event_id: eventId };
+  const bus = Array.from(servedEvents.values());
 
   const subject = filedUnder(event);
   const isKey = isKeySubject(subject);
@@ -4305,8 +4329,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // exactly as many as the seed makes, so anything appended after it is cut
     // before it is ever seen. The drift event was appended, and so the demo's
     // one bus incident with no run id never reached Incident 360.
-    case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...mockKeyryxWitnessEvents(), ...seedEvents(Number(args?.limit ?? 60))]);
-    case "run_events": return r(seedEvents(20));
+    case "recent_events": return r(serve([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...mockKeyryxWitnessEvents(), ...seedEvents(Number(args?.limit ?? 60))]));
+    case "run_events": return r(serve(seedEvents(20)));
     // The case for one demo incident, from the demo's own rows (see `mockCaseFile`).
     case "case_file": return r(await mockCaseFile(String(args?.incident_id ?? "")));
 
@@ -4351,7 +4375,9 @@ export function mockSubscribe<T>(event: string, onEvent: (payload: T) => void): 
     // event, so a Kill/Approve/Budget click shows up on a live Bus tab
     // within one tick instead of waiting on a random draw to cover it.
     const queued = pendingLiveDelivery.shift();
-    onEvent((queued ?? makeEvent()) as unknown as T);
+    const delivered = queued ?? makeEvent();
+    serve([delivered]);
+    onEvent(delivered as unknown as T);
   };
   const id = window.setInterval(tick, 1300 + Math.floor(Math.random() * 900));
   return Promise.resolve(() => window.clearInterval(id));
