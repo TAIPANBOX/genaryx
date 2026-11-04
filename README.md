@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1358-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1380-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -462,6 +462,15 @@ box; these frames are not it, and say so here rather than in a footnote.
   child that timed out and a report that disagrees with the copy are each an
   error that says so. At most two proofs of any kind run at once. It applies
   nothing.
+- **A sealed case (2026-11-04, invariant 42).** `case_seal` closes a case: the
+  console assembles it again, asks again for the proofs the operator named, takes
+  the operator's decision and note, and writes one document in the canonical form
+  RFC 8785 fixes, so another implementation can reproduce its bytes. The sha256 of
+  those bytes is the target of one `console.case_close` line in the console's own
+  chain, and a private file is named by it. A seal that cannot be journaled
+  stores nothing; a proof that could not be made is sealed as that; a stored pack
+  is handed back by `case_pack` only if it still hashes to its name. Sealing
+  changes nothing in any plane.
 - **Felyx reads the case (2026-11-04, invariant 39).** On an incident with an
   event row, Incident 360 has an "Ask Felyx to read this case" button. Felyx is
   handed the case file (invariant 37) and no tool: it cannot look anything else

@@ -1047,6 +1047,52 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "policy_enforcement_status" => Ok(reply(
             genaryx_api::policy::commands::policy_enforcement_status(&ctx.policy).await,
         )),
+        // Seal a case with the proofs asked for again here and the operator's
+        // decision: one canonical document, its sha256 as the target of a
+        // `console.case_close` line in the console's chain, and a file named by
+        // it. An approver's act, because it puts an operator's name to a decision;
+        // it changes nothing in any plane.
+        "case_seal" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                incident_id: String,
+                #[serde(default)]
+                proofs: Vec<genaryx_api::seal::ProofSpec>,
+                decision: genaryx_api::seal::Decision,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::seal::commands::case_seal(
+                    genaryx_api::seal::commands::SealRequest {
+                        incident_id: a.incident_id,
+                        proofs: a.proofs,
+                        decision: a.decision,
+                    },
+                    genaryx_api::case::commands::CasePlanes {
+                        bus: &ctx.bus,
+                        money: &ctx.money,
+                        policy: &ctx.policy,
+                        identity: &ctx.identity,
+                        memory: &ctx.memory,
+                    },
+                    wg_journal(ctx).as_ref(),
+                )
+                .await,
+            ))
+        }
+        // A sealed pack handed back, only if it is still the pack its digest names.
+        "case_pack" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                digest: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(genaryx_api::seal::commands::case_pack(
+                &a.digest,
+                ctx.bus.events_dir.as_deref(),
+            )))
+        }
         // What a candidate budget or step limit would have done to the calls the
         // gateway recorded, from `tokenfuse backtest`, in both halves. A read,
         // and classified as one in roles.rs: it applies nothing.
