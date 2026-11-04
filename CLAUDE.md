@@ -815,8 +815,8 @@ an absent invariant.
 
     Where it says nothing: the answer check is a clause-level text heuristic,
     not a parser. It does not check a positive budget claim in a clause that
-    names several runs, a run id no tool returned, budget AMOUNTS, or unit
-    budgets; a negative claim separated from its runs by a semicolon escapes
+    names several runs, or unit budgets; a run id or an amount no tool
+    returned is invariant 38's; a negative claim separated from its runs by a semicolon escapes
     it, and an over claim about several runs in one clause is not checked
     run by run (agents are). A budget a gateway applies on its own (a per-run default ceiling, an
     identity-map unit cap) is invisible to the Cloud and so to this tool,
