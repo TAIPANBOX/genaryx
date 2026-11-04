@@ -177,6 +177,10 @@
           "value": "WARDRYX_POLICY_ARCHIVE",
           "why": "Read by crates/api/src/proof/commands.rs, wardryx's own name for the directory of every policy version it kept, which `wardryx replay -archive` needs. The console mounts it read only and passes it as an argument; unset, a policy proof answers that the archive is not configured and never a proof of nothing. Declared rather than checked for the same structural reason as WARDRYX_URL above."
         },
+        "a_foreign_prefixed_read_this_suite_cannot_prove_6": {
+          "value": "TOKENFUSE_DATA_DIR",
+          "why": "Read by crates/api/src/proof/budget_commands.rs, tokenfuse's own name for the directory of Parquet files the gateway writes its calls to, which `tokenfuse sql` and `tokenfuse backtest` read. The console mounts it read only; the proof passes it to each child it runs, and to the copy of the incident's run it makes in a private scratch directory. Unset, a budget proof answers that the trace directory is not configured and never a proof of nothing. Declared rather than checked for the same structural reason as WARDRYX_POLICY_ARCHIVE above."
+        },
         "the_secret_is_read_by_reference": {
           "value": "GENARYX_COPILOT_API_KEY_REF=env:<NAME>",
           "why": "The copilot's key is not read from a variable this repository names. It reads the REFERENCE and then the variable the reference points at, so the name is the deployment's choice. stack-k8s picks GENARYX_COPILOT_KEY. Nothing here can check a name it never sees."

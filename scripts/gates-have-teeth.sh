@@ -799,6 +799,95 @@ run_case "invariant 40: a replay that examined nothing answers no for the incide
 	"$proof_gate" \
 	"$(py 'edit("crates/api/src/proof/mod.rs", "stops_this_incident: (trustworthy && candidate.replayable > 0).then_some(stops),", "stops_this_incident: trustworthy.then_some(stops),")')" \
 	"a_replay_in_which_nothing_could_be_replayed_says_nothing_about_the_incident"
+# invariant 41: a candidate budget is proved by `tokenfuse backtest`, in both
+# halves, and a proof that could not be made is never a proof of nothing. Product
+# mutants; the gates are the budget module's own tests and the integration test
+# with a stand-in tokenfuse.
+proof_budget_it_gate='cargo test -q --no-fail-fast -p genaryx-api --test it budget_proof_test'
+
+run_case "invariant 41: the amount handed to the CLI is the plain text of the micros" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "(micros as f64 + 0.5) / 1e6", "micros as f64 / 1e6")')" \
+	"an_amount_is_handed_to_the_cli_as_text_it_reads_back_exactly"
+
+run_case "invariant 41: a zero limit is accepted as a candidate" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "if micros == 0 {", "if false {")')" \
+	"amounts_are_whole_micro_dollars_or_refused"
+
+run_case "invariant 41: a report for another candidate is believed" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "if echoed != asked.describe() {", "if false {")')" \
+	"a_backtest_report_for_another_candidate_is_refused"
+
+run_case "invariant 41: a projection that is not the spend less the saving is believed" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "if Some(projected) != spent.checked_sub(saved) {", "if false {")')" \
+	"a_backtest_report_that_contradicts_itself_is_refused"
+
+run_case "invariant 41: calls blocked in no run are believed" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "if (runs_affected > 0) != (calls_blocked > 0) {", "if false {")')" \
+	"a_backtest_report_that_contradicts_itself_is_refused"
+
+run_case "invariant 41: the whole trace's blocks count as stopping the incident" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "let stops = run.calls_blocked > 0;", "let stops = trace.calls_blocked > 0;")')" \
+	"the_incident_is_stopped_only_when_its_own_run_has_a_call_blocked"
+
+run_case "invariant 41: the rest of the trace is the whole trace, the incident included" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "runs_affected: trace.runs_affected - run.runs_affected,", "runs_affected: trace.runs_affected,")')" \
+	"the_rest_of_the_trace_is_the_whole_trace_less_the_incident"
+
+run_case "invariant 41: a split over calls at the same step is called exact" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "elsewhere_exact: !tied,", "elsewhere_exact: true,")')" \
+	"a_run_with_calls_at_the_same_step_marks_the_split_approximate"
+
+run_case "invariant 41: a copy that disagrees with its replay is believed" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "if run.calls_total != copied {", "if false {")')" \
+	"reports_that_cannot_describe_the_same_trace_are_refused"
+
+run_case "invariant 41: a whole trace with fewer calls than the run is believed" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "if trace.calls_total < run.calls_total {", "if false {")')" \
+	"reports_that_cannot_describe_the_same_trace_are_refused"
+
+run_case "invariant 41: a run id that could break the query is put in it" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "if !run.bytes().all(is_name_byte) {", "if false {")')" \
+	"a_run_id_is_put_in_a_query_only_when_it_is_a_plain_name"
+
+run_case "invariant 41: an empty copy is taken for a proof of nothing" fail \
+	"$proof_budget_it_gate" \
+	"$(py 'edit("crates/api/src/proof/budget_commands.rs", "if count == 0 {", "if false {")')" \
+	"a_run_the_trace_does_not_hold_is_not_a_proof_of_nothing"
+
+run_case "invariant 41: each child has a deadline of its own" fail \
+	"$proof_budget_it_gate" \
+	"$(py 'edit("crates/api/src/proof/budget_commands.rs", "    started + timeout\n", "    Instant::now() + timeout\n")')" \
+	"all_the_children_of_one_proof_share_one_deadline"
+
+run_case "invariant 41: a busy slot runs a budget proof anyway" fail \
+	"$proof_budget_it_gate" \
+	"$(py 'edit("crates/api/src/proof/budget_commands.rs", "let _slot = slots\n        .try_acquire()\n        .map_err(|busy| ProofError::Busy { limit: busy.limit })?;", "let _slot = slots.try_acquire().ok();")')" \
+	"a_budget_proof_meets_a_busy_slot_as_an_answer_not_a_queue"
+
+run_case "invariant 41: the copy of the run is left behind when the proof ends" fail \
+	"$proof_budget_it_gate" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "let _ = std::fs::remove_dir_all(&self.0);", "let _ = &self.0;")')" \
+	"the_proof_runs_four_children_in_order_over_the_right_directories_and_removes_the_copy"
+
+run_case "invariant 41: the children inherit the console's environment" fail \
+	"$proof_budget_it_gate" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "        .env_clear()\n", "")')" \
+	"the_proof_runs_four_children_in_order_over_the_right_directories_and_removes_the_copy"
+
+run_case "invariant 41: the candidate's own doc comment reworded" pass \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/budget.rs", "/// A candidate budget, in the units the trace keeps.", "/// A candidate budget, in the units that the trace keeps.")')"
 
 run_case "invariant 40: the outcomes' own doc comment reworded" pass \
 	"$proof_gate" \

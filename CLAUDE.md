@@ -2099,6 +2099,96 @@ an absent invariant.
     believed, outcomes not summed, the child's environment inherited, the candidate
     left behind, the deadline not enforced, an empty candidate run).)*
 
+41. **A candidate budget is replayed over the calls already made by `tokenfuse
+    backtest`, in both halves, and a proof that could not be made is never a
+    proof of nothing.** `@decided 2026-11-04`: slice 4 of the
+    incident-to-proven-fix plan, with the same two halves, the same bounds and
+    the same slots as invariant 40. `budget_proof` (`crates/api/src/proof/
+    budget.rs` for the reading and the judging, `budget_commands.rs` for the
+    children) takes an incident and a candidate of up to three limits (a budget
+    per run, a budget per call, a step limit), and runs four children with no
+    shell, an environment of `PATH` and the one trace directory each is pointed
+    at, one deadline for all four, an output cap each, and a slot held until the
+    last has ended: `tokenfuse sql` with `copy (select * from calls where run_id
+    = '<run>' order by ts_millis, step) to <scratch>/part.parquet stored as
+    parquet` over the gateway's trace (`TOKENFUSE_DATA_DIR`, read only), which
+    copies the incident's own calls into a trace of their own; `tokenfuse sql`
+    counting that copy's calls and distinct steps; `tokenfuse backtest` over the
+    copy; `tokenfuse backtest` over the whole trace. The copy is the reason for
+    the shape: the CLI prints totals over the whole trace and nothing per run,
+    so the first half (would the candidate have blocked a call of THIS
+    incident's run) is the engine's own verdict on the run replayed alone, not
+    a restatement of its rules in the console, and the second half is the
+    whole-trace report less the incident's own numbers.
+
+    The CLI cannot be trusted at its word, and each of these is held. It exits 0
+    on a flag it dropped, on an empty trace and on an error of its own, so the
+    output is the only thing read: a table `tokenfuse sql` prints must be
+    exactly the one expected, a backtest report must be exactly the seven lines
+    `backtestcli::run` writes, must echo the candidate that was asked for (a
+    dropped flag changes that line), must have its affected runs and blocked
+    calls agree and its projected spend equal the spend less the saving. It
+    reads `--budget` as `(v * 1e6) as i64`, which truncates: the plain text of
+    249 micro-dollars is read as 248, and about 1.2% of amounts are read one
+    micro-dollar low (@measured by arithmetic over the amounts from 1 to
+    2,000,000 micro-dollars: 23,103 of them). An amount is therefore handed
+    over as the text of half a micro-dollar more, and `cli_amount` checks with
+    the CLI's own arithmetic that it reads back as exactly what was asked,
+    refusing the amount otherwise. A run id is a producer's text and goes into a
+    query, so only a name of letters, digits and `. _ : -` up to 128 bytes is
+    put there (`query_safe_run`), and the scratch path is checked the same way.
+    A run with no calls in the trace is `NotInTrace`, an empty copy never a
+    proof of nothing. The two reports must be about the same trace: one run in
+    the copy's replay, as many calls as were copied and counted, a whole trace
+    that holds at least the incident's run, calls and blocks. Calls at the same
+    step are loaded by the CLI in an order it does not promise, so when the
+    incident's run has any (fewer distinct steps than calls) the proof says
+    `elsewhere_exact: false` and still gives the numbers; the first half is not
+    affected, since the copy is written in the order the calls happened. A
+    candidate sets at least one limit, each amount is dollars with at most six
+    decimals, not zero and at most a million dollars, a step limit is from 1 to
+    a million, and a refused candidate starts nothing. Nothing is applied. A
+    viewer read.
+
+    @measured 2026-11-04 on the forge lab, `tokenfuse` v1.20.3, read only: the
+    four children as above against the gateway's real trace (230 runs, 832
+    calls): the copy of one run reported 35 rows, the copy replayed as `runs: 1
+    (1 affected)` for `--budget 0.002`, the whole trace as `runs: 230 (15
+    affected)`; an empty selection copied 0 rows and the CLI then printed `no
+    calls in the trace at ...`; every error above exited 0; a lab run of 155
+    calls carried 29 distinct steps.
+    *(test: `crates/api/src/proof/budget/tests.rs` (fourteen, among them a
+    60,000-amount sweep and three 200-seed sweeps), `crates/api/tests/it/
+    budget_proof_test.rs` (thirteen, on a stand-in `tokenfuse` that records every
+    call's arguments and environment), `crates/web/src/roles.rs`'s
+    `proving_a_budget_is_a_viewer_read`. Red first: the test commit of the pull
+    request that added this failed against stubs. Scenarios:
+    `features/a-candidate-budget-is-proved-before-it-is-applied.feature`,
+    thirteen, each bound. Gate: sixteen product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (the plain amount handed over, a zero limit
+    accepted, a report for another candidate believed, a wrong projection
+    believed, blocks in no run believed, the whole trace's blocks counted as
+    stopping the incident, the rest of the trace not less the incident, a tied
+    split called exact, a copy that disagrees with its replay believed, a
+    whole trace smaller than the run believed, a hostile run id put in the
+    query, an empty copy taken for a proof, a deadline of its own for each
+    child, a busy slot run anyway, the copy left behind, the environment
+    inherited).)*
+
+    Where it says nothing: the gateway's second door (the OpenAI one) writes a
+    trace of its own and only one is read; the replay covers the budget per
+    run, the budget per call and the step limit and no rule that needs more
+    than the recorded cost and step of a call; the gateway keeps its own
+    budgets and these are not read; a trace the gateway has rotated away holds
+    no run to prove against; and neither the `tokenfuse` binary in the console
+    image nor a read-only mount of the gateway's trace directory is arranged yet
+    in `stack-k8s` or `stack-single` (their own repositories, their own
+    invariants). @measured 2026-11-04 on the forge lab, read only: the gateway's
+    trace files are `-rw-r--r-- 20010:10001` in a `drwxrwxr-x` directory, so the
+    console's uid could read them, unlike the policy archive of invariant 40;
+    the console container there has no mount of the trace directory and no
+    `tokenfuse` binary.
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

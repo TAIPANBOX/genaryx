@@ -128,6 +128,9 @@ const COMMANDS: &[Gate] = &[
     // The proof of a candidate policy: `wardryx replay` run over the recorded
     // decisions, read only. It changes no policy and applies nothing.
     gate("policy_proof", Role::Viewer, false),
+    // The proof of a candidate budget: `tokenfuse backtest` run over the calls
+    // the gateway recorded, read only. It changes no budget and applies nothing.
+    gate("budget_proof", Role::Viewer, false),
     gate("quality_list_baselines", Role::Viewer, false),
     gate("quality_list_run_summaries", Role::Viewer, false),
     gate("quality_run_scores", Role::Viewer, false),
@@ -358,6 +361,12 @@ mod tests {
     fn proving_a_policy_is_a_viewer_read() {
         assert_eq!(required_role("policy_proof"), Role::Viewer);
         assert!(!requires_ceremony("policy_proof"));
+    }
+
+    #[test]
+    fn proving_a_budget_is_a_viewer_read() {
+        assert_eq!(required_role("budget_proof"), Role::Viewer);
+        assert!(!requires_ceremony("budget_proof"));
     }
 
     #[test]

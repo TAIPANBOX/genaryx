@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1330-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1358-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -450,6 +450,18 @@ box; these frames are not it, and say so here rather than in a footnote.
   not be made, for want of the archive, the binary or a run, or because the
   report does not add up, is an error that says so. At most two proofs run at
   once; a full house is a `busy` answer at once, never a queue. It applies nothing.
+- **A budget proof (2026-11-04, invariant 41).** `budget_proof` runs `tokenfuse
+  backtest` over the calls the gateway recorded against a candidate budget per
+  run, budget per call or step limit, and says both halves: whether the
+  candidate would have blocked a call of the incident's own run (the run is
+  copied out of the trace and replayed alone, so the verdict is the engine's),
+  and what it would have blocked and saved everywhere else. The amount is handed
+  to the CLI as text it reads back exactly, since its own reading drops a
+  micro-dollar for about 1.2% of amounts; its output is only believed when it
+  echoes the candidate asked for and adds up; a run the trace does not hold, a
+  child that timed out and a report that disagrees with the copy are each an
+  error that says so. At most two proofs of any kind run at once. It applies
+  nothing.
 - **Felyx reads the case (2026-11-04, invariant 39).** On an incident with an
   event row, Incident 360 has an "Ask Felyx to read this case" button. Felyx is
   handed the case file (invariant 37) and no tool: it cannot look anything else
