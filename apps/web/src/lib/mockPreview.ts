@@ -3920,7 +3920,44 @@ async function mockCaseFile(incidentId: string): Promise<CaseFile> {
  * command's is.
  */
 async function mockFelyxReadsCase(incidentId: string) {
-  throw incidentId.slice(0, 0);
+  let c: CaseFile;
+  try {
+    c = await mockCaseFile(incidentId);
+  } catch (refusal) {
+    const r = refusal as { kind?: string; source?: string; event_id?: number };
+    if (r.kind === "unsupported_source") throw `No case: a ${r.source} incident has no event row to start from.`;
+    if (r.kind === "not_found") throw `No case: the console's store holds no event row ${r.event_id}.`;
+    throw "No case: this is not an incident id the case command reads.";
+  }
+  const event = c.facts.find((f) => f.section === "event");
+  const missing = c.lines.filter((l) => l.state === "unavailable" || l.state === "not_asked");
+  const planeLabel: Record<string, string> = {
+    bus: "the console's event store",
+    tokenfuse: "TokenFuse",
+    idryx: "Idryx",
+    wardryx: "Wardryx",
+    engram: "Engram",
+  };
+  const parts: string[] = [];
+  parts.push(
+    c.claimed_agent
+      ? `Row \`${event?.row_id}\` is filed under \`${c.subject}\`: a call was refused at the gateway, and \`${c.claimed_agent}\` is only the agent it claimed to be.`
+      : `Row \`${event?.row_id}\` is filed under \`${c.subject}\`.`,
+  );
+  if (c.run_id) parts.push(`It happened in run \`${c.run_id}\`.`);
+  parts.push(
+    missing.length > 0
+      ? `Missing from the case: ${missing.map((l) => `${planeLabel[l.plane] ?? l.plane} (${l.section.replace(/_/g, " ")})`).join("; ")}. The chain above does not rest on them.`
+      : "Nothing is missing from the case.",
+  );
+  parts.push("Recommended: a person reviews the key and the refusals before anything changes. Nothing is applied.");
+  return {
+    text: parts.join(" "),
+    tool_trace: [{ name: "case_file", ok: true, result_preview: `case ${c.digest.slice(0, 19)}` }],
+    proposals: [],
+    usage: { prompt_tokens: 0, completion_tokens: 0 },
+    unsupported_claims: [] as string[],
+  };
 }
 
 export async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

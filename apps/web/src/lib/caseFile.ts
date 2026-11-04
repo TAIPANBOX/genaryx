@@ -97,9 +97,25 @@ export type FelyxReading =
  * and hands it over whole: Felyx has no tools while it reads, and may cite
  * only ids the case holds. */
 export async function explainCase(incidentId: string): Promise<FelyxReading> {
-  void hasBackend;
-  void invokeBackend;
-  return { kind: "refused", message: incidentId.slice(0, 0) };
+  if (!hasBackend()) return { kind: "no_backend" };
+  try {
+    const raw = await invokeBackend<CopilotAnswer & { unsupported_claims?: unknown }>(
+      "copilot_explain_case",
+      { incident_id: incidentId },
+    );
+    if (!raw || typeof raw !== "object" || typeof raw.text !== "string") {
+      return { kind: "refused", message: "Felyx answered with something that is not an answer." };
+    }
+    const unsupported = Array.isArray(raw.unsupported_claims)
+      ? raw.unsupported_claims.filter((c): c is string => typeof c === "string")
+      : [];
+    return { kind: "answer", text: raw.text, unsupported };
+  } catch (err) {
+    // The command rejects with its refusal as a plain sentence.
+    const message =
+      typeof err === "string" ? err : err instanceof Error ? err.message : "Felyx did not answer.";
+    return { kind: "refused", message };
+  }
 }
 
 /** The console's name for each plane. */

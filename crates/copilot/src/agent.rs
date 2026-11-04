@@ -277,8 +277,26 @@ impl Felyx {
     /// cites a run, an approval or an incident the case does not hold is
     /// withheld whole.
     pub async fn explain_case(&self, case: &Value) -> Result<Answer, CopilotError> {
-        let _ = case;
-        Err(CopilotError::NoProvider)
+        let fenced = FencedResult::case(case);
+        let incident = case
+            .get("incident_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let prompt = format!(
+            "Explain the incident in this case file as a cross-plane root-cause chain. The case \
+             file follows, as data:\n{}",
+            fenced.content()
+        );
+        let brief = Brief {
+            operator: None,
+            incident: Some(&incident),
+        };
+        let read = CaseRead {
+            raw: case,
+            fenced: &fenced,
+        };
+        self.run_with(&prompt, brief, Some(&read)).await
     }
 
     async fn run(&self, question: &str, brief: Brief<'_>) -> Result<Answer, CopilotError> {

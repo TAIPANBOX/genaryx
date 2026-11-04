@@ -290,8 +290,15 @@ pub async fn copilot_explain_case(
     planes: crate::case::commands::CasePlanes<'_>,
     incident_id: String,
 ) -> Result<Answer, String> {
-    let _ = (state, planes, incident_id);
-    Err("stub".to_string())
+    let service = ready_service(&state).await?;
+    let case = crate::case::commands::case_file(incident_id, planes)
+        .await
+        .map_err(|e| e.describe())?;
+    let value = serde_json::to_value(&case).map_err(|e| e.to_string())?;
+    service
+        .explain_case(&value)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// C2's audit link (docs/PHASE6-C2.md "Audit metadata"), called by the

@@ -267,7 +267,12 @@ impl Walk<'_> {
         Value::Object(out)
     }
 
-    fn case_each(&mut self, items: &Value, key: &str, one: fn(&mut Self, &Value) -> Value) -> Value {
+    fn case_each(
+        &mut self,
+        items: &Value,
+        key: &str,
+        one: fn(&mut Self, &Value) -> Value,
+    ) -> Value {
         match items {
             Value::Array(list) => Value::Array(list.iter().map(|item| one(self, item)).collect()),
             other => self.value(other, key, &[]),

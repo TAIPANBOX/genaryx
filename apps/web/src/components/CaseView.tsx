@@ -156,7 +156,40 @@ export type FelyxState = { kind: "idle" } | { kind: "reading" } | FelyxReading;
  * support listed under it, and the limits it read under said once.
  */
 export function FelyxReadingView({ state }: { state: FelyxState }) {
-  return state.kind === "idle" ? null : null;
+  switch (state.kind) {
+    case "idle":
+      return null;
+    case "reading":
+      return <span>Felyx is reading the case…</span>;
+    case "refused":
+      return <span>{state.message}</span>;
+    case "no_backend":
+      return <span>No Felyx: there is no box behind this console to ask.</span>;
+    case "answer":
+      return (
+        <div data-felyx="answer" style={{ marginTop: 4 }}>
+          <pre className="mono" style={{ fontSize: 11, whiteSpace: "pre-wrap", margin: 0 }}>
+            {state.text}
+          </pre>
+          {state.unsupported.length > 0 && (
+            <div data-felyx="unsupported" style={{ marginTop: 3 }}>
+              <div className="mono" style={{ fontSize: 9.5, color: "var(--faint)" }}>
+                THE ANSWER COULD NOT SUPPORT
+              </div>
+              {state.unsupported.map((claim) => (
+                <div key={claim} style={{ fontSize: 11 }}>
+                  {claim}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mono" style={{ fontSize: 9.5, color: "var(--faint)", marginTop: 3 }}>
+            Felyx read this case only: it had no tools, and it may cite only ids the case holds.
+            Nothing is applied; a person decides.
+          </div>
+        </div>
+      );
+  }
 }
 
 /**

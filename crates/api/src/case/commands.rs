@@ -85,7 +85,20 @@ impl CaseError {
     /// a case); the tagged form is for the case view. Nothing the caller sent is
     /// repeated except the source name, which is one of three fixed words.
     pub fn describe(&self) -> String {
-        String::new()
+        match self {
+            CaseError::NoStore { .. } => {
+                "No case: the console has no readable event store on this box.".to_string()
+            }
+            CaseError::BadIncidentId { .. } => {
+                "No case: this is not an incident id the case command reads.".to_string()
+            }
+            CaseError::UnsupportedSource { source } => {
+                format!("No case: a {source} incident has no event row to start from.")
+            }
+            CaseError::NotFound { event_id } => {
+                format!("No case: the console's store holds no event row {event_id}.")
+            }
+        }
     }
 }
 
