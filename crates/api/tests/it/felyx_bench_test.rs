@@ -409,16 +409,20 @@ async fn an_answer_that_names_nothing_misses_the_cause_and_has_no_remedy_to_repl
 
 #[tokio::test]
 async fn an_answer_that_names_two_causes_names_none() {
+    // The true cause, and then another one as well.
     let scores = bench(|case| {
-        vec![says(&format!(
-            "{} It could equally be a retry loop on one tool.",
-            case.rival
-        ))]
+        let other = if case.truth == Cause::RetryLoop {
+            " Or a policy denied the tool."
+        } else {
+            " It could equally be a retry loop on one tool."
+        };
+        vec![says(&format!("{}{other}", case.oracle))]
     })
     .await;
-    for s in scores.iter().filter(|s| s.truth != Cause::RetryLoop) {
+    for s in &scores {
         assert_eq!(s.named, Named::Several, "{}", s.case);
         assert!(!s.cause_right, "{}", s.case);
+        assert_eq!(s.remedy_stops, None, "{}", s.case);
     }
 }
 
