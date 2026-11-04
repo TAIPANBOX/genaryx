@@ -165,11 +165,17 @@ async fn sealing_journals_the_digest_as_the_target_and_stores_the_pack() {
     assert!(sealed.stored, "{:?}", sealed.store_error);
     let hex = sealed.digest.strip_prefix("sha256:").expect("sha256");
     let file = dir.join(PACKS_DIR).join(format!("{hex}.json"));
-    assert_eq!(std::fs::read_to_string(&file).expect("the file"), sealed.pack);
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("the file"),
+        sealed.pack
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&file).expect("metadata").permissions().mode();
+        let mode = std::fs::metadata(&file)
+            .expect("metadata")
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o077, 0, "the pack is readable by others: {mode:o}");
     }
     assert_eq!(
@@ -251,7 +257,10 @@ async fn a_stored_pack_that_was_altered_is_not_handed_back() {
         Err(PackError::NotThePack { .. })
     ));
     std::fs::remove_file(&file).expect("remove");
-    assert_eq!(case_pack(&sealed.digest, Some(&dir)), Err(PackError::NotFound));
+    assert_eq!(
+        case_pack(&sealed.digest, Some(&dir)),
+        Err(PackError::NotFound)
+    );
 }
 
 #[test]
@@ -266,7 +275,11 @@ fn a_digest_that_is_not_a_digest_never_reaches_the_filesystem() {
         &format!("sha256:{}/x", "ab".repeat(31)),
         &"ab".repeat(32),
     ] {
-        assert_eq!(case_pack(bad, Some(&dir)), Err(PackError::BadDigest), "{bad:?}");
+        assert_eq!(
+            case_pack(bad, Some(&dir)),
+            Err(PackError::BadDigest),
+            "{bad:?}"
+        );
     }
     let good = format!("sha256:{}", "ab".repeat(32));
     assert_eq!(case_pack(&good, None), Err(PackError::NoStore));
@@ -309,8 +322,16 @@ async fn an_incident_the_store_does_not_hold_is_not_sealed() {
     let journal = BusHandle::from_dirs(&dir, &dir);
     let result = case_seal_at(request(99999), planes(&bus, &p), Some(&journal), AT).await;
     assert!(
-        matches!(result, Err(SealFailure::Case { error: CaseError::NotFound { .. } })),
+        matches!(
+            result,
+            Err(SealFailure::Case {
+                error: CaseError::NotFound { .. }
+            })
+        ),
         "{result:?}"
     );
-    assert!(!journal.console_events_path.exists(), "a chain line was written");
+    assert!(
+        !journal.console_events_path.exists(),
+        "a chain line was written"
+    );
 }

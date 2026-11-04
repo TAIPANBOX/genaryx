@@ -75,7 +75,14 @@ fn the_digest_is_the_sha256_of_the_canonical_text_and_nothing_else() {
     members.sort_unstable();
     assert_eq!(
         members,
-        ["case", "decision", "format", "proofs", "sealed_at", "sealed_by"]
+        [
+            "case",
+            "decision",
+            "format",
+            "proofs",
+            "sealed_at",
+            "sealed_by"
+        ]
     );
     assert_eq!(value["format"], PACK_FORMAT);
     assert_eq!(value["decision"]["outcome"], "applied");
@@ -96,16 +103,25 @@ fn a_pack_is_the_pack_its_digest_names_only_if_it_is_whole_canonical_and_of_this
     // The same document, written for reading: not the bytes that were hashed.
     let value: Value = serde_json::from_str(&sealed.canonical).expect("JSON");
     let pretty = serde_json::to_string_pretty(&value).expect("pretty");
-    assert_eq!(verify(&pretty, &sealed.digest), Err(VerifyError::NotCanonical));
+    assert_eq!(
+        verify(&pretty, &sealed.digest),
+        Err(VerifyError::NotCanonical)
+    );
     // Members in the order they were written in, not the canonical order.
     let unsorted = format!(
         "{{\"sealed_by\":{},\"case\":{}}}",
         value["sealed_by"], value["case"]
     );
-    assert_eq!(verify(&unsorted, &digest_of_text(&unsorted)), Err(VerifyError::NotCanonical));
+    assert_eq!(
+        verify(&unsorted, &digest_of_text(&unsorted)),
+        Err(VerifyError::NotCanonical)
+    );
     // Another format, hashed honestly.
     let other = canonical(&json!({ "format": "something.else/1" })).expect("canonical");
-    assert_eq!(verify(&other, &digest_of_text(&other)), Err(VerifyError::WrongFormat));
+    assert_eq!(
+        verify(&other, &digest_of_text(&other)),
+        Err(VerifyError::WrongFormat)
+    );
     assert_eq!(verify("not json", "sha256:00"), Err(VerifyError::NotJson));
     // The right document under another document's digest.
     let elsewhere = digest_of_text("something else");
@@ -158,7 +174,10 @@ fn a_decision_is_trimmed_bounded_and_free_of_control_characters() {
 fn only_a_sha256_in_lowercase_hex_is_a_digest() {
     let ok = format!("sha256:{}", "ab".repeat(32));
     assert!(is_digest(&ok));
-    assert!(is_digest(&format!("sha256:{}", "0123456789abcdef".repeat(4))));
+    assert!(is_digest(&format!(
+        "sha256:{}",
+        "0123456789abcdef".repeat(4)
+    )));
     for not in [
         String::new(),
         "sha256:".to_string(),
@@ -189,7 +208,10 @@ fn only_a_sha256_in_lowercase_hex_is_a_digest() {
             })
             .collect();
         if is_digest(&text) {
-            assert!(!text.contains(['/', '.', '\\', ' ', '\n']), "seed {seed}: {text:?}");
+            assert!(
+                !text.contains(['/', '.', '\\', ' ', '\n']),
+                "seed {seed}: {text:?}"
+            );
         }
     }
 }
@@ -202,7 +224,13 @@ fn a_proof_spec_and_a_decision_read_from_the_shape_the_command_takes_and_nothing
     let budget: ProofSpec =
         serde_json::from_str(r#"{"kind":"budget","per_run_usd":"2","max_steps":20}"#)
             .expect("budget");
-    assert!(matches!(budget, ProofSpec::Budget { max_steps: Some(20), .. }));
+    assert!(matches!(
+        budget,
+        ProofSpec::Budget {
+            max_steps: Some(20),
+            ..
+        }
+    ));
     let decision: Decision =
         serde_json::from_str(r#"{"outcome":"deferred"}"#).expect("a decision without a note");
     assert_eq!(decision.outcome, Outcome::Deferred);
@@ -213,13 +241,19 @@ fn a_proof_spec_and_a_decision_read_from_the_shape_the_command_takes_and_nothing
         r#"{"kind":"policy","candidate":"x","extra":1}"#,
         r#"{"kind":"unknown"}"#,
     ] {
-        assert!(serde_json::from_str::<ProofSpec>(refused).is_err(), "{refused}");
+        assert!(
+            serde_json::from_str::<ProofSpec>(refused).is_err(),
+            "{refused}"
+        );
     }
     for refused in [
         r#"{"outcome":"done"}"#,
         r#"{"outcome":"applied","note":"x","by":"someone"}"#,
         r#"{"note":"x"}"#,
     ] {
-        assert!(serde_json::from_str::<Decision>(refused).is_err(), "{refused}");
+        assert!(
+            serde_json::from_str::<Decision>(refused).is_err(),
+            "{refused}"
+        );
     }
 }

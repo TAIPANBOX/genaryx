@@ -202,7 +202,10 @@ pub async fn case_seal_at(
             Ok(()) => (true, None),
             Err(e) => (false, Some(e)),
         },
-        None => (false, Some("the console has no store directory".to_string())),
+        None => (
+            false,
+            Some("the console has no store directory".to_string()),
+        ),
     };
     Ok(SealedCase {
         digest: sealed.digest,

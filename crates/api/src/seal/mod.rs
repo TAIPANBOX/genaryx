@@ -220,7 +220,10 @@ pub fn verify(text: &str, digest: &str) -> Result<(), VerifyError> {
 /// is ever turned into a file name.
 pub fn is_digest(digest: &str) -> bool {
     digest.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     })
 }
 

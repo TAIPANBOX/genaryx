@@ -108,7 +108,11 @@ fn an_integer_a_double_cannot_hold_is_refused_and_one_it_can_is_written_whole() 
         json!(i64::MIN),
         json!(i64::MAX),
     ] {
-        assert_eq!(canonical(&refused), Err(JcsError::IntegerNotExact), "{refused}");
+        assert_eq!(
+            canonical(&refused),
+            Err(JcsError::IntegerNotExact),
+            "{refused}"
+        );
     }
     // The refusal is found inside a document, not only at its top.
     assert!(canonical(&json!({ "a": [1, { "b": u64::MAX }] })).is_err());
@@ -122,18 +126,36 @@ fn pseudo(x: &mut u64) -> u64 {
 }
 
 fn random_value(x: &mut u64, depth: u32) -> Value {
-    let keys = ["a", "b", "\u{e9}", "\u{1f600}", "\u{fb33}", "z", "\"", "\n", "", "10", "9"];
+    let keys = [
+        "a",
+        "b",
+        "\u{e9}",
+        "\u{1f600}",
+        "\u{fb33}",
+        "z",
+        "\"",
+        "\n",
+        "",
+        "10",
+        "9",
+    ];
     match pseudo(x) % if depth == 0 { 5 } else { 7 } {
         0 => Value::Null,
         1 => Value::Bool(pseudo(x) % 2 == 0),
         2 => json!(pseudo(x) as i64 - (1 << 30)),
         3 => Value::String(
             (0..pseudo(x) % 5)
-                .map(|_| ['a', '"', '\\', '\n', '\u{1}', '\u{e9}', '\u{1f600}'][pseudo(x) as usize % 7])
+                .map(|_| {
+                    ['a', '"', '\\', '\n', '\u{1}', '\u{e9}', '\u{1f600}'][pseudo(x) as usize % 7]
+                })
                 .collect(),
         ),
         4 => Value::Number(Number::from_f64((pseudo(x) % 100000) as f64 / 8.0).expect("finite")),
-        5 => Value::Array((0..pseudo(x) % 4).map(|_| random_value(x, depth - 1)).collect()),
+        5 => Value::Array(
+            (0..pseudo(x) % 4)
+                .map(|_| random_value(x, depth - 1))
+                .collect(),
+        ),
         _ => {
             let mut map = serde_json::Map::new();
             for _ in 0..pseudo(x) % 5 {
