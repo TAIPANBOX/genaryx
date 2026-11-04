@@ -885,6 +885,65 @@ run_case "invariant 41: the children inherit the console's environment" fail \
 	"$(py 'edit("crates/api/src/proof/commands.rs", "        .env_clear()\n", "")')" \
 	"the_proof_runs_four_children_in_order_over_the_right_directories_and_removes_the_copy"
 
+# invariant 42: a case is sealed as one canonical document whose digest is the target
+# of a chain line. Product mutants; the gates are the seal module's own tests and
+# the integration test over a real store and a real journal.
+seal_gate='cargo test -q --no-fail-fast -p genaryx-api --lib seal::'
+seal_it_gate='cargo test -q --no-fail-fast -p genaryx-api --test it case_seal_test'
+
+run_case "invariant 42: members are sorted by their UTF-8 bytes" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/jcs.rs", "keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));", "keys.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));")')" \
+	"members_are_sorted_by_utf16_code_units_not_by_bytes"
+
+run_case "invariant 42: an integer a double cannot hold is written rounded" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/jcs.rs", "return if i.unsigned_abs() <= MAX_EXACT_INT {", "return if true {")')" \
+	"an_integer_a_double_cannot_hold_is_refused_and_one_it_can_is_written_whole"
+
+run_case "invariant 42: a number past 1e21 is written in positional form" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/jcs.rs", "} else if 0 < n && n <= 21 {", "} else if 0 < n && n <= 22 {")')" \
+	"numbers_are_written_the_way_ecmascript_writes_them"
+
+run_case "invariant 42: a control character is left unescaped" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/jcs.rs", "c if (c as u32) < 0x20 =>", "c if (c as u32) < 0x1f =>")')" \
+	"strings_are_escaped_the_way_json_stringify_escapes_them"
+
+run_case "invariant 42: a pack that is not in canonical form is accepted" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/mod.rs", "if canonical(&value).as_deref() != Ok(text) {", "if false {")')" \
+	"a_pack_is_the_pack_its_digest_names_only_if_it_is_whole_canonical_and_of_this_format"
+
+run_case "invariant 42: a pack that hashes to another digest is accepted" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/mod.rs", "if found != digest {", "if false {")')" \
+	"a_pack_is_the_pack_its_digest_names_only_if_it_is_whole_canonical_and_of_this_format"
+
+run_case "invariant 42: a digest of any length is turned into a file name" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/mod.rs", "hex.len() == 64", "hex.len() >= 1")')" \
+	"only_a_sha256_in_lowercase_hex_is_a_digest"
+
+run_case "invariant 42: a note of any length is sealed" fail \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/mod.rs", "if note.chars().count() > NOTE_MAX_CHARS {", "if false {")')" \
+	"a_decision_is_trimmed_bounded_and_free_of_control_characters"
+
+run_case "invariant 42: a seal that was not journaled is stored anyway" fail \
+	"$seal_it_gate" \
+	"$(py 'edit("crates/api/src/seal/commands.rs", "if !journaled {", "if false {")')" \
+	"a_seal_that_cannot_be_journaled_stores_nothing"
+
+run_case "invariant 42: a digest that is not a digest is looked up on disk" fail \
+	"$seal_it_gate" \
+	"$(py 'edit("crates/api/src/seal/commands.rs", "if !is_digest(digest) {", "if false {")')" \
+	"a_digest_that_is_not_a_digest_never_reaches_the_filesystem"
+
+run_case "invariant 42: the canonical error's own doc comment reworded" pass \
+	"$seal_gate" \
+	"$(py 'edit("crates/api/src/seal/jcs.rs", "/// Why a value has no canonical form.", "/// Why a value has no canonical form at all.")')"
 # invariant 43: the bench scores a named cause, the ids an answer cites and the
 # remedy that follows from the cause against what is known to be true. Product
 # mutants; the gate is the bench module's own tests.

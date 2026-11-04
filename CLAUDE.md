@@ -2189,6 +2189,65 @@ an absent invariant.
     the console container there has no mount of the trace directory and no
     `tokenfuse` binary.
 
+42. **A case is sealed as one canonical document, and the digest of that
+    document is the target of a line in the console's own chain.** `@decided
+    2026-11-04`: slice 6 of the incident-to-proven-fix plan, and its first
+    decision held: no new service and no new event type. The console already emits
+    exactly one type, `console_command`, and a closed case fits it as the action
+    `console.case_close` with the pack's digest as the `target`, which the readers
+    of the bus already pack and sign. `case_seal` (`crates/api/src/seal`)
+    assembles the case again from the planes (never from the browser), asks again
+    for each proof the operator named (at most four, a policy candidate or a
+    budget limit, through the proofs of invariants 40 and 41, each recorded with
+    its request and either its result or the cause it could not be made), takes
+    the operator's decision (`applied`, `declined` or `deferred`, and a note of at
+    most 2000 characters in their words, with no control character but a line
+    break) and writes one pack: `format`, `case`, `proofs`, `decision`,
+    `sealed_by`, `sealed_at`, and no digest of itself. The pack is written in the
+    form RFC 8785 fixes (`seal::jcs`): no whitespace, members sorted by the UTF-16
+    code units of their names, strings escaped as `JSON.stringify` escapes them,
+    numbers written as ECMAScript's `Number::toString` writes them; an integer
+    past `2^53 - 1` has no such form and the pack is refused rather than rounded,
+    since a digest that depends on a rounding is one two honest readers can
+    disagree about. The digest is the sha256 of that text as `sha256:<hex>`, and a
+    pack past a mebibyte is not sealed. The chain line is written first and the
+    file second: a seal that cannot be journaled is refused and stores nothing,
+    because a file with no line in the chain claims a seal that never happened,
+    while a line with no file is a pack that was handed back in the answer and can
+    be stored again. The file is `case-packs/<hex>.json` beside the console's
+    store, private to its user, written by a temporary file renamed into place; a
+    file already there must hold the same text. `case_pack` hands one back only if
+    the text is JSON, in canonical form, of this format and hashes to the digest
+    asked for, and a digest that is not `sha256:` and 64 lowercase hex digits is
+    refused before it is ever made into a path. `applied` is the operator's
+    statement: an application outside the console (a policy loaded in the policy
+    plane, a limit set in the gateway) is not something the console sees, and the
+    pack names who said so. Sealing changes nothing in any plane, so it is an
+    approver's act with no ceremony; reading a pack is a read.
+    *(test: `crates/api/src/seal/jcs/tests.rs` (six, one a 200-seed sweep of
+    random documents), `crates/api/src/seal/tests.rs` (seven, one a 200-seed sweep
+    of digest-shaped text), `crates/api/tests/it/case_seal_test.rs` (eight, over a
+    real store and a real journal), `crates/web/src/roles.rs`'s
+    `sealing_a_case_is_an_approvers_act_and_reading_a_pack_is_a_read`. Red first:
+    the test commit of the pull request that added this failed against stubs.
+    Scenarios:
+    `features/a-sealed-case-is-one-canonical-document-with-its-digest-in-the-chain.feature`,
+    ten, each bound. Gate: ten product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (members sorted by bytes, an integer rounded, a
+    number written in positional form past 1e21, a control character left
+    unescaped, a pack not in canonical form accepted, a pack that hashes to
+    another digest accepted, a digest of any length made a file name, a note of any
+    length sealed, a seal stored though it was not journaled, a digest that is not
+    a digest looked up on disk).)*
+
+    Where it says nothing: the pack is verified by this console and by anything
+    that can compute RFC 8785 and sha256, but no second implementation has read
+    one yet, and the canonical form is tested against the published number and
+    ordering cases that matter here, not against every vector of the RFC; the
+    Evidence Center does not list sealed packs and has no button for sealing, only
+    the commands exist; a Trailryx pack of the bus contains the chain line, and
+    nothing here checks that it was read; `sealed_at` is this console's clock; and
+    the note and the decision are the operator's words, kept as they were said.
 43. **The loop is scored against incidents whose cause is known, on three
     questions, and a cause is judged on what the answer names.** `@decided
     2026-11-04`: slice 7 of the incident-to-proven-fix plan, modelled on the
