@@ -86,6 +86,18 @@ impl CopilotService {
         }
     }
 
+    /// Felyx reads one case file the console assembled for an incident (the
+    /// join of the console's store and the planes, `genaryx_api::case`), and
+    /// explains it. No tool loop: the case is all the answer may rest on, and
+    /// every id it cites must be one the case holds
+    /// ([`Felyx::explain_case`]). [`CopilotError::NoProvider`] when disabled.
+    pub async fn explain_case(&self, case: &serde_json::Value) -> Result<Answer, CopilotError> {
+        match &self.felyx {
+            Some(felyx) => felyx.explain_case(case).await,
+            None => Err(CopilotError::NoProvider),
+        }
+    }
+
     /// A fast, tool-free one-line summary of one event, or `None` when the
     /// copilot is disabled. A caller is expected to wrap this in its own
     /// latency budget and to never let it block or suppress the alert itself:
@@ -132,6 +144,18 @@ mod tests {
                 .unwrap();
         assert!(matches!(
             svc.explain_incident("budget_exhausted:reconciliation-batch")
+                .await,
+            Err(CopilotError::NoProvider)
+        ));
+    }
+
+    #[tokio::test]
+    async fn explain_case_on_a_disabled_service_is_no_provider() {
+        let svc =
+            CopilotService::from_config_and_clients(&CopilotConfig::default(), Clients::default())
+                .unwrap();
+        assert!(matches!(
+            svc.explain_case(&serde_json::json!({ "incident_id": "bus:1" }))
                 .await,
             Err(CopilotError::NoProvider)
         ));

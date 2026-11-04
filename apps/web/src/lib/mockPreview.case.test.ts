@@ -86,4 +86,43 @@ describe("the demo case", () => {
       event_id: 999999999,
     });
   });
+
+  it("the_demo_felyx_reading_cites_only_ids_the_demo_case_holds", async () => {
+    const id = await demoRefusalId();
+    const incident = `bus:${id}`;
+    const c = await mockInvoke<CaseFile>("case_file", { incident_id: incident });
+    const answer = await mockInvoke<{ text: string; tool_trace: { name: string }[]; proposals: unknown[] }>(
+      "copilot_explain_case",
+      { incident_id: incident },
+    );
+
+    // Read from the case alone: no tool but the case, and nothing proposed.
+    expect(answer.tool_trace.map((t) => t.name)).toEqual(["case_file"]);
+    expect(answer.proposals).toEqual([]);
+
+    // Every id in backticks is one the case holds.
+    const held = new Set<string>([
+      c.incident_id,
+      c.subject,
+      ...(c.claimed_agent ? [c.claimed_agent] : []),
+      ...(c.run_id ? [c.run_id] : []),
+      ...c.facts.map((f) => f.row_id),
+    ]);
+    const cited = [...answer.text.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+    expect(cited.length).toBeGreaterThan(0);
+    for (const token of cited) expect(held.has(token)).toBe(true);
+
+    // It says what is missing, and the key is the subject, not the claim.
+    expect(answer.text).toContain("Missing from the case");
+    expect(answer.text).toContain(`\`${c.subject}\``);
+  });
+
+  it("the_demo_refuses_to_read_an_incident_with_no_event_row", async () => {
+    await expect(mockInvoke("copilot_explain_case", { incident_id: "money:inc-1" })).rejects.toBe(
+      "No case: a money incident has no event row to start from.",
+    );
+    await expect(mockInvoke("copilot_explain_case", { incident_id: "bus:999999999" })).rejects.toBe(
+      "No case: the console's store holds no event row 999999999.",
+    );
+  });
 });

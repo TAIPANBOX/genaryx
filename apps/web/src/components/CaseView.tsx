@@ -5,6 +5,7 @@ import {
   SECTION_TITLE,
   caseIncidentId,
   coverageSentence,
+  explainCase,
   factsOf,
   fetchCase,
   lineSentence,
@@ -13,6 +14,7 @@ import {
   refusalSentence,
   shortDigest,
   type CaseResult,
+  type FelyxReading,
 } from "../lib/caseFile";
 import type { UnifiedIncident } from "../lib/incidents";
 
@@ -145,6 +147,51 @@ function rowPreview(row: unknown): string {
   return text.length > ROW_PREVIEW_CHARS ? `${text.slice(0, ROW_PREVIEW_CHARS)} ...` : text;
 }
 
+/** Where asking Felyx to read the case stands. */
+export type FelyxState = { kind: "idle" } | { kind: "reading" } | FelyxReading;
+
+/**
+ * Felyx's reading of a case. Its text is a model's, not the console's and
+ * not a plane's: shown as plain escaped text, with what the answer could not
+ * support listed under it, and the limits it read under said once.
+ */
+export function FelyxReadingView({ state }: { state: FelyxState }) {
+  switch (state.kind) {
+    case "idle":
+      return null;
+    case "reading":
+      return <span>Felyx is reading the case…</span>;
+    case "refused":
+      return <span>{state.message}</span>;
+    case "no_backend":
+      return <span>No Felyx: there is no box behind this console to ask.</span>;
+    case "answer":
+      return (
+        <div data-felyx="answer" style={{ marginTop: 4 }}>
+          <pre className="mono" style={{ fontSize: 11, whiteSpace: "pre-wrap", margin: 0 }}>
+            {state.text}
+          </pre>
+          {state.unsupported.length > 0 && (
+            <div data-felyx="unsupported" style={{ marginTop: 3 }}>
+              <div className="mono" style={{ fontSize: 9.5, color: "var(--faint)" }}>
+                THE ANSWER COULD NOT SUPPORT
+              </div>
+              {state.unsupported.map((claim) => (
+                <div key={claim} style={{ fontSize: 11 }}>
+                  {claim}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mono" style={{ fontSize: 9.5, color: "var(--faint)", marginTop: 3 }}>
+            Felyx read this case only: it had no tools, and it may cite only ids the case holds.
+            Nothing is applied; a person decides.
+          </div>
+        </div>
+      );
+  }
+}
+
 /**
  * The Case section of Incident 360. Asks for the case of an event-row
  * incident when the card opens; says so, in words, for a source that has no
@@ -153,6 +200,7 @@ function rowPreview(row: unknown): string {
 export function CaseSection({ row }: { row: Pick<UnifiedIncident, "id" | "source"> }) {
   const incidentId = caseIncidentId(row);
   const [result, setResult] = useState<CaseResult | null>(null);
+  const [felyx, setFelyx] = useState<FelyxState>({ kind: "idle" });
 
   useEffect(() => {
     if (!incidentId) return;
@@ -172,6 +220,25 @@ export function CaseSection({ row }: { row: Pick<UnifiedIncident, "id" | "source
       <div style={{ fontSize: 12, lineHeight: 1.45, color: shown === null ? "var(--faint)" : undefined }}>
         {shown === null ? "reading…" : <CaseView result={shown} />}
       </div>
+      {incidentId && (
+        <div style={{ marginTop: 6 }}>
+          <button
+            type="button"
+            className="chip"
+            style={{ cursor: "pointer" }}
+            disabled={felyx.kind === "reading"}
+            onClick={() => {
+              setFelyx({ kind: "reading" });
+              void explainCase(incidentId).then(setFelyx);
+            }}
+          >
+            Ask Felyx to read this case
+          </button>
+          <div style={{ fontSize: 12, lineHeight: 1.45 }}>
+            <FelyxReadingView state={felyx} />
+          </div>
+        </div>
+      )}
       <div className="mono" style={{ fontSize: 9.5, color: "var(--faint)", marginTop: 3, lineHeight: 1.4 }}>
         assembled from the console's store and the planes, with no model; every fact names its plane, its
         row and a digest

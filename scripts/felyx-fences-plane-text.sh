@@ -16,9 +16,12 @@
 # - every `Message::user(` in the copilot crate's source is one of the three
 #   that are allowed: the operator's question, the console's revision request,
 #   a text through `fence_text`;
-# - `FencedResult::console(` appears once, in the propose path, where what is
+# - `FencedResult::console(` appears twice, in the propose path and in the
+#   refusal of a tool call made while a case file is being read, where what is
 #   said back is the console's own;
 # - a read tool's result goes through `FencedResult::plane(`;
+# - a case file reaches the model through `FencedResult::case(`, which keeps the
+#   console's own words plain and fences every string inside a plane's row;
 # - no tool module builds a `Message`.
 #
 # WHAT IT DOES NOT DO
@@ -70,8 +73,14 @@ while IFS= read -r line; do
 done < <(product "$agent" | grep 'Message::user(')
 
 console=$(product "$agent" | grep -c 'FencedResult::console(')
-if [ "$console" -ne 1 ]; then
-	note "$agent: FencedResult::console( appears $console times, and the propose path is the one place it belongs"
+if [ "$console" -ne 2 ]; then
+	note "$agent: FencedResult::console( appears $console times, and the propose path and the refusal of a tool call while a case is read are the two places it belongs"
+fi
+
+# `grep -c`, not `grep -q`: -q leaves early and the pipe's other end is killed,
+# which `pipefail` reads as a failure.
+if [ "$(product "$agent" | grep -c 'FencedResult::case(case)')" -eq 0 ]; then
+	note "$agent: a case file no longer goes through FencedResult::case"
 fi
 
 if ! product "$agent" | grep -q 'FencedResult::plane(&call.name, &value)'; then
@@ -86,4 +95,4 @@ if [ "$fail" -gt 0 ]; then
 	printf '\n%d way(s) a plane text could reach the model unfenced.\n' "$fail"
 	exit 1
 fi
-printf 'felyx-fences-plane-text: %d user messages, one console path, every read fenced\n' "$users"
+printf 'felyx-fences-plane-text: %d user messages, two console paths, a case fenced by position, every read fenced\n' "$users"

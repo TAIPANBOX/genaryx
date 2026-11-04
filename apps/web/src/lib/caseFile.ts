@@ -1,5 +1,6 @@
 import { hasBackend, invokeBackend } from "./transport";
 import type { UnifiedIncident } from "./incidents";
+import type { CopilotAnswer } from "../copilotTypes";
 import type {
   CaseError,
   CaseFact,
@@ -82,6 +83,38 @@ export async function fetchCase(incidentId: string): Promise<CaseResult> {
       kind: "unreachable",
       message: err instanceof Error ? err.message : "the box did not answer the case command",
     };
+  }
+}
+
+/** What asking Felyx to read a case came to. */
+export type FelyxReading =
+  | { kind: "answer"; text: string; unsupported: string[] }
+  /** The command refused, with a sentence: no event row, no provider. */
+  | { kind: "refused"; message: string }
+  | { kind: "no_backend" };
+
+/** Ask Felyx to read the case of one incident. The box assembles the case
+ * and hands it over whole: Felyx has no tools while it reads, and may cite
+ * only ids the case holds. */
+export async function explainCase(incidentId: string): Promise<FelyxReading> {
+  if (!hasBackend()) return { kind: "no_backend" };
+  try {
+    const raw = await invokeBackend<CopilotAnswer & { unsupported_claims?: unknown }>(
+      "copilot_explain_case",
+      { incident_id: incidentId },
+    );
+    if (!raw || typeof raw !== "object" || typeof raw.text !== "string") {
+      return { kind: "refused", message: "Felyx answered with something that is not an answer." };
+    }
+    const unsupported = Array.isArray(raw.unsupported_claims)
+      ? raw.unsupported_claims.filter((c): c is string => typeof c === "string")
+      : [];
+    return { kind: "answer", text: raw.text, unsupported };
+  } catch (err) {
+    // The command rejects with its refusal as a plain sentence.
+    const message =
+      typeof err === "string" ? err : err instanceof Error ? err.message : "Felyx did not answer.";
+    return { kind: "refused", message };
   }
 }
 

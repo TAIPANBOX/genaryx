@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { caseIncidentId, coverage, factsOf, fetchCase, shortDigest } from "./caseFile";
+import { caseIncidentId, coverage, explainCase, factsOf, fetchCase, shortDigest } from "./caseFile";
 import type { CaseFile } from "../caseTypes";
 
 describe("the case reader", () => {
@@ -40,5 +40,9 @@ describe("the case reader", () => {
     expect(factsOf(c, "spend").map((f) => f.row_id)).toEqual(["r"]);
     expect(factsOf(c, "event")).toEqual([]);
     expect(shortDigest("sha256:" + "ab".repeat(32))).toBe("sha256:abababababab");
+  });
+
+  it("with_no_box_to_ask_felyx_says_so_and_invents_no_answer", async () => {
+    await expect(explainCase("bus:1")).resolves.toEqual({ kind: "no_backend" });
   });
 });

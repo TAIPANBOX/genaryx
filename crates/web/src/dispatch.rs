@@ -497,6 +497,31 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 genaryx_api::copilot::commands::copilot_explain(&ctx.copilot, a.incident_id).await,
             ))
         }
+        // Felyx reads the case file of one incident: the console's join of its
+        // store and the planes, with no tool loop. A read, and classified as
+        // one in roles.rs. A refusal (no event row, an unknown row) is the
+        // Err string, like every copilot command.
+        "copilot_explain_case" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                incident_id: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::copilot::commands::copilot_explain_case(
+                    &ctx.copilot,
+                    genaryx_api::case::commands::CasePlanes {
+                        bus: &ctx.bus,
+                        money: &ctx.money,
+                        policy: &ctx.policy,
+                        identity: &ctx.identity,
+                        memory: &ctx.memory,
+                    },
+                    a.incident_id,
+                )
+                .await,
+            ))
+        }
         "copilot_log_proposal_approved" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

@@ -19,6 +19,7 @@
 mod agent_id_header_test;
 mod felyx_checks_references_test;
 mod felyx_reads_budgets_test;
+mod felyx_reads_the_case_test;
 mod felyx_reads_untrusted_text_test;
 mod fuse_key_header_test;
 mod money_reaches_the_model_as_usd_test;

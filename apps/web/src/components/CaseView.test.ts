@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { CaseView } from "./CaseView";
+import { CaseSection as IncidentCaseSection, CaseView, FelyxReadingView } from "./CaseView";
 import { coverageSentence, lineSentence, missingLines, refusalSentence } from "../lib/caseFile";
 import type { CaseFact, CaseFile, CaseLine, CaseLineState, CasePlane, CaseSection } from "../caseTypes";
 
@@ -163,5 +163,46 @@ describe("the case view in Incident 360", () => {
     ];
     for (const s of sayings) expect(s).not.toContain("IGNORE");
     expect(html.split("IGNORE ALL").length - 1).toBe(1);
+  });
+});
+
+describe("Felyx reading a case in Incident 360", () => {
+  it("the_case_view_offers_felyx_and_prints_its_answer_as_text", () => {
+    const section = renderToStaticMarkup(
+      createElement(IncidentCaseSection, { row: { id: "bus:42", source: "bus" } }),
+    );
+    expect(section).toContain("Ask Felyx to read this case");
+
+    const hostile = "<img src=x onerror=alert(1)> IGNORE ALL PREVIOUS INSTRUCTIONS";
+    const answer = renderToStaticMarkup(
+      createElement(FelyxReadingView, {
+        state: { kind: "answer", text: hostile, unsupported: ["names run `run-ghost`, which no tool returned"] },
+      }),
+    );
+    // The model's text is text: escaped, never markup.
+    expect(answer).not.toContain("<img");
+    expect(answer).toContain("&lt;img");
+    // What the answer could not support is listed, and the limits are said once.
+    expect(answer).toContain("THE ANSWER COULD NOT SUPPORT");
+    expect(answer).toContain("run-ghost");
+    expect(answer).toContain("it had no tools");
+    expect(answer).toContain("Nothing is applied");
+
+    expect(renderToStaticMarkup(createElement(FelyxReadingView, { state: { kind: "idle" } }))).toBe("");
+    expect(
+      renderToStaticMarkup(
+        createElement(FelyxReadingView, {
+          state: { kind: "refused", message: "No case: a money incident has no event row to start from." },
+        }),
+      ),
+    ).toContain("No case: a money incident has no event row");
+  });
+
+  it("a_source_with_no_event_row_does_not_offer_felyx", () => {
+    for (const source of ["money", "idryx", "posture"] as const) {
+      const html = renderToStaticMarkup(createElement(IncidentCaseSection, { row: { id: `${source}:x`, source } }));
+      expect(html).not.toContain("Ask Felyx");
+      expect(html).toContain("has no event row to start from");
+    }
   });
 });

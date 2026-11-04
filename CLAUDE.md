@@ -2001,6 +2001,47 @@ an absent invariant.
     `withheld_proposals` or `untrusted_text` yet, so only the note in `text`
     reaches an operator there.)*
 
+39. **Felyx reads the case file the console assembled, not a tool loop, and what
+    it says rests on that case alone.** `@decided 2026-11-04`: slice 2 of the
+    incident-to-proven-fix plan. `Felyx::explain_case` (`crates/copilot/src/agent.rs`)
+    is given one case (invariant 37) and no tool: the request carries no tool
+    spec, and a tool the model asks for anyway is answered with a refusal and
+    never dispatched. The case reaches the model through `FencedResult::case`
+    (`untrusted.rs`), which splits by position and never by field name alone:
+    the console's own words in the case (a line's state, section, plane and
+    reason, a fact's label, trust and digest) stay plain, an id the console took
+    from a plane or from the incident stays plain only while it is one token,
+    the error text of a plane that did not answer is fenced, and every string
+    inside a fact's `row` is fenced like any tool result, so a plane's own
+    `reason` or `label` is data. The case's ids ground the references check as a
+    tool result's do (`incident_id` as the incident, `row_id` and `subject` as
+    ids, `claimed_agent` as an agent; a `key:` subject is also named without its
+    prefix); a draft that names a run, an approval or an incident the case does
+    not hold is sent back once and then withheld whole, and an id found only in
+    plane text grounds nothing. The system prompt for a case says that a plane
+    that did not answer, or was not asked, is not evidence that nothing is there,
+    that a refusal's claimed agent is a claim, and that nothing is applied.
+    `copilot_explain_case` (a viewer read) assembles the case with
+    `case_file` and hands it over; a provider that is not ready, or an incident
+    with no event row, is a sentence before any model call. Incident 360 offers
+    "Ask Felyx to read this case" on an incident with an event row and prints the
+    answer as escaped text.
+    *(test: `crates/copilot/tests/it/felyx_reads_the_case_test.rs` (six, a scripted
+    model against the real loop), `crates/copilot/src/service.rs`'s
+    `explain_case_on_a_disabled_service_is_no_provider`,
+    `crates/api/src/case/commands.rs`'s `a_refusal_describes_itself_in_words`,
+    `crates/web/src/roles.rs`'s `felyx_reading_a_case_is_a_viewer_read`, web:
+    `CaseView.test.ts`, `caseFile.test.ts`, `mockPreview.case.test.ts`. Red first:
+    the test commit of the pull request that added this failed against stubs.
+    Scenarios: `features/felyx-reads-the-case-file.feature`, seven, each bound.
+    Gate: `scripts/felyx-fences-plane-text.sh` now holds that a case reaches the
+    model through `FencedResult::case` and that the console constructor is used
+    in exactly two places (the proposal path and the refusal of a tool call while
+    a case is read); four product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (the tools offered while a case is read, a
+    tool run while a case is read, a row's text left plain, the incident not
+    checked against the case) and one for the gate itself.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1293-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1302-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -439,6 +439,15 @@ box; these frames are not it, and say so here rather than in a footnote.
   refusal is filed under its key, so nothing is asked about the agent it
   claimed. Text from events and memory is shown as data. Read with
   `case_file`, a viewer read; the demo shows one on invented rows.
+- **Felyx reads the case (2026-11-04, invariant 39).** On an incident with an
+  event row, Incident 360 has an "Ask Felyx to read this case" button. Felyx is
+  handed the case file (invariant 37) and no tool: it cannot look anything else
+  up, a tool it asks for is refused, and what it says may cite only ids the case
+  holds. The case reaches it with the console's own words plain and every string
+  a plane wrote fenced as data; a chain that names a run, approval or incident
+  the case does not hold is withheld, and a plane the case says did not answer
+  is a gap the answer must name. It proposes nothing and applies nothing. The
+  demo shows a reading of the demo case.
 - **Refused client keys and PII findings (2026-10-14, invariant 30).** When
   TokenFuse reports a call refused for its client key (an `identity_mismatch`
   with `reason: missing_key` or `unknown_key`), the incident centre reads it
