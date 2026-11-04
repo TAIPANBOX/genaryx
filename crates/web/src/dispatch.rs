@@ -1047,6 +1047,47 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         "policy_enforcement_status" => Ok(reply(
             genaryx_api::policy::commands::policy_enforcement_status(&ctx.policy).await,
         )),
+        // What a candidate budget or step limit would have done to the calls the
+        // gateway recorded, from `tokenfuse backtest`, in both halves. A read,
+        // and classified as one in roles.rs: it applies nothing.
+        "budget_proof" => {
+            // An amount arrives as the text the operator typed or as a JSON
+            // number; either is read as dollars with at most six decimals.
+            #[derive(serde::Deserialize)]
+            #[serde(untagged)]
+            enum Amount {
+                Text(String),
+                Number(serde_json::Number),
+            }
+            impl Amount {
+                fn text(self) -> String {
+                    match self {
+                        Amount::Text(t) => t,
+                        Amount::Number(n) => n.to_string(),
+                    }
+                }
+            }
+            #[derive(serde::Deserialize)]
+            struct A {
+                incident_id: String,
+                per_run_usd: Option<Amount>,
+                per_step_usd: Option<Amount>,
+                max_steps: Option<u32>,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::proof::budget_commands::budget_proof(
+                    genaryx_api::proof::budget_commands::BudgetRequest {
+                        incident_id: a.incident_id,
+                        per_run_usd: a.per_run_usd.map(Amount::text),
+                        per_step_usd: a.per_step_usd.map(Amount::text),
+                        max_steps: a.max_steps,
+                    },
+                    &ctx.bus,
+                )
+                .await,
+            ))
+        }
         // What a candidate policy would have done to the decisions already
         // taken, from `wardryx replay`, in both halves. A read, and classified
         // as one in roles.rs: it applies nothing.

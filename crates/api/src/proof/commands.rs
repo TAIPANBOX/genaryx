@@ -27,6 +27,7 @@ use crate::case::Data;
 use crate::case::commands::{CaseError, event_id_of};
 use genaryx_core::store::Store;
 use serde::Serialize;
+use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -92,6 +93,10 @@ pub enum ProofError {
     NoRun,
     /// The candidate is empty, too large or holds a NUL.
     CandidateRefused { reason: &'static str },
+    /// The incident's run id is not one the proof will put in a query.
+    RunRefused { reason: &'static str },
+    /// The gateway's trace holds no calls of the incident's run.
+    NotInTrace { run: Data },
     /// The binary could not be started.
     Spawn { detail: Data },
     /// Every proof slot is taken. Ask again when one has finished.
@@ -114,7 +119,7 @@ pub struct ProofRequest {
 }
 
 /// The run an incident happened in, from the console's own store.
-fn run_of(bus: &AppState, incident_id: &str) -> Result<String, ProofError> {
+pub(super) fn run_of(bus: &AppState, incident_id: &str) -> Result<String, ProofError> {
     let incident = |e: CaseError| ProofError::Incident {
         reason: e.describe(),
     };
@@ -158,10 +163,10 @@ fn check_candidate(candidate: &str) -> Result<(), ProofError> {
 }
 
 /// A private directory that is removed when it goes out of scope.
-struct Scratch(PathBuf);
+pub(super) struct Scratch(pub(super) PathBuf);
 
 impl Scratch {
-    fn new() -> std::io::Result<Self> {
+    pub(super) fn new() -> std::io::Result<Self> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -195,32 +200,28 @@ fn capped(mut stream: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec
     })
 }
 
-/// What a finished replay left.
-struct Finished {
-    exit: Option<i32>,
-    stdout: String,
-    stderr: String,
+/// What a finished child left.
+pub(super) struct Finished {
+    pub(super) exit: Option<i32>,
+    pub(super) stdout: String,
+    pub(super) stderr: String,
 }
 
-/// Run `wardryx replay` with exactly these arguments, bounded in time and in
-/// output, with no shell and an environment of `PATH` alone.
-fn run_replay(
+/// Run `bin` with exactly these arguments, bounded in time and in output, with no
+/// shell and an environment of `PATH` and the `extra` variables alone. The child
+/// is killed at `deadline`, and `seconds` is what a timeout reports.
+pub(super) fn run_bounded(
     bin: &Path,
-    events: &Path,
-    archive: &Path,
-    candidate: &Path,
-    timeout: Duration,
+    args: &[OsString],
+    extra: &[(&str, &OsStr)],
+    deadline: Instant,
+    seconds: u64,
 ) -> Result<Finished, ProofError> {
     let mut child = Command::new(bin)
-        .arg("replay")
-        .arg("-events")
-        .arg(events)
-        .arg("-archive")
-        .arg(archive)
-        .arg("-policy")
-        .arg(candidate)
+        .args(args)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .envs(extra.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -231,16 +232,13 @@ fn run_replay(
     let stdout = capped(child.stdout.take().expect("stdout was piped"));
     let stderr = capped(child.stderr.take().expect("stderr was piped"));
 
-    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(ProofError::Timeout {
-                    seconds: timeout.as_secs(),
-                });
+                return Err(ProofError::Timeout { seconds });
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => {
@@ -258,6 +256,26 @@ fn run_replay(
         stdout: text(stdout),
         stderr: text(stderr),
     })
+}
+
+/// Run `wardryx replay` with exactly these arguments.
+fn run_replay(
+    bin: &Path,
+    events: &Path,
+    archive: &Path,
+    candidate: &Path,
+    timeout: Duration,
+) -> Result<Finished, ProofError> {
+    let args = [
+        OsString::from("replay"),
+        OsString::from("-events"),
+        OsString::from(events),
+        OsString::from("-archive"),
+        OsString::from(archive),
+        OsString::from("-policy"),
+        OsString::from(candidate),
+    ];
+    run_bounded(bin, &args, &[], Instant::now() + timeout, timeout.as_secs())
 }
 
 /// Prove a candidate policy against the recorded decisions of one incident's

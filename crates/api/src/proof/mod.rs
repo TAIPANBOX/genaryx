@@ -38,6 +38,8 @@
 //! a proof that nothing changes: an unconfigured archive, a missing binary, a
 //! timeout and a report that does not parse are each an error that says so.
 
+pub mod budget;
+pub mod budget_commands;
 pub mod commands;
 pub mod slots;
 
