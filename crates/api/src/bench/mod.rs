@@ -92,8 +92,12 @@ impl Cause {
 
     /// The remedy that follows from the cause, if the console has a proof for one.
     pub fn remedy(self) -> Option<RemedyFor> {
-        None
-}
+        match self {
+            Cause::RetryLoop => Some(RemedyFor::Budget),
+            Cause::DeniedTool => Some(RemedyFor::Policy),
+            Cause::UnknownKey => None,
+        }
+    }
 }
 
 /// What an answer names.
@@ -110,27 +114,41 @@ pub enum Named {
 /// The cause an answer names: the one cause with a sentence that names it, and no
 /// other.
 pub fn named_cause(text: &str) -> Named {
-    let _ = text;
-    Named::Nothing
+    let lower = text.to_lowercase();
+    let sentences: Vec<&str> = lower.split(['.', '\n', ';', '!', '?']).collect();
+    let matched: Vec<Cause> = CAUSES
+        .iter()
+        .copied()
+        .filter(|cause| {
+            cause.groups().iter().any(|group| {
+                sentences
+                    .iter()
+                    .any(|sentence| group.iter().all(|word| sentence.contains(word)))
+            })
+        })
+        .collect();
+    match matched.as_slice() {
+        [] => Named::Nothing,
+        [one] => Named::Cause(*one),
+        _ => Named::Several,
+    }
 }
 
 /// The first word in `packet` that gives `cause` away, if there is one.
 pub fn gives_away(packet: &str, cause: Cause) -> Option<&'static str> {
-    let _ = (packet, cause);
-    None
+    let lower = packet.to_lowercase();
+    cause.giveaways().iter().copied().find(|w| lower.contains(w))
 }
 
 /// The first question: the named cause is the true one.
 pub fn cause_right(named: Named, truth: Cause) -> bool {
-    let _ = (named, truth);
-    true
+    named == Named::Cause(truth)
 }
 
 /// The second question: nothing the answer cites is unsupported, and the chain
 /// was not withheld whole.
 pub fn ids_exist(unsupported: &[String], text: &str) -> bool {
-    let _ = (unsupported, text);
-    true
+    unsupported.is_empty() && !text.starts_with(WITHHELD_PREFIX)
 }
 
 /// How one answer scored on one case.
@@ -157,13 +175,15 @@ pub struct Totals {
 }
 
 pub fn tally(scores: &[CaseScore]) -> Totals {
-    let _ = scores;
     Totals {
-        cases: 0,
-        cause_right: 0,
-        ids_exist: 0,
-        remedy_applicable: 0,
-        remedy_stops: 0,
+        cases: scores.len(),
+        cause_right: scores.iter().filter(|s| s.cause_right).count(),
+        ids_exist: scores.iter().filter(|s| s.ids_exist).count(),
+        remedy_applicable: scores.iter().filter(|s| s.remedy_stops.is_some()).count(),
+        remedy_stops: scores
+            .iter()
+            .filter(|s| s.remedy_stops == Some(true))
+            .count(),
     }
 }
 
@@ -173,8 +193,33 @@ fn mark(pass: bool) -> &'static str {
 
 /// The report, as text: one line per case, the three questions, and the totals.
 pub fn render(scores: &[CaseScore]) -> String {
-    let _ = scores;
-    String::new()
+    let mut out = String::from("case                 truth        named        cause  ids  remedy\n");
+    for s in scores {
+        let named = match s.named {
+            Named::Cause(c) => c.label(),
+            Named::Nothing => "(nothing)",
+            Named::Several => "(several)",
+        };
+        let remedy = match s.remedy_stops {
+            Some(stops) => mark(stops),
+            None => "n/a",
+        };
+        out.push_str(&format!(
+            "{:<20} {:<12} {:<12} {:<6} {:<4} {}\n",
+            s.case,
+            s.truth.label(),
+            named,
+            mark(s.cause_right),
+            mark(s.ids_exist),
+            remedy
+        ));
+    }
+    let t = tally(scores);
+    out.push_str(&format!(
+        "named the cause right: {} of {}; every cited id exists: {} of {}; the remedy stops the replay: {} of {}\n",
+        t.cause_right, t.cases, t.ids_exist, t.cases, t.remedy_stops, t.remedy_applicable
+    ));
+    out
 }
 
 #[cfg(test)]
