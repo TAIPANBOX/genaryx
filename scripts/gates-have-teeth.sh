@@ -881,6 +881,56 @@ run_case "invariant 41: the children inherit the console's environment" fail \
 	"$(py 'edit("crates/api/src/proof/commands.rs", "        .env_clear()\n", "")')" \
 	"the_proof_runs_four_children_in_order_over_the_right_directories_and_removes_the_copy"
 
+# invariant 42: a remedy is typed, checked, proved where a proof exists, and routed
+# to a person; nothing here applies it. Product mutants; the gates are the remedy
+# module's own tests and the integration test over a real store.
+remedy_gate='cargo test -q --no-fail-fast -p genaryx-api --lib remedy::'
+remedy_it_gate='cargo test -q --no-fail-fast -p genaryx-api --test it remedy_check_test'
+
+run_case "invariant 42: an event type is matched by its prefix" fail \
+	"$remedy_gate" \
+	"$(py 'edit("crates/api/src/remedy/mod.rs", "if e.event_type == event_type {", "if event_type.starts_with(e.event_type) {")')" \
+	"an_event_type_is_classified_by_the_table_and_any_other_is_unclassified"
+
+run_case "invariant 42: a type nobody listed is guessed to be a policy incident" fail \
+	"$remedy_gate" \
+	"$(py 'edit("crates/api/src/remedy/mod.rs", "    (IncidentClass::Unclassified, None)\n", "    (IncidentClass::Policy, None)\n")')" \
+	"an_event_type_is_classified_by_the_table_and_any_other_is_unclassified"
+
+run_case "invariant 42: a refused key is given a scenario that rehearses another failure" fail \
+	"$remedy_gate" \
+	"$(py 'edit("crates/api/src/remedy/mod.rs", "entry(\"identity_mismatch\", IncidentClass::Identity, None),", "entry(\"identity_mismatch\", IncidentClass::Identity, Some(RUNAWAY)),")')" \
+	"an_event_type_is_classified_by_the_table_and_any_other_is_unclassified"
+
+run_case "invariant 42: an identity incident is offered a stop of the agent it claimed" fail \
+	"$remedy_gate" \
+	"$(py 'edit("crates/api/src/remedy/mod.rs", "IncidentClass::Identity | IncidentClass::Unclassified => &[],", "IncidentClass::Identity | IncidentClass::Unclassified => &[RemedyKind::StopAgent],")')" \
+	"an_identity_incident_is_offered_no_remedy_and_says_why"
+
+run_case "invariant 42: a stop is routed to the command that lifts a ban" fail \
+	"$remedy_gate" \
+	"$(py 'edit("crates/api/src/remedy/mod.rs", "command: \"agent_stop\",", "command: \"agent_lift\",")')" \
+	"a_stop_or_a_revocation_routes_to_its_ceremony_command_with_its_subject"
+
+run_case "invariant 42: a stop of any text is accepted as a stop of an agent" fail \
+	"$remedy_gate" \
+	"$(py 'edit("crates/api/src/remedy/mod.rs", "if is_agent_id(subject) {", "if true {")')" \
+	"a_remedy_is_checked_before_anything_is_proved_or_routed"
+
+run_case "invariant 42: every remedy is said to fit every incident" fail \
+	"$remedy_it_gate" \
+	"$(py 'edit("crates/api/src/remedy/commands.rs", "let fits_class = offered(class).contains(&request.remedy.kind());", "let fits_class = true;")')" \
+	"an_identity_refusal_is_offered_nothing_and_a_stop_of_its_claimed_agent_does_not_fit"
+
+run_case "invariant 42: a scenario is said to be present without looking" fail \
+	"$remedy_it_gate" \
+	"$(py 'edit("crates/api/src/remedy/commands.rs", "in_scenario_dir: dir.map(|d| d.join(scenario).is_file()),", "in_scenario_dir: Some(true),")')" \
+	"a_spend_incident_is_classified_offered_a_budget_and_a_drill"
+
+run_case "invariant 42: the kinds' own doc comment reworded" pass \
+	"$remedy_gate" \
+	"$(py 'edit("crates/api/src/remedy/mod.rs", "/// The kinds of remedy there are.", "/// The kinds of remedy that there are.")')"
+
 run_case "invariant 41: the candidate's own doc comment reworded" pass \
 	"$proof_gate" \
 	"$(py 'edit("crates/api/src/proof/budget.rs", "/// A candidate budget, in the units the trace keeps.", "/// A candidate budget, in the units that the trace keeps.")')"

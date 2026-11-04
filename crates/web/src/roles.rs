@@ -131,6 +131,9 @@ const COMMANDS: &[Gate] = &[
     // The proof of a candidate budget: `tokenfuse backtest` run over the calls
     // the gateway recorded, read only. It changes no budget and applies nothing.
     gate("budget_proof", Role::Viewer, false),
+    // A typed remedy checked against an incident, read only: it proves where a
+    // proof exists, names a drill and a route, and applies nothing.
+    gate("remedy_check", Role::Viewer, false),
     gate("quality_list_baselines", Role::Viewer, false),
     gate("quality_list_run_summaries", Role::Viewer, false),
     gate("quality_run_scores", Role::Viewer, false),
@@ -367,6 +370,26 @@ mod tests {
     fn proving_a_budget_is_a_viewer_read() {
         assert_eq!(required_role("budget_proof"), Role::Viewer);
         assert!(!requires_ceremony("budget_proof"));
+    }
+
+    #[test]
+    fn checking_a_remedy_is_a_viewer_read() {
+        assert_eq!(required_role("remedy_check"), Role::Viewer);
+        assert!(!requires_ceremony("remedy_check"));
+    }
+
+    /// Where a remedy is routed is a command a person runs through its ceremony,
+    /// and nothing in the remedy module runs it. The names are held here, in the
+    /// crate that has the table, so a route to a command that does not exist, or
+    /// that a viewer could run without a passkey, is a failing test.
+    #[test]
+    fn every_remedy_route_is_a_real_admin_command_that_needs_the_ceremony() {
+        assert!(!genaryx_api::remedy::ROUTED_COMMANDS.is_empty());
+        for command in genaryx_api::remedy::ROUTED_COMMANDS {
+            assert!(gate_of(command).is_some(), "{command} is not a command");
+            assert_eq!(required_role(command), Role::Admin, "{command}");
+            assert!(requires_ceremony(command), "{command}");
+        }
     }
 
     #[test]

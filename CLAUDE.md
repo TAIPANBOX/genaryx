@@ -2177,6 +2177,67 @@ an absent invariant.
     the console container there has no mount of the trace directory and no
     `tokenfuse` binary.
 
+42. **A remedy is a typed value that is checked, proved where a proof exists,
+    and routed to a person, and nothing here applies it.** `@decided
+    2026-11-04`: slice 5 of the incident-to-proven-fix plan. `Remedy`
+    (`crates/api/src/remedy`) is one of four kinds: a policy candidate, a budget
+    or step limit, a stop of an agent, a revocation of a delegation. It is read
+    from one JSON shape that refuses unknown fields (a reason is a person's, said
+    at the ceremony, and is not part of a remedy) and is refused before anything
+    runs unless it is well formed, by the checks the proofs and the commands
+    already hold: the candidate's size and bytes, the budget's amounts and limits,
+    an `agent://` id for a stop, an `agent://` or `user://` id for a revocation.
+    `remedy_check` takes an incident and a remedy and answers: the class the
+    incident's event type gives (`classify`, one fixed table of fourteen types;
+    a type outside it is `unclassified` and offered nothing, a near miss
+    included), the kinds offered for that class, whether the remedy is one of
+    them, the proof, the Mockryx scenario, and the route. The proof is the one the
+    kind has: a policy candidate goes to `policy_proof`, a budget limit to
+    `budget_proof`, with their bounds and the slots they share, and a proof that
+    could not be made is carried as the cause (`Failed`), not dropped. A stop and
+    a revocation are acts on one subject and no recorded history replays one, so
+    their proof is the statement of that (`Unproven`): project rule 5, a remedy
+    with no proof can still be applied and the case says it was unproven. The
+    route (project rule 6) is the existing ceremony command a person runs with
+    the arguments filled in (`agent_stop`, `delegation_revoke`, the reason left
+    for the person), or, for a policy and a limit, the statement that no console
+    command does it and where it is done; the web crate holds that every routed
+    command exists, is admin and needs the ceremony. Nothing in the module calls
+    one. An identity refusal is filed under its key (invariant 19) and is offered
+    no remedy: stopping or revoking the agent it claimed would charge it with an
+    attempt it did not make, and it says so. A Mockryx scenario is a fire drill
+    against the operator's own pre-production gateway, so one is named, with
+    whether this box's scenario directory holds it, and never started. The
+    scenario for each type is the shipped one that rehearses that failure
+    (@measured 2026-11-04, `gh api repos/TAIPANBOX/mockryx/contents/scenarios` at
+    v0.3.1 and the header of each file read): spend and a loop to
+    `runaway-budget.yaml`, a policy denial to `wardryx-denied-tool.yaml`, a hold or
+    an approval to `approval-required.yaml`, personal data to `pii-in-prompt.yaml`,
+    a blocked secret to `dlp-secret-leak.yaml`; a refused key and a quality drift
+    have none, since the nearest scenarios rehearse a forged delegation chain and
+    Verdryx noticing a denied attempt. Viewer read.
+    *(test: `crates/api/src/remedy/tests.rs` (eight, two 200-seed sweeps),
+    `crates/api/tests/it/remedy_check_test.rs` (seven, over a real store),
+    `crates/web/src/roles.rs`'s `checking_a_remedy_is_a_viewer_read` and
+    `every_remedy_route_is_a_real_admin_command_that_needs_the_ceremony`. Red
+    first: the test commit of the pull request that added this failed against
+    stubs. Scenarios:
+    `features/a-remedy-is-typed-checked-and-routed-to-a-person.feature`, nine,
+    each bound. Gate: eight product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (a type matched by its prefix, a type nobody
+    listed guessed, a refused key given a scenario, an identity incident offered a
+    stop, a stop routed to the command that lifts a ban, any text accepted as an
+    agent to stop, every remedy said to fit, a scenario said present without
+    looking).)*
+
+    Where it says nothing: Felyx's propose tools still emit the untyped
+    `ProposedAction`, so a typed remedy is what an operator or the interface
+    names, not yet what the model proposes; the console has no card for a check
+    yet, only the command; the table is of types and the registry of types grows,
+    so a new type is unclassified until someone adds it, which is the safe
+    direction; a policy candidate and a limit are applied outside this console by
+    a person, with nothing here to confirm that they were.
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
