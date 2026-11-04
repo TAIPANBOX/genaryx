@@ -81,7 +81,7 @@ fn numbers_are_written_the_way_ecmascript_writes_them() {
         (1e21, "1e+21"),
         (1.5e300, "1.5e+300"),
         (123456789012345680000.0, "123456789012345680000"),
-        (333333333.33333329, "333333333.3333333"),
+        (333333333.3333333, "333333333.3333333"),
         (1e30, "1e+30"),
         (1e-27, "1e-27"),
         (9007199254740992.0, "9007199254740992"),
@@ -141,7 +141,7 @@ fn random_value(x: &mut u64, depth: u32) -> Value {
     ];
     match pseudo(x) % if depth == 0 { 5 } else { 7 } {
         0 => Value::Null,
-        1 => Value::Bool(pseudo(x) % 2 == 0),
+        1 => Value::Bool(pseudo(x).is_multiple_of(2)),
         2 => json!(pseudo(x) as i64 - (1 << 30)),
         3 => Value::String(
             (0..pseudo(x) % 5)
