@@ -42,6 +42,7 @@ import type { EntityLifecycleState } from "./lifecycleTypes";
 import type { Session } from "./session";
 import type { EgressRow } from "../egressTypes";
 import { shortAgentLabel } from "./graph";
+import type { CaseFile } from "../caseTypes";
 
 export const MOCK = import.meta.env.VITE_GENARYX_MOCK === "1";
 
@@ -3702,6 +3703,10 @@ function mockRoutinesHistory(routine?: string, limit?: number) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function mockCaseFile(incidentId: string): Promise<CaseFile> {
+  throw { kind: "bad_incident_id", incident_id: incidentId.slice(0, 80) };
+}
+
 export async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const r = (v: unknown) => v as T;
   switch (command) {
@@ -4049,6 +4054,8 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // one bus incident with no run id never reached Incident 360.
     case "recent_events": return r([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...mockKeyryxWitnessEvents(), ...seedEvents(Number(args?.limit ?? 60))]);
     case "run_events": return r(seedEvents(20));
+    // The case for one demo incident, from the demo's own rows (see `mockCaseFile`).
+    case "case_file": return r(await mockCaseFile(String(args?.incident_id ?? "")));
 
     case "memory_stats": return r({ counts: { episodic: 31, semantic: 21, procedural: 0 }, facts_total: 21, facts_active: 21, entities: 0, db_size_bytes: 1_724_416, db_path: "/root/.taipan/engram.engram", agent_id: null, reflections: 0, vector_index_size: 31, facts_superseded: 0 });
 

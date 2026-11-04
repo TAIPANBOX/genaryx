@@ -450,6 +450,31 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             let a: A = decode(args)?;
             Ok(ok(genaryx_api::bus::recent_events(a.limit, &ctx.bus)))
         }
+        // The case file for one incident: the console's own store and every
+        // plane that has something about it, joined with no model. A read, and
+        // classified as one in roles.rs. A plane that does not answer is a line
+        // in the case, so the reply is a case even with every plane down; only
+        // an incident with no event row is refused.
+        "case_file" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                incident_id: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::case::commands::case_file(
+                    a.incident_id,
+                    genaryx_api::case::commands::CasePlanes {
+                        bus: &ctx.bus,
+                        money: &ctx.money,
+                        policy: &ctx.policy,
+                        identity: &ctx.identity,
+                        memory: &ctx.memory,
+                    },
+                )
+                .await,
+            ))
+        }
         "copilot_ask" => {
             #[derive(serde::Deserialize)]
             #[allow(non_snake_case)]

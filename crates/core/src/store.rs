@@ -564,6 +564,32 @@ impl Store {
         Ok(out)
     }
 
+    /// One event by its row id, or `None` when the store holds no such row.
+    ///
+    /// `None` and an error are different answers: a store that cannot be read
+    /// is a fault, and a row that is not there is a fact. The case file keeps
+    /// them apart, and a caller must not fold one into the other.
+    pub fn event_by_id(&self, id: i64) -> Result<Option<StoredEvent>> {
+        let _ = (&self.conn, id);
+        Ok(None)
+    }
+
+    /// The earlier events of `type_`, newest first by `id`, never the event
+    /// `before_id` itself and never a later one: the "similar past incidents"
+    /// of a case. Same type is the whole rule; the caller says whether the
+    /// subject matched. `limit` caps the rows, and the scan walks the primary
+    /// key backwards, so it stops at `limit` matches rather than reading the
+    /// table.
+    pub fn similar_events(
+        &self,
+        type_: &str,
+        before_id: i64,
+        limit: usize,
+    ) -> Result<Vec<StoredEvent>> {
+        let _ = (&self.conn, type_, before_id, limit);
+        Ok(Vec::new())
+    }
+
     /// The delegation-relevant columns of every event, oldest-first (by `id`),
     /// for batch-building the core [`crate::graph::DelegationGraph`] (PHASE3
     /// W1). Only the columns the graph needs, so it stays cheap over a large

@@ -15,6 +15,7 @@
 //! other file here reads them.
 
 mod agent_stop_test;
+mod case_file_test;
 mod cloud_stub;
 mod delegation_revoke_test;
 mod gateway_posture_test;
