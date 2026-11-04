@@ -417,14 +417,14 @@ fn the_trace() -> BacktestReport {
 
 #[test]
 fn the_incident_is_stopped_only_when_its_own_run_has_a_call_blocked() {
-    let stopped = judge_budget("r1", &run_budget(), &the_run(), &the_trace(), 35, false)
-        .expect("a proof");
+    let stopped =
+        judge_budget("r1", &run_budget(), &the_run(), &the_trace(), 35, false).expect("a proof");
     assert!(stopped.stops_this_incident);
 
     // The candidate blocks calls elsewhere in the trace and none in this run.
     let untouched = report((1, 0), (35, 0), 5_674, 0);
-    let elsewhere_only = judge_budget("r1", &run_budget(), &untouched, &the_trace(), 35, false)
-        .expect("a proof");
+    let elsewhere_only =
+        judge_budget("r1", &run_budget(), &untouched, &the_trace(), 35, false).expect("a proof");
     assert!(!elsewhere_only.stops_this_incident);
     assert_eq!(elsewhere_only.incident.calls_blocked, 0);
     assert_eq!(elsewhere_only.trace.calls_blocked, 70);
@@ -433,8 +433,8 @@ fn the_incident_is_stopped_only_when_its_own_run_has_a_call_blocked() {
 
 #[test]
 fn the_rest_of_the_trace_is_the_whole_trace_less_the_incident() {
-    let proof = judge_budget("r1", &run_budget(), &the_run(), &the_trace(), 35, false)
-        .expect("a proof");
+    let proof =
+        judge_budget("r1", &run_budget(), &the_run(), &the_trace(), 35, false).expect("a proof");
     assert_eq!(proof.run, Data::bounded("r1"));
     assert_eq!(proof.candidate, run_budget());
     assert_eq!(proof.incident.calls, 35);
@@ -454,8 +454,8 @@ fn the_rest_of_the_trace_is_the_whole_trace_less_the_incident() {
 
 #[test]
 fn a_run_with_calls_at_the_same_step_marks_the_split_approximate() {
-    let tied = judge_budget("r1", &run_budget(), &the_run(), &the_trace(), 35, true)
-        .expect("a proof");
+    let tied =
+        judge_budget("r1", &run_budget(), &the_run(), &the_trace(), 35, true).expect("a proof");
     assert!(!tied.elsewhere_exact);
     // The numbers are still given; only their claim to be exact is withdrawn.
     assert_eq!(tied.elsewhere.runs_affected, 14);
@@ -484,8 +484,14 @@ fn reports_that_cannot_describe_the_same_trace_are_refused() {
         ("a replay of the run with other runs", with_other_runs),
         ("an empty whole trace", empty_trace),
         ("fewer calls in the trace than in the run", fewer_calls),
-        ("fewer blocked calls in the trace than in the run", blocks_less),
-        ("fewer affected runs in the trace than in the run", affects_less),
+        (
+            "fewer blocked calls in the trace than in the run",
+            blocks_less,
+        ),
+        (
+            "fewer affected runs in the trace than in the run",
+            affects_less,
+        ),
     ] {
         assert!(result.is_err(), "{what} was believed");
     }

@@ -62,7 +62,9 @@ fn copy_table(n: u64) -> String {
 }
 
 fn steps_table(n: u64, steps: u64) -> String {
-    format!("+----+-------+\n| n  | steps |\n+----+-------+\n| {n:<2} | {steps:<5} |\n+----+-------+\n")
+    format!(
+        "+----+-------+\n| n  | steps |\n+----+-------+\n| {n:<2} | {steps:<5} |\n+----+-------+\n"
+    )
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -278,7 +280,8 @@ fn the_proof_runs_four_children_in_order_over_the_right_directories_and_removes_
     // 1: the copy of the run, out of the gateway's own trace.
     assert_eq!(made[0].args[0], "sql");
     let statement = &made[0].args[1];
-    let head = "copy (select * from calls where run_id = 'r-incident' order by ts_millis, step) to '";
+    let head =
+        "copy (select * from calls where run_id = 'r-incident' order by ts_millis, step) to '";
     assert!(statement.starts_with(head), "{statement}");
     let scratch = statement
         .strip_prefix(head)
@@ -359,7 +362,13 @@ fn a_candidate_is_handed_over_as_the_amount_the_cli_will_read() {
         },
     );
     let (bus, ids) = bus(&dir);
-    prove_again(&config, &bus, &request(ids[0], Some("0.000249")), TEN_SECONDS).expect("a proof");
+    prove_again(
+        &config,
+        &bus,
+        &request(ids[0], Some("0.000249")),
+        TEN_SECONDS,
+    )
+    .expect("a proof");
 
     let made = calls(&dir);
     assert_eq!(made[2].args[1], "--budget");
@@ -373,8 +382,8 @@ fn a_budget_proof_reports_both_halves_for_an_incident_in_a_real_store() {
     let dir = temp_dir("halves");
     let config = fake_tokenfuse(&dir, &Script::ok());
     let (bus, ids) = bus(&dir);
-    let proof = prove_again(&config, &bus, &request(ids[0], Some("0.002")), TEN_SECONDS)
-        .expect("a proof");
+    let proof =
+        prove_again(&config, &bus, &request(ids[0], Some("0.002")), TEN_SECONDS).expect("a proof");
 
     assert_eq!(proof.run, Data::bounded("r-incident"));
     assert!(proof.stops_this_incident);
@@ -396,18 +405,13 @@ fn a_candidate_that_blocks_nothing_in_the_run_but_something_elsewhere_stops_noth
     let config = fake_tokenfuse(
         &dir,
         &Script {
-            alone: report_text(
-                LIMIT,
-                (1, 0),
-                (35, 0),
-                ("0.005674", "0.000000", "0.005674"),
-            ),
+            alone: report_text(LIMIT, (1, 0), (35, 0), ("0.005674", "0.000000", "0.005674")),
             ..Script::ok()
         },
     );
     let (bus, ids) = bus(&dir);
-    let proof = prove_again(&config, &bus, &request(ids[0], Some("0.002")), TEN_SECONDS)
-        .expect("a proof");
+    let proof =
+        prove_again(&config, &bus, &request(ids[0], Some("0.002")), TEN_SECONDS).expect("a proof");
     assert!(!proof.stops_this_incident);
     assert_eq!(proof.incident.calls_blocked, 0);
     assert_eq!(proof.trace.calls_blocked, 70);
@@ -424,8 +428,8 @@ fn calls_at_the_same_step_make_the_split_approximate() {
         },
     );
     let (bus, ids) = bus(&dir);
-    let proof = prove_again(&config, &bus, &request(ids[0], Some("0.002")), TEN_SECONDS)
-        .expect("a proof");
+    let proof =
+        prove_again(&config, &bus, &request(ids[0], Some("0.002")), TEN_SECONDS).expect("a proof");
     assert!(!proof.elsewhere_exact);
     assert_eq!(proof.elsewhere.runs_affected, 14);
 }
@@ -478,7 +482,12 @@ fn reports_that_disagree_with_each_other_are_refused() {
         (
             "a replay of another number of calls than were copied",
             Script {
-                alone: report_text(LIMIT, (1, 1), (36, 18), ("0.005674", "0.003810", "0.001864")),
+                alone: report_text(
+                    LIMIT,
+                    (1, 1),
+                    (36, 18),
+                    ("0.005674", "0.003810", "0.001864"),
+                ),
                 ..Script::ok()
             },
         ),
@@ -586,7 +595,10 @@ fn a_candidate_that_sets_no_limit_or_a_bad_amount_is_refused_before_anything_run
             "{bad:?}: {result:?}"
         );
     }
-    assert!(calls(&dir).is_empty(), "a refused candidate started a child");
+    assert!(
+        calls(&dir).is_empty(),
+        "a refused candidate started a child"
+    );
 }
 
 #[test]

@@ -183,8 +183,8 @@ pub fn prove_budget_in(
     let part_text = part.to_str().ok_or(ProofError::RunRefused {
         reason: "the scratch path is not text",
     })?;
-    let statement = copy_statement(&run, part_text)
-        .map_err(|reason| ProofError::RunRefused { reason })?;
+    let statement =
+        copy_statement(&run, part_text).map_err(|reason| ProofError::RunRefused { reason })?;
 
     let copied = tokenfuse(
         config,

@@ -2168,9 +2168,14 @@ an absent invariant.
     run, the budget per call and the step limit and no rule that needs more
     than the recorded cost and step of a call; the gateway keeps its own
     budgets and these are not read; a trace the gateway has rotated away holds
-    no run to prove against; and the console image carries `tokenfuse` and
-    mounts the trace read only in `stack-k8s` and `stack-single`'s own
-    repositories, not here.
+    no run to prove against; and neither the `tokenfuse` binary in the console
+    image nor a read-only mount of the gateway's trace directory is arranged yet
+    in `stack-k8s` or `stack-single` (their own repositories, their own
+    invariants). @measured 2026-11-04 on the forge lab, read only: the gateway's
+    trace files are `-rw-r--r-- 20010:10001` in a `drwxrwxr-x` directory, so the
+    console's uid could read them, unlike the policy archive of invariant 40;
+    the console container there has no mount of the trace directory and no
+    `tokenfuse` binary.
 
 ## Decisions that have no gate yet
 

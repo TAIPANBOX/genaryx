@@ -333,7 +333,10 @@ fn money(text: &str) -> Option<i64> {
 fn saved_amount(text: &str) -> Option<i64> {
     let (amount, rest) = text.split_once(" (")?;
     let percent = rest.strip_suffix("%)")?;
-    if percent.is_empty() || !percent.bytes().all(|b| b.is_ascii_digit() || b == b'.' || b == b'-')
+    if percent.is_empty()
+        || !percent
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b'.' || b == b'-')
     {
         return None;
     }
