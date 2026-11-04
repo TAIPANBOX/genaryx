@@ -20,6 +20,7 @@
 //! A missing input is an answer that names it ([`ProofError::NotConfigured`]),
 //! never a proof that nothing changes.
 
+use super::slots::{MAX_CONCURRENT_PROOFS, Slots};
 use super::{ParseError, PolicyProof, ReplayReport, judge, parse_report};
 use crate::bus::AppState;
 use crate::case::Data;
@@ -29,6 +30,7 @@ use serde::Serialize;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 /// The most candidate text one proof takes.
@@ -42,6 +44,11 @@ pub const OUTPUT_CAP_BYTES: u64 = 1024 * 1024;
 
 /// The events file wardryx records its decisions in, under the bus directory.
 pub const WARDRYX_EVENTS_FILE: &str = "wardryx.ndjson";
+
+/// The slots every proof in this process shares. A viewer may ask for a proof,
+/// each one runs a child for up to [`REPLAY_TIMEOUT`], so how many run at once is
+/// bounded here and a busy slot is [`ProofError::Busy`].
+pub static PROOF_SLOTS: LazyLock<Slots> = LazyLock::new(|| Slots::new(MAX_CONCURRENT_PROOFS));
 
 /// Where the replay runs from.
 #[derive(Debug, Clone)]
@@ -87,6 +94,8 @@ pub enum ProofError {
     CandidateRefused { reason: &'static str },
     /// The binary could not be started.
     Spawn { detail: Data },
+    /// Every proof slot is taken. Ask again when one has finished.
+    Busy { limit: usize },
     /// The replay did not finish in time.
     Timeout { seconds: u64 },
     /// The replay ended without a report, or with an error of its own.
@@ -252,9 +261,23 @@ fn run_replay(
 }
 
 /// Prove a candidate policy against the recorded decisions of one incident's
-/// run, with an explicit configuration. [`policy_proof`] is this with the
-/// box's own.
+/// run, with an explicit configuration and no bound on how many run at once.
+/// [`prove_in`] is this under a set of slots; [`policy_proof`] is that with the
+/// process's own.
 pub fn prove(
+    config: &ProofConfig,
+    bus: &AppState,
+    request: &ProofRequest,
+    timeout: Duration,
+) -> Result<PolicyProof, ProofError> {
+    prove_in(&Slots::new(usize::MAX), config, bus, request, timeout)
+}
+
+/// [`prove`] under `slots`: the request is checked first, so a request that
+/// would be refused anyway takes no slot, and then one slot is held until the
+/// replay has ended. No free slot is [`ProofError::Busy`], at once.
+pub fn prove_in(
+    slots: &Slots,
     config: &ProofConfig,
     bus: &AppState,
     request: &ProofRequest,
@@ -268,6 +291,8 @@ pub fn prove(
         missing: "the directory wardryx records its decisions in",
     })?;
     let run = run_of(bus, &request.incident_id)?;
+
+    let _slot = slots.try_acquire().map_err(|busy| ProofError::Busy { limit: busy.limit })?;
 
     let scratch = Scratch::new().map_err(|e| ProofError::Spawn {
         detail: Data::bounded(&e.to_string()),
@@ -296,16 +321,34 @@ pub async fn policy_proof(
     request: ProofRequest,
     bus: &AppState,
 ) -> Result<PolicyProof, ProofError> {
-    let config = ProofConfig::from_env(bus);
+    policy_proof_in(
+        &PROOF_SLOTS,
+        ProofConfig::from_env(bus),
+        request,
+        bus,
+        REPLAY_TIMEOUT,
+    )
+    .await
+}
+
+/// [`policy_proof`] with its slots, configuration and deadline given.
+pub async fn policy_proof_in(
+    slots: &Slots,
+    config: ProofConfig,
+    request: ProofRequest,
+    bus: &AppState,
+    timeout: Duration,
+) -> Result<PolicyProof, ProofError> {
     let bus_dir = (bus.events_dir.clone(), bus.source_events_dir.clone());
     let mode = bus.mode.clone();
+    let slots = slots.clone();
     tokio::task::spawn_blocking(move || {
         let bus = AppState {
             events_dir: bus_dir.0,
             source_events_dir: bus_dir.1,
             mode,
         };
-        prove(&config, &bus, &request, REPLAY_TIMEOUT)
+        prove_in(&slots, &config, &bus, &request, timeout)
     })
     .await
     .map_err(|e| ProofError::Spawn {

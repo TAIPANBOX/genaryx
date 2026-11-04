@@ -2064,19 +2064,25 @@ an absent invariant.
     counterfactual; the text of every row is data. A missing archive, a missing
     event file, an empty, oversized or NUL-bearing candidate, an incident with no
     run, a timeout, a failed replay and a report that does not hold together are
-    each an error that names the cause. Nothing is applied. A viewer read.
+    each an error that names the cause. At most two proofs run at once in the
+    console process (`proof::slots`, shared by every kind of proof): a request that
+    would be refused anyway takes no slot, and when every slot is taken the answer
+    is `busy`, naming the limit, at once; the slot is a guard that is given back on
+    every path out. Nothing is applied. A viewer read.
     `WARDRYX_POLICY_ARCHIVE` is wardryx's own name for the archive, declared in
     `components.json`; the console image carries the `wardryx` binary and mounts
     the archive read only, which `stack-k8s` and `stack-single` do (their own
     repositories, their own invariants).
     *(test: `crates/api/src/proof/tests.rs` (nine, one a 200-seed hostile sweep),
-    `crates/api/tests/it/policy_proof_test.rs` (ten, a stand-in `wardryx` that
+    `crates/api/src/proof/slots.rs` (four, one a 200-thread bound),
+    `crates/api/tests/it/policy_proof_test.rs` (eleven, a stand-in `wardryx` that
     records its arguments, its environment and its candidate),
     `crates/web/src/roles.rs`'s `proving_a_policy_is_a_viewer_read`. Red first: the
     test commit of the pull request that added this failed against stubs.
     Scenarios: `features/a-candidate-policy-is-proved-before-it-is-applied.feature`,
-    nine, each bound. Gate: nine product mutants and one non-fault in
-    `scripts/gates-have-teeth.sh` (another run's change counted as the incident's,
+    ten, each bound. Gate: eleven product mutants and one non-fault in
+    `scripts/gates-have-teeth.sh` (a slot limit ignored, a slot never given back,
+    a busy slot run anyway, another run's change counted as the incident's,
     a loosening counted as stopping it, a diverged replay trusted, a forged row
     believed, outcomes not summed, the child's environment inherited, the candidate
     left behind, the deadline not enforced, an empty candidate run).)*

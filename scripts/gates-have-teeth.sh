@@ -780,6 +780,21 @@ run_case "invariant 40: an empty candidate is run" fail \
 	"$(py 'edit("crates/api/src/proof/commands.rs", "if candidate.trim().is_empty() {", "if false {")')" \
 	"a_candidate_that_cannot_be_given_is_refused_before_anything_runs"
 
+run_case "invariant 40: the limit on proofs in flight is ignored" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/slots.rs", "(n < limit).then_some(n + 1)", "Some(n + 1)")')" \
+	"slots_hand_out_exactly_their_limit"
+
+run_case "invariant 40: a slot is never given back" fail \
+	"$proof_gate" \
+	"$(py 'edit("crates/api/src/proof/slots.rs", "self.in_use.fetch_sub(1, Ordering::AcqRel);", "let _ = &self.in_use;")')" \
+	"a_released_slot_is_taken_again"
+
+run_case "invariant 40: a busy slot runs its proof anyway" fail \
+	"$proof_it_gate" \
+	"$(py 'edit("crates/api/src/proof/commands.rs", "let _slot = slots.try_acquire().map_err(|busy| ProofError::Busy { limit: busy.limit })?;", "let _slot = slots.try_acquire().ok();")')" \
+	"a_busy_slot_is_an_answer_not_a_queue"
+
 run_case "invariant 40: the outcomes' own doc comment reworded" pass \
 	"$proof_gate" \
 	"$(py 'edit("crates/api/src/proof/mod.rs", "/// The seven rows `wardryx replay` counts.", "/// The seven rows that `wardryx replay` counts.")')"

@@ -8,8 +8,9 @@
 
 use genaryx_api::bus::{AppState, BusMode};
 use genaryx_api::proof::commands::{
-    CANDIDATE_MAX_BYTES, ProofConfig, ProofError, ProofRequest, prove,
+    CANDIDATE_MAX_BYTES, ProofConfig, ProofError, ProofRequest, policy_proof_in, prove,
 };
+use genaryx_api::proof::slots::Slots;
 use genaryx_core::store::Store;
 use genaryx_core::{AgentEvent, ConsoleEvent, Provenance, SchemaVersion};
 use serde_json::json;
@@ -456,4 +457,84 @@ fn a_missing_binary_is_a_spawn_error() {
         ),
         Err(ProofError::Spawn { .. })
     ));
+}
+
+fn live_bus(dir: &Path) -> AppState {
+    AppState {
+        events_dir: Some(dir.to_path_buf()),
+        source_events_dir: Some(dir.to_path_buf()),
+        mode: BusMode::Live {
+            env: "test".to_string(),
+            dir: dir.display().to_string(),
+        },
+    }
+}
+
+/// A viewer may ask for a proof, and each one runs a child. When every slot is
+/// taken the next ask is answered at once with a busy error, not queued and not
+/// started; and when the slot comes back the next ask is served.
+#[tokio::test]
+async fn a_busy_slot_is_an_answer_not_a_queue() {
+    let slow_dir = temp_dir("busy-slow");
+    let slow_bin = fake_wardryx(&slow_dir, REPORT, "", 0, 3);
+    let (bus, ids) = bus(&slow_dir);
+    let slots = Slots::new(1);
+
+    let first = {
+        let (slots, config, bus) = (
+            slots.clone(),
+            config(&slow_dir, slow_bin),
+            live_bus(&slow_dir),
+        );
+        let request = request(ids[0], CANDIDATE);
+        tokio::spawn(async move {
+            policy_proof_in(&slots, config, request, &bus, Duration::from_secs(20)).await
+        })
+    };
+    // Wait for the first proof to hold the only slot.
+    for _ in 0..250 {
+        if slots.in_use() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(slots.in_use(), 1, "the first proof never took its slot");
+
+    // A second ask while the slot is taken: an answer at once, nothing started.
+    let fast_dir = temp_dir("busy-fast");
+    let fast_bin = fake_wardryx(&fast_dir, REPORT, "", 0, 0);
+    let asked = std::time::Instant::now();
+    let second = policy_proof_in(
+        &slots,
+        config(&slow_dir, fast_bin.clone()),
+        request(ids[0], CANDIDATE),
+        &bus,
+        Duration::from_secs(20),
+    )
+    .await;
+    assert_eq!(second.err(), Some(ProofError::Busy { limit: 1 }));
+    assert!(
+        asked.elapsed() < Duration::from_secs(2),
+        "a busy slot waited instead of answering"
+    );
+    assert!(
+        !fast_dir.join("args.txt").exists(),
+        "a refused proof started its child"
+    );
+
+    // The first finishes, gives the slot back, and the next ask is served.
+    first
+        .await
+        .expect("the first task")
+        .expect("the first proof");
+    assert_eq!(slots.in_use(), 0, "the slot was not given back");
+    let third = policy_proof_in(
+        &slots,
+        config(&slow_dir, fast_bin),
+        request(ids[0], CANDIDATE),
+        &bus,
+        Duration::from_secs(20),
+    )
+    .await;
+    assert!(third.is_ok(), "{third:?}");
 }
