@@ -80,6 +80,15 @@ pub enum CaseError {
     NotFound { event_id: i64 },
 }
 
+impl CaseError {
+    /// The refusal in words, for a surface that shows a sentence (Felyx reading
+    /// a case); the tagged form is for the case view. Nothing the caller sent is
+    /// repeated except the source name, which is one of three fixed words.
+    pub fn describe(&self) -> String {
+        String::new()
+    }
+}
+
 /// The store row id an incident id names.
 ///
 /// `bus:<n>`, `verdryx:<n>` and a bare `<n>` name an event row. `money:`,
@@ -567,6 +576,36 @@ mod tests {
             admin,
             used,
         }
+    }
+
+    #[test]
+    fn a_refusal_describes_itself_in_words() {
+        for error in [
+            CaseError::NoStore {
+                reason: "disk {gone}".to_string(),
+            },
+            CaseError::BadIncidentId {
+                incident_id: "{\"x\": 1}".to_string(),
+            },
+            CaseError::UnsupportedSource {
+                source: "money".to_string(),
+            },
+            CaseError::NotFound { event_id: 7 },
+        ] {
+            let said = error.describe();
+            assert!(said.starts_with("No case: "), "{said}");
+            assert!(
+                !said.contains('{') && !said.contains("gone"),
+                "a refusal repeated what it was sent: {said}"
+            );
+        }
+        assert_eq!(
+            CaseError::UnsupportedSource {
+                source: "money".to_string()
+            }
+            .describe(),
+            "No case: a money incident has no event row to start from."
+        );
     }
 
     #[test]

@@ -513,7 +513,12 @@ run_case "felyx-fences-plane-text: the event of a summary goes out bare" fail \
 run_case "felyx-fences-plane-text: a read tool's result goes through the console's constructor" fail \
 	"$fence_gate" \
 	"$(py 'edit("crates/copilot/src/agent.rs", "let fenced = FencedResult::plane(&call.name, &value);", "let fenced = FencedResult::console(&value);")')" \
-	"FencedResult::console( appears 2 times"
+	"FencedResult::console( appears 3 times"
+
+run_case "felyx-fences-plane-text: a case file goes to the model through the plain constructor" fail \
+	"$fence_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "let fenced = FencedResult::case(case);", "let fenced = FencedResult::plane(\"case_file\", case);")')" \
+	"a case file no longer goes through FencedResult::case"
 
 run_case "felyx-fences-plane-text: the agent file is gone" fail \
 	"$fence_gate" \
@@ -694,6 +699,34 @@ run_case "invariant 37: the approvals of other runs are listed as this run's dec
 run_case "invariant 37: the error-text bound's own comment reworded" pass \
 	"$case_gate" \
 	"$(py 'edit("crates/api/src/case/mod.rs", "/// The longest piece of a plane'"'"'s own error text a case keeps.", "/// The largest piece of a plane'"'"'s own error text a case keeps.")')"
+
+# invariant 39: Felyx reads one case file instead of running a tool loop. Product
+# mutants; the gate is the scripted-model tests whose file name carries the case.
+case_read_gate='cargo test -q --no-fail-fast -p genaryx-copilot --test it felyx_reads_the_case_test'
+
+run_case "invariant 39: the model is offered the tools while it reads a case" fail \
+	"$case_read_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "        let tools = if case.is_some() {\n            Vec::new()\n        } else {\n            self.registry.specs()\n        };", "        let tools = self.registry.specs();")')" \
+	"felyx_reads_the_case_it_is_given_and_asks_for_no_tool"
+
+run_case "invariant 39: a tool the model asks for is run while it reads a case" fail \
+	"$case_read_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "                if case.is_some() {\n                    let refusal =", "                if false {\n                    let refusal =")')" \
+	"a_model_that_asks_for_a_tool_while_reading_a_case_gets_none"
+
+run_case "invariant 39: a plane's row text reaches the model plain" fail \
+	"$case_read_gate" \
+	"$(py 'edit("crates/copilot/src/untrusted.rs", "\"row\" => self.value(v, \"row\", &subjects),", "\"row\" => v.clone(),")')" \
+	"plane_text_in_a_case_row_reaches_the_model_fenced_and_grounds_nothing"
+
+run_case "invariant 39: the incident a case is about is not checked against the case" fail \
+	"$case_read_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "            incident: Some(&incident),\n        };\n        let read = CaseRead", "            incident: None,\n        };\n        let read = CaseRead")')" \
+	"a_case_with_no_incident_id_gives_no_chain"
+
+run_case "invariant 39: the case prompt's own doc comment reworded" pass \
+	"$case_read_gate" \
+	"$(py 'edit("crates/copilot/src/agent.rs", "/// The system prompt for reading one case file.", "/// The system prompt used for reading one case file.")')"
 
 echo
 echo "=== and the one this estate learned the hard way ==="

@@ -83,6 +83,8 @@ const COMMANDS: &[Gate] = &[
     gate("case_file", Role::Viewer, false),
     gate("copilot_ask", Role::Viewer, false),
     gate("copilot_explain", Role::Viewer, false),
+    // Felyx reading the case file of one incident: no tool loop, no proposal.
+    gate("copilot_explain_case", Role::Viewer, false),
     gate("copilot_status", Role::Viewer, false),
     gate("credentials_gateway_retained_runs", Role::Viewer, false),
     gate("credentials_keys", Role::Viewer, false),
@@ -335,6 +337,18 @@ mod tests {
 
     /// The case file only reads: the same floor as every other read, and no
     /// ceremony, since nothing it does changes a plane.
+    /// Felyx reading a case is an explanation: the same floor as
+    /// `copilot_explain`, no ceremony, and it proposes nothing.
+    #[test]
+    fn felyx_reading_a_case_is_a_viewer_read() {
+        assert_eq!(required_role("copilot_explain_case"), Role::Viewer);
+        assert_eq!(
+            required_role("copilot_explain_case"),
+            required_role("copilot_explain")
+        );
+        assert!(!requires_ceremony("copilot_explain_case"));
+    }
+
     #[test]
     fn reading_a_case_is_a_viewer_read() {
         assert_eq!(required_role("case_file"), Role::Viewer);

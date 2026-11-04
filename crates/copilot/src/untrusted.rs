@@ -31,6 +31,10 @@ use serde_json::{Map, Value};
 
 use crate::action::ActionKind;
 
+/// The name a case file goes by in the evidence: it is read like a tool's
+/// result, and the references check knows its fields by it.
+pub(crate) const CASE_TOOL: &str = "case_file";
+
 /// The fence's element name. The tag is written with a literal `<`, which
 /// [`escape`] never lets through from the text inside.
 pub(crate) const FENCE_TAG: &str = "untrusted-data";
@@ -136,6 +140,28 @@ impl FencedResult {
         }
     }
 
+    /// The case file the console assembled for an incident, as the model reads
+    /// it. The console's own words in it (a line's reason, a fact's label, the
+    /// state, the plane, the section, the digest) stay plain; an id the console
+    /// took from a plane stays plain only while it is one token; and every
+    /// string inside a fact's `row` is fenced like any tool result, whatever the
+    /// plane named the field. The split is by position in the case, never by
+    /// field name alone: a plane's row may carry a `reason` or a `label` of its
+    /// own, and that is plane text.
+    pub(crate) fn case(case: &Value) -> Self {
+        let mut walk = Walk {
+            tool: CASE_TOOL,
+            spans: Vec::new(),
+            fields: Vec::new(),
+        };
+        let shaped = walk.case(case);
+        Self {
+            content: shaped.to_string(),
+            spans: walk.spans,
+            fields: walk.fields,
+        }
+    }
+
     /// What the console itself says back to the model: a queued proposal, or
     /// the reason one was withheld. Never a plane's data.
     pub(crate) fn console(value: &Value) -> Self {
@@ -204,6 +230,107 @@ impl Walk<'_> {
             Value::String(s) => Value::String(self.fence(key, s, subjects)),
             other => other.clone(),
         }
+    }
+
+    /// An id the console took from a plane or from the incident: plain only
+    /// while it is one token, and then a structured field the references check
+    /// may ground on; anything longer is text and is fenced.
+    fn id_field(&mut self, key: &str, value: &Value, subjects: &[String]) -> Value {
+        match value {
+            Value::String(s) if s.is_empty() => value.clone(),
+            Value::String(s) if token_shaped(s) => {
+                self.fields.push((key.to_string(), s.clone()));
+                value.clone()
+            }
+            Value::String(s) => Value::String(self.fence(key, s, subjects)),
+            other => other.clone(),
+        }
+    }
+
+    fn case(&mut self, case: &Value) -> Value {
+        let Value::Object(map) = case else {
+            return self.value(case, "value", &[]);
+        };
+        let mut out = Map::with_capacity(map.len());
+        for (key, v) in map {
+            let shaped = match key.as_str() {
+                "incident_id" | "subject" | "claimed_agent" | "run_id" => {
+                    self.id_field(key, v, &[])
+                }
+                "digest" => v.clone(),
+                "lines" => self.case_each(v, "lines", Self::case_line),
+                "facts" => self.case_each(v, "facts", Self::case_fact),
+                _ => self.value(v, key, &[]),
+            };
+            out.insert(key.clone(), shaped);
+        }
+        Value::Object(out)
+    }
+
+    fn case_each(&mut self, items: &Value, key: &str, one: fn(&mut Self, &Value) -> Value) -> Value {
+        match items {
+            Value::Array(list) => Value::Array(list.iter().map(|item| one(self, item)).collect()),
+            other => self.value(other, key, &[]),
+        }
+    }
+
+    fn case_line(&mut self, line: &Value) -> Value {
+        let Value::Object(map) = line else {
+            return self.value(line, "line", &[]);
+        };
+        let mut out = Map::with_capacity(map.len());
+        for (key, v) in map {
+            let shaped = match key.as_str() {
+                "section" | "plane" | "state" | "facts" | "reason" => v.clone(),
+                "upstream" => self.case_upstream(v),
+                _ => self.value(v, key, &[]),
+            };
+            out.insert(key.clone(), shaped);
+        }
+        Value::Object(out)
+    }
+
+    /// A plane's own error text: data, whatever the case calls it.
+    fn case_upstream(&mut self, upstream: &Value) -> Value {
+        let Value::Object(map) = upstream else {
+            return self.value(upstream, "upstream", &[]);
+        };
+        let mut out = Map::with_capacity(map.len());
+        for (key, v) in map {
+            let shaped = match (key.as_str(), v) {
+                ("trust", _) => v.clone(),
+                ("text", Value::String(s)) if !s.is_empty() => {
+                    Value::String(self.fence("upstream", s, &[]))
+                }
+                _ => self.value(v, key, &[]),
+            };
+            out.insert(key.clone(), shaped);
+        }
+        Value::Object(out)
+    }
+
+    fn case_fact(&mut self, fact: &Value) -> Value {
+        let Value::Object(map) = fact else {
+            return self.value(fact, "fact", &[]);
+        };
+        let subjects: Vec<String> = map
+            .get("row_id")
+            .and_then(Value::as_str)
+            .filter(|s| token_shaped(s))
+            .map(str::to_string)
+            .into_iter()
+            .collect();
+        let mut out = Map::with_capacity(map.len());
+        for (key, v) in map {
+            let shaped = match key.as_str() {
+                "section" | "plane" | "label" | "trust" | "digest" => v.clone(),
+                "row_id" => self.id_field(key, v, &[]),
+                "row" => self.value(v, "row", &subjects),
+                _ => self.value(v, key, &subjects),
+            };
+            out.insert(key.clone(), shaped);
+        }
+        Value::Object(out)
     }
 
     fn fence(&mut self, field: &str, text: &str, subjects: &[String]) -> String {

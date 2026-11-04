@@ -95,6 +95,10 @@ fn kind_of(tool: &str, key: &str) -> Kind {
         ("id", "identities") => Kind::Agent,
         ("id", "memory_recall" | "memory_why") => Kind::Memory,
         ("id", "quality_latest") => Kind::Run,
+        // The case file's own fields (`crate::untrusted::FencedResult::case`).
+        ("incident_id", _) => Kind::Incident,
+        ("claimed_agent", _) => Kind::Agent,
+        ("row_id" | "subject", _) => Kind::Other,
         _ => Kind::Other,
     }
 }
@@ -170,6 +174,12 @@ impl Evidence {
             return;
         }
         self.ids.entry(stem.to_string()).or_default().insert(kind);
+        // A key a refusal is filed under is named without its prefix.
+        if let Some(key) = stem.strip_prefix("key:")
+            && !key.is_empty()
+        {
+            self.ids.entry(key.to_string()).or_default().insert(kind);
+        }
         // An agent is named by the last part of its id ("flint").
         if let Some(short) = stem.rsplit('/').next()
             && short != stem

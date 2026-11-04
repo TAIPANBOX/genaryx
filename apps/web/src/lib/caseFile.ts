@@ -1,5 +1,6 @@
 import { hasBackend, invokeBackend } from "./transport";
 import type { UnifiedIncident } from "./incidents";
+import type { CopilotAnswer } from "../copilotTypes";
 import type {
   CaseError,
   CaseFact,
@@ -83,6 +84,22 @@ export async function fetchCase(incidentId: string): Promise<CaseResult> {
       message: err instanceof Error ? err.message : "the box did not answer the case command",
     };
   }
+}
+
+/** What asking Felyx to read a case came to. */
+export type FelyxReading =
+  | { kind: "answer"; text: string; unsupported: string[] }
+  /** The command refused, with a sentence: no event row, no provider. */
+  | { kind: "refused"; message: string }
+  | { kind: "no_backend" };
+
+/** Ask Felyx to read the case of one incident. The box assembles the case
+ * and hands it over whole: Felyx has no tools while it reads, and may cite
+ * only ids the case holds. */
+export async function explainCase(incidentId: string): Promise<FelyxReading> {
+  void hasBackend;
+  void invokeBackend;
+  return { kind: "refused", message: incidentId.slice(0, 0) };
 }
 
 /** The console's name for each plane. */

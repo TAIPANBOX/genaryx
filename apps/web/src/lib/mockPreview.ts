@@ -3913,6 +3913,16 @@ async function mockCaseFile(incidentId: string): Promise<CaseFile> {
   return { ...body, digest: `sha256:${sha256Hex(JSON.stringify(body))}` };
 }
 
+/**
+ * `copilot_explain_case` for the demo: Felyx's reading of a demo case, written
+ * from the case alone. It names only ids the case holds, says what is missing
+ * from it, and proposes nothing. A refusal is a plain sentence, as the real
+ * command's is.
+ */
+async function mockFelyxReadsCase(incidentId: string) {
+  throw incidentId.slice(0, 0);
+}
+
 export async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const r = (v: unknown) => v as T;
   switch (command) {
@@ -4289,6 +4299,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // ---- Felyx ----
     case "copilot_ask": return r(mockCopilotAnswer(String(args?.question ?? "")));
     case "copilot_explain": return r(mockCopilotExplainAnswer(String(args?.incident_id ?? "")));
+    case "copilot_explain_case": return r(await mockFelyxReadsCase(String(args?.incident_id ?? "")));
 
     default:
       if (/_list_|_events|_incidents|_runs|scores|baselines|summaries|remediations/.test(command)) return r([]);

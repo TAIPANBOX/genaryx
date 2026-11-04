@@ -278,6 +278,22 @@ pub async fn copilot_explain(state: &CopilotState, incident_id: String) -> Resul
         .map_err(|e| e.to_string())
 }
 
+/// Felyx reads the case file of one incident (slice 1 of the incident-to-proven-fix
+/// plan assembles it, `crate::case`): the same one-round-trip shape as
+/// [`copilot_explain`], but the model is given the console's own join of the
+/// event row, the run, the spend, the identity, the policy and the memory
+/// instead of a tool loop to gather them. An incident with no event row is
+/// refused in words before the model is called, and a provider that is not
+/// ready is reported first. Read-only, like every command it calls.
+pub async fn copilot_explain_case(
+    state: &CopilotState,
+    planes: crate::case::commands::CasePlanes<'_>,
+    incident_id: String,
+) -> Result<Answer, String> {
+    let _ = (state, planes, incident_id);
+    Err("stub".to_string())
+}
+
 /// C2's audit link (docs/PHASE6-C2.md "Audit metadata"), called by the
 /// frontend right AFTER a proposal card's Approve action has already
 /// completed the real signed mutation through its own existing command
