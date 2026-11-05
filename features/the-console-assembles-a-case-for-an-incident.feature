@@ -153,3 +153,11 @@ Feature: The console assembles one case for an incident, with no model, and says
     When a visitor opens the case of an incident that read showed them
     Then the case is built from that very row, from a short read or a long one
     And an id the demo never served is still reported as not found
+
+  # @test:the_demo_still_finds_an_incident_after_the_visitor_opened_many_others
+  # @test:the_feed_keeps_the_rows_it_showed_and_adds_a_few_on_each_read
+  Scenario: The demo keeps the rows it showed while a visitor opens one incident after another
+    Given opening an incident reads the demo's feed again
+    When a visitor has opened thirty incidents from the list
+    Then the case of a row from the first read is still built from that row
+    And each read has added a few new rows to the ones it showed before

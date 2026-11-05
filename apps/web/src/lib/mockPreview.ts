@@ -610,6 +610,8 @@ let blockedSpendFromIncidents = 0;
 
 function armProtagonistArc(scenario: DemoScenario): void {
   currentScenario = scenario;
+  // The feed of one scenario is not the feed of the other.
+  feedHistory.length = 0;
   // The storyline changes what several reads answer, and a panel that only
   // refetches on its own timer would sit on the old story for up to its poll
   // interval after the operator flipped the switch. This is the app's existing
@@ -764,13 +766,27 @@ const COMMAND_EVENTS_CAP = 12;
  * destructively drained, so it survives being read by more than one
  * caller. */
 const recentCommandEvents: UiEvent[] = [];
-/** Every event this transport has handed out, by id. The synthetic feed makes a
- * fresh event, with a fresh id, every time it is read, so an incident a visitor
- * was shown can only be found where it was served: a second read holds other
- * events. `case_file` looks here. Bounded; the oldest are dropped first, and a
- * fixed demo row served again is the newest again. */
+/** Every event this transport has handed out, by id. An incident a visitor was
+ * shown is found where it was served, and `case_file` looks here. Bounded; the
+ * oldest are dropped first, and a fixed demo row served again is the newest
+ * again. */
 const SERVED_EVENTS_CAP = 10_000;
 const servedEvents = new Map<number, UiEvent>();
+
+/** The synthetic part of `recent_events`, newest first, the way a store holds it:
+ * a read adds a few rows and returns the ones it returned before. Every view and
+ * every incident a visitor opens reads the feed, and when each read made all of
+ * its rows anew, twenty opened incidents pushed the list they came from out of
+ * `servedEvents`. */
+const FRESH_ROWS_PER_READ = 20;
+const feedHistory: UiEvent[] = [];
+
+function feedEvents(n: number): UiEvent[] {
+  const wanted = Math.max(Math.min(n, FRESH_ROWS_PER_READ), n - feedHistory.length);
+  for (let i = 0; i < wanted; i++) feedHistory.unshift(makeEvent());
+  feedHistory.length = Math.min(feedHistory.length, SERVED_EVENTS_CAP);
+  return feedHistory.slice(0, n);
+}
 
 function serve(events: UiEvent[]): UiEvent[] {
   for (const e of events) {
@@ -4329,7 +4345,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // exactly as many as the seed makes, so anything appended after it is cut
     // before it is ever seen. The drift event was appended, and so the demo's
     // one bus incident with no run id never reached Incident 360.
-    case "recent_events": return r(serve([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...mockKeyryxWitnessEvents(), ...seedEvents(Number(args?.limit ?? 60))]));
+    case "recent_events": return r(serve([...recentCommandEvents, ...mockIdentityRefusalEvents(), mockQualityDriftEvent(), ...mockRefusedKeyAndPiiEvents(), ...mockKeyryxWitnessEvents(), ...feedEvents(Number(args?.limit ?? 60))]));
     case "run_events": return r(serve(seedEvents(20)));
     // The case for one demo incident, from the demo's own rows (see `mockCaseFile`).
     case "case_file": return r(await mockCaseFile(String(args?.incident_id ?? "")));
