@@ -146,6 +146,26 @@ describe("the demo case finds what the demo showed", () => {
     expect(c.lines.find((l) => l.section === "event")!.state).toBe("answered");
   });
 
+  it("the_demo_still_finds_an_incident_after_the_visitor_opened_many_others", async () => {
+    const served = await mockInvoke<UiEvent[]>("recent_events", { limit: 500 });
+    const shown = served[served.length - 1]!;
+    // Opening an incident reads the feed, so thirty reads is a visitor going down the list.
+    for (let i = 0; i < 30; i++) await mockInvoke<UiEvent[]>("recent_events", { limit: 500 });
+    const c = await mockInvoke<CaseFile>("case_file", { incident_id: `bus:${shown.id}` });
+    const eventFact = c.facts.find((f) => f.section === "event")!;
+    expect(eventFact.row_id).toBe(String(shown.id));
+    expect(eventFact.row).toEqual(shown);
+  });
+
+  it("the_feed_keeps_the_rows_it_showed_and_adds_a_few_on_each_read", async () => {
+    const first = await mockInvoke<UiEvent[]>("recent_events", { limit: 500 });
+    const second = await mockInvoke<UiEvent[]>("recent_events", { limit: 500 });
+    const firstIds = new Set(first.map((e) => e.id));
+    const kept = second.filter((e) => firstIds.has(e.id)).length;
+    expect(kept).toBeGreaterThan(second.length / 2);
+    expect(kept).toBeLessThan(second.length);
+  });
+
   it("the_demo_finds_an_incident_from_deep_in_a_long_read", async () => {
     const served = await mockInvoke<UiEvent[]>("recent_events", { limit: 700 });
     // Past the 500 a case once looked through.
