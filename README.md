@@ -76,7 +76,10 @@ flowchart TB
   VCX ==>|"delegation_issued / denied / revoked"| BUS
   TF ==>|"agent-event NDJSON"| BUS{{"agent-event bus + Agent Passport"}}
   WX ==> BUS
-  Agent -->|"web fetch"| SCX["Scopyx: governed web egress"]
+  Agent -->|"web fetch: MCP tools/call"| BRK["TokenFuse MCP broker: the scopyx key from its vault, the run labelled from the act"]
+  BRK -->|"last hop"| SCX["Scopyx: governed web egress"]
+  BRK -->|"observed act"| TF
+  Agent -.->|"or direct, key in a header"| SCX
   SCX -->|"POST /v1/decide"| WX
   SCX ==>|"web_fetch / web_blocked"| BUS
   ENG["Engram: memory"] -->|"reflect via base_url"| TF
@@ -87,6 +90,7 @@ flowchart TB
   QX ==>|"crypto events"| BUS
   BUS ==> VX["Verdryx: quality / drift"]
   VX ==>|"quality events"| BUS
+  VX ==>|"slo_burn: a policy can hold the agent"| WX
   TF -->|"outcome-tagged traces"| VX
   MX["Mockryx: pre-prod safety rehearsal"] -->|"hostile scenarios"| TF
   MX ==>|"sim events"| BUS
