@@ -52,6 +52,7 @@ the names change per build and stale ones are served forever otherwise.
 ./scripts/no-owner-quotes.sh         # invariant 21
 ./scripts/felyx-fences-plane-text.sh # invariant 38
 ./scripts/readme-numbers.sh          # runs the whole suite; slow
+./scripts/no-reader-leaves-a-pipe-early.sh  # invariant 45
 ./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
 ```
 
@@ -2354,6 +2355,8 @@ an absent invariant.
     so a new type is unclassified until someone adds it, which is the safe
     direction; a policy candidate and a limit are applied outside this console by
     a person, with nothing here to confirm that they were.
+45. **A check says what the text holds, not which of a writer and its reader finished first.** `@claude 2026-11-06`, carried from stack-k8s#226 and stack-single#167; it records no decision of the owner. Under `set -o pipefail` a pipe into `grep -q` reports the writer too: grep leaves at its first match, a writer with more to write takes SIGPIPE, the pipeline returns 141, and a line that is there reads as missing. In the negative form, `if ... | grep -q bad`, the 141 reads as clean and a refused line passes. The rate follows the load on the machine. @measured forge, 4 cores, bash 5.2.37, GNU grep 3.11, 2026-11-06, `gate-loop.sh` beside six busy loops (estate-gates `evidence/pipe-readers-2026-11-06/`): `scripts/felyx-fences-plane-text.sh` at `dc32da1` failed 0 of 100 runs, and 0 of 100 once fixed, so this repository had not gone red; the rule is held before a text here outgrows one write. Every such pipe in live shell code here moved, 3 in 2 files: to a here-string, `grep -q x <<<"$text"`, or to a pipe into `grep -c x >/dev/null`.
+    *(gate: `scripts/no-reader-leaves-a-pipe-early.sh`: a control that breaks a real pipe, known lines through the reader, then every tracked shell file and workflow `run:` step masked down to live code. It refuses to report OK on no shell file, no pipe, no step or a file it lost its place in. Eighteen cases in `scripts/gates-have-teeth.sh`. Not held: `| head`, the same race, which here takes a few lines from a writer of a few lines.)*
 
 ## Decisions that have no gate yet
 

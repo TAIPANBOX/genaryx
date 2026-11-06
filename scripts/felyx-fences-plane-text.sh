@@ -55,7 +55,7 @@ note() {
 	fail=$((fail + 1))
 }
 
-if ! product "$provider" | grep -A4 'pub fn tool_result(' | grep -q 'result: &FencedResult'; then
+if ! grep -q 'result: &FencedResult' <<<"$(product "$provider" | grep -A4 'pub fn tool_result(')"; then
 	note "$provider: Message::tool_result no longer takes a FencedResult"
 fi
 
@@ -83,7 +83,7 @@ if [ "$(product "$agent" | grep -c 'FencedResult::case(case)')" -eq 0 ]; then
 	note "$agent: a case file no longer goes through FencedResult::case"
 fi
 
-if ! product "$agent" | grep -q 'FencedResult::plane(&call.name, &value)'; then
+if ! grep -q 'FencedResult::plane(&call.name, &value)' <<<"$(product "$agent")"; then
 	note "$agent: a read tool's result no longer goes through FencedResult::plane"
 fi
 
