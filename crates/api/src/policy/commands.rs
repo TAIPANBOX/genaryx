@@ -846,7 +846,15 @@ pub async fn policy_grant_tool(
     let result = client.client.put_policy(&policy_id, &policy).await;
 
     let (http_status, verify_result) = match &result {
-        Ok(_) => (200, format!("granted tools:{}", tools.join(","))),
+        // The chain's line carries this and not `params`, so it names all three.
+        Ok(_) => (
+            200,
+            format!(
+                "granted {} tools:{} from hold {id}",
+                plan.agent,
+                tools.join(",")
+            ),
+        ),
         Err(e) => (status_of(e), format!("error: {e}")),
     };
     let (bus_recorded, bus_error) = journal_grant(
