@@ -195,16 +195,26 @@ impl DecisionDto {
 /// 46), so this type gives it no way to be read by accident: it serialises as
 /// the bare string, because that is the answer, and it has no `Display`, no
 /// accessor, and a `Debug` that prints no part of it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(transparent)]
 pub struct RawApprovalToken(String);
 
+impl std::fmt::Debug for RawApprovalToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RawApprovalToken(<redacted>)")
+    }
+}
+
 /// The token to hand the operator for this answer: a grant's, and no other.
-fn raw_token_of(
-    _decision: DecisionDto,
-    _resp: &ApprovalDecideResponse,
-) -> Option<RawApprovalToken> {
-    None
+fn raw_token_of(decision: DecisionDto, resp: &ApprovalDecideResponse) -> Option<RawApprovalToken> {
+    match decision {
+        DecisionDto::Grant => resp
+            .approval_token
+            .as_ref()
+            .filter(|token| !token.is_empty())
+            .map(|token| RawApprovalToken(token.clone())),
+        DecisionDto::Deny => None,
+    }
 }
 
 /// The decoded claims of a freshly minted `approval_token`, shown to the

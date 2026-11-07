@@ -202,7 +202,13 @@ async fn a_grant_whose_claims_cannot_be_read_still_answers_with_the_raw_token() 
 
 #[tokio::test]
 async fn a_deny_answers_with_no_token() {
-    let body = json!({"approval_id": APPROVAL, "decision": "deny"}).to_string();
+    // Wardryx sends none on a denial. If one ever came, it is still no grant.
+    let body = json!({
+        "approval_id": APPROVAL,
+        "decision": "deny",
+        "approval_token": shared_secret_token(),
+    })
+    .to_string();
     let base = spawn_cloud(vec![(DECIDE_ROUTE, "200 OK", body)]);
     let state = policy_at(&base, None).await;
     let outcome = decide(&state, DecisionDto::Deny).await.expect("denied");

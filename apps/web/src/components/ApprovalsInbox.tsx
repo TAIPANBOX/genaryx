@@ -1,12 +1,22 @@
 import { useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { formatTimestamp, formatUsd } from "../lib/format";
-import { tokenPlainLine, type GrantedToken } from "../lib/approvalToken";
+import {
+  APPROVAL_TOKEN_HEADER,
+  SINGLE_USE_EXCEPTION,
+  tokenPlainLine,
+  type GrantedToken,
+} from "../lib/approvalToken";
 import { agentIdFromMuteKey, muteKey } from "../lib/notifications";
 import {
+  approvalArgumentsLabel,
+  approvalArgumentsTitle,
   approvalModelLabel,
   approvalOrgLabel,
   approvalPolicyVersionLabel,
+  approvalReasonLabel,
+  approvalTargetLabel,
+  NO_CALL_ON_HOLD,
   NOT_RECORDED,
 } from "../lib/policyExport";
 import type { Approval, Decision } from "../policyTypes";
@@ -56,7 +66,7 @@ function MuteToggle({ agentId, muted, onToggle }: { agentId: string; muted: bool
  * figure: the operator deciding this hold has to be able to see at a glance
  * which of these the plane actually told us. */
 function Field({ label, value, title }: { label: string; value: string; title?: string }) {
-  const absent = value === NOT_RECORDED;
+  const absent = value === NOT_RECORDED || value === NO_CALL_ON_HOLD;
   return (
     <div className="flex items-baseline gap-2 min-w-0">
       <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--faint)" }}>
@@ -92,20 +102,37 @@ function useCountdown(expUnix: number): { remainingMs: number; label: string } {
   return { remainingMs, label: `${mm}:${ss}` };
 }
 
+/** What the copy button is showing. A failed copy says so: the operator has one
+ * chance at this token, and a button that looks done when it is not loses it. */
+type CopyState = "idle" | "copied" | "failed";
+
 /**
- * Shown once, right after a Grant: the decoded `approval_token` claims
- * (PHASE2.md Wave 2 - "show the operator exactly what they authorized").
- * This is the ONLY time the token's contents are ever visible - Wardryx
- * never lets it be retrieved again - so it stays on screen until the
- * operator dismisses it, independent of the approval's own row moving to
- * history underneath.
+ * Shown once, right after a Grant: the raw token, which is what reaches the
+ * agent, and the decoded claims beside it (PHASE2.md Wave 2 - "show the operator
+ * exactly what they authorized"). Wardryx never lets the token be retrieved
+ * again, so it stays on screen until the operator dismisses it, independent of
+ * the approval's own row moving to history underneath.
+ *
+ * The token is held by this component's parent in plain state and rendered here
+ * as text: `lib/approvalToken.ts` says why nothing else may hold it. Once it has
+ * expired it is no use to anybody and is no longer drawn.
  */
 export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToken; onDismiss: () => void }) {
-  const token = granted.claims;
-  const countdown = useCountdown(token?.exp_unix ?? 0);
-  if (!token) return null;
+  const { claims, raw } = granted;
+  const countdown = useCountdown(claims?.exp_unix ?? 0);
+  const [copy, setCopy] = useState<CopyState>("idle");
 
-  const expired = countdown.remainingMs <= 0;
+  const expired = claims !== null && countdown.remainingMs <= 0;
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(raw);
+      setCopy("copied");
+    } catch {
+      // No clipboard outside a secure context, or the browser refused it.
+      setCopy("failed");
+    }
+  };
 
   return (
     <div
@@ -127,24 +154,64 @@ export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToke
           Dismiss
         </button>
       </div>
-      <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-        <Field label="agent" value={token.agent_id} />
-        <Field label="run" value={token.run_id} />
-        <Field label="tools" value={token.tools.length > 0 ? token.tools.join(", ") : "(none)"} />
-      </div>
-      <div className="flex items-center gap-5">
-        <span className="mono tabular text-[13px]" style={{ color: "var(--fg)" }}>
-          ceiling {formatUsd(token.cost_ceiling_usd)}
-        </span>
-        <span
-          className="mono tabular text-[13px]"
-          style={{ color: expired ? "var(--sev-critical)" : "var(--fg)" }}
-        >
-          {expired ? "expired" : `expires in ${countdown.label}`}
-        </span>
-      </div>
+      {!expired && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px]" style={{ color: "var(--dim)" }}>
+            The agent retries the call with this value in the header{" "}
+            <code className="mono" style={{ color: "var(--fg)" }}>
+              {APPROVAL_TOKEN_HEADER}
+            </code>
+          </span>
+          <div className="flex items-start gap-2">
+            <code
+              data-testid="approval-token"
+              className="mono text-[11.5px] min-w-0 flex-1"
+              style={{ color: "var(--fg)", wordBreak: "break-all", userSelect: "all" }}
+            >
+              {raw}
+            </code>
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 8px", fontSize: 11, whiteSpace: "nowrap" }}
+              aria-label="Copy the approval token"
+              onClick={() => void onCopy()}
+            >
+              {copy === "copied" ? "Copied" : "Copy"}
+            </button>
+          </div>
+          {copy === "failed" && (
+            <span className="text-[11px]" style={{ color: "var(--sev-high)" }} role="alert">
+              The browser refused the copy. Select the token above and copy it by hand.
+            </span>
+          )}
+        </div>
+      )}
+      {claims !== null && (
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+          <Field label="agent" value={claims.agent_id} />
+          <Field label="run" value={claims.run_id} />
+          <Field label="tools" value={claims.tools.length > 0 ? claims.tools.join(", ") : "(none)"} />
+        </div>
+      )}
+      {claims !== null && (
+        <div className="flex items-center gap-5">
+          <span className="mono tabular text-[13px]" style={{ color: "var(--fg)" }}>
+            ceiling {formatUsd(claims.cost_ceiling_usd)}
+          </span>
+          <span
+            className="mono tabular text-[13px]"
+            style={{ color: expired ? "var(--sev-critical)" : "var(--fg)" }}
+          >
+            {expired ? "expired" : `expires in ${countdown.label}`}
+          </span>
+        </div>
+      )}
+      <span className="text-[12px]" style={{ color: "var(--fg)" }}>
+        {tokenPlainLine(claims)}
+      </span>
       <span className="text-[11px]" style={{ color: "var(--faint)" }}>
-        {tokenPlainLine(token)}
+        {SINGLE_USE_EXCEPTION}
       </span>
     </div>
   );
@@ -206,6 +273,8 @@ function PendingRow({
       <div className="flex flex-wrap gap-x-5 gap-y-1.5">
         <Field label="run" value={approval.run_id} />
         <Field label="tools" value={approval.tool_names.length > 0 ? approval.tool_names.join(", ") : "-"} />
+        <Field label="target" value={approvalTargetLabel(approval)} />
+        <Field label="arguments" value={approvalArgumentsLabel(approval)} title={approvalArgumentsTitle(approval)} />
         <Field
           label="model"
           value={approvalModelLabel(approval)}
@@ -236,11 +305,9 @@ function PendingRow({
         {chain && chain.length > 0 && <Field label="on_behalf_of" value={chain.join(" -> ")} />}
       </div>
 
-      {approval.reason && (
-        <span className="text-[11.5px]" style={{ color: "var(--dim)" }}>
-          {approval.reason}
-        </span>
-      )}
+      <span className="text-[11.5px]" style={{ color: "var(--dim)" }}>
+        {approvalReasonLabel(approval)}
+      </span>
 
       <div className="flex items-center gap-2 justify-end">
         <ConfirmButton
@@ -294,6 +361,14 @@ function HistoryRow({
         <span className="mono truncate text-[11px]" style={{ color: "var(--faint)" }}>
           {approval.decided_by ?? "unknown"} &middot; {approval.decided_at ? formatTimestamp(approval.decided_at) : "-"}{" "}
           &middot; {approvalModelLabel(approval)}
+        </span>
+        {/* What was decided on stays readable after the decision: the trail is
+            the half somebody reads back later. */}
+        <span className="truncate text-[11px]" style={{ color: "var(--dim)" }} title={approvalReasonLabel(approval)}>
+          {approvalReasonLabel(approval)}
+        </span>
+        <span className="mono truncate text-[11px]" style={{ color: "var(--faint)" }} title={approvalArgumentsTitle(approval)}>
+          target {approvalTargetLabel(approval)} &middot; arguments {approvalArgumentsLabel(approval)}
         </span>
       </div>
       <span className="mono tabular text-[11.5px]" style={{ color: "var(--dim)" }}>

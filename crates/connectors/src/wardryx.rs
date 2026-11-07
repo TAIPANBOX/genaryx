@@ -68,7 +68,8 @@
 //!     let decided = client
 //!         .decide_approval(&approval_id, ApprovalVerdict::Grant, "user://acme/alice")
 //!         .await?;
-//!     println!("granted, approval_token = {:?}", decided.approval_token);
+//!     // A live credential: hand it to the caller, never to a log.
+//!     let _token = decided.approval_token;
 //! }
 //! # Ok(())
 //! # }
@@ -645,12 +646,25 @@ mod approver_statement_tests {
 /// `approval_token` is a live credential that wardryx hands over once, so this
 /// type has its own `Debug`: a `{:?}` of a response or of a `Result` around one
 /// names whether a token came back and never what it says.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ApprovalDecideResponse {
     pub approval_id: String,
     pub decision: String,
     #[serde(default)]
     pub approval_token: Option<String>,
+}
+
+impl std::fmt::Debug for ApprovalDecideResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApprovalDecideResponse")
+            .field("approval_id", &self.approval_id)
+            .field("decision", &self.decision)
+            .field(
+                "approval_token",
+                &self.approval_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 /// One element of `GET /v1/approvals`'s bare JSON array response
@@ -760,7 +774,16 @@ impl Approval {
     /// fields unknown, because "this hold named no call" would be a false
     /// statement about a hold that did.
     pub fn tool_call(&self) -> Option<HeldToolCall> {
-        None
+        let call = self.context_get("tool_call").filter(|v| !v.is_null())?;
+        let text = |key: &str| -> Option<String> { Some(call.get(key)?.as_str()?.to_string()) };
+        Some(HeldToolCall {
+            name: text("name"),
+            target: text("target"),
+            arguments_truncated: call
+                .get("arguments_truncated")
+                .and_then(serde_json::Value::as_bool),
+            digest: text("digest"),
+        })
     }
 }
 
@@ -883,7 +906,7 @@ pub struct ApprovalTokenClaims {
     /// granted for. Wardryx writes it only when the held request carried a
     /// tool call, so `None` is a token bound to an agent, a run, a tool set and
     /// a cost ceiling, and not to one call.
-    #[serde(skip)]
+    #[serde(default, rename = "tcd")]
     pub tool_call_digest: Option<String>,
 }
 
@@ -898,17 +921,22 @@ impl ApprovalTokenClaims {
     /// An error here names the fault and never quotes the token: its text goes
     /// into the journal, and serde's messages repeat the value they refused.
     pub fn decode(token: &str) -> Result<Self, WardryxError> {
-        let (payload, _sig) = token
-            .split_once('.')
-            .ok_or_else(|| WardryxError::BadToken("missing '.' separator".to_string()))?;
+        let segments: Vec<&str> = token.split('.').collect();
+        let payload = match segments.as_slice() {
+            [_undivided] => {
+                return Err(WardryxError::BadToken("missing '.' separator".to_string()));
+            }
+            [payload, _sig] | [_header, payload, _sig] => *payload,
+            _ => return Err(WardryxError::BadToken("too many segments".to_string())),
+        };
         if payload.is_empty() {
             return Err(WardryxError::BadToken("empty claims payload".to_string()));
         }
         let decoded = URL_SAFE_NO_PAD
             .decode(payload)
-            .map_err(|e| WardryxError::BadToken(format!("invalid base64url payload: {e}")))?;
+            .map_err(|_| WardryxError::BadToken("invalid base64url payload".to_string()))?;
         serde_json::from_slice(&decoded)
-            .map_err(|e| WardryxError::BadToken(format!("invalid claims JSON: {e}")))
+            .map_err(|_| WardryxError::BadToken("invalid claims JSON".to_string()))
     }
 
     /// The claims' embedded expiry as a [`SystemTime`]. A negative `exp`
@@ -1248,8 +1276,12 @@ mod tests {
 
     #[test]
     fn a_token_with_more_than_three_segments_is_refused() {
+        let token = build_v3_token(
+            r#"{"agent_id":"a","run_id":"r","tools":[],"max_cost_usd":0,"exp":1,"nonce":"n"}"#,
+        );
+        assert!(ApprovalTokenClaims::decode(&token).is_ok());
         assert!(matches!(
-            ApprovalTokenClaims::decode("a.b.c.d"),
+            ApprovalTokenClaims::decode(&format!("{token}.one-more")),
             Err(WardryxError::BadToken(_))
         ));
     }
@@ -1257,7 +1289,10 @@ mod tests {
     #[test]
     fn a_decode_error_never_repeats_what_it_refused() {
         let canary = "canary-in-the-claims";
-        let wrong_type = format!(r#"{{"agent_id":"{canary}","run_id":7}}"#);
+        // In a field of another type, because that is the value serde quotes.
+        let wrong_type = format!(
+            r#"{{"agent_id":"a","run_id":"r","tools":[],"max_cost_usd":"{canary}","exp":1,"nonce":"n"}}"#
+        );
         for token in [
             build_token(&wrong_type, "sig"),
             build_v3_token(&wrong_type),

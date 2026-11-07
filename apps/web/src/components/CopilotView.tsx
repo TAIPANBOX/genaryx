@@ -14,7 +14,7 @@ import {
   fetchCopilotStatus,
   logProposalApproved,
 } from "../lib/copilot";
-import { withGranted, withoutGranted, type GrantedToken } from "../lib/approvalToken";
+import { grantedTokenFrom, withGranted, withoutGranted, type GrantedToken } from "../lib/approvalToken";
 import { cssVar } from "../lib/cssVars";
 import { formatUsd } from "../lib/format";
 import { describeIdentityError, rescan } from "../lib/identity";
@@ -200,7 +200,7 @@ async function runApproval(action: ProposedAction, reason: string): Promise<Appr
     case "grant_deny": {
       const decision: Decision = action.params.verdict === "deny" ? "deny" : "grant";
       const outcome = await decideApproval(action.target, decision);
-      return { summary: outcome.summary, granted: null };
+      return { summary: outcome.summary, granted: grantedTokenFrom(action.target, outcome) };
     }
     case "rescan": {
       const alerts = await rescan();
