@@ -122,6 +122,7 @@ Feature: Always allow a tool for an agent, from the approvals inbox
     Then it says the agent's next call passes and this one still waits for an answer
 
   # @test:a_grant_is_on_the_consoles_own_chain_with_its_agent_and_tool
+  # @test:a_wardryx_that_will_not_say_what_it_holds_writes_nothing_and_is_journaled
   Scenario: A standing grant is on the console's own record
     Given an operator who always allowed a tool
     When the journal is read

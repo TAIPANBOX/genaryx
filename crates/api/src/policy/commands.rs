@@ -791,11 +791,24 @@ pub async fn policy_grant_tool(
 ) -> Result<GrantToolOutcome, PolicyError> {
     let client = ready_client(&state).await?;
     let operator = crate::console_actor::operator_or(&client.operator);
-    let approvals = client
-        .client
-        .list_approvals()
-        .await
-        .map_err(PolicyError::from)?;
+    let approvals = match client.client.list_approvals().await {
+        Ok(approvals) => approvals,
+        Err(e) => {
+            let verify_result = format!("error: {e}");
+            let status = status_of(&e);
+            let params = json!({ "approval_id": id });
+            let _ = journal_grant(
+                &client,
+                &operator,
+                &id,
+                params,
+                "allow",
+                status,
+                &verify_result,
+            );
+            return Err(PolicyError::from(e));
+        }
+    };
     let plan = approvals
         .iter()
         .find(|a| a.approval_id == id)

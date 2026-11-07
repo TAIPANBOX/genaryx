@@ -255,6 +255,24 @@ async fn a_policy_wardryx_will_not_read_writes_nothing_over_it() {
 }
 
 #[tokio::test]
+async fn a_wardryx_that_will_not_say_what_it_holds_writes_nothing_and_is_journaled() {
+    let (base, log) = spawn_recording_cloud(vec![(
+        "/v1/approvals",
+        "500 Internal Server Error",
+        "{}".to_string(),
+    )]);
+    let (dir, bus) = scratch_bus();
+    let state = policy_at(&base, Some(bus)).await;
+    let err = policy_grant_tool("ap_1".to_string(), &state)
+        .await
+        .expect_err("refused");
+    assert!(matches!(err, PolicyError::Wardryx { .. }), "{err:?}");
+    no_put_reached_wardryx(&log);
+    let journal = journal_of(&dir);
+    assert!(journal.contains("console.grant_tool"), "{journal}");
+}
+
+#[tokio::test]
 async fn a_grant_is_on_the_consoles_own_chain_with_its_agent_and_tool() {
     let (base, _log) = spawn_recording_cloud(vec![
         (
