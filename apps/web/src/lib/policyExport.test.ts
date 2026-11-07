@@ -56,6 +56,8 @@ const HOLD: Approval = {
     arguments_truncated: false,
     digest: "aa11",
   },
+  hold_kind: null,
+  identity_source: null,
 };
 
 const DECIDED: Approval = {
@@ -78,6 +80,7 @@ const POLICY: PolicyRecord = {
   deny_above_usd: 500,
   max_steps: 40,
   deny_if_unattested: true,
+  grant_tool: [],
   updated_at: "2026-08-19T11:02:00Z",
 };
 
@@ -85,7 +88,10 @@ function inbox(approvals: Approval[]): string {
   return renderToStaticMarkup(
     createElement(ApprovalsInbox, {
       approvals,
+      policies: [],
+      role: null,
       onDecide: async () => {},
+      onAlwaysAllow: async () => {},
       grantedTokens: [],
       onDismissToken: () => {},
       focusApprovalId: null,

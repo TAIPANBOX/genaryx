@@ -128,7 +128,7 @@ before dispatching if the caller is below it. Classification
   and the read-only crypto inspections `crypto_scan_*` / `crypto_status` /
   `crypto_verify_evidence`).
 - **approver**: `policy_decide_approval`.
-- **admin**: `money_kill_run`, `money_set_budget`, `money_ack_incident`,
+- **admin**: `policy_grant_tool`, `money_kill_run`, `money_set_budget`, `money_ack_incident`,
   `identity_rescan`, `drills_run`, `evidence_build`, `memory_forget`,
   `onboard_generate`, `onboard_write_passport`, `copilot_log_proposal_approved`,
   `pocket_connect`, `pocket_disconnect`, and the remote mutations
@@ -183,10 +183,10 @@ paths (set => named actor; unset => OS-user default).
 
 ## Part 2: WebAuthn per-action ceremony (built, branch `feat/webauthn-per-action`)
 
-Signing in gets you the console; it does not get you the kill. TEN
+Signing in gets you the console; it does not get you the kill. ELEVEN
 privileged commands carry the ceremony today
 (the ceremony column of `crates/web/src/roles.rs`): `money_kill_run`,
-`money_set_budget`, `policy_decide_approval`, `remote_operator_wg_config`,
+`money_set_budget`, `policy_decide_approval`, `policy_grant_tool`, `remote_operator_wg_config`,
 `remote_operator_wg_revoke`, `delegation_revoke`, `money_close_retained`,
 `money_set_unit_budget`, `agent_stop` and `agent_lift`. The two WireGuard
 commands joined because issuing a peer hands out a road into the control

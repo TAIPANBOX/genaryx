@@ -1280,6 +1280,55 @@ run_case "invariant 46: the token type's own comment reworded" pass \
 	"$token_tests" \
 	"$(py 'edit("crates/api/src/policy/commands.rs", "/// The token to hand the operator for this answer: a grant", "/// The token to give the operator for this answer: a grant")')"
 
+# A standing grant (CLAUDE.md invariant 47): the command, on a stub wardryx, and the gates it
+# sits behind. Each name is a test that has to go red.
+grant_tests='cargo test -q -p genaryx-api --test it standing_grant_test'
+grant_gates='cargo test -q -p genaryx-web --bin genaryx-web standing_grant'
+
+run_case "invariant 47: policy_grant_tool leaves the ceremony column" fail \
+	"$grant_gates" \
+	"$(py 'edit("crates/web/src/roles.rs", "gate(\"policy_grant_tool\", Role::Admin, true)", "gate(\"policy_grant_tool\", Role::Admin, false)")')" \
+	"a_standing_grant_with_a_passkey_and_no_assertion_is_428"
+
+run_case "invariant 47: an approver may write a standing grant" fail \
+	"$grant_gates" \
+	"$(py 'edit("crates/web/src/roles.rs", "gate(\"policy_grant_tool\", Role::Admin, true)", "gate(\"policy_grant_tool\", Role::Approver, true)")')" \
+	"an_approver_is_refused_by_the_role_gate_on_a_standing_grant"
+
+run_case "invariant 47: the grant stops asking for a proven chain" fail \
+	"$grant_tests" \
+	"$(py 'edit("crates/api/src/policy/standing_grant.rs", "        deny_if_chain_unproven: true,\n        ..Policy::default()", "        deny_if_chain_unproven: false,\n        ..Policy::default()")')" \
+	"a_grant_writes_the_policy_agent_allow_writes"
+
+run_case "invariant 47: a hold that came with a static key loses it" fail \
+	"$grant_tests" \
+	"$(py 'edit("crates/api/src/policy/standing_grant.rs", "        _ if plan.static_key => &STATIC_SOURCES,\n", "")')" \
+	"a_hold_that_came_with_a_static_key_is_not_turned_into_a_refusal"
+
+run_case "invariant 47: a grant overwrites what the agent holds" fail \
+	"$grant_tests" \
+	"$(py 'edit("crates/api/src/policy/standing_grant.rs", "let mut tools: Vec<String> = kept_tools.to_vec();", "let mut tools: Vec<String> = Vec::new();")')" \
+	"a_grant_adds_to_the_policy_the_agent_already_holds"
+
+run_case "invariant 47: an id with no trust domain is written" fail \
+	"$grant_tests" \
+	"$(py 'edit("crates/api/src/policy/standing_grant.rs", "    if !pins_trust_domain(&held.agent_id) {\n", "    if held.agent_id.is_empty() {\n")')" \
+	"an_agent_with_no_trust_domain_reaches_no_policy_and_is_journaled"
+
+run_case "invariant 47: a hold of another kind is written" fail \
+	"$grant_tests" \
+	"$(py 'edit("crates/api/src/policy/standing_grant.rs", "    if held.hold_kind() != Some(NO_GRANT) {\n", "    if held.hold_kind() == Some(\"never\") {\n")')" \
+	"a_hold_of_another_kind_reaches_no_policy"
+
+run_case "invariant 47: a refused attempt leaves no record" fail \
+	"$grant_tests" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "            let _ = journal_grant(\n                &client,\n                &operator,\n                &id,\n                params,\n                \"refused\",\n                0,\n                &verify_result,\n            );\n", "            let _ = (&params, &verify_result);\n")')" \
+	"an_agent_with_no_trust_domain_reaches_no_policy_and_is_journaled"
+
+run_case "invariant 47: a comment in the policy's own file reworded" pass \
+	"$grant_tests" \
+	"$(py 'edit("crates/api/src/policy/standing_grant.rs", "//! A standing grant: \"always allow this tool for this agent\", asked on a hold.", "//! A standing grant: \"always allow this tool for this agent\", offered on a hold.")')"
+
 echo
 if [ -n "$(git status --porcelain)" ]; then
 	printf 'FAIL: this script left the tree dirty, so it cannot be trusted about anything above\n'

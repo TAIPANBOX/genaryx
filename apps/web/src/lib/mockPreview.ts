@@ -2113,6 +2113,10 @@ function mockApprovals() {
       // Wardryx records the call by name, target and digest and never its
       // arguments. One row in the demo shows the arguments cut short.
       tool_call: mockHeldCall(toolNames[0] ?? "runbook_apply", `https://ops.${ORG}/${a.name}`, i === 1) as MockHeldCall | null,
+      // The first row is the floor: a tool call nothing grants, which a standing
+      // grant ends. The rest are holds on spend, which it does not.
+      hold_kind: (i === 0 ? "no_grant" : null) as string | null,
+      identity_source: "agent-token" as string | null,
     };
   });
 
@@ -2137,6 +2141,8 @@ function mockApprovals() {
         model: PROTAGONIST.model,
         // A hold on spend, not on one call: the inbox and the token both say so.
         tool_call: null,
+        hold_kind: null,
+        identity_source: "agent-token",
       });
     }
   }
@@ -2228,6 +2234,31 @@ function decideApprovalMock(id: string, decision: "grant" | "deny") {
   };
 }
 
+/** The standing grants of this demo session, by agent. */
+const mockStandingGrants = new Map<string, string[]>();
+
+/** `policy_grant_tool`'s mock: adds the tool of one hold to its agent's grant, and
+ * says so the way the command does. */
+function grantToolMock(id: string) {
+  const held = mockApprovals().find((a) => a.approval_id === id);
+  const tool = held?.tool_call?.name;
+  if (!held || !tool) throw { kind: "standing_grant", reason: `wardryx has no approval ${id}` };
+  const tools = Array.from(new Set([...(mockStandingGrants.get(held.agent_id) ?? []), tool])).sort();
+  mockStandingGrants.set(held.agent_id, tools);
+  return {
+    summary: `${held.agent_id} always allowed ${tool}`,
+    policy_id: `grant-${held.agent_id.replace("agent://", "").replace(/[^A-Za-z0-9._-]/g, "-")}`,
+    agent_id: held.agent_id,
+    tools,
+    http_status: 200,
+    verify_result: `granted tools:${tools.join(",")}`,
+    sig_alg: "none",
+    sig_fpr: "bearer-admin",
+    bus_recorded: true,
+    bus_error: null,
+  };
+}
+
 function mockPolicies() {
   const pol = (o: Record<string, unknown>) => ({
     deny_tool: [] as string[],
@@ -2236,10 +2267,14 @@ function mockPolicies() {
     deny_above_usd: 0,
     max_steps: 0,
     deny_if_unattested: false,
+    grant_tool: [] as string[],
     updated_at: ago(3 * DAY),
     ...o,
   });
   return [
+    ...Array.from(mockStandingGrants, ([target, tools]) =>
+      pol({ id: `grant-${target.replace("agent://", "")}`, name: `grant ${target}`, target, grant_tool: tools, updated_at: ago(0) }),
+    ),
     pol({ id: "sre-runbook-approval", name: "sre-runbook-approval", target: `agent://${ORG}/sre/runbook-executor`, require_human_above_usd: 25 }),
     pol({ id: "sre-deploy-approval", name: "sre-deploy-approval", target: `agent://${ORG}/sre/deploy-guard`, require_human_above_usd: 10 }),
     pol({ id: "deny-shell-exec", name: "deny-shell-exec", target: `agent://${ORG}/*`, deny_tool: ["shell_exec", "prod_delete"] }),
@@ -4248,6 +4283,11 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
       const decision: "grant" | "deny" = args?.decision === "grant" ? "grant" : "deny";
       emitConsoleCommand("console.decide_approval", id || "(unknown approval)", "allow", `decision:${decision}`, `user://${ORG}/ops`);
       return r(decideApprovalMock(id, decision));
+    }
+    case "policy_grant_tool": {
+      const id = String(args?.id ?? "");
+      emitConsoleCommand("console.grant_tool", id || "(unknown approval)", "allow", "standing grant", `user://${ORG}/ops`);
+      return r(grantToolMock(id));
     }
 
     case "identity_list_identities": return r(mockIdentities());

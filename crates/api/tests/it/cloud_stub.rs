@@ -95,6 +95,7 @@ fn serve(stream: TcpStream, routes: &Routes, log: &Mutex<Vec<Seen>>) {
     if content_length > 0 {
         reader.read_exact(&mut body).ok();
     }
+    let verb = method.clone();
     if let Ok(mut seen) = log.lock() {
         seen.push(Seen {
             method,
@@ -103,8 +104,11 @@ fn serve(stream: TcpStream, routes: &Routes, log: &Mutex<Vec<Seen>>) {
             body: String::from_utf8_lossy(&body).into_owned(),
         });
     }
+    // `"PUT /v1/x"` answers that method alone, for a route whose read and write
+    // differ; a bare path answers every method.
     let (status, out) = routes
-        .get(path.as_str())
+        .get(format!("{verb} {path}").as_str())
+        .or_else(|| routes.get(path.as_str()))
         .cloned()
         .unwrap_or(("404 Not Found", r#"{"error":"not found"}"#.to_string()));
     let mut w = reader.into_inner();

@@ -2324,6 +2324,61 @@ mod tests {
         assert_ne!(status, StatusCode::UNAUTHORIZED);
     }
 
+    // -- policy_grant_tool: the role gate, then the same ceremony as a grant ---
+
+    #[tokio::test]
+    async fn an_approver_is_refused_by_the_role_gate_on_a_standing_grant() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("dave", Role::Approver, Method::Oidc);
+        enroll_test_passkey(&ctx, "dave");
+        assert_eq!(
+            post_command_with(&ctx, "policy_grant_tool", &sid, None, "{}").await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn a_standing_grant_with_a_passkey_and_no_assertion_is_428() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        assert_eq!(
+            post_command_with(&ctx, "policy_grant_tool", &sid, None, "{}").await,
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn a_standing_grant_with_a_valid_assertion_passes_the_gate() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = json!({ "id": "ap_1" }).to_string();
+        let challenge = start_action(&ctx, &sid, "policy_grant_tool", &args).await;
+        let header = assertion_header(&ctx, &challenge);
+        // This Ctx has no wardryx, so the COMMAND answers next, and whatever it
+        // says, it is not one of the gate's refusals.
+        let status = post_command_with(&ctx, "policy_grant_tool", &sid, Some(&header), &args).await;
+        assert_ne!(status, StatusCode::PRECONDITION_REQUIRED);
+        assert_ne!(status, StatusCode::FORBIDDEN);
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn an_assertion_for_one_hold_does_not_open_another() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("alice", Role::Admin, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let asked = json!({ "id": "ap_1" }).to_string();
+        let challenge = start_action(&ctx, &sid, "policy_grant_tool", &asked).await;
+        let header = assertion_header(&ctx, &challenge);
+        let other = json!({ "id": "ap_2" }).to_string();
+        assert_eq!(
+            post_command_with(&ctx, "policy_grant_tool", &sid, Some(&header), &other).await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
     // -- agent_stop / agent_lift: role gate, ceremony gate, the ceremony
     //    recorded as the first step ------------------------------------------
     //

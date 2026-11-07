@@ -20,9 +20,11 @@
 //!   [`state::bootstrap`] in the background to resolve it.
 //! - [`commands`] are the commands the Policy frontend calls:
 //!   two typed reads (`policy_list_approvals`/`policy_list_policies`) plus
-//!   one mutation (`policy_decide_approval`) that journals a
-//!   `console_command` onto the same live-wire bus the Bus Explorer already
+//!   two mutations (`policy_decide_approval`, `policy_grant_tool`) that journal
+//!   a `console_command` onto the same live-wire bus the Bus Explorer already
 //!   tails (`crate::bus`), via `genaryx_core::command::record`.
+//! - [`standing_grant`] is what a standing grant says, kept as plain functions
+//!   of what a hold carried.
 //!
 //! Deliberately NOT coupled to `crate::money`: every module here keeps its
 //! own small mirrors of the handful of conventions the two share (see
@@ -33,6 +35,7 @@
 pub mod approver;
 pub mod commands;
 pub mod env;
+pub mod standing_grant;
 pub mod state;
 
 pub use state::{PolicyState, bootstrap};

@@ -8,6 +8,8 @@ import {
   type GrantedToken,
 } from "../lib/approvalToken";
 import { agentIdFromMuteKey, muteKey } from "../lib/notifications";
+import { repeatOffers, standingGrantOffer, type RepeatOffer, type StandingGrantOffer } from "../lib/standingGrant";
+import type { ConsoleRole } from "../lib/transport";
 import {
   approvalArgumentsLabel,
   approvalArgumentsTitle,
@@ -19,7 +21,7 @@ import {
   NO_CALL_ON_HOLD,
   NOT_RECORDED,
 } from "../lib/policyExport";
-import type { Approval, Decision } from "../policyTypes";
+import type { Approval, Decision, PolicyRecord } from "../policyTypes";
 import { ConfirmButton } from "./ConfirmButton";
 
 /** Bell / bell-with-slash glyph for the per-row mute toggle (docs/PHASE2.md
@@ -217,22 +219,92 @@ export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToke
   );
 }
 
+/** The always-allow button of one held row, quieter than Grant on purpose: Grant is
+ * the answer to this call, and this one outlives it. Off, it stays on the row, so
+ * the line under it has something to be about. */
+function AlwaysAllowButton({
+  offer,
+  onAlwaysAllow,
+  approvalId,
+}: {
+  offer: StandingGrantOffer;
+  onAlwaysAllow: (id: string) => Promise<void>;
+  approvalId: string;
+}) {
+  if (offer.kind === "none" || offer.kind === "granted") return null;
+  return (
+    <ConfirmButton
+      label="Always allow"
+      confirmLabel={offer.kind === "ready" ? `Confirm: always allow ${offer.tool}` : undefined}
+      tone="var(--dim)"
+      disabled={offer.kind !== "ready"}
+      onConfirm={() => onAlwaysAllow(approvalId)}
+    />
+  );
+}
+
+/** What a held row says under its buttons about a standing grant, if anything. */
+function standingGrantLine(offer: StandingGrantOffer): string | null {
+  switch (offer.kind) {
+    case "blocked":
+      return offer.line;
+    case "granted":
+      return `This agent always holds ${offer.tool} now, so its next call passes. This call still waits for an answer.`;
+    case "ready":
+      return offer.staticKey ? "This agent called with a static key, so Always allow takes one too." : null;
+    case "none":
+      return null;
+  }
+}
+
+/** One agent and tool a person keeps granting, offered as a standing grant. */
+function RepeatOfferRow({ offer, onAlwaysAllow }: { offer: RepeatOffer; onAlwaysAllow: (id: string) => Promise<void> }) {
+  return (
+    <div className="panel px-3 py-2.5 flex items-center gap-3" style={{ background: "var(--panel-2)" }}>
+      <span className="badge" style={cssVar("tone", "var(--sev-low)")}>
+        repeat
+      </span>
+      <span className="min-w-0 flex-1 text-[11.5px]" style={{ color: "var(--dim)" }}>
+        <span className="mono" style={{ color: "var(--fg)" }}>
+          {offer.agent_id}
+        </span>{" "}
+        was granted{" "}
+        <span className="mono" style={{ color: "var(--fg)" }}>
+          {offer.tool}
+        </span>{" "}
+        {offer.grants} times. Always allow it?
+      </span>
+      <ConfirmButton
+        label="Always allow"
+        confirmLabel={`Confirm: always allow ${offer.tool}`}
+        tone="var(--dim)"
+        onConfirm={() => onAlwaysAllow(offer.approval_id)}
+      />
+    </div>
+  );
+}
+
 function PendingRow({
   approval,
+  offer,
   onDecide,
+  onAlwaysAllow,
   highlighted,
   muted,
   onToggleMuteAgent,
   onOpenAgent,
 }: {
   approval: Approval;
+  offer: StandingGrantOffer;
   onDecide: (id: string, decision: Decision) => Promise<void>;
+  onAlwaysAllow: (id: string) => Promise<void>;
   highlighted: boolean;
   muted: boolean;
   onToggleMuteAgent: (agentId: string) => void;
   onOpenAgent: (agentId: string) => void;
 }) {
   const chain = approval.on_behalf_of;
+  const grantLine = standingGrantLine(offer);
   return (
     <div
       id={`approval-${approval.approval_id}`}
@@ -309,7 +381,14 @@ function PendingRow({
         {approvalReasonLabel(approval)}
       </span>
 
+      {grantLine && (
+        <span className="text-[11px]" style={{ color: "var(--faint)" }}>
+          {grantLine}
+        </span>
+      )}
+
       <div className="flex items-center gap-2 justify-end">
+        <AlwaysAllowButton offer={offer} onAlwaysAllow={onAlwaysAllow} approvalId={approval.approval_id} />
         <ConfirmButton
           label="Grant"
           confirmLabel="Confirm grant"
@@ -428,7 +507,10 @@ function MutedAgentsStrip({ mutedAgents, onUnmute }: { mutedAgents: readonly str
  */
 export function ApprovalsInbox({
   approvals,
+  policies,
+  role,
   onDecide,
+  onAlwaysAllow,
   grantedTokens,
   onDismissToken,
   focusApprovalId,
@@ -437,7 +519,13 @@ export function ApprovalsInbox({
   onOpenAgent,
 }: {
   approvals: Approval[];
+  /** The stored policies, so a row does not offer what the agent already holds. */
+  policies: readonly PolicyRecord[];
+  /** The signed-in role, `null` when the console has no session to read. */
+  role: ConsoleRole | null | undefined;
   onDecide: (id: string, decision: Decision) => Promise<void>;
+  /** A standing grant (`lib/standingGrant.ts`), after the same ceremony as a grant. */
+  onAlwaysAllow: (id: string) => Promise<void>;
   grantedTokens: readonly GrantedToken[];
   onDismissToken: (approvalId: string) => void;
   focusApprovalId: string | null;
@@ -449,6 +537,7 @@ export function ApprovalsInbox({
 }) {
   const pending = approvals.filter((a) => a.pending);
   const history = approvals.filter((a) => !a.pending);
+  const offers = repeatOffers(approvals, policies, role);
   const mutedAgentIds = Array.from(mutedKeys)
     .map(agentIdFromMuteKey)
     .filter((id): id is string => id !== null);
@@ -466,6 +555,10 @@ export function ApprovalsInbox({
 
       <MutedAgentsStrip mutedAgents={mutedAgentIds} onUnmute={onToggleMuteAgent} />
 
+      {offers.map((offer) => (
+        <RepeatOfferRow key={`${offer.agent_id} ${offer.tool}`} offer={offer} onAlwaysAllow={onAlwaysAllow} />
+      ))}
+
       {pending.length === 0 ? (
         <div className="py-6 mono" style={{ color: "var(--faint)", fontSize: 12 }}>
           no pending approvals.
@@ -476,7 +569,9 @@ export function ApprovalsInbox({
             <PendingRow
               key={a.approval_id}
               approval={a}
+              offer={standingGrantOffer(a, policies, role)}
               onDecide={onDecide}
+              onAlwaysAllow={onAlwaysAllow}
               highlighted={a.approval_id === focusApprovalId}
               muted={mutedKeys.has(muteKey("agent", a.agent_id))}
               onToggleMuteAgent={onToggleMuteAgent}

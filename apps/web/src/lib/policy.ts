@@ -4,6 +4,7 @@ import type {
   Approval,
   Decision,
   DecideOutcome,
+  GrantToolOutcome,
   PolicyError,
   PolicyRecord,
   PolicyStatus,
@@ -88,6 +89,12 @@ export const fetchEnforcementStatus = (): Promise<WardryxStatus> =>
 export const decideApproval = (id: string, decision: Decision): Promise<DecideOutcome> =>
   callWithCeremony<DecideOutcome>("policy_decide_approval", { id, decision });
 
+/** Always allow the tool of one hold for its agent (`policy_grant_tool`), after the
+ * same per-action ceremony as a grant. Only the hold's id is sent: the agent and
+ * the tool are read from wardryx's own record of it. */
+export const alwaysAllowTool = (id: string): Promise<GrantToolOutcome> =>
+  callWithCeremony<GrantToolOutcome>("policy_grant_tool", { id });
+
 /** Human-readable text for any `PolicyError` - used for the plain error
  * banner (mirrors `lib/money.ts`'s `describeMoneyError`, including the
  * optional `currentRole` - the signed-in operator's own role, from
@@ -102,6 +109,7 @@ export function describePolicyError(err: PolicyError, currentRole?: ConsoleRole 
     case "unreachable":
       return `Could not reach Wardryx: ${err.reason}`;
     case "approver_statement":
+    case "standing_grant":
       return `Refused before it reached Wardryx: ${err.reason}`;
     case "wardryx":
       return err.status !== null ? `Wardryx error ${err.status}: ${err.message}` : err.message;

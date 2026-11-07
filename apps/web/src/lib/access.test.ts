@@ -26,6 +26,7 @@ function policy(overrides: Partial<PolicyRecord> & { id: string; target: string 
     target: overrides.target,
     deny_tool: overrides.deny_tool ?? [],
     allow_domains: overrides.allow_domains ?? [],
+    grant_tool: overrides.grant_tool ?? [],
     require_human_above_usd: overrides.require_human_above_usd ?? 0,
     deny_above_usd: overrides.deny_above_usd ?? 0,
     max_steps: overrides.max_steps ?? 0,

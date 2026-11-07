@@ -1,6 +1,6 @@
 //! Console commands for the Policy view: two reads (`policy_list_approvals`/
-//! `policy_list_policies`), one privileged mutation
-//! (`policy_decide_approval`), plus `policy_status` so the frontend can
+//! `policy_list_policies`), two privileged mutations
+//! (`policy_decide_approval`, `policy_grant_tool`), plus `policy_status` so the frontend can
 //! render a clean "no policy plane" / "unreachable" state up front instead
 //! of guessing from a read command's error shape.
 //!
@@ -66,6 +66,12 @@ pub struct ApprovalDto {
     /// call. Wardryx does not send the arguments, so there is no field for them
     /// and the row says so (CLAUDE.md invariant 46).
     pub tool_call: Option<HeldToolCallDto>,
+    /// `no_grant` on a tool call nothing grants, the one hold a standing grant
+    /// ends for good; `None` on every other hold (CLAUDE.md invariant 47).
+    pub hold_kind: Option<String>,
+    /// How the enforcement point knew the agent, which a standing grant has to
+    /// admit or it turns this hold into a refusal.
+    pub identity_source: Option<String>,
 }
 
 /// The call a held approval is about: a UI-facing mirror of
@@ -108,6 +114,8 @@ impl From<&Approval> for ApprovalDto {
             org: a.org().map(str::to_string),
             model: a.model().map(str::to_string),
             tool_call: a.tool_call().map(HeldToolCallDto::from),
+            hold_kind: a.hold_kind().map(str::to_string),
+            identity_source: a.identity_source().map(str::to_string),
         }
     }
 }
@@ -130,6 +138,7 @@ pub struct PolicyRecordDto {
     pub deny_above_usd: f64,
     pub max_steps: i64,
     pub deny_if_unattested: bool,
+    pub grant_tool: Vec<String>,
     pub updated_at: Option<String>,
 }
 
@@ -145,6 +154,7 @@ impl From<&PolicyRecord> for PolicyRecordDto {
             deny_above_usd: r.policy.deny_above_usd,
             max_steps: r.policy.max_steps,
             deny_if_unattested: r.policy.deny_if_unattested,
+            grant_tool: r.policy.grant_tool.clone(),
             updated_at: r.updated_at.clone(),
         }
     }
@@ -283,6 +293,11 @@ pub enum PolicyError {
     ApproverStatement {
         reason: String,
     },
+    /// A standing grant refused before it was sent to Wardryx: the hold it was
+    /// asked on cannot carry one (CLAUDE.md invariant 47).
+    StandingGrant {
+        reason: String,
+    },
     NoEnvironment,
     Unreachable {
         reason: String,
@@ -361,6 +376,24 @@ pub struct DecideOutcome {
     /// its claims could be read: this answer is the only copy there is. Nothing
     /// else in this module or its journal record holds it.
     pub approval_token: Option<RawApprovalToken>,
+    pub bus_recorded: bool,
+    pub bus_error: Option<String>,
+}
+
+/// What `policy_grant_tool` returns: the policy as wardryx took it, and the same
+/// honest split between wardryx's verdict and the journal as [`DecideOutcome`].
+#[derive(Debug, Clone, Serialize)]
+pub struct GrantToolOutcome {
+    pub summary: String,
+    pub policy_id: String,
+    pub agent_id: String,
+    /// Every tool the agent now holds through this policy, the one just granted
+    /// among them.
+    pub tools: Vec<String>,
+    pub http_status: u16,
+    pub verify_result: String,
+    pub sig_alg: String,
+    pub sig_fpr: String,
     pub bus_recorded: bool,
     pub bus_error: Option<String>,
 }
@@ -706,6 +739,156 @@ pub async fn policy_decide_approval(
             sig_fpr: client.sig_fpr.to_string(),
             token,
             approval_token: raw_token_of(decision, &resp),
+            bus_recorded,
+            bus_error,
+        }),
+        Err(e) => Err(PolicyError::from(e)),
+    }
+}
+
+/// What the journal says of a standing grant, and only that: the agent, the
+/// tool and the hold it was asked on. `decision` is `allow` for an attempt that
+/// reached wardryx, `refused` for one stopped here, as a decision's record is.
+fn journal_grant(
+    client: &PolicyClient,
+    operator: &str,
+    target: &str,
+    params: serde_json::Value,
+    decision: &str,
+    http_status: u16,
+    verify_result: &str,
+) -> (bool, Option<String>) {
+    let (sig_alg, sig_fpr) = crate::console_actor::signature_or(client.sig_alg, client.sig_fpr);
+    let rec = CommandRecord {
+        operator: operator.to_string(),
+        env: "local".to_string(),
+        action: "console.grant_tool".to_string(),
+        target: target.to_string(),
+        params,
+        decision: decision.to_string(),
+        sig_alg,
+        sig_fpr,
+        http_status,
+        verify_result: verify_result.to_string(),
+    };
+    journal(client, &rec)
+}
+
+/// Always allow the tool of one hold for the agent of that hold: a `grant_tool`
+/// policy written through wardryx's `PUT /v1/policies/{id}`, in the shape
+/// stack-single's `./install.sh agent-allow` writes it, so the two can add to
+/// the same policy and take from it (CLAUDE.md invariant 47).
+///
+/// `id` is the only thing the browser says. The agent and the tool are read from
+/// wardryx's own record of the hold, so a ceremony confirms this hold and
+/// nothing a caller typed. Every attempt is journaled, the refused ones too.
+///
+/// A policy the agent already holds is read first and added to: this takes
+/// nothing away, and a grant that took a static key keeps taking one.
+pub async fn policy_grant_tool(
+    id: String,
+    state: &PolicyState,
+) -> Result<GrantToolOutcome, PolicyError> {
+    let client = ready_client(&state).await?;
+    let operator = crate::console_actor::operator_or(&client.operator);
+    let approvals = match client.client.list_approvals().await {
+        Ok(approvals) => approvals,
+        Err(e) => {
+            let verify_result = format!("error: {e}");
+            let status = status_of(&e);
+            let params = json!({ "approval_id": id });
+            let _ = journal_grant(
+                &client,
+                &operator,
+                &id,
+                params,
+                "allow",
+                status,
+                &verify_result,
+            );
+            return Err(PolicyError::from(e));
+        }
+    };
+    let plan = approvals
+        .iter()
+        .find(|a| a.approval_id == id)
+        .ok_or_else(|| format!("wardryx has no approval {id}"))
+        .and_then(super::standing_grant::plan);
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(reason) => {
+            let verify_result = format!("refused before wardryx: {reason}");
+            let params = json!({ "approval_id": id });
+            let _ = journal_grant(
+                &client,
+                &operator,
+                &id,
+                params,
+                "refused",
+                0,
+                &verify_result,
+            );
+            return Err(PolicyError::StandingGrant { reason });
+        }
+    };
+    let policy_id = super::standing_grant::policy_id(&plan.agent);
+    let params = json!({ "approval_id": id, "agent_id": plan.agent, "tool": plan.tool });
+
+    let kept = match client.client.get_policy(&policy_id).await {
+        Ok(record) => Some(record.policy),
+        Err(WardryxError::Api { status: 404, .. }) => None,
+        Err(e) => {
+            let verify_result = format!("error: {e}");
+            let status = status_of(&e);
+            let _ = journal_grant(
+                &client,
+                &operator,
+                &policy_id,
+                params,
+                "allow",
+                status,
+                &verify_result,
+            );
+            return Err(PolicyError::from(e));
+        }
+    };
+    let why = format!("always allowed by {operator} from hold {id}");
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let policy = super::standing_grant::grant_policy(&plan, kept.as_ref(), &today, &why);
+    let tools = policy.grant_tool.clone();
+    let result = client.client.put_policy(&policy_id, &policy).await;
+
+    let (http_status, verify_result) = match &result {
+        // The chain's line carries this and not `params`, so it names all three.
+        Ok(_) => (
+            200,
+            format!(
+                "granted {} tools:{} from hold {id}",
+                plan.agent,
+                tools.join(",")
+            ),
+        ),
+        Err(e) => (status_of(e), format!("error: {e}")),
+    };
+    let (bus_recorded, bus_error) = journal_grant(
+        &client,
+        &operator,
+        &policy_id,
+        params,
+        "allow",
+        http_status,
+        &verify_result,
+    );
+    match result {
+        Ok(_) => Ok(GrantToolOutcome {
+            summary: format!("{} always allowed {}", plan.agent, plan.tool),
+            policy_id,
+            agent_id: plan.agent,
+            tools,
+            http_status,
+            verify_result,
+            sig_alg: client.sig_alg.to_string(),
+            sig_fpr: client.sig_fpr.to_string(),
             bus_recorded,
             bus_error,
         }),
