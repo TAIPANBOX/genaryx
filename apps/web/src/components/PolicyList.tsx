@@ -2,7 +2,7 @@ import { cssVar } from "../lib/cssVars";
 import { formatTimestamp, formatUsd } from "../lib/format";
 import type { PolicyRecord } from "../policyTypes";
 
-const COLUMNS = "110px 1fr 1fr 1fr 90px 90px 80px 90px 150px";
+const COLUMNS = "110px 1fr 1fr 1fr 1fr 90px 90px 80px 90px 150px";
 
 /**
  * The Policy view: `WardryxClient::list_policies()`'s read-only list
@@ -33,7 +33,7 @@ export function PolicyList({ policies, policyVersion }: { policies: PolicyRecord
             className="grid gap-3 px-5 py-2"
             style={{ gridTemplateColumns: COLUMNS, borderBottom: "1px solid var(--line)" }}
           >
-            {["id", "target", "deny tool", "allow domains", "human >$", "deny >$", "steps", "unattested", "updated"].map(
+            {["id", "target", "deny tool", "allow domains", "grants tool", "human >$", "deny >$", "steps", "unattested", "updated"].map(
               (label) => (
                 <span
                   key={label}
@@ -66,6 +66,13 @@ export function PolicyList({ policies, policyVersion }: { policies: PolicyRecord
                 title={p.allow_domains.join(", ") || undefined}
               >
                 {p.allow_domains.length > 0 ? p.allow_domains.join(", ") : "-"}
+              </span>
+              <span
+                className="mono truncate text-[11px]"
+                style={{ color: "var(--dim)" }}
+                title={p.grant_tool.join(", ") || undefined}
+              >
+                {p.grant_tool.length > 0 ? p.grant_tool.join(", ") : "-"}
               </span>
               <span className="mono tabular text-[12px]" style={{ color: "var(--fg)" }}>
                 {p.require_human_above_usd > 0 ? formatUsd(p.require_human_above_usd) : "-"}

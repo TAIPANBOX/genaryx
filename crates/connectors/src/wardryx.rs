@@ -767,6 +767,19 @@ impl Approval {
         self.context_get("model")?.as_str()
     }
 
+    /// `context["hold_kind"]`: which gate stood in the way, when that is the
+    /// floor: `no_grant` on a tool call nothing grants. Only that hold is ended
+    /// for good by a grant; every other hold ends with the one answer.
+    pub fn hold_kind(&self) -> Option<&str> {
+        self.context_get("hold_kind")?.as_str()
+    }
+
+    /// `context["identity_source"]`: how the enforcement point knew the agent,
+    /// normalized by wardryx to `agent-token`, `client-key` or `none`.
+    pub fn identity_source(&self) -> Option<&str> {
+        self.context_get("identity_source")?.as_str()
+    }
+
     /// `context["tool_call"]`: the one call a person is asked to approve, when
     /// the held request named one (`handleDecide`'s hold context). `None` is
     /// a hold that named no single call: a model call, or a wardryx older than
@@ -838,6 +851,21 @@ pub struct Policy {
     pub max_steps: i64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub deny_if_unattested: bool,
+    /// The tools this policy lifts the no-grant floor for, for the agents it
+    /// targets: `"*"` for every tool. Wardryx refuses it on a target that pins
+    /// no trust domain, and it may be written through `PUT`, which is what ends
+    /// a hold on a running box with no restart (`policy.go`, `GrantTool`).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub grant_tool: Vec<String>,
+    /// The identity sources a request must come with to be decided by this
+    /// policy (`agent-token`, `client-key`, `none`). A request whose source is
+    /// not listed is DENIED, so a grant that leaves out the source its agent
+    /// calls with turns a hold into a refusal. Empty means no requirement.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub require_identity_source: Vec<String>,
+    /// Denies a request whose delegation chain is present and unproven.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub deny_if_chain_unproven: bool,
 }
 
 /// One stored policy, as returned by `GET /v1/policies` (a bare array of

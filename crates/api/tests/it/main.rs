@@ -31,4 +31,5 @@ mod policy_proof_test;
 mod quarantine_is_visible_test;
 mod remedy_check_test;
 mod retained_close_test;
+mod standing_grant_test;
 mod stats_scale;

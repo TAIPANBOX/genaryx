@@ -32,6 +32,7 @@ export type PolicyError =
   | { kind: "no_environment" }
   | { kind: "unreachable"; reason: string }
   | { kind: "approver_statement"; reason: string }
+  | { kind: "standing_grant"; reason: string }
   | { kind: "wardryx"; status: number | null; message: string }
   | { kind: "role_required"; role: "viewer" | "approver" | "admin" };
 
@@ -54,6 +55,12 @@ export interface Approval {
   model: string | null;
   /** The one call this hold is about, `null` when the hold named no single call. */
   tool_call: HeldToolCall | null;
+  /** `no_grant` on a tool call nothing grants, the one hold a standing grant ends
+   * for good; `null` on every other hold. */
+  hold_kind: string | null;
+  /** How the enforcement point knew the agent: `agent-token`, `client-key` or
+   * `none`; `null` when the hold did not say. */
+  identity_source: string | null;
 }
 
 /** Mirrors `policy::commands::HeldToolCallDto`: the call by name, target and the
@@ -80,6 +87,8 @@ export interface PolicyRecord {
   deny_above_usd: number;
   max_steps: number;
   deny_if_unattested: boolean;
+  /** The tools this policy lifts the no-grant floor for; `*` is every tool. */
+  grant_tool: string[];
   updated_at: string | null;
 }
 
@@ -107,6 +116,21 @@ export interface DecideOutcome {
   /** The raw token, on a grant only. A live credential and the one copy of it:
    * `lib/approvalToken.ts` says where it may go. */
   approval_token: string | null;
+  bus_recorded: boolean;
+  bus_error: string | null;
+}
+
+/** Mirrors `policy::commands::GrantToolOutcome`. */
+export interface GrantToolOutcome {
+  summary: string;
+  policy_id: string;
+  agent_id: string;
+  /** Every tool the agent now holds through this policy. */
+  tools: string[];
+  http_status: number;
+  verify_result: string;
+  sig_alg: string;
+  sig_fpr: string;
   bus_recorded: boolean;
   bus_error: string | null;
 }

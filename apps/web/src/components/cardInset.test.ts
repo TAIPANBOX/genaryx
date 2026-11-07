@@ -72,12 +72,17 @@ const APPROVAL: Approval = {
   org: "forge",
   model: "claude-haiku-5-5",
   tool_call: null,
+  hold_kind: null,
+  identity_source: null,
 };
 
 const DECIDED: Approval = { ...APPROVAL, approval_id: "appr-2", pending: false, decided_at: "2026-10-14T10:00:00Z", decided_by: "ops", decision: "allow" };
 
 const APPROVALS_PROPS = {
+  policies: [],
+  role: null,
   onDecide: async () => {},
+  onAlwaysAllow: async () => {},
   grantedTokens: [],
   onDismissToken: noop,
   focusApprovalId: null,

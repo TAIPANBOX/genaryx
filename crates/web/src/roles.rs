@@ -159,6 +159,9 @@ const COMMANDS: &[Gate] = &[
     gate("policy_decide_approval", Role::Approver, true),
     // Commands that change enforcement state, sign an action, delete data, drive
     // a remote box, spawn real work, or pair a device: `admin` only.
+    // A standing grant: the same ceremony as a grant, and a higher floor, because
+    // this one outlives the call and takes a person out of the next ones.
+    gate("policy_grant_tool", Role::Admin, true),
     // Money plane: the signed Cloud mutations.
     gate("money_kill_run", Role::Admin, true),
     gate("money_set_budget", Role::Admin, true),
@@ -486,6 +489,7 @@ mod tests {
         "money_set_budget",
         "money_set_unit_budget",
         "policy_decide_approval",
+        "policy_grant_tool",
         "remote_operator_wg_config",
         "remote_operator_wg_revoke",
     ];
@@ -509,6 +513,15 @@ mod tests {
             assert_eq!(row.role, Role::Admin, "{command}");
             assert!(row.ceremony, "{command}");
         }
+    }
+
+    /// A grant ends one call and a standing grant ends every call after it, so
+    /// the ceremony is the same and the role is not.
+    #[test]
+    fn a_standing_grant_is_an_admin_row_with_the_ceremony() {
+        let row = gate_of("policy_grant_tool").expect("policy_grant_tool has no row");
+        assert_eq!(row.role, Role::Admin);
+        assert!(row.ceremony);
     }
 
     #[test]

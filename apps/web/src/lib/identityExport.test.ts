@@ -279,6 +279,7 @@ describe("the access matrix export never turns an unread plane into a zero", () 
       name: "reporter",
       target: "agent://acme.local/*",
       allow_domains: [],
+      grant_tool: [],
       deny_tool: ["shell"],
       max_steps: 5,
       require_human_above_usd: 0,

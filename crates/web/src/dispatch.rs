@@ -1051,6 +1051,16 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 .await,
             )))
         }
+        "policy_grant_tool" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                id: String,
+            }
+            let a: A = decode(args)?;
+            Ok(reply(
+                genaryx_api::policy::commands::policy_grant_tool(a.id, &ctx.policy).await,
+            ))
+        }
         "policy_list_approvals" => Ok(reply(
             genaryx_api::policy::commands::policy_list_approvals(&ctx.policy).await,
         )),

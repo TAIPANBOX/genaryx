@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { grantedTokenFrom, withGranted, withoutGranted, type GrantedToken } from "../lib/approvalToken";
 import { cssVar } from "../lib/cssVars";
 import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
-import { decideApproval, describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
+import { alwaysAllowTool, decideApproval, describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
 import {
   APPROVALS_EXPORT_COLUMNS,
   approvalsExportMeta,
@@ -229,6 +229,26 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
     [refresh],
   );
 
+  // The same contract as `handleDecide`: a refusal reaches the banner, and is
+  // rethrown so `ConfirmButton` settles either way.
+  const handleAlwaysAllow = useCallback(
+    async (id: string) => {
+      try {
+        const outcome = await alwaysAllowTool(id);
+        setNotice(
+          outcome.bus_recorded
+            ? `${outcome.summary}, in force now - signed console_command recorded, visible in the Bus tab.`
+            : `${outcome.summary}, in force now (bus journal not recorded: ${outcome.bus_error ?? "unknown reason"})`,
+        );
+        void refresh();
+      } catch (err) {
+        setError(err as PolicyError);
+        throw err;
+      }
+    },
+    [refresh],
+  );
+
   if (!ready) {
     return <PolicyEmptyState status={status} />;
   }
@@ -318,7 +338,10 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
         ) : (
           <ApprovalsInbox
             approvals={approvals}
+            policies={policies ?? []}
+            role={session?.role}
             onDecide={handleDecide}
+            onAlwaysAllow={handleAlwaysAllow}
             grantedTokens={grantedTokens}
             onDismissToken={(approvalId) => setGrantedTokens((list) => withoutGranted(list, approvalId))}
             focusApprovalId={focusApprovalId}

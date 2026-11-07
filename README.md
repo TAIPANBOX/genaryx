@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1437-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1465-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -302,9 +302,19 @@ box; these frames are not it, and say so here rather than in a footnote.
   (CLAUDE.md invariant 46, `scripts/approval-token-stays-in-memory.sh`). Each
   row of the inbox shows the reason for the hold and the target of the tool, and
   says so where wardryx sends no arguments or the arguments were truncated.
-- **Per-action WebAuthn ceremony (D15/B3 part 2).** The ten privileged
+- **Always allow, when a person keeps saying yes.** A call held because nothing
+  grants the tool offers "Always allow" beside Grant and Deny, which writes the
+  same `grant_tool` policy `./install.sh agent-allow` writes in stack-single:
+  one policy per agent, in force with no restart, on the record, and taken back
+  with `agent-deny`. Grant stays the default answer. It asks for the same
+  passkey ceremony and the `admin` role, because it outlives the call, and the
+  command reads the agent and the tool from wardryx's record of the hold, not
+  from the browser. An agent id with no trust domain has the button off, with a
+  line saying why. The inbox offers it in a row of its own once one agent has
+  been granted one tool three times (CLAUDE.md invariant 47).
+- **Per-action WebAuthn ceremony (D15/B3 part 2).** The eleven privileged
   commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
-  `remote_operator_wg_config`, `remote_operator_wg_revoke`,
+  `policy_grant_tool`, `remote_operator_wg_config`, `remote_operator_wg_revoke`,
   `delegation_revoke`, `money_close_retained`, `money_set_unit_budget`,
   `agent_stop`, `agent_lift`)
   additionally require a fresh, per-action passkey
