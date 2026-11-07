@@ -134,10 +134,10 @@ fi
 if ! grep -q 'pub struct RawApprovalToken(String);' "$commands"; then
 	note "$commands: RawApprovalToken is no longer a private tuple field over a String"
 fi
-if grep -B3 'pub struct RawApprovalToken' "$commands" | grep -q 'derive(.*Debug'; then
+if grep -q 'derive(.*Debug' <<<"$(grep -B3 'pub struct RawApprovalToken' "$commands")"; then
 	note "$commands: RawApprovalToken derives Debug, which prints the token"
 fi
-if grep -B3 'pub struct ApprovalDecideResponse' "$connector" | grep -q 'derive(.*Debug'; then
+if grep -q 'derive(.*Debug' <<<"$(grep -B3 'pub struct ApprovalDecideResponse' "$connector")"; then
 	note "$connector: ApprovalDecideResponse derives Debug, which prints the token"
 fi
 if grep -qE 'Display for RawApprovalToken|impl RawApprovalToken' "$commands"; then
