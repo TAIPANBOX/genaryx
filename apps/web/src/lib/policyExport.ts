@@ -52,6 +52,28 @@ export function approvalPolicyVersionLabel(approval: Approval): string {
   return approval.policy_version && approval.policy_version.length > 0 ? approval.policy_version : NOT_RECORDED;
 }
 
+export function visibleText(text: string): string {
+  return text;
+}
+
+export function approvalReasonLabel(approval: Approval): string {
+  return approval.reason ?? "";
+}
+
+export const NO_CALL_ON_HOLD = "";
+
+export function approvalTargetLabel(_approval: Approval): string {
+  return NOT_RECORDED;
+}
+
+export function approvalArgumentsLabel(_approval: Approval): string {
+  return "";
+}
+
+export function approvalArgumentsTitle(_approval: Approval): string {
+  return "";
+}
+
 // ---- The approval trail ----------------------------------------------------
 
 export interface ApprovalExportRow {
@@ -70,6 +92,8 @@ export interface ApprovalExportRow {
   org: string | null;
   model: string | null;
   reason: string | null;
+  target: string | null;
+  arguments_truncated: boolean | null;
 }
 
 export const APPROVALS_EXPORT_COLUMNS: { key: keyof ApprovalExportRow & string; header: string }[] = [
@@ -88,6 +112,8 @@ export const APPROVALS_EXPORT_COLUMNS: { key: keyof ApprovalExportRow & string; 
   { key: "org", header: "org" },
   { key: "model", header: "model" },
   { key: "reason", header: "reason" },
+  { key: "target", header: "target" },
+  { key: "arguments_truncated", header: "arguments_truncated" },
 ];
 
 function textOrNull(value: string | null | undefined): string | null {
@@ -123,6 +149,8 @@ export function approvalsExportRows(approvals: Approval[]): ApprovalExportRow[] 
     org: textOrNull(a.org),
     model: textOrNull(a.model),
     reason: textOrNull(a.reason),
+    target: null,
+    arguments_truncated: null,
   }));
 }
 
@@ -148,6 +176,7 @@ export function approvalsExportMeta(opts: {
       "An empty tool_names means the hold's context carried no tool list. This console cannot tell that from a hold that declared an empty one, because the two arrive identically.",
       "model and org are display-only context: the PDP never branches on the model, and org is stamped from the authenticated principal rather than from the request body.",
       "reason is the policy plane's own one-sentence explanation of the hold, not an operator's note.",
+      "An empty target means the hold named no single call, or the call named no target. The arguments are never in this file: the plane does not send them.",
     ],
   };
 }

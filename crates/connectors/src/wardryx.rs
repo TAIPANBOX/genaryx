@@ -641,6 +641,10 @@ mod approver_statement_tests {
 /// response omits the key entirely) and by reading `approval.Decide`
 /// (`approval.go:310-331`), which only ever calls `MintApprovalToken` from
 /// the grant branch.
+///
+/// `approval_token` is a live credential that wardryx hands over once, so this
+/// type has its own `Debug`: a `{:?}` of a response or of a `Result` around one
+/// names whether a token came back and never what it says.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApprovalDecideResponse {
     pub approval_id: String,
@@ -657,8 +661,9 @@ pub struct ApprovalDecideResponse {
 ///
 /// `context` carries everything about the held decision that isn't one of
 /// this struct's own named fields - `org`, `model`, `est_cost_usd`,
-/// `attestation_method`, `on_behalf_of`, `reason`, `policy_version`, and
-/// `tool_names` (`internal/approval.Request` stamps all but `org`,
+/// `attestation_method`, `on_behalf_of`, `reason`, `policy_version`,
+/// `tool_call`, and `tool_names` (`internal/approval.Request` stamps all but
+/// `org` and `tool_call`,
 /// `approval.go:277-299`; `handleDecide` stamps `org` from the
 /// authenticated principal on top, `api.go:277-285`) - as an untyped JSON
 /// object, per this task's spec: prefer the typed accessor methods below
@@ -747,6 +752,33 @@ impl Approval {
     pub fn model(&self) -> Option<&str> {
         self.context_get("model")?.as_str()
     }
+
+    /// `context["tool_call"]`: the one call a person is asked to approve, when
+    /// the held request named one (`handleDecide`'s hold context). `None` is
+    /// a hold that named no single call: a model call, or a wardryx older than
+    /// the binding. A key that is there but unreadable stays `Some` with its
+    /// fields unknown, because "this hold named no call" would be a false
+    /// statement about a hold that did.
+    pub fn tool_call(&self) -> Option<HeldToolCall> {
+        None
+    }
+}
+
+/// The call a held approval is about, as wardryx records it: by name, target
+/// and the digest a grant binds its token to. Wardryx leaves the arguments out
+/// on purpose, because they can carry customer data, so there is no field for
+/// them here: what a person can read is that they were not sent.
+///
+/// Every field is `None` when the context did not carry it in a readable shape,
+/// never an empty string or a `false` standing in for "not known".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldToolCall {
+    pub name: Option<String>,
+    pub target: Option<String>,
+    /// True when the enforcement point could not send the arguments, so the
+    /// digest binds only the name and the target.
+    pub arguments_truncated: Option<bool>,
+    pub digest: Option<String>,
 }
 
 // ---- DTOs: /v1/policies (api.go:420-604, policy.go:32-76) ------------------
@@ -847,15 +879,24 @@ pub struct ApprovalTokenClaims {
     /// Unix seconds (`claims.Exp`, `approval.go:112`).
     pub exp: i64,
     pub nonce: String,
+    /// `claims.ToolCallDigest`: the digest of the one call this token was
+    /// granted for. Wardryx writes it only when the held request carried a
+    /// tool call, so `None` is a token bound to an agent, a run, a tool set and
+    /// a cost ceiling, and not to one call.
+    #[serde(skip)]
+    pub tool_call_digest: Option<String>,
 }
 
 impl ApprovalTokenClaims {
     /// Decode (never verify - see the struct doc comment) an
-    /// `approval_token`'s claims: split on the first `'.'`
-    /// (`strings.Cut`, `approval.go:180`, mirrored here with
-    /// `str::split_once`), base64url-no-pad-decode the payload segment
-    /// (`base64.RawURLEncoding`, `approval.go:154,191`), and parse the
-    /// result as JSON.
+    /// `approval_token`'s claims. The dots tell the two formats apart, as
+    /// wardryx's own reader does (`strings.Count`, `keys.go`): `payload.sig`
+    /// for a token signed with the shared secret, `header.payload.sig` for a
+    /// v3 compact JWS signed through Keyryx. The payload is base64url with no
+    /// padding, then JSON, in both.
+    ///
+    /// An error here names the fault and never quotes the token: its text goes
+    /// into the journal, and serde's messages repeat the value they refused.
     pub fn decode(token: &str) -> Result<Self, WardryxError> {
         let (payload, _sig) = token
             .split_once('.')
@@ -1181,6 +1222,125 @@ mod tests {
             ApprovalTokenClaims::decode(&bad_json),
             Err(WardryxError::BadToken(_))
         ));
+    }
+
+    /// A v3 token as `mintV3` writes it: a protected header, the claims, an
+    /// ES256 signature, three segments.
+    fn build_v3_token(claims_json: &str) -> String {
+        let header = URL_SAFE_NO_PAD
+            .encode(br#"{"alg":"ES256","kid":"test-key","typ":"wardryx-approval+jwt"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(claims_json.as_bytes());
+        format!("{header}.{payload}.not-a-real-es256-signature")
+    }
+
+    #[test]
+    fn a_token_signed_through_keyryx_decodes_from_its_middle_segment() {
+        let token = build_v3_token(
+            r#"{"agent_id":"agent://acme/payments","run_id":"run-1","tools":["charge"],
+                "max_cost_usd":50.0,"exp":1784267010,"nonce":"n","v":3,"aid":"ap_1",
+                "tcd":"aaaa"}"#,
+        );
+        let claims = ApprovalTokenClaims::decode(&token).expect("a v3 token decodes");
+        assert_eq!(claims.agent_id, "agent://acme/payments");
+        assert_eq!(claims.exp, 1_784_267_010);
+        assert_eq!(claims.tool_call_digest.as_deref(), Some("aaaa"));
+    }
+
+    #[test]
+    fn a_token_with_more_than_three_segments_is_refused() {
+        assert!(matches!(
+            ApprovalTokenClaims::decode("a.b.c.d"),
+            Err(WardryxError::BadToken(_))
+        ));
+    }
+
+    #[test]
+    fn a_decode_error_never_repeats_what_it_refused() {
+        let canary = "canary-in-the-claims";
+        let wrong_type = format!(r#"{{"agent_id":"{canary}","run_id":7}}"#);
+        for token in [
+            build_token(&wrong_type, "sig"),
+            build_v3_token(&wrong_type),
+            format!("{canary}!!.sig"),
+        ] {
+            let error = ApprovalTokenClaims::decode(&token).expect_err("refused");
+            assert!(!error.to_string().contains(canary), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_decide_response_prints_without_its_token() {
+        let response = ApprovalDecideResponse {
+            approval_id: "ap_1".to_string(),
+            decision: "grant".to_string(),
+            approval_token: Some("payload-segment.signature-segment".to_string()),
+        };
+        let printed = format!("{response:?}");
+        assert!(!printed.contains("payload-segment"), "{printed}");
+        assert!(!printed.contains("signature-segment"), "{printed}");
+        assert!(printed.contains("ap_1"), "{printed}");
+    }
+
+    fn approval_with_context(context: serde_json::Value) -> Approval {
+        serde_json::from_value(serde_json::json!({
+            "approval_id": "ap_1",
+            "agent_id": "agent://acme/payments",
+            "run_id": "run-1",
+            "requested_at": "2026-07-17T00:00:00Z",
+            "pending": true,
+            "context": context,
+        }))
+        .expect("a valid Approval fixture")
+    }
+
+    #[test]
+    fn a_held_tool_call_is_read_by_name_target_and_digest() {
+        let approval = approval_with_context(serde_json::json!({
+            "tool_call": {
+                "name": "fetch_url",
+                "target": "https://example.invalid/a",
+                "arguments_truncated": true,
+                "digest": "abc",
+            },
+        }));
+        assert_eq!(
+            approval.tool_call(),
+            Some(HeldToolCall {
+                name: Some("fetch_url".to_string()),
+                target: Some("https://example.invalid/a".to_string()),
+                arguments_truncated: Some(true),
+                digest: Some("abc".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_hold_with_no_tool_call_says_none_and_an_unreadable_one_says_unknown() {
+        let unknown = HeldToolCall {
+            name: None,
+            target: None,
+            arguments_truncated: None,
+            digest: None,
+        };
+        assert_eq!(
+            approval_with_context(serde_json::json!({})).tool_call(),
+            None
+        );
+        assert_eq!(
+            approval_with_context(serde_json::json!({ "tool_call": null })).tool_call(),
+            None
+        );
+        for shape in [
+            serde_json::json!("a string"),
+            serde_json::json!(7),
+            serde_json::json!([1, 2]),
+            serde_json::json!({ "name": 1, "target": [], "arguments_truncated": "yes", "digest": {} }),
+        ] {
+            assert_eq!(
+                approval_with_context(serde_json::json!({ "tool_call": shape })).tool_call(),
+                Some(unknown.clone()),
+            );
+        }
     }
 
     #[test]

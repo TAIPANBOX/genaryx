@@ -15,6 +15,7 @@
 //! other file here reads them.
 
 mod agent_stop_test;
+mod approval_token_test;
 mod budget_proof_test;
 mod case_file_test;
 mod case_seal_test;

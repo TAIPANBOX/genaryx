@@ -16,16 +16,20 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApprovalsInbox } from "../components/ApprovalsInbox";
 import {
+  approvalArgumentsTitle,
   approvalModelLabel,
   approvalOrgLabel,
   approvalPolicyVersionLabel,
+  approvalReasonLabel,
   APPROVALS_EXPORT_COLUMNS,
   approvalsExportMeta,
   approvalsExportRows,
+  approvalTargetLabel,
   NOT_RECORDED,
   POLICIES_EXPORT_COLUMNS,
   policiesExportMeta,
   policiesExportRows,
+  visibleText,
 } from "./policyExport";
 import { toCsv, toJson } from "./download";
 import type { Approval, PolicyRecord } from "../policyTypes";
@@ -46,6 +50,12 @@ const HOLD: Approval = {
   policy_version: "pv-2026-08-19",
   org: "meridian-treasury",
   model: "claude-opus-4",
+  tool_call: {
+    name: "payments.transfer",
+    target: "https://bank.meridian.example/transfers",
+    arguments_truncated: false,
+    digest: "aa11",
+  },
 };
 
 const DECIDED: Approval = {
@@ -76,7 +86,7 @@ function inbox(approvals: Approval[]): string {
     createElement(ApprovalsInbox, {
       approvals,
       onDecide: async () => {},
-      grantedToken: null,
+      grantedTokens: [],
       onDismissToken: () => {},
       focusApprovalId: null,
       mutedKeys: new Set<string>(),
@@ -85,6 +95,86 @@ function inbox(approvals: Approval[]): string {
     }),
   );
 }
+
+describe("an operator deciding a hold can see what it is about", () => {
+  it("a_row_shows_why_the_hold_happened_and_the_target_of_the_tool", () => {
+    const html = inbox([HOLD]);
+    expect(html).toContain("estimated cost above the human-approval threshold");
+    expect(html).toContain("https://bank.meridian.example/transfers");
+  });
+
+  it("a_decided_row_keeps_the_reason_and_the_target", () => {
+    const html = inbox([DECIDED]);
+    expect(html).toContain("estimated cost above the human-approval threshold");
+    expect(html).toContain("https://bank.meridian.example/transfers");
+  });
+
+  it("a_row_says_wardryx_did_not_send_the_arguments", () => {
+    expect(inbox([HOLD])).toContain("not sent by wardryx");
+    expect(inbox([DECIDED])).toContain("not sent by wardryx");
+  });
+
+  it("a_row_says_when_the_arguments_were_truncated", () => {
+    const truncated = { ...HOLD, tool_call: { ...HOLD.tool_call!, arguments_truncated: true } };
+    const html = inbox([truncated]);
+    expect(html).toContain("truncated");
+    expect(html).toContain("a grant binds only the tool and target");
+    expect(inbox([HOLD])).not.toContain("truncated");
+  });
+
+  it("a_hold_with_no_single_call_says_so_instead_of_leaving_a_blank", () => {
+    const html = inbox([{ ...HOLD, tool_call: null }]);
+    expect(html).toContain("this hold names no single call");
+  });
+
+  it("a_hold_with_no_reason_says_so_instead_of_leaving_a_blank", () => {
+    expect(inbox([{ ...HOLD, reason: null }])).toContain("wardryx gave no reason for this hold");
+  });
+
+  it("a_target_that_did_not_arrive_is_not_recorded_and_an_empty_one_is_none_stated", () => {
+    const call = HOLD.tool_call!;
+    expect(approvalTargetLabel({ ...HOLD, tool_call: { ...call, target: null } })).toBe(NOT_RECORDED);
+    expect(approvalTargetLabel({ ...HOLD, tool_call: { ...call, target: "" } })).toBe("none stated");
+  });
+
+  it("the_arguments_hover_names_the_digest_a_grant_binds", () => {
+    expect(approvalArgumentsTitle(HOLD)).toContain("aa11");
+    expect(approvalArgumentsTitle({ ...HOLD, tool_call: { ...HOLD.tool_call!, digest: null } })).toContain("no readable digest");
+    expect(approvalArgumentsTitle({ ...HOLD, tool_call: null })).toContain("not one call");
+  });
+
+  it("a_target_cannot_hide_part_of_itself_from_the_person_reading_it", () => {
+    const call = HOLD.tool_call!;
+    const hostile = { ...HOLD, tool_call: { ...call, target: "safe.example\u202e/moc.live\u0000\n" } };
+    const label = approvalTargetLabel(hostile);
+    expect(label).toBe("safe.example\\u{202e}/moc.live\\u{0}\\u{a}");
+    expect(visibleText("plain text, https://a.example/b?c=d")).toBe("plain text, https://a.example/b?c=d");
+    expect(approvalReasonLabel({ ...HOLD, reason: "held\u2028now" })).toBe("held\\u{2028}now");
+  });
+
+  it("two_hundred_seeds_of_hostile_targets_never_reach_a_row_with_a_hidden_character", () => {
+    const hidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+    const pool = ["\u202e", "\u200b", "\u2066", "\u0000", "\n", "\t", "\ufeff", "a", "/", " ", "\u{e0041}"];
+    let state = 0x2545f491;
+    for (let seed = 0; seed < 200; seed++) {
+      let target = "";
+      for (let i = 0; i < 24; i++) {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        target += pool[state % pool.length];
+      }
+      expect(approvalTargetLabel({ ...HOLD, tool_call: { ...HOLD.tool_call!, target } })).not.toMatch(hidden);
+    }
+  });
+
+  it("the_approval_trail_carries_the_target_and_whether_the_arguments_were_truncated", () => {
+    const [row] = approvalsExportRows([{ ...HOLD, tool_call: { ...HOLD.tool_call!, arguments_truncated: true } }]);
+    expect(row.target).toBe("https://bank.meridian.example/transfers");
+    expect(row.arguments_truncated).toBe(true);
+    const [none] = approvalsExportRows([{ ...HOLD, tool_call: null }]);
+    expect(none.target).toBeNull();
+    expect(none.arguments_truncated).toBeNull();
+  });
+});
 
 describe("the approvals inbox renders the context the hold arrived with", () => {
   it("shows the model the operator is being asked to spend money on", () => {

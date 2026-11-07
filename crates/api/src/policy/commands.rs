@@ -24,8 +24,8 @@
 use super::env::EnvSource;
 use super::state::{PolicyClient, PolicyInner, PolicyState};
 use genaryx_connectors::{
-    Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, PolicyRecord,
-    WardryxError,
+    Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, HeldToolCall,
+    PolicyRecord, WardryxError,
 };
 use genaryx_core::{CommandRecord, command};
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,31 @@ pub struct ApprovalDto {
     pub policy_version: Option<String>,
     pub org: Option<String>,
     pub model: Option<String>,
+    /// The one call this hold is about, or `None` when the hold named no single
+    /// call. Wardryx does not send the arguments, so there is no field for them
+    /// and the row says so (CLAUDE.md invariant 46).
+    pub tool_call: Option<HeldToolCallDto>,
+}
+
+/// The call a held approval is about: a UI-facing mirror of
+/// `genaryx_connectors::HeldToolCall`, with its unknowns kept as `null`.
+#[derive(Debug, Clone, Serialize)]
+pub struct HeldToolCallDto {
+    pub name: Option<String>,
+    pub target: Option<String>,
+    pub arguments_truncated: Option<bool>,
+    pub digest: Option<String>,
+}
+
+impl From<HeldToolCall> for HeldToolCallDto {
+    fn from(c: HeldToolCall) -> Self {
+        Self {
+            name: c.name,
+            target: c.target,
+            arguments_truncated: c.arguments_truncated,
+            digest: c.digest,
+        }
+    }
 }
 
 impl From<&Approval> for ApprovalDto {
@@ -82,6 +107,7 @@ impl From<&Approval> for ApprovalDto {
             policy_version: a.policy_version().map(str::to_string),
             org: a.org().map(str::to_string),
             model: a.model().map(str::to_string),
+            tool_call: a.tool_call().map(HeldToolCallDto::from),
         }
     }
 }
@@ -161,6 +187,26 @@ impl DecisionDto {
     }
 }
 
+/// The raw `approval_token` of a grant, the string the enforcement point takes
+/// in `x-fuse-approval-token`. It is a live credential and the one copy the
+/// operator will ever get: wardryx returns it from the grant and never again.
+///
+/// It goes out in the answer to the grant and nowhere else (CLAUDE.md invariant
+/// 46), so this type gives it no way to be read by accident: it serialises as
+/// the bare string, because that is the answer, and it has no `Display`, no
+/// accessor, and a `Debug` that prints no part of it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(transparent)]
+pub struct RawApprovalToken(String);
+
+/// The token to hand the operator for this answer: a grant's, and no other.
+fn raw_token_of(
+    _decision: DecisionDto,
+    _resp: &ApprovalDecideResponse,
+) -> Option<RawApprovalToken> {
+    None
+}
+
 /// The decoded claims of a freshly minted `approval_token`, shown to the
 /// operator exactly once (Wardryx never lets the token be retrieved again
 /// after this response - see `ApprovalDecideResponse::approval_token`'s doc
@@ -176,6 +222,9 @@ pub struct DecodedTokenDto {
     pub cost_ceiling_usd: f64,
     /// Unix seconds (`ApprovalTokenClaims::exp`).
     pub exp_unix: i64,
+    /// The digest of the one call the token is bound to, or `None` for a token
+    /// granted on a hold that named no single call, which the panel says.
+    pub tool_call_digest: Option<String>,
 }
 
 impl From<&ApprovalTokenClaims> for DecodedTokenDto {
@@ -186,6 +235,7 @@ impl From<&ApprovalTokenClaims> for DecodedTokenDto {
             tools: c.tools.clone(),
             cost_ceiling_usd: c.cost_ceiling_usd(),
             exp_unix: c.exp,
+            tool_call_digest: c.tool_call_digest.clone(),
         }
     }
 }
@@ -295,8 +345,12 @@ pub struct DecideOutcome {
     pub sig_fpr: String,
     /// `Some` only on a successful grant whose `approval_token` decoded
     /// cleanly - see [`describe_decision_result`] for the (rare, honestly
-    /// reported) cases where a grant succeeds but no token can be shown.
+    /// reported) cases where a grant succeeds but its claims cannot be read.
     pub token: Option<DecodedTokenDto>,
+    /// The raw token, on every grant wardryx answered with one, whether or not
+    /// its claims could be read: this answer is the only copy there is. Nothing
+    /// else in this module or its journal record holds it.
+    pub approval_token: Option<RawApprovalToken>,
     pub bus_recorded: bool,
     pub bus_error: Option<String>,
 }
@@ -634,13 +688,14 @@ pub async fn policy_decide_approval(
     let (bus_recorded, bus_error) = journal(&client, &rec);
 
     match result {
-        Ok(_) => Ok(DecideOutcome {
+        Ok(resp) => Ok(DecideOutcome {
             summary,
             http_status,
             verify_result,
             sig_alg: client.sig_alg.to_string(),
             sig_fpr: client.sig_fpr.to_string(),
             token,
+            approval_token: raw_token_of(decision, &resp),
             bus_recorded,
             bus_error,
         }),
@@ -763,6 +818,105 @@ mod tests {
     }
 
     #[test]
+    fn describe_decision_result_reads_a_token_signed_through_keyryx() {
+        let claims_json = r#"{"agent_id":"agent://acme/payments","run_id":"run-1","tools":["charge"],
+            "max_cost_usd":50.0,"exp":9999999999,"nonce":"n1","v":3,"aid":"ap_1","tcd":"abc"}"#;
+        let token = format!(
+            "{}.{}.fake-es256-never-verified",
+            b64url_nopad(br#"{"alg":"ES256","kid":"k","typ":"wardryx-approval+jwt"}"#),
+            b64url_nopad(claims_json.as_bytes()),
+        );
+        let resp = ApprovalDecideResponse {
+            approval_id: "ap_1".to_string(),
+            decision: "grant".to_string(),
+            approval_token: Some(token),
+        };
+        let (_, verify_result, token_dto, summary) =
+            describe_decision_result(DecisionDto::Grant, "ap_1", &Ok(resp));
+        assert!(
+            verify_result.starts_with("granted ceiling_usd:50.00 ttl_s:"),
+            "got {verify_result:?}"
+        );
+        let dto = token_dto.expect("a v3 token must decode");
+        assert_eq!(dto.agent_id, "agent://acme/payments");
+        assert_eq!(dto.tool_call_digest.as_deref(), Some("abc"));
+        assert_eq!(summary, "approval ap_1 granted");
+    }
+
+    #[test]
+    fn a_deny_never_answers_with_a_token_even_if_wardryx_sent_one() {
+        let resp = ApprovalDecideResponse {
+            approval_id: "ap_1".to_string(),
+            decision: "deny".to_string(),
+            approval_token: Some("x.y".to_string()),
+        };
+        assert!(raw_token_of(DecisionDto::Deny, &resp).is_none());
+    }
+
+    #[test]
+    fn an_empty_token_is_no_token_to_show() {
+        let resp = ApprovalDecideResponse {
+            approval_id: "ap_1".to_string(),
+            decision: "grant".to_string(),
+            approval_token: Some(String::new()),
+        };
+        assert!(raw_token_of(DecisionDto::Grant, &resp).is_none());
+    }
+
+    #[test]
+    fn the_raw_token_serialises_bare_and_prints_redacted() {
+        let raw = RawApprovalToken("payload-segment.signature-segment".to_string());
+        assert_eq!(
+            serde_json::to_value(&raw).expect("serialise"),
+            json!("payload-segment.signature-segment")
+        );
+        let printed = format!("{raw:?}");
+        assert!(!printed.contains("segment"), "{printed}");
+    }
+
+    /// Hostile bytes for a token: whatever wardryx answered with, the journal's
+    /// text and the notice never carry any of it, and nothing panics.
+    #[test]
+    fn two_hundred_seeds_of_hostile_tokens_never_reach_the_journal_text() {
+        let canary = "canary-of-the-hostile-token";
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        for seed in 0..200u32 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let claims = match state % 5 {
+                0 => format!(r#"{{"agent_id":"{canary}","run_id":{seed}}}"#),
+                1 => format!(r#"{{"tools":"{canary}"}}"#),
+                2 => format!(r#"["{canary}"]"#),
+                3 => format!(r#""{canary}""#),
+                _ => canary.to_string(),
+            };
+            let payload = b64url_nopad(claims.as_bytes());
+            let token = match (state >> 8) % 6 {
+                0 => format!("{payload}.{canary}"),
+                1 => format!("{canary}.{payload}.{canary}"),
+                2 => format!("{payload}.{canary}.{canary}.{canary}"),
+                3 => format!("{canary}!!!.{canary}"),
+                4 => canary.to_string(),
+                _ => format!(".{canary}"),
+            };
+            let resp = ApprovalDecideResponse {
+                approval_id: "ap_1".to_string(),
+                decision: "grant".to_string(),
+                approval_token: Some(token),
+            };
+            let (status, verify_result, _, summary) =
+                describe_decision_result(DecisionDto::Grant, "ap_1", &Ok(resp));
+            assert_eq!(status, 200, "seed {seed}");
+            assert!(
+                !verify_result.contains(canary),
+                "seed {seed}: {verify_result}"
+            );
+            assert!(!summary.contains(canary), "seed {seed}: {summary}");
+        }
+    }
+
+    #[test]
     fn describe_decision_result_error_is_never_a_fabricated_ok() {
         let err = WardryxError::ApprovalAlreadyDecided;
         let (status, verify_result, token, summary) =
@@ -860,6 +1014,93 @@ mod tests {
         assert_eq!(dto.org.as_deref(), Some("acme"));
         assert_eq!(dto.on_behalf_of, None);
         assert!(dto.pending);
+    }
+
+    #[test]
+    fn approval_dto_carries_the_held_call_and_no_arguments() {
+        let json = serde_json::json!({
+            "approval_id": "ap_1",
+            "agent_id": "agent://acme/payments",
+            "run_id": "run-1",
+            "requested_at": "2026-07-17T00:00:00Z",
+            "pending": true,
+            "context": {
+                "reason": "policy held the call",
+                "tool_call": {
+                    "name": "fetch_url",
+                    "target": "https://example.invalid/a",
+                    "arguments_truncated": false,
+                    "digest": "abc",
+                }
+            }
+        });
+        let approval: Approval = serde_json::from_value(json).expect("valid Approval fixture");
+        let dto = serde_json::to_value(ApprovalDto::from(&approval)).expect("serialise");
+        assert_eq!(dto["tool_call"]["name"], "fetch_url");
+        assert_eq!(dto["tool_call"]["target"], "https://example.invalid/a");
+        assert_eq!(dto["tool_call"]["arguments_truncated"], false);
+        assert_eq!(dto["tool_call"]["digest"], "abc");
+        assert_eq!(dto["reason"], "policy held the call");
+        assert!(dto["tool_call"].get("arguments").is_none());
+    }
+
+    #[test]
+    fn approval_dto_of_a_hold_with_no_call_says_null() {
+        let json = serde_json::json!({
+            "approval_id": "ap_1",
+            "agent_id": "agent://acme/payments",
+            "run_id": "run-1",
+            "requested_at": "2026-07-17T00:00:00Z",
+            "pending": true,
+            "context": { "reason": "over threshold" }
+        });
+        let approval: Approval = serde_json::from_value(json).expect("valid Approval fixture");
+        let dto = serde_json::to_value(ApprovalDto::from(&approval)).expect("serialise");
+        assert!(dto["tool_call"].is_null());
+    }
+
+    /// Hostile shapes for the hold's context: the row keeps its other fields and
+    /// nothing panics, whatever `tool_call` holds.
+    #[test]
+    fn two_hundred_seeds_of_hostile_contexts_never_cost_the_row() {
+        let mut state: u64 = 0xdead_beef_cafe_f00d;
+        let pick = |state: &mut u64| -> serde_json::Value {
+            *state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            match *state % 7 {
+                0 => json!(null),
+                1 => json!(true),
+                2 => json!(*state),
+                3 => json!("\u{202e}target"),
+                4 => json!([]),
+                5 => json!({ "name": { "name": [] } }),
+                _ => json!(-1.5),
+            }
+        };
+        for seed in 0..200u32 {
+            let context = json!({
+                "reason": "kept",
+                "tool_call": {
+                    "name": pick(&mut state),
+                    "target": pick(&mut state),
+                    "arguments_truncated": pick(&mut state),
+                    "digest": pick(&mut state),
+                },
+            });
+            let json = json!({
+                "approval_id": "ap_1",
+                "agent_id": "agent://acme/payments",
+                "run_id": "run-1",
+                "requested_at": "2026-07-17T00:00:00Z",
+                "pending": true,
+                "context": context,
+            });
+            let approval: Approval = serde_json::from_value(json).expect("valid Approval fixture");
+            let dto = ApprovalDto::from(&approval);
+            assert_eq!(dto.reason.as_deref(), Some("kept"), "seed {seed}");
+            assert!(dto.tool_call.is_some(), "seed {seed}");
+        }
     }
 
     #[test]

@@ -1152,6 +1152,134 @@ run_case "no-reader-leaves-a-pipe-early: no workflow step is read" fail \
 	"$(py 'edit("scripts/no-reader-leaves-a-pipe-early.sh", "elif path.startswith(\".github/workflows/\") and", "elif path.startswith(\".github/flows/\") and")')" \
 	'measured NOTHING'
 
+# invariant 46: the raw approval token stays in its answer and in component
+# memory. The gate's own cases first, then product mutants through cargo.
+token_gate='./scripts/approval-token-stays-in-memory.sh'
+
+run_case "approval-token: a module outside the list reads the wire field" fail \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/lib/recentEvents.ts", "export ", "export const _teeth = (o: { approval_token: string }) => o.approval_token;\nexport ")')" \
+	'recentEvents.ts names approval_token'
+
+run_case "approval-token: a new module holds a granted token" fail \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/lib/recentEvents.ts", "export ", "export type _Teeth = import(\"./approvalToken\").GrantedToken;\nexport ")')" \
+	'recentEvents.ts holds a granted token'
+
+run_case "approval-token: a holder writes to browser storage" fail \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/components/ApprovalsInbox.tsx", "      setCopy(\"copied\");", "      setCopy(\"copied\");\n      localStorage.setItem(\"t\", raw);")')" \
+	'reaches past this component'
+
+run_case "approval-token: a holder logs to the console" fail \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/components/PolicyView.tsx", "        const granted = grantedTokenFrom(id, outcome);", "        const granted = grantedTokenFrom(id, outcome);\n        console.log(granted);")')" \
+	'reaches past this component'
+
+run_case "approval-token: the policy view stays mounted across navigation" fail \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/components/AppShell.tsx", "{view === \"policy\" && (\n          <PolicyView", "{(\n          <PolicyView")')" \
+	'does not mount PolicyView only while it is the active view'
+
+run_case "approval-token: the copilot crate names the call that mints it" fail \
+	"$token_gate" \
+	"$(py 'edit("crates/copilot/src/tools/wardryx.rs", "pub(super) struct ApprovalsInbox;", "// decide_approval\npub(super) struct ApprovalsInbox;")')" \
+	'the copilot crate names the token'
+
+run_case "approval-token: the raw token derives Debug" fail \
+	"$token_gate" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "#[derive(Clone, Serialize)]\n#[serde(transparent)]", "#[derive(Clone, Debug, Serialize)]\n#[serde(transparent)]")')" \
+	'RawApprovalToken derives Debug'
+
+run_case "approval-token: the raw token gains a way to be read" fail \
+	"$token_gate" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "/// The token to hand the operator for this answer", "impl RawApprovalToken {\n    pub fn text(&self) -> &str { &self.0 }\n}\n\n/// The token to hand the operator for this answer")')" \
+	'RawApprovalToken has a way to be read'
+
+run_case "approval-token: the wardryx response prints its token" fail \
+	"$token_gate" \
+	"$(py 'edit("crates/connectors/src/wardryx.rs", "#[derive(Clone, Deserialize)]\npub struct ApprovalDecideResponse", "#[derive(Clone, Debug, Deserialize)]\npub struct ApprovalDecideResponse")')" \
+	'ApprovalDecideResponse derives Debug'
+
+run_case "approval-token: a third reader of the field in the policy commands" fail \
+	"$token_gate" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "    let (bus_recorded, bus_error) = journal(&client, &rec);", "    let _third = result.as_ref().ok().map(|r| r.approval_token.clone());\n    let (bus_recorded, bus_error) = journal(&client, &rec);")')" \
+	'reads .approval_token 3 times'
+
+run_case "approval-token: the answer to a decision may be cached" fail \
+	"$token_gate" \
+	"$(py 'edit("crates/web/src/dispatch.rs", "Ok(no_store(reply(", "Ok(std::convert::identity(reply(")')" \
+	'is not marked no-store'
+
+run_case "approval-token: the module that holds it is gone" fail \
+	"$token_gate" \
+	"$(py 'import os
+os.remove("apps/web/src/lib/approvalToken.ts")')" \
+	'measured nothing'
+
+run_case "approval-token: no module holds a token any more" fail \
+	"$token_gate" \
+	"$(py 'import subprocess
+for f in subprocess.check_output(["git", "ls-files", "apps/web/src"], text=True).split():
+    if f.endswith((".ts", ".tsx")) and not f.endswith((".test.ts", ".test.tsx")):
+        s = open(f).read()
+        t = s.replace("GrantedTokenPanel", "Panel").replace("grantedTokenFrom", "fromGrant").replace("GrantedToken", "Grant")
+        if t != s:
+            open(f, "w").write(t)')" \
+	'measured nothing'
+
+run_case "approval-token: a test may name the field, and a read of the host is no leak" pass \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/lib/recentEvents.test.ts", "import ", "// approval_token in a test file is a fixture\nimport ")
+edit("apps/web/src/components/PolicyView.tsx", "        void refresh();\n      } catch (err) {", "        void refresh();\n        void window.location.host;\n      } catch (err) {")')"
+
+token_tests='cargo test -q -p genaryx-api --test it approval_token_test'
+
+run_case "invariant 46: a grant answers with no raw token" fail \
+	"$token_tests" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "            approval_token: raw_token_of(decision, &resp),", "            approval_token: None,")')" \
+	"a_grant_answers_with_the_raw_token_wardryx_minted"
+
+run_case "invariant 46: the journal keeps a copy of the token" fail \
+	"$token_tests" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "        verify_result: verify_result.clone(),\n    };\n    let (bus_recorded, bus_error) = journal(&client, &rec);", "        verify_result: format!(\"{verify_result} {:?}\", result.as_ref().ok().and_then(|r| r.approval_token.clone())),\n    };\n    let (bus_recorded, bus_error) = journal(&client, &rec);")')" \
+	"the_raw_token_reaches_no_journal_row_no_bus_line_and_no_file"
+
+run_case "invariant 46: the raw token prints" fail \
+	"$token_tests" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "        f.write_str(\"RawApprovalToken(<redacted>)\")", "        f.write_str(&self.0)")')" \
+	"the_answer_prints_without_the_raw_token"
+
+run_case "invariant 46: a Keyryx token is read from its first segment" fail \
+	"$token_tests" \
+	"$(py 'edit("crates/connectors/src/wardryx.rs", "[payload, _sig] | [_header, payload, _sig] => *payload,", "[payload, _sig] | [payload, _, _sig] => *payload,")')" \
+	"a_grant_carries_the_claims_it_shows_in_both_token_formats"
+
+run_case "invariant 46: a grant with no decodable claims loses its token" fail \
+	"$token_tests" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "            approval_token: raw_token_of(decision, &resp),", "            approval_token: token.as_ref().and_then(|_| raw_token_of(decision, &resp)),")
+edit("crates/api/src/policy/commands.rs", "            token,\n            approval_token", "            token: token.clone(),\n            approval_token")')" \
+	"a_grant_whose_claims_cannot_be_read_still_answers_with_the_raw_token"
+
+run_case "invariant 46: a decode error repeats what it refused" fail \
+	'cargo test -q -p genaryx-connectors --lib a_decode_error_never_repeats_what_it_refused' \
+	"$(py 'edit("crates/connectors/src/wardryx.rs", ".map_err(|_| WardryxError::BadToken(\"invalid claims JSON\".to_string()))", ".map_err(|e| WardryxError::BadToken(format!(\"invalid claims JSON: {e}\")))")')" \
+	"a_decode_error_never_repeats_what_it_refused"
+
+run_case "invariant 46: the decide path logs the token" fail \
+	'cargo test -q -p genaryx-web --bin genaryx-web a_granted_token_reaches_no_log_line' \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "    let (http_status, verify_result, token, summary) =\n        describe_decision_result(decision, &id, &result);", "    eprintln!(\"decided: {:?}\", result.as_ref().ok().and_then(|r| r.approval_token.clone()));\n    let (http_status, verify_result, token, summary) =\n        describe_decision_result(decision, &id, &result);")')" \
+	"stderr holds"
+
+run_case "invariant 46: the answer leaves no-store off" fail \
+	'cargo test -q -p genaryx-web --bin genaryx-web a_grant_through_the_router_answers_the_raw_token_and_keeps_no_copy' \
+	"$(py 'edit("crates/web/src/dispatch.rs", "Ok(no_store(reply(", "Ok(std::convert::identity(reply(")')" \
+	"a_grant_through_the_router_answers_the_raw_token_and_keeps_no_copy"
+
+run_case "invariant 46: the token type's own comment reworded" pass \
+	"$token_tests" \
+	"$(py 'edit("crates/api/src/policy/commands.rs", "/// The token to hand the operator for this answer: a grant", "/// The token to give the operator for this answer: a grant")')"
+
 echo
 if [ -n "$(git status --porcelain)" ]; then
 	printf 'FAIL: this script left the tree dirty, so it cannot be trusted about anything above\n'

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { cssVar } from "../lib/cssVars";
 import { formatTimestamp, formatUsd } from "../lib/format";
+import { tokenPlainLine, type GrantedToken } from "../lib/approvalToken";
 import { agentIdFromMuteKey, muteKey } from "../lib/notifications";
 import {
   approvalModelLabel,
@@ -8,7 +9,7 @@ import {
   approvalPolicyVersionLabel,
   NOT_RECORDED,
 } from "../lib/policyExport";
-import type { Approval, Decision, DecideOutcome } from "../policyTypes";
+import type { Approval, Decision } from "../policyTypes";
 import { ConfirmButton } from "./ConfirmButton";
 
 /** Bell / bell-with-slash glyph for the per-row mute toggle (docs/PHASE2.md
@@ -47,14 +48,6 @@ function MuteToggle({ agentId, muted, onToggle }: { agentId: string; muted: bool
       <BellIcon muted={muted} />
     </button>
   );
-}
-
-/** One just-granted token, kept in the parent's state so it survives the
- * approval moving from the pending queue into history on the next refresh -
- * see `PolicyView.tsx`. */
-export interface GrantedToken {
-  approvalId: string;
-  outcome: DecideOutcome;
 }
 
 /** One labelled field of a held approval.
@@ -107,8 +100,8 @@ function useCountdown(expUnix: number): { remainingMs: number; label: string } {
  * operator dismisses it, independent of the approval's own row moving to
  * history underneath.
  */
-function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToken; onDismiss: () => void }) {
-  const token = granted.outcome.token;
+export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToken; onDismiss: () => void }) {
+  const token = granted.claims;
   const countdown = useCountdown(token?.exp_unix ?? 0);
   if (!token) return null;
 
@@ -151,8 +144,7 @@ function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToken; onDi
         </span>
       </div>
       <span className="text-[11px]" style={{ color: "var(--faint)" }}>
-        Single-use if the server enforces WARDRYX_APPROVAL_SINGLE_USE - this console cannot verify a token&rsquo;s
-        replay state, and this token cannot be shown again once dismissed.
+        {tokenPlainLine(token)}
       </span>
     </div>
   );
@@ -362,7 +354,7 @@ function MutedAgentsStrip({ mutedAgents, onUnmute }: { mutedAgents: readonly str
 export function ApprovalsInbox({
   approvals,
   onDecide,
-  grantedToken,
+  grantedTokens,
   onDismissToken,
   focusApprovalId,
   mutedKeys,
@@ -371,8 +363,8 @@ export function ApprovalsInbox({
 }: {
   approvals: Approval[];
   onDecide: (id: string, decision: Decision) => Promise<void>;
-  grantedToken: GrantedToken | null;
-  onDismissToken: () => void;
+  grantedTokens: readonly GrantedToken[];
+  onDismissToken: (approvalId: string) => void;
   focusApprovalId: string | null;
   mutedKeys: ReadonlySet<string>;
   onToggleMuteAgent: (agentId: string) => void;
@@ -393,7 +385,9 @@ export function ApprovalsInbox({
 
   return (
     <div className="flex flex-col gap-3 px-5">
-      {grantedToken && <GrantedTokenPanel granted={grantedToken} onDismiss={onDismissToken} />}
+      {grantedTokens.map((granted) => (
+        <GrantedTokenPanel key={granted.approvalId} granted={granted} onDismiss={() => onDismissToken(granted.approvalId)} />
+      ))}
 
       <MutedAgentsStrip mutedAgents={mutedAgentIds} onUnmute={onToggleMuteAgent} />
 

@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1411-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1437-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -292,6 +292,16 @@ box; these frames are not it, and say so here rather than in a footnote.
   instead of the box's OS account. The local account stays the break-glass
   admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
+- **A person's approval reaches the agent.** Granting a held call shows the
+  raw `approval_token` once, with a copy button, the header it goes in
+  (`x-fuse-approval-token`), the expiry countdown and a plain line: it allows
+  one call, bound to that call, and it cannot be shown again. The agent retries
+  the call with that header. The token lives in that one answer and in the
+  memory of the view that shows it, so leaving the view drops it; it reaches no
+  log, no bus, no audit trail, no Felyx, no store and no URL
+  (CLAUDE.md invariant 46, `scripts/approval-token-stays-in-memory.sh`). Each
+  row of the inbox shows the reason for the hold and the target of the tool, and
+  says so where wardryx sends no arguments or the arguments were truncated.
 - **Per-action WebAuthn ceremony (D15/B3 part 2).** The ten privileged
   commands (`money_kill_run`, `money_set_budget`, `policy_decide_approval`,
   `remote_operator_wg_config`, `remote_operator_wg_revoke`,

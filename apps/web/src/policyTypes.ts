@@ -52,6 +52,21 @@ export interface Approval {
   policy_version: string | null;
   org: string | null;
   model: string | null;
+  /** The one call this hold is about, `null` when the hold named no single call. */
+  tool_call: HeldToolCall | null;
+}
+
+/** Mirrors `policy::commands::HeldToolCallDto`: the call by name, target and the
+ * digest a grant binds its token to. Wardryx leaves the arguments out on purpose,
+ * so there is no field for them. Each field is `null` when the context did not
+ * carry it in a readable shape. */
+export interface HeldToolCall {
+  name: string | null;
+  target: string | null;
+  /** True when the enforcement point could not send the arguments, so the digest
+   * binds only the name and the target. */
+  arguments_truncated: boolean | null;
+  digest: string | null;
 }
 
 /** Mirrors `policy::commands::PolicyRecordDto`. */
@@ -76,6 +91,9 @@ export interface DecodedToken {
   tools: string[];
   cost_ceiling_usd: number;
   exp_unix: number;
+  /** The digest of the one call the token is bound to, `null` for a token granted
+   * on a hold that named no single call. */
+  tool_call_digest: string | null;
 }
 
 /** Mirrors `policy::commands::DecideOutcome`. */
@@ -86,6 +104,9 @@ export interface DecideOutcome {
   sig_alg: string;
   sig_fpr: string;
   token: DecodedToken | null;
+  /** The raw token, on a grant only. A live credential and the one copy of it:
+   * `lib/approvalToken.ts` says where it may go. */
+  approval_token: string | null;
   bus_recorded: boolean;
   bus_error: string | null;
 }
