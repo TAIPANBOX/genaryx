@@ -2093,6 +2093,7 @@ function mockApprovals() {
   const rows = pick.map((a, i) => {
     const approvalId = `ap_${(pseudo(a.name + "ap") * 1e12).toString(16).slice(0, 10)}`;
     const decided = decidedApprovals.get(approvalId) ?? null;
+    const toolNames = a.allowed.filter((x) => x.includes("_read") || x.includes("run") || x.includes("apply")).slice(0, 2);
     return {
       approval_id: approvalId,
       agent_id: agentId(a),
@@ -2102,13 +2103,16 @@ function mockApprovals() {
       decided_by: decided ? "console-op" : (null as string | null),
       decision: decided ? decided.decision : (null as string | null),
       pending: !decided,
-      tool_names: a.allowed.filter((x) => x.includes("_read") || x.includes("run") || x.includes("apply")).slice(0, 2),
+      tool_names: toolNames,
       est_cost_usd: Number((8 + pseudo(a.name + "c") * 40).toFixed(1)),
       reason: `estimated cost exceeds the ${a.team} human-approval threshold; approval required`,
       on_behalf_of: [userId(a.owner)],
       policy_version: "356f49daa246",
       org: ORG,
       model: a.model,
+      // Wardryx records the call by name, target and digest and never its
+      // arguments. One row in the demo shows the arguments cut short.
+      tool_call: mockHeldCall(toolNames[0] ?? "runbook_apply", `https://ops.${ORG}/${a.name}`, i === 1) as MockHeldCall | null,
     };
   });
 
@@ -2131,11 +2135,29 @@ function mockApprovals() {
         policy_version: "356f49daa246",
         org: ORG,
         model: PROTAGONIST.model,
+        // A hold on spend, not on one call: the inbox and the token both say so.
+        tool_call: null,
       });
     }
   }
   return rows;
 }
+
+type MockHeldCall = ReturnType<typeof mockHeldCall>;
+
+/** A held call as wardryx records it. */
+function mockHeldCall(name: string, target: string, truncated: boolean) {
+  return {
+    name,
+    target,
+    arguments_truncated: truncated,
+    digest: `${pseudo(target).toString(16).slice(2, 14)}`.padEnd(64, "0"),
+  };
+}
+
+/** The raw token the demo hands back. It is the shape of a token and nothing
+ * more: there is no gateway here to present it to. */
+const DEMO_APPROVAL_TOKEN = "demo-approval-token.not-a-real-credential";
 
 /** `policy_decide_approval`'s mock: settles the protagonist's own synthetic
  * incident approval when `id` matches it (denying it is equivalent to the
@@ -2169,9 +2191,11 @@ function decideApprovalMock(id: string, decision: "grant" | "deny") {
               run_id: PROTAGONIST_RUN_ID,
               tools: PROTAGONIST.allowed.slice(0, 3),
               cost_ceiling_usd: manualRunBudgets.get(PROTAGONIST_RUN_ID) ?? PROTAGONIST_RUN_BUDGET_USD,
-              exp_unix: Math.floor(Date.now() / 1000) + 900,
+              exp_unix: Math.floor(Date.now() / 1000) + 600,
+              tool_call_digest: null,
             }
           : null,
+        approval_token: granted ? DEMO_APPROVAL_TOKEN : null,
         bus_recorded: true,
         bus_error: null,
       };
@@ -2189,8 +2213,16 @@ function decideApprovalMock(id: string, decision: "grant" | "deny") {
     sig_fpr: "software-signed",
     token:
       decision === "grant" && src
-        ? { agent_id: src.agent_id, run_id: src.run_id, tools: src.tool_names, cost_ceiling_usd: src.est_cost_usd ?? 25, exp_unix: Math.floor(Date.now() / 1000) + 900 }
+        ? {
+            agent_id: src.agent_id,
+            run_id: src.run_id,
+            tools: src.tool_names,
+            cost_ceiling_usd: src.est_cost_usd ?? 25,
+            exp_unix: Math.floor(Date.now() / 1000) + 600,
+            tool_call_digest: src.tool_call?.digest ?? null,
+          }
         : null,
+    approval_token: decision === "grant" && src ? DEMO_APPROVAL_TOKEN : null,
     bus_recorded: true,
     bus_error: null,
   };

@@ -96,11 +96,17 @@ convention (empty/failure states like `MoneyEmptyState`, the
      override of a DENY is separate Wave-3 work), `target` = `approval_id`,
      `verify_result` e.g. `granted ceiling_usd:50.00 ttl_s:600` / `denied`.
      Always journal the attempt, even on a failed/rejected call.
-   - On **Grant**, decode the returned `approval_token`
-     (`ApprovalTokenClaims::decode`) and show the operator exactly what they
+   - On **Grant**, show the raw `approval_token` once, with a copy button and
+     the header the enforcement point reads it from (`x-fuse-approval-token`),
+     and decode it (`ApprovalTokenClaims::decode`, both the `payload.sig` and the
+     v3 `header.payload.sig` format) to show the operator exactly what they
      authorized: agent/run, tools, cost ceiling (`cost_ceiling_usd`), expiry
-     countdown (`ttl_remaining`). Caption single-use awareness: if the server
-     runs `WARDRYX_APPROVAL_SINGLE_USE` the token is one-shot.
+     countdown (`ttl_remaining`). A plain line says the token allows one call,
+     bound to that call, and cannot be shown again; a token granted on a hold
+     that named no single call says what it is bound to instead. Single-use is
+     wardryx's default since 1.0, and `WARDRYX_APPROVAL_SINGLE_USE=false` turns
+     it off. The token lives in that answer and in the view's memory and nowhere
+     else (CLAUDE.md invariant 46).
    - Decided approvals move to a history list (`decision`, `decided_by`,
      `decided_at`).
 3. **Policy view** — `WardryxClient::list_policies()`. Each policy: `id`,
@@ -116,7 +122,7 @@ error.
 
 - [ ] Decision stream renders `wardryx.*` bus events (allow/deny/hold + approval_*)
 - [ ] Approvals Inbox lists holds with full context (who/what/cost/why/chain)
-- [ ] Grant mints and shows a DECODED cost-bound token (ceiling + TTL + single-use note)
+- [ ] Grant mints and shows the raw token once, with its header, beside the DECODED cost-bound claims (ceiling + TTL + a plain line on what it allows)
 - [ ] Grant/Deny journals a conforming `console_command` (action `console.grant_approval`/`console.deny_approval`)
 - [ ] Policy view shows policies + set-level `policy_version`
 - [ ] No-wardryx environment renders a clean empty state, not an error

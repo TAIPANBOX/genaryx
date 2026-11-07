@@ -2487,6 +2487,230 @@ mod tests {
         assert_eq!(body["kind"], "not_configured", "{body}");
     }
 
+    // -- a person's grant reaches the operator, and nothing else (invariant 46) --
+
+    /// The token the stub wardryx mints. Invented: its signature says so, and
+    /// the console never verifies one.
+    fn fake_approval_token() -> String {
+        let claims = json!({
+            "agent_id": "agent://example.invalid/agents/held",
+            "run_id": "run-held",
+            "tools": ["fetch_url"],
+            "max_cost_usd": 0.5,
+            "exp": 4_102_444_800_i64,
+            "nonce": "not-a-real-nonce",
+        });
+        format!(
+            "{}.fake-signature-of-a-console-test",
+            B64URL.encode(claims.to_string())
+        )
+    }
+
+    /// A stub wardryx on a loopback port: every connection gets `body`.
+    fn spawn_wardryx(body: String) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind stub");
+        let base = format!("http://{}", listener.local_addr().expect("stub address"));
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream);
+                let mut request_body = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                        break;
+                    }
+                    let length = line
+                        .split_once(':')
+                        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                        .and_then(|(_, value)| value.trim().parse().ok());
+                    request_body = length.unwrap_or(request_body);
+                }
+                let _ = reader.read_exact(&mut vec![0u8; request_body]);
+                let mut out = reader.into_inner();
+                let _ = write!(
+                    out,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = out.flush();
+            }
+        });
+        base
+    }
+
+    /// What one grant did, driven through the real router and the real
+    /// ceremony against a stub wardryx.
+    struct RouterGrant {
+        status: StatusCode,
+        cache_control: Option<String>,
+        body: Value,
+        dir: PathBuf,
+    }
+
+    async fn grant_through_the_router() -> RouterGrant {
+        let dir = test_dir();
+        let bus_dir = dir.join("bus");
+        std::fs::create_dir_all(&bus_dir).expect("bus dir");
+        let ctx = ctx_at(dir.clone(), false);
+        let base = spawn_wardryx(
+            json!({
+                "approval_id": "ap_1",
+                "decision": "grant",
+                "approval_token": fake_approval_token(),
+            })
+            .to_string(),
+        );
+        *ctx.policy.inner.lock().await = genaryx_api::policy::state::PolicyInner::Ready(
+            genaryx_api::policy::state::PolicyClient {
+                client: Arc::new(
+                    genaryx_connectors::WardryxClient::new(base.as_str(), "test-token")
+                        .expect("wardryx client"),
+                ),
+                source: genaryx_api::policy::env::EnvSource::EnvFallback,
+                wardryx_url: base.clone(),
+                org_domain: "wardryx.local".to_string(),
+                operator: "user://wardryx.local/test".to_string(),
+                host: "test".to_string(),
+                sig_alg: "none",
+                sig_fpr: "bearer-admin",
+                bus: Some(genaryx_api::policy::state::BusHandle::from_dirs(
+                    &bus_dir, &bus_dir,
+                )),
+            },
+        );
+
+        let sid = ctx.sessions.create("alice", Role::Approver, Method::Oidc);
+        enroll_test_passkey(&ctx, "alice");
+        let args = json!({ "id": "ap_1", "decision": "grant" }).to_string();
+        let challenge = start_action(&ctx, &sid, "policy_decide_approval", &args).await;
+        let assertion = assertion_header(&ctx, &challenge);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/command/policy_decide_approval")
+            .header("content-type", "application/json")
+            .header("cookie", format!("{}={}", auth::COOKIE, sid))
+            .header("x-genaryx-webauthn", assertion)
+            .body(Body::from(args))
+            .unwrap();
+        let resp = app(Arc::clone(&ctx)).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let cache_control = resp
+            .headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        RouterGrant {
+            status,
+            cache_control,
+            body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            dir,
+        }
+    }
+
+    fn files_under(dir: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        let mut pending = vec![dir.to_path_buf()];
+        while let Some(next) = pending.pop() {
+            for entry in std::fs::read_dir(&next).expect("read dir").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    let bytes = std::fs::read(&path).expect("read file");
+                    files.push((path, bytes));
+                }
+            }
+        }
+        files
+    }
+
+    #[tokio::test]
+    async fn a_grant_through_the_router_answers_the_raw_token_and_keeps_no_copy() {
+        let grant = grant_through_the_router().await;
+        assert_eq!(grant.status, StatusCode::OK, "{}", grant.body);
+        let token = fake_approval_token();
+        assert_eq!(grant.body["approval_token"], json!(token));
+        assert_eq!(grant.body["bus_recorded"], true, "{}", grant.body);
+        assert_eq!(grant.cache_control.as_deref(), Some("no-store"));
+
+        // Did not fail is not did run: the journal is there to be read.
+        let files = files_under(&grant.dir);
+        let names: Vec<String> = files.iter().map(|(p, _)| p.display().to_string()).collect();
+        assert!(
+            names.iter().any(|n| n.ends_with("console.ndjson")),
+            "{names:?}"
+        );
+        for (path, bytes) in &files {
+            for needle in std::iter::once(token.as_str()).chain(token.split('.')) {
+                let found = bytes
+                    .windows(needle.len())
+                    .any(|window| window == needle.as_bytes());
+                assert!(!found, "{} holds {needle}", path.display());
+            }
+        }
+    }
+
+    const CHILD_REACHED_THE_GRANT: &str = "the child reached the grant";
+
+    /// Run by [`a_granted_token_reaches_no_log_line`] in a process of its own,
+    /// because a subscriber is process-wide and `eprintln!` goes to the real
+    /// stderr: only a parent can read everything this one writes.
+    #[tokio::test]
+    #[ignore = "a_granted_token_reaches_no_log_line runs this as a child process"]
+    async fn grant_with_every_log_on() {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(std::io::stderr)
+            .init();
+        let grant = grant_through_the_router().await;
+        assert_eq!(grant.status, StatusCode::OK);
+        assert!(grant.body["bus_recorded"] == true, "the journal failed");
+        assert!(
+            grant.body["approval_token"].is_string(),
+            "no token to keep out of the log"
+        );
+        println!("{CHILD_REACHED_THE_GRANT}");
+    }
+
+    #[test]
+    fn a_granted_token_reaches_no_log_line() {
+        let child = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+            .args([
+                "tests::grant_with_every_log_on",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+            ])
+            .output()
+            .expect("run the child");
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        assert!(child.status.success(), "the child failed: {stderr}");
+
+        // Did not fail is not did run. The child reached the grant, a line the
+        // decide path really logs is in what was read, and so is the subscriber.
+        assert!(
+            stdout.contains(CHILD_REACHED_THE_GRANT),
+            "measured nothing: {stdout}"
+        );
+        assert!(
+            stderr.contains("is sent without an approver statement"),
+            "this capture did not see the decide path's own log line"
+        );
+        assert!(
+            stderr.contains("webauthn assertion verified"),
+            "this capture did not see the subscriber"
+        );
+
+        let token = fake_approval_token();
+        for needle in std::iter::once(token.as_str()).chain(token.split('.')) {
+            assert!(!stdout.contains(needle), "stdout holds {needle}");
+            assert!(!stderr.contains(needle), "stderr holds {needle}");
+        }
+    }
+
     #[tokio::test]
     async fn a_viewer_may_list_retained_reservations() {
         let ctx = test_ctx();

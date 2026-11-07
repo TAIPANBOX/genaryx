@@ -52,6 +52,54 @@ export function approvalPolicyVersionLabel(approval: Approval): string {
   return approval.policy_version && approval.policy_version.length > 0 ? approval.policy_version : NOT_RECORDED;
 }
 
+/** Text an agent or a tool chose, made fit to decide on: control, format and
+ * line-separator characters are written out by code point, so that a target
+ * cannot hide part of itself or reverse how it reads in front of the person
+ * being asked to approve it. */
+export function visibleText(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (c) => `\\u{${(c.codePointAt(0) ?? 0).toString(16)}}`);
+}
+
+/** Why the plane held this, or a sentence saying it gave no reason. */
+export function approvalReasonLabel(approval: Approval): string {
+  return approval.reason && approval.reason.length > 0 ? visibleText(approval.reason) : "wardryx gave no reason for this hold";
+}
+
+/** What a row says where the hold named no single call: a model call, or a
+ * wardryx older than the binding. */
+export const NO_CALL_ON_HOLD = "this hold names no single call";
+
+/** The tool's target. An empty target is the enforcement point's own answer, and
+ * reads differently from a field that never arrived. */
+export function approvalTargetLabel(approval: Approval): string {
+  const call = approval.tool_call;
+  if (call === null) return NO_CALL_ON_HOLD;
+  if (call.target === null) return NOT_RECORDED;
+  return call.target.length > 0 ? visibleText(call.target) : "none stated";
+}
+
+/** The call's arguments, which wardryx does not send: they can carry customer
+ * data, so a person sees the name, the target and the digest. The row says so,
+ * and says when they were cut short before wardryx saw them, because then the
+ * digest binds only the tool and the target and a grant fits the next such call
+ * too. */
+export function approvalArgumentsLabel(approval: Approval): string {
+  const call = approval.tool_call;
+  if (call === null) return NO_CALL_ON_HOLD;
+  if (call.arguments_truncated === true) {
+    return "truncated: wardryx saw none, and a grant binds only the tool and target";
+  }
+  return "not sent by wardryx";
+}
+
+/** Hover text for the arguments field: what a grant is bound to. */
+export function approvalArgumentsTitle(approval: Approval): string {
+  const call = approval.tool_call;
+  if (call === null) return "A grant of this hold binds the agent, run, tool set and cost ceiling, not one call.";
+  if (call.digest === null) return "Wardryx does not send arguments, and this hold carried no readable digest.";
+  return `Wardryx does not send arguments. A grant binds the token to digest ${call.digest}.`;
+}
+
 // ---- The approval trail ----------------------------------------------------
 
 export interface ApprovalExportRow {
@@ -70,6 +118,8 @@ export interface ApprovalExportRow {
   org: string | null;
   model: string | null;
   reason: string | null;
+  target: string | null;
+  arguments_truncated: boolean | null;
 }
 
 export const APPROVALS_EXPORT_COLUMNS: { key: keyof ApprovalExportRow & string; header: string }[] = [
@@ -88,6 +138,8 @@ export const APPROVALS_EXPORT_COLUMNS: { key: keyof ApprovalExportRow & string; 
   { key: "org", header: "org" },
   { key: "model", header: "model" },
   { key: "reason", header: "reason" },
+  { key: "target", header: "target" },
+  { key: "arguments_truncated", header: "arguments_truncated" },
 ];
 
 function textOrNull(value: string | null | undefined): string | null {
@@ -123,6 +175,8 @@ export function approvalsExportRows(approvals: Approval[]): ApprovalExportRow[] 
     org: textOrNull(a.org),
     model: textOrNull(a.model),
     reason: textOrNull(a.reason),
+    target: textOrNull(a.tool_call?.target),
+    arguments_truncated: a.tool_call?.arguments_truncated ?? null,
   }));
 }
 
@@ -148,6 +202,7 @@ export function approvalsExportMeta(opts: {
       "An empty tool_names means the hold's context carried no tool list. This console cannot tell that from a hold that declared an empty one, because the two arrive identically.",
       "model and org are display-only context: the PDP never branches on the model, and org is stamped from the authenticated principal rather than from the request body.",
       "reason is the policy plane's own one-sentence explanation of the hold, not an operator's note.",
+      "An empty target means the hold named no single call, or the call named no target. The arguments are never in this file: the plane does not send them.",
     ],
   };
 }

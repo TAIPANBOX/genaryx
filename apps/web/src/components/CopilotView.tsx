@@ -14,6 +14,7 @@ import {
   fetchCopilotStatus,
   logProposalApproved,
 } from "../lib/copilot";
+import { grantedTokenFrom, withGranted, withoutGranted, type GrantedToken } from "../lib/approvalToken";
 import { cssVar } from "../lib/cssVars";
 import { formatUsd } from "../lib/format";
 import { describeIdentityError, rescan } from "../lib/identity";
@@ -22,6 +23,7 @@ import { decideApproval, describePolicyError } from "../lib/policy";
 import type { IdentityError } from "../identityTypes";
 import type { MoneyError } from "../moneyTypes";
 import type { Decision, PolicyError } from "../policyTypes";
+import { GrantedTokenPanel } from "./ApprovalsInbox";
 import { ConfirmButton } from "./ConfirmButton";
 import { usePopover, PopoverHeader } from "../lib/popover";
 import { FelyxConnectCard, felyxConnectSupport } from "./FelyxConnectCard";
@@ -176,12 +178,16 @@ function describeApprovalError(kind: ProposedActionKind, err: unknown): string {
  * collects for `kill`/`budget` only (`""` for `grant_deny`/`rescan`, which
  * use the non-break-glass ceremony and ignore it, exactly like
  * `ApprovalsInbox.tsx`'s Grant/Deny buttons already do).
+ *
+ * A grant here mints the same one-time token as a grant in the inbox, and this
+ * is the only copy of it, so it comes back beside the summary rather than inside
+ * it: the summary goes into the transcript and the token must not.
  */
-async function runApproval(action: ProposedAction, reason: string): Promise<string> {
+async function runApproval(action: ProposedAction, reason: string): Promise<ApprovalResult> {
   switch (action.kind) {
     case "kill": {
       const outcome = await killRun(action.target, reason);
-      return outcome.summary;
+      return { summary: outcome.summary, granted: null };
     }
     case "budget": {
       const usdCap = Number(action.params.usd_cap);
@@ -189,22 +195,32 @@ async function runApproval(action: ProposedAction, reason: string): Promise<stri
         throw new Error(`proposal has no usable "usd_cap" in params (got ${JSON.stringify(action.params)})`);
       }
       const outcome = await setBudget(action.target, usdCap, reason);
-      return outcome.summary;
+      return { summary: outcome.summary, granted: null };
     }
     case "grant_deny": {
       const decision: Decision = action.params.verdict === "deny" ? "deny" : "grant";
       const outcome = await decideApproval(action.target, decision);
-      return outcome.summary;
+      return { summary: outcome.summary, granted: grantedTokenFrom(action.target, outcome) };
     }
     case "rescan": {
       const alerts = await rescan();
-      return `rescan complete - ${alerts.length} alert${alerts.length === 1 ? "" : "s"} found`;
+      return {
+        summary: `rescan complete - ${alerts.length} alert${alerts.length === 1 ? "" : "s"} found`,
+        granted: null,
+      };
     }
     default: {
       const exhaustive: never = action.kind;
       throw new Error(`unknown proposal kind: ${exhaustive}`);
     }
   }
+}
+
+/** What an approved proposal did: the note for the transcript, and the token of a
+ * grant, which never goes in it. */
+interface ApprovalResult {
+  summary: string;
+  granted: GrantedToken | null;
 }
 
 /**
@@ -710,6 +726,10 @@ export function CopilotView({
 }) {
   const [status, setStatus] = useState<CopilotStatus | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // The raw tokens of grants made from a card. Beside the transcript and never in
+  // it: `messages` is what this view shows as Felyx's conversation, and a token
+  // has no business there (lib/approvalToken.ts).
+  const [grantedTokens, setGrantedTokens] = useState<GrantedToken[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const nextId = useRef(0);
@@ -884,9 +904,9 @@ export function CopilotView({
       if (!proposal || proposal.status !== "pending") return;
       const { action } = proposal;
 
-      let summary: string;
+      let result: ApprovalResult;
       try {
-        summary = await runApproval(action, reason);
+        result = await runApproval(action, reason);
       } catch (err) {
         setMessages((m) => [
           ...m,
@@ -898,6 +918,10 @@ export function CopilotView({
           },
         ]);
         return;
+      }
+      const { summary, granted } = result;
+      if (granted) {
+        setGrantedTokens((list) => withGranted(list, granted));
       }
 
       setMessages((m) =>
@@ -933,6 +957,18 @@ export function CopilotView({
       <div className="px-5 pt-4 pb-2 shrink-0">
         <ResidencyBanner status={status} onConnect={openConnect} />
       </div>
+
+      {grantedTokens.length > 0 && (
+        <div className="px-5 pb-2 shrink-0 flex flex-col gap-2">
+          {grantedTokens.map((granted) => (
+            <GrantedTokenPanel
+              key={granted.approvalId}
+              granted={granted}
+              onDismiss={() => setGrantedTokens((list) => withoutGranted(list, granted.approvalId))}
+            />
+          ))}
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto thin-scroll px-5 py-2 flex flex-col gap-3">
         {messages.length === 0 ? (

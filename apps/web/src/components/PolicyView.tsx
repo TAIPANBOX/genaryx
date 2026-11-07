@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { grantedTokenFrom, withGranted, withoutGranted, type GrantedToken } from "../lib/approvalToken";
 import { cssVar } from "../lib/cssVars";
 import { downloadCsv, downloadJson, type ExportMeta } from "../lib/download";
 import { decideApproval, describePolicyError, fetchApprovals, fetchPolicies } from "../lib/policy";
@@ -13,7 +14,7 @@ import {
 import { usePolicyStatus } from "../lib/usePolicyStatus";
 import { useSession } from "../lib/useSession";
 import type { Approval, Decision, PolicyError, PolicyRecord, PolicyStatus } from "../policyTypes";
-import { ApprovalsInbox, type GrantedToken } from "./ApprovalsInbox";
+import { ApprovalsInbox } from "./ApprovalsInbox";
 import { DecisionStream } from "./DecisionStream";
 import { PolicyList } from "./PolicyList";
 import { FreshBadge } from "./FreshBadge";
@@ -175,7 +176,10 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
   const [policies, setPolicies] = useState<PolicyRecord[] | null>(null);
   const [error, setError] = useState<PolicyError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [grantedToken, setGrantedToken] = useState<GrantedToken | null>(null);
+  // The raw tokens of this view's grants. Plain state on purpose: it survives the
+  // approval moving into history on the next refresh, and it goes when this view
+  // is left (lib/approvalToken.ts).
+  const [grantedTokens, setGrantedTokens] = useState<GrantedToken[]>([]);
 
   const refresh = useCallback(async () => {
     if (!ready) return;
@@ -212,8 +216,9 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
             ? `${outcome.summary} - signed console_command recorded, visible in the Bus tab.`
             : `${outcome.summary} (bus journal not recorded: ${outcome.bus_error ?? "unknown reason"})`,
         );
-        if (outcome.token) {
-          setGrantedToken({ approvalId: id, outcome });
+        const granted = grantedTokenFrom(id, outcome);
+        if (granted) {
+          setGrantedTokens((list) => withGranted(list, granted));
         }
         void refresh();
       } catch (err) {
@@ -314,8 +319,8 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
           <ApprovalsInbox
             approvals={approvals}
             onDecide={handleDecide}
-            grantedToken={grantedToken}
-            onDismissToken={() => setGrantedToken(null)}
+            grantedTokens={grantedTokens}
+            onDismissToken={(approvalId) => setGrantedTokens((list) => withoutGranted(list, approvalId))}
             focusApprovalId={focusApprovalId}
             mutedKeys={mutedKeys}
             onToggleMuteAgent={onToggleMuteAgent}

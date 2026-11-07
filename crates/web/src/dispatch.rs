@@ -27,7 +27,8 @@ use crate::ctx::Ctx;
 // naming them here is what makes a shape change in the plane a compile error
 // in this shell rather than a silent 400 in the browser.
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::header::CACHE_CONTROL;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use genaryx_api::evidence::commands::EvidenceBuildRequest;
 use genaryx_api::onboard::commands::{
@@ -81,6 +82,15 @@ fn reply<T: serde::Serialize, E: serde::Serialize>(r: Result<T, E>) -> Response 
         )
             .into_response(),
     }
+}
+
+/// The same response, marked so that nothing between here and the browser
+/// keeps a copy of it.
+fn no_store(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 // axum's `Response` is a large value, and clippy would rather it were boxed.
@@ -1028,7 +1038,10 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 decision: DecisionDto,
             }
             let a: A = decode(args)?;
-            Ok(reply(
+            // A grant's answer is the one copy of a live credential, so it
+            // tells every cache between here and the browser to keep nothing
+            // (CLAUDE.md invariant 46).
+            Ok(no_store(reply(
                 genaryx_api::policy::commands::policy_decide_approval(
                     a.id,
                     a.decision,
@@ -1036,7 +1049,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                     &ctx.approver,
                 )
                 .await,
-            ))
+            )))
         }
         "policy_list_approvals" => Ok(reply(
             genaryx_api::policy::commands::policy_list_approvals(&ctx.policy).await,
