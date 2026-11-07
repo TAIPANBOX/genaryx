@@ -926,7 +926,7 @@ impl ApprovalTokenClaims {
             [_undivided] => {
                 return Err(WardryxError::BadToken("missing '.' separator".to_string()));
             }
-            [payload, _sig] | [_header, payload, _sig] => *payload,
+            [payload, _] | [_, payload, _] => *payload,
             _ => return Err(WardryxError::BadToken("too many segments".to_string())),
         };
         if payload.is_empty() {

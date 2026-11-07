@@ -1252,7 +1252,7 @@ run_case "invariant 46: the raw token prints" fail \
 
 run_case "invariant 46: a Keyryx token is read from its first segment" fail \
 	"$token_tests" \
-	"$(py 'edit("crates/connectors/src/wardryx.rs", "[payload, _sig] | [_header, payload, _sig] => *payload,", "[payload, _sig] | [payload, _, _sig] => *payload,")')" \
+	"$(py 'edit("crates/connectors/src/wardryx.rs", "[payload, _] | [_, payload, _] => *payload,", "[payload, _] | [payload, _, _] => *payload,")')" \
 	"a_grant_carries_the_claims_it_shows_in_both_token_formats"
 
 run_case "invariant 46: a grant with no decodable claims loses its token" fail \

@@ -178,8 +178,7 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
   const [notice, setNotice] = useState<string | null>(null);
   // The raw tokens of this view's grants. Plain state on purpose: it survives the
   // approval moving into history on the next refresh, and it goes when this view
-  // is left, which is the only other place a token could be read from
-  // (lib/approvalToken.ts).
+  // is left (lib/approvalToken.ts).
   const [grantedTokens, setGrantedTokens] = useState<GrantedToken[]>([]);
 
   const refresh = useCallback(async () => {
