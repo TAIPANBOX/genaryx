@@ -99,6 +99,7 @@ async fn decide(state: &PolicyState, decision: DecisionDto) -> Result<DecideOutc
     policy_decide_approval(
         APPROVAL.to_string(),
         decision,
+        None,
         state,
         &ApproverKey::NotConfigured,
     )

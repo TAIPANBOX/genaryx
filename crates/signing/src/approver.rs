@@ -40,7 +40,24 @@ pub struct Claims {
     pub exp: i64,
     /// A unique id for this statement.
     pub jti: String,
+    /// What the person was shown (wardryx invariant 51): `Some` makes a
+    /// version 2 statement carrying `tcd` and `pvd`, `None` the version 1
+    /// statement every wardryx before 2.7 reads.
+    pub shown: Option<Shown>,
 }
+
+/// The call a person decided and the preview of its arguments they were shown,
+/// each a lower-case hex sha-256 or [`NONE`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shown {
+    /// `tcd`: the digest of the held call, or `none` for a hold with no call.
+    pub tcd: String,
+    /// `pvd`: the digest of the preview the person was shown, or `none`.
+    pub pvd: String,
+}
+
+/// The value `tcd` or `pvd` carries when there is no call, or no preview.
+pub const NONE: &str = "none";
 
 /// Why a statement could not be made or did not verify.
 #[derive(Debug, thiserror::Error)]
@@ -108,7 +125,7 @@ pub fn sign(signer: &dyn Es256Signer, claims: &Claims) -> Result<String, Stateme
     check_claims(claims)?;
     let kid = thumbprint(&signer.public_key_x963()?)?;
     let header = serde_json::json!({ "alg": "ES256", "kid": kid, "typ": TYP });
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "v": 1,
         "sub": claims.sub,
         "cred": claims.cred,
@@ -118,6 +135,11 @@ pub fn sign(signer: &dyn Es256Signer, claims: &Claims) -> Result<String, Stateme
         "exp": claims.exp,
         "jti": claims.jti,
     });
+    if let Some(shown) = &claims.shown {
+        payload["v"] = serde_json::json!(2);
+        payload["tcd"] = serde_json::json!(shown.tcd);
+        payload["pvd"] = serde_json::json!(shown.pvd);
+    }
     let signing_input = format!(
         "{}.{}",
         URL_SAFE_NO_PAD.encode(header.to_string()),
@@ -170,9 +192,21 @@ pub fn verify(x963: &[u8], statement: &str, now: i64) -> Result<Claims, Statemen
     let payload: serde_json::Value =
         serde_json::from_slice(&decode(payload_b64, "the payload is not base64url")?)
             .map_err(|_| StatementError::Malformed("the payload is not JSON"))?;
-    if payload.get("v").and_then(|v| v.as_i64()) != Some(1) {
-        return Err(StatementError::Malformed("the claim version is not 1"));
-    }
+    let shown = match payload.get("v").and_then(|v| v.as_i64()) {
+        Some(1) => {
+            if payload.get("tcd").is_some() || payload.get("pvd").is_some() {
+                return Err(StatementError::Malformed(
+                    "a version 1 statement carries tcd or pvd",
+                ));
+            }
+            None
+        }
+        Some(2) => Some(Shown {
+            tcd: text_claim(&payload, "tcd")?,
+            pvd: text_claim(&payload, "pvd")?,
+        }),
+        _ => return Err(StatementError::Malformed("the claim version is not 1 or 2")),
+    };
     let claims = Claims {
         sub: text_claim(&payload, "sub")?,
         cred: text_claim(&payload, "cred")?,
@@ -181,6 +215,7 @@ pub fn verify(x963: &[u8], statement: &str, now: i64) -> Result<Claims, Statemen
         iat: number_claim(&payload, "iat")?,
         exp: number_claim(&payload, "exp")?,
         jti: text_claim(&payload, "jti")?,
+        shown,
     };
     check_claims(&claims)?;
     if claims.iat > now + MAX_FUTURE_SKEW_SECS {
@@ -253,6 +288,13 @@ fn check_claims(c: &Claims) -> Result<(), StatementError> {
             "jti must be a non-empty id of at most 128 bytes",
         ));
     }
+    if let Some(shown) = &c.shown
+        && (!digest_or_none(&shown.tcd) || !digest_or_none(&shown.pvd))
+    {
+        return Err(StatementError::Claims(
+            "tcd and pvd must each be a lower-case hex sha-256 or none",
+        ));
+    }
     let lifetime = c.exp - c.iat;
     if !(1..=MAX_LIFETIME_SECS).contains(&lifetime) {
         return Err(StatementError::Claims(
@@ -260,6 +302,14 @@ fn check_claims(c: &Claims) -> Result<(), StatementError> {
         ));
     }
     Ok(())
+}
+
+/// A lower-case hex sha-256, or [`NONE`].
+fn digest_or_none(s: &str) -> bool {
+    s == NONE
+        || (s.len() == 64
+            && s.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)))
 }
 
 /// Bidirectional control characters, which can make a label read as something
@@ -460,6 +510,74 @@ mod tests {
             iat: 1_000,
             exp: 1_120,
             jti: "stmt-1".into(),
+            shown: None,
+        }
+    }
+
+    fn payload_of(jws: &str) -> serde_json::Value {
+        serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(jws.split('.').nth(1).unwrap())
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_version_2_statement_names_the_call_and_the_preview_the_person_was_shown() {
+        let k = key();
+        let x = k.public_key_x963().unwrap();
+        let mut c = claims();
+        c.shown = Some(Shown {
+            tcd: "a".repeat(64),
+            pvd: "b".repeat(64),
+        });
+        let jws = sign(&k, &c).expect("signed");
+        let p = payload_of(&jws);
+        assert_eq!(p["v"], 2);
+        assert_eq!(p["tcd"], "a".repeat(64));
+        assert_eq!(p["pvd"], "b".repeat(64));
+        assert_eq!(verify(&x, &jws, 1_010).expect("verifies"), c);
+        // none is how a statement says no preview was shown.
+        c.shown = Some(Shown {
+            tcd: "a".repeat(64),
+            pvd: NONE.into(),
+        });
+        assert_eq!(verify(&x, &sign(&k, &c).unwrap(), 1_010).unwrap(), c);
+    }
+
+    #[test]
+    fn a_version_1_statement_carries_no_tcd_or_pvd() {
+        let k = key();
+        let jws = sign(&k, &claims()).expect("signed");
+        let p = payload_of(&jws);
+        assert_eq!(p["v"], 1);
+        assert!(p.get("tcd").is_none() && p.get("pvd").is_none());
+    }
+
+    #[test]
+    fn a_malformed_tcd_or_pvd_is_refused_before_anything_is_signed() {
+        let k = key();
+        for bad in [
+            "",
+            "None",
+            &"A".repeat(64),
+            &"a".repeat(63),
+            &"z".repeat(64),
+        ] {
+            for which in 0..2 {
+                let mut c = claims();
+                let (tcd, pvd) = if which == 0 {
+                    (bad.to_string(), NONE.to_string())
+                } else {
+                    (NONE.to_string(), bad.to_string())
+                };
+                c.shown = Some(Shown { tcd, pvd });
+                assert!(
+                    matches!(sign(&k, &c), Err(StatementError::Claims(_))),
+                    "{bad:?} accepted"
+                );
+            }
         }
     }
 

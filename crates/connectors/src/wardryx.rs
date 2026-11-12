@@ -357,6 +357,17 @@ impl WardryxClient {
         self.get_json("/v1/approvals").await
     }
 
+    /// `GET /v1/approvals/{id}/preview` (admin, wardryx invariant 51): the
+    /// sealed preview of a held call's arguments, ciphertext only the console's
+    /// preview key opens, or the state of a preview that was not sealed.
+    /// wardryx answers 410 for a sealed preview that is gone (decided, expired
+    /// or not kept), which arrives as [`WardryxError::Api`] with status 410.
+    pub async fn approval_preview(&self, id: &str) -> Result<ApprovalPreview, WardryxError> {
+        let approval = path_segment(id)?;
+        self.get_json(&format!("/v1/approvals/{approval}/preview"))
+            .await
+    }
+
     /// `POST /v1/approvals/{id}/decide` (admin) - grant or deny a pending
     /// approval (`handleApprovalDecide`, `api.go:319-368`). `decided_by` is
     /// a required, caller-supplied identifier (e.g. `user://org/alice`;
@@ -797,6 +808,73 @@ impl Approval {
                 .and_then(serde_json::Value::as_bool),
             digest: text("digest"),
         })
+    }
+
+    /// `context["preview"]` (wardryx invariant 51): the state of what a person
+    /// can be shown of the call's arguments, and for a sealed preview its
+    /// digest and ruleset. `None` is a hold made by a wardryx without previews,
+    /// or one that named no call.
+    pub fn preview(&self) -> Option<HeldPreview> {
+        let p = self.context_get("preview").filter(|v| v.is_object())?;
+        let text = |key: &str| -> Option<String> { Some(p.get(key)?.as_str()?.to_string()) };
+        Some(HeldPreview {
+            state: text("state").unwrap_or_default(),
+            pvd: text("pvd"),
+            ruleset: text("ruleset"),
+        })
+    }
+
+    /// `context["require_preview"]`: a matched policy says a grant needs a
+    /// person who saw the arguments.
+    pub fn require_preview(&self) -> bool {
+        self.context_get("require_preview")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+}
+
+/// A hold's preview as wardryx records it: never the preview, only its state
+/// and, when sealed, its digest and ruleset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldPreview {
+    /// `sealed`, `truncated`, `no_arguments`, `off` or `unavailable`.
+    pub state: String,
+    pub pvd: Option<String>,
+    pub ruleset: Option<String>,
+}
+
+/// The state of a preview that was sealed and can be fetched.
+pub const PREVIEW_SEALED: &str = "sealed";
+
+/// `GET /v1/approvals/{id}/preview`'s answer. `sealed` is the HPKE
+/// encapsulated key and ciphertext, base64; it is set only for a sealed
+/// preview. Its `Debug` prints no part of it.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct ApprovalPreview {
+    pub approval_id: String,
+    pub state: String,
+    #[serde(default)]
+    pub tool_call_digest: Option<String>,
+    #[serde(default)]
+    pub pvd: Option<String>,
+    #[serde(default)]
+    pub ruleset: Option<String>,
+    #[serde(default)]
+    pub suite: Option<String>,
+    #[serde(default)]
+    pub sealed: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+impl std::fmt::Debug for ApprovalPreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApprovalPreview")
+            .field("approval_id", &self.approval_id)
+            .field("state", &self.state)
+            .field("pvd", &self.pvd)
+            .field("sealed", &self.sealed.as_ref().map(|_| "<ciphertext>"))
+            .finish()
     }
 }
 
@@ -1354,6 +1432,40 @@ mod tests {
             "context": context,
         }))
         .expect("a valid Approval fixture")
+    }
+
+    #[test]
+    fn a_held_preview_is_read_as_its_state_and_digest_and_never_more() {
+        let a = approval_with_context(serde_json::json!({
+            "preview": {"state": "sealed", "pvd": "a".repeat(64), "ruleset": "r1"},
+            "require_preview": true,
+        }));
+        let p = a.preview().expect("a preview");
+        assert_eq!(p.state, PREVIEW_SEALED);
+        assert_eq!(p.pvd.as_deref(), Some("a".repeat(64).as_str()));
+        assert_eq!(p.ruleset.as_deref(), Some("r1"));
+        assert!(a.require_preview());
+        let old = approval_with_context(serde_json::json!({"tool_call": {"name": "t"}}));
+        assert!(
+            old.preview().is_none(),
+            "a hold from a wardryx without previews"
+        );
+        assert!(!old.require_preview());
+        let off = approval_with_context(serde_json::json!({"preview": {"state": "off"}}));
+        assert_eq!(off.preview().expect("state").state, "off");
+        assert!(off.preview().expect("state").pvd.is_none());
+    }
+
+    #[test]
+    fn a_fetched_preview_never_prints_its_ciphertext() {
+        let p: ApprovalPreview = serde_json::from_value(serde_json::json!({
+            "approval_id": "ap_1", "state": "sealed", "pvd": "a".repeat(64),
+            "sealed": "Q0lQSEVSVEVYVC1CWVRFUw==",
+        }))
+        .expect("parses");
+        let shown = format!("{p:?}");
+        assert!(!shown.contains("Q0lQSEVSVEVYVC1CWVRFUw=="), "{shown}");
+        assert!(shown.contains("<ciphertext>"));
     }
 
     #[test]

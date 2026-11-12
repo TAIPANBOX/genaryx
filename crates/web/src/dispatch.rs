@@ -1036,6 +1036,10 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             struct A {
                 id: String,
                 decision: DecisionDto,
+                /// The digest of the preview the browser showed, inside the
+                /// arguments the passkey assertion confirmed (invariant 48).
+                #[serde(default)]
+                seen_pvd: Option<String>,
             }
             let a: A = decode(args)?;
             // A grant's answer is the one copy of a live credential, so it
@@ -1045,8 +1049,26 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                 genaryx_api::policy::commands::policy_decide_approval(
                     a.id,
                     a.decision,
+                    a.seen_pvd,
                     &ctx.policy,
                     &ctx.approver,
+                )
+                .await,
+            )))
+        }
+        "policy_approval_preview" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                id: String,
+            }
+            let a: A = decode(args)?;
+            // The preview is shown and dropped: nothing between here and the
+            // browser keeps it (invariant 48).
+            Ok(no_store(reply(
+                genaryx_api::policy::preview::policy_approval_preview(
+                    a.id,
+                    &ctx.policy,
+                    &ctx.preview_key,
                 )
                 .await,
             )))

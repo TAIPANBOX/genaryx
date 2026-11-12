@@ -62,7 +62,14 @@ pub struct Config {
     /// (`GENARYX_APPROVER_KEY_FILE`), or `None` when none is configured
     /// (CLAUDE.md invariant 35).
     pub approver_key_file: Option<PathBuf>,
+    /// The preview key file the console opens held calls' arguments with
+    /// (`GENARYX_PREVIEW_KEY_FILE`), or `None` when none is configured
+    /// (CLAUDE.md invariant 48).
+    pub preview_key_file: Option<PathBuf>,
 }
+
+/// The environment variable that names the preview key file.
+pub const PREVIEW_KEY_FILE_ENV: &str = "GENARYX_PREVIEW_KEY_FILE";
 
 /// The environment variable that names the approver key file.
 pub const APPROVER_KEY_FILE_ENV: &str = "GENARYX_APPROVER_KEY_FILE";
@@ -92,6 +99,11 @@ pub fn legacy_require_passkey_notice(set: bool) -> Option<&'static str> {
 }
 
 impl Config {
+    /// Read [`Config::preview_key_file`] from `GENARYX_PREVIEW_KEY_FILE`.
+    pub fn preview_key_file_from_env() -> Option<PathBuf> {
+        approver_key_file_from(&std::env::var(PREVIEW_KEY_FILE_ENV).unwrap_or_default())
+    }
+
     /// Read [`Config::approver_key_file`] from `GENARYX_APPROVER_KEY_FILE`.
     pub fn approver_key_file_from_env() -> Option<PathBuf> {
         approver_key_file_from(&std::env::var(APPROVER_KEY_FILE_ENV).unwrap_or_default())
@@ -234,7 +246,13 @@ mod tests {
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
             approver_key_file: None,
+            preview_key_file: None,
         }
+    }
+
+    #[test]
+    fn the_preview_key_file_comes_from_its_own_variable() {
+        assert_eq!(PREVIEW_KEY_FILE_ENV, "GENARYX_PREVIEW_KEY_FILE");
     }
 
     #[test]

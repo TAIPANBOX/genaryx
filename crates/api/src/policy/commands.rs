@@ -63,9 +63,15 @@ pub struct ApprovalDto {
     pub org: Option<String>,
     pub model: Option<String>,
     /// The one call this hold is about, or `None` when the hold named no single
-    /// call. Wardryx does not send the arguments, so there is no field for them
-    /// and the row says so (CLAUDE.md invariant 46).
+    /// call. Wardryx does not send the arguments in the list; what a person can
+    /// read of them is the sealed preview `policy_approval_preview` opens
+    /// (CLAUDE.md invariant 48).
     pub tool_call: Option<HeldToolCallDto>,
+    /// The state of that preview and, when sealed, its digest; `None` for a
+    /// hold from a wardryx without previews or with no call.
+    pub preview: Option<HeldPreviewDto>,
+    /// A matched policy says a grant needs a person who saw the arguments.
+    pub require_preview: bool,
     /// `no_grant` on a tool call nothing grants, the one hold a standing grant
     /// ends for good; `None` on every other hold (CLAUDE.md invariant 47).
     pub hold_kind: Option<String>,
@@ -82,6 +88,14 @@ pub struct HeldToolCallDto {
     pub target: Option<String>,
     pub arguments_truncated: Option<bool>,
     pub digest: Option<String>,
+}
+
+/// A hold's preview as wardryx records it: the state, and the digest a grant
+/// names when it was sealed.
+#[derive(Debug, Clone, Serialize)]
+pub struct HeldPreviewDto {
+    pub state: String,
+    pub pvd: Option<String>,
 }
 
 impl From<HeldToolCall> for HeldToolCallDto {
@@ -114,6 +128,11 @@ impl From<&Approval> for ApprovalDto {
             org: a.org().map(str::to_string),
             model: a.model().map(str::to_string),
             tool_call: a.tool_call().map(HeldToolCallDto::from),
+            preview: a.preview().map(|p| HeldPreviewDto {
+                state: p.state,
+                pvd: p.pvd,
+            }),
+            require_preview: a.require_preview(),
             hold_kind: a.hold_kind().map(str::to_string),
             identity_source: a.identity_source().map(str::to_string),
         }
@@ -298,6 +317,11 @@ pub enum PolicyError {
     StandingGrant {
         reason: String,
     },
+    /// A held call's preview could not be opened or checked, or a decision
+    /// named a preview that is not the hold's (CLAUDE.md invariant 48).
+    Preview {
+        reason: String,
+    },
     NoEnvironment,
     Unreachable {
         reason: String,
@@ -429,7 +453,7 @@ fn status_of(e: &WardryxError) -> u16 {
 /// appropriate [`PolicyError`] when the panel is not ready. Only holds the
 /// state lock long enough to clone the (cheap, `Arc`-backed) client out -
 /// mirrors `money::commands::ready_client` exactly.
-async fn ready_client(state: &&PolicyState) -> Result<PolicyClient, PolicyError> {
+pub(crate) async fn ready_client(state: &&PolicyState) -> Result<PolicyClient, PolicyError> {
     let guard = state.inner.lock().await;
     match &*guard {
         PolicyInner::Ready(client) => Ok(client.clone()),
@@ -665,6 +689,7 @@ pub async fn policy_enforcement_status(
 pub async fn policy_decide_approval(
     id: String,
     decision: DecisionDto,
+    seen_pvd: Option<String>,
     state: &PolicyState,
     approver: &crate::policy::approver::ApproverKey,
 ) -> Result<DecideOutcome, PolicyError> {
@@ -679,11 +704,42 @@ pub async fn policy_decide_approval(
     let confirmed = crate::console_actor::current_signature()
         .filter(|sig| sig.alg == "webauthn-es256")
         .map(|sig| sig.fpr);
+    // What the person was shown (CLAUDE.md invariant 48): read from wardryx's
+    // own record of the hold, and the digest the browser showed, which the
+    // passkey assertion confirmed with the rest of the command's arguments.
+    // Only a statement carries it, so it is worked out only when one is made.
+    let mut shown = None;
+    let mut preview_note = json!({});
+    if matches!(approver, crate::policy::approver::ApproverKey::Ready(_)) {
+        let hold = client
+            .client
+            .list_approvals()
+            .await
+            .map_err(PolicyError::from)?
+            .into_iter()
+            .find(|a| a.approval_id == id);
+        if let Some(hold) = hold {
+            match crate::policy::preview::shown_for(&hold, decision.wire(), seen_pvd.as_deref()) {
+                Ok(s) => {
+                    preview_note = match &s {
+                        Some(s) => json!({"pvd": s.pvd}),
+                        None => json!({}),
+                    };
+                    shown = s;
+                }
+                Err(reason) => {
+                    let _ = journal_refusal(&client, decision, &id, &operator, &reason);
+                    return Err(PolicyError::Preview { reason });
+                }
+            }
+        }
+    }
     let request = crate::policy::approver::Request {
         approval_id: &id,
         decision: decision.wire(),
         approver: &operator,
         passkey_credential: confirmed.as_deref(),
+        shown,
     };
     let statement = match crate::policy::approver::statement_for(
         approver,
@@ -721,7 +777,8 @@ pub async fn policy_decide_approval(
         env: "local".to_string(),
         action: decision.action().to_string(),
         target: id.clone(),
-        params: json!({}),
+        // The preview's digest when the statement named one: never the preview.
+        params: preview_note,
         decision: "allow".to_string(),
         sig_alg,
         sig_fpr,

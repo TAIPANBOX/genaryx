@@ -123,6 +123,10 @@ const COMMANDS: &[Gate] = &[
     gate("money_status", Role::Viewer, false),
     gate("onboard_status", Role::Viewer, false),
     gate("policy_list_approvals", Role::Viewer, false),
+    // Reading what a held call's arguments say is part of deciding it, so it
+    // needs the role that decides; it changes nothing, so no ceremony
+    // (CLAUDE.md invariant 48).
+    gate("policy_approval_preview", Role::Approver, false),
     gate("policy_list_policies", Role::Viewer, false),
     gate("policy_status", Role::Viewer, false),
     // The proof of a candidate policy: `wardryx replay` run over the recorded
@@ -522,6 +526,15 @@ mod tests {
         let row = gate_of("policy_grant_tool").expect("policy_grant_tool has no row");
         assert_eq!(row.role, Role::Admin);
         assert!(row.ceremony);
+    }
+
+    /// Reading a held call's preview is part of deciding it, so it takes the
+    /// approver role; it changes nothing, so it takes no ceremony.
+    #[test]
+    fn reading_a_held_calls_preview_is_an_approver_read_with_no_ceremony() {
+        let row = gate_of("policy_approval_preview").expect("policy_approval_preview has no row");
+        assert_eq!(row.role, Role::Approver);
+        assert!(!row.ceremony);
     }
 
     #[test]

@@ -46,6 +46,10 @@ pub struct Request<'a> {
     /// The credential id of the passkey whose assertion verified this
     /// decision, or `None` when no passkey confirmed it.
     pub passkey_credential: Option<&'a str>,
+    /// What the person was shown of the call (wardryx invariant 51): `Some`
+    /// makes a version 2 statement, `None` the version 1 statement a wardryx
+    /// without previews reads.
+    pub shown: Option<statement::Shown>,
 }
 
 /// Why a decision was refused before anything was sent to wardryx.
@@ -134,6 +138,7 @@ pub fn statement_for(
                 iat: now,
                 exp: now + STATEMENT_LIFETIME_SECS,
                 jti,
+                shown: request.shown.clone(),
             };
             statement::sign(signer.as_ref(), &claims)
                 .map(Some)
@@ -183,7 +188,23 @@ mod tests {
             decision: "grant",
             approver: "user://acme/alice",
             passkey_credential: passkey,
+            shown: None,
         }
+    }
+
+    #[test]
+    fn what_the_person_was_shown_goes_into_a_version_2_statement() {
+        let (key, public) = ready();
+        let mut r = request(Some("Y3JlZC0x"));
+        r.shown = Some(statement::Shown {
+            tcd: "a".repeat(64),
+            pvd: "b".repeat(64),
+        });
+        let jws = statement_for(&key, &r, 1_000)
+            .unwrap()
+            .expect("a statement");
+        let claims = statement::verify(&public, &jws, 1_010).expect("verifies");
+        assert_eq!(claims.shown, r.shown);
     }
 
     #[test]

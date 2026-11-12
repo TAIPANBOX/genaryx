@@ -35,6 +35,7 @@
 pub mod approver;
 pub mod commands;
 pub mod env;
+pub mod preview;
 pub mod standing_grant;
 pub mod state;
 
