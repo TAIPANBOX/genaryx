@@ -80,6 +80,9 @@ pub struct Ctx {
     /// The key the console opens held calls' previews with, read once from
     /// `GENARYX_PREVIEW_KEY_FILE` (CLAUDE.md invariant 48).
     pub preview_key: genaryx_api::policy::preview::PreviewKeyState,
+    /// Which previews each person opened here, so a decision names one only
+    /// after a real open (CLAUDE.md invariant 48).
+    pub seen_previews: genaryx_api::policy::preview::SeenPreviews,
     pub identity: IdentityState,
     /// I15 "key lifecycle health": the gateway's key-lifecycle report, an
     /// entirely independent plane from `identity` above (different
@@ -177,6 +180,7 @@ impl Ctx {
             preview_key: genaryx_api::policy::preview::PreviewKeyState::load(
                 cfg.preview_key_file.as_deref(),
             ),
+            seen_previews: genaryx_api::policy::preview::SeenPreviews::default(),
             identity: IdentityState::pending(),
             credentials: CredentialsState::pending(),
             admission: AdmissionState::pending(),

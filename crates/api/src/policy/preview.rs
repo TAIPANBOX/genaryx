@@ -20,7 +20,59 @@ use genaryx_connectors::{Approval, PREVIEW_SEALED};
 use genaryx_signing::approver::{NONE, Shown};
 use genaryx_signing::preview::{Binding, PreviewKey, is_digest};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// How long after a person opened a preview a decision may name it.
+pub const SEEN_FOR: Duration = Duration::from_secs(15 * 60);
+
+/// The most opens remembered at once; past it the oldest go first.
+const SEEN_CAP: usize = 4096;
+
+/// Which previews were opened, by whom, in this console process. A decision
+/// names a preview as seen only if this person opened that preview of that hold
+/// here within [`SEEN_FOR`]: the digest alone is in the approvals list for any
+/// viewer to copy, so a browser's word that it showed it is not enough. Held in
+/// memory; a restart forgets, and the person opens it again.
+#[derive(Default)]
+pub struct SeenPreviews {
+    inner: Mutex<HashMap<(String, String), (String, Instant)>>,
+}
+
+impl SeenPreviews {
+    /// Record that `operator` opened preview `pvd` of hold `approval_id`.
+    pub fn record(&self, operator: &str, approval_id: &str, pvd: &str) {
+        let Ok(mut map) = self.inner.lock() else {
+            return;
+        };
+        let now = Instant::now();
+        map.retain(|_, (_, at)| now.duration_since(*at) < SEEN_FOR);
+        if map.len() >= SEEN_CAP
+            && let Some(oldest) = map
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(k, _)| k.clone())
+        {
+            map.remove(&oldest);
+        }
+        map.insert(
+            (operator.to_string(), approval_id.to_string()),
+            (pvd.to_string(), now),
+        );
+    }
+
+    /// Whether `operator` opened preview `pvd` of hold `approval_id` here
+    /// within [`SEEN_FOR`].
+    pub fn confirms(&self, operator: &str, approval_id: &str, pvd: &str) -> bool {
+        let Ok(map) = self.inner.lock() else {
+            return false;
+        };
+        map.get(&(operator.to_string(), approval_id.to_string()))
+            .is_some_and(|(seen, at)| seen == pvd && at.elapsed() < SEEN_FOR)
+    }
+}
 
 /// The console's preview key, read once at startup.
 pub enum PreviewKeyState {
@@ -104,8 +156,10 @@ pub async fn policy_approval_preview(
     id: String,
     state: &PolicyState,
     key: &PreviewKeyState,
+    seen: &SeenPreviews,
 ) -> Result<PreviewDto, PolicyError> {
     let client = ready_client(&state).await?;
+    let operator = crate::console_actor::operator_or(&client.operator);
     let approvals = client
         .client
         .list_approvals()
@@ -189,6 +243,8 @@ pub async fn policy_approval_preview(
         serde_json::from_slice(&document).map_err(|_| PolicyError::Preview {
             reason: "the opened preview is not a JSON document".to_string(),
         })?;
+    // Opened and checked: this person may now name it in a decision.
+    seen.record(&operator, &id, &pvd);
     Ok(PreviewDto {
         approval_id: id,
         state: PREVIEW_SEALED.to_string(),
@@ -209,10 +265,15 @@ pub async fn policy_approval_preview(
 /// preview; a deny may name none (it opens nothing); a hold with no sealed
 /// preview names none, and its grant is refused when a policy requires a
 /// preview, unless the call had no arguments to show.
+///
+/// `opened` says whether this person opened that preview here
+/// ([`SeenPreviews::confirms`]); a digest the browser sends without an open
+/// behind it is refused.
 pub fn shown_for(
     hold: &Approval,
     decision: &str,
     seen: Option<&str>,
+    opened: bool,
 ) -> Result<Option<Shown>, String> {
     let Some(recorded) = hold.preview() else {
         return match seen {
@@ -226,7 +287,10 @@ pub fn shown_for(
         .unwrap_or_else(|| NONE.to_string());
     let sealed = recorded.state == PREVIEW_SEALED;
     let pvd = match (sealed, seen) {
-        (true, Some(s)) if Some(s) == recorded.pvd.as_deref() => s.to_string(),
+        (true, Some(s)) if Some(s) == recorded.pvd.as_deref() && opened => s.to_string(),
+        (true, Some(s)) if Some(s) == recorded.pvd.as_deref() => {
+            return Err("this console has no record of the person deciding opening this preview; open the arguments again".to_string());
+        }
         (true, Some(_)) => {
             return Err(
                 "the preview shown is not the one the hold records; open the arguments again"
@@ -277,7 +341,7 @@ mod tests {
 
     #[test]
     fn a_grant_of_a_sealed_hold_names_the_preview_the_person_saw() {
-        let shown = shown_for(&sealed(false), "grant", Some(PVD)).expect("allowed");
+        let shown = shown_for(&sealed(false), "grant", Some(PVD), true).expect("allowed");
         assert_eq!(
             shown,
             Some(Shown {
@@ -289,13 +353,28 @@ mod tests {
 
     #[test]
     fn a_grant_of_a_sealed_hold_nobody_opened_or_opened_stale_is_refused() {
-        assert!(shown_for(&sealed(false), "grant", None).is_err());
-        assert!(shown_for(&sealed(false), "grant", Some(&"3".repeat(64))).is_err());
+        assert!(shown_for(&sealed(false), "grant", None, true).is_err());
+        assert!(shown_for(&sealed(false), "grant", Some(&"3".repeat(64)), true).is_err());
+    }
+
+    #[test]
+    fn a_digest_the_browser_sends_without_an_open_behind_it_is_refused() {
+        assert!(shown_for(&sealed(false), "grant", Some(PVD), false).is_err());
+    }
+
+    #[test]
+    fn an_open_is_remembered_for_that_person_and_that_hold_only() {
+        let seen = SeenPreviews::default();
+        seen.record("user://acme/alice", "ap_1", PVD);
+        assert!(seen.confirms("user://acme/alice", "ap_1", PVD));
+        assert!(!seen.confirms("user://acme/bob", "ap_1", PVD));
+        assert!(!seen.confirms("user://acme/alice", "ap_2", PVD));
+        assert!(!seen.confirms("user://acme/alice", "ap_1", &"3".repeat(64)));
     }
 
     #[test]
     fn a_deny_of_a_sealed_hold_may_name_no_preview() {
-        let shown = shown_for(&sealed(false), "deny", None).expect("allowed");
+        let shown = shown_for(&sealed(false), "deny", None, true).expect("allowed");
         assert_eq!(
             shown,
             Some(Shown {
@@ -312,13 +391,13 @@ mod tests {
             "preview": {"state": "truncated"},
         }));
         assert_eq!(
-            shown_for(&truncated, "grant", None).expect("allowed"),
+            shown_for(&truncated, "grant", None, true).expect("allowed"),
             Some(Shown {
                 tcd: TCD.into(),
                 pvd: NONE.into()
             })
         );
-        assert!(shown_for(&truncated, "grant", Some(PVD)).is_err());
+        assert!(shown_for(&truncated, "grant", Some(PVD), true).is_err());
     }
 
     #[test]
@@ -327,28 +406,28 @@ mod tests {
             "tool_call": {"name": "t", "digest": TCD},
             "preview": {"state": "off"}, "require_preview": true,
         }));
-        assert!(shown_for(&off, "grant", None).is_err());
-        assert!(shown_for(&off, "deny", None).is_ok());
+        assert!(shown_for(&off, "grant", None, true).is_err());
+        assert!(shown_for(&off, "deny", None, true).is_ok());
         let nothing = hold(serde_json::json!({
             "tool_call": {"name": "t", "digest": TCD},
             "preview": {"state": "no_arguments"}, "require_preview": true,
         }));
-        assert!(shown_for(&nothing, "grant", None).is_ok());
-        assert!(shown_for(&sealed(true), "grant", Some(PVD)).is_ok());
+        assert!(shown_for(&nothing, "grant", None, true).is_ok());
+        assert!(shown_for(&sealed(true), "grant", Some(PVD), true).is_ok());
     }
 
     #[test]
     fn a_hold_from_a_wardryx_without_previews_gets_the_version_1_statement() {
         let old = hold(serde_json::json!({"tool_call": {"name": "t", "digest": TCD}}));
-        assert_eq!(shown_for(&old, "grant", None), Ok(None));
-        assert!(shown_for(&old, "grant", Some(PVD)).is_err());
+        assert_eq!(shown_for(&old, "grant", None, true), Ok(None));
+        assert!(shown_for(&old, "grant", Some(PVD), true).is_err());
     }
 
     #[test]
     fn a_hold_with_no_call_names_none_for_both() {
         let model = hold(serde_json::json!({"preview": {"state": "no_arguments"}}));
         assert_eq!(
-            shown_for(&model, "grant", None).expect("allowed"),
+            shown_for(&model, "grant", None, true).expect("allowed"),
             Some(Shown {
                 tcd: NONE.into(),
                 pvd: NONE.into()

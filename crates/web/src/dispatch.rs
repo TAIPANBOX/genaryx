@@ -1052,6 +1052,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                     a.seen_pvd,
                     &ctx.policy,
                     &ctx.approver,
+                    &ctx.seen_previews,
                 )
                 .await,
             )))
@@ -1069,6 +1070,7 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
                     a.id,
                     &ctx.policy,
                     &ctx.preview_key,
+                    &ctx.seen_previews,
                 )
                 .await,
             )))

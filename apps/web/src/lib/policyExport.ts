@@ -86,6 +86,19 @@ export function approvalTargetLabel(approval: Approval): string {
 export function approvalArgumentsLabel(approval: Approval): string {
   const call = approval.tool_call;
   if (call === null) return NO_CALL_ON_HOLD;
+  // A wardryx with previews says what a person can be shown (invariant 48).
+  switch (approval.preview?.state) {
+    case "sealed":
+      return "sealed for this console: open them to read";
+    case "no_arguments":
+      return "none: the call carried no arguments";
+    case "truncated":
+      return "too large to show: a grant binds only the tool and target";
+    case "off":
+      return "not shown: wardryx keeps no preview (no preview key configured there)";
+    case "unavailable":
+      return "not shown: wardryx could not build a preview of them";
+  }
   if (call.arguments_truncated === true) {
     return "truncated: wardryx saw none, and a grant binds only the tool and target";
   }

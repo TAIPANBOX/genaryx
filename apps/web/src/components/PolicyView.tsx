@@ -200,7 +200,7 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
   }, [refresh]);
 
   const handleDecide = useCallback(
-    async (id: string, decision: Decision) => {
+    async (id: string, decision: Decision, seenPvd: string | null) => {
       // Sets the SAME `error` state `refresh()` above uses, so a rejection
       // (most notably a 403 `role_required` refusal for an approver trying
       // an admin-only command, or a viewer trying to decide at all -
@@ -210,7 +210,7 @@ export function PolicyView({ focusApprovalId, mutedKeys, onToggleMuteAgent, onOp
       // reject/resolve distinction is kept honest for any future caller that
       // branches on it, matching `MoneyView.tsx`'s identical contract.
       try {
-        const outcome = await decideApproval(id, decision);
+        const outcome = await decideApproval(id, decision, seenPvd);
         setNotice(
           outcome.bus_recorded
             ? `${outcome.summary} - signed console_command recorded, visible in the Bus tab.`

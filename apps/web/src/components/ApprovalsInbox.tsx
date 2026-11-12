@@ -24,8 +24,11 @@ import {
   approvalTargetLabel,
   NO_CALL_ON_HOLD,
   NOT_RECORDED,
+  visibleText,
 } from "../lib/policyExport";
-import type { Approval, Decision, PolicyRecord } from "../policyTypes";
+import type { Approval, ApprovalPreview, Decision, PolicyRecord } from "../policyTypes";
+import { fetchApprovalPreview } from "../lib/policy";
+import { ArgumentPreview } from "./ArgumentPreview";
 import { ConfirmButton } from "./ConfirmButton";
 
 /** Bell / bell-with-slash glyph for the per-row mute toggle (docs/PHASE2.md
@@ -427,6 +430,35 @@ function RepeatOfferRow({ offer, onAlwaysAllow }: { offer: RepeatOffer; onAlways
   );
 }
 
+/** What the Grant button of a held row may do (CLAUDE.md invariant 48). A grant
+ * of a call whose preview was sealed waits until the person opened it; a call
+ * whose arguments could not be shown is granted blind, said so on the button
+ * and in the record; a policy may forbid that. */
+export type GrantGate =
+  | { kind: "grant"; label: string; confirm: string }
+  | { kind: "blocked"; label: string; why: string };
+
+export function grantGate(approval: Approval, opened: ApprovalPreview | null): GrantGate {
+  const state = approval.preview?.state;
+  const blindStates = ["truncated", "off", "unavailable"];
+  if (state === "sealed") {
+    return opened?.pvd
+      ? { kind: "grant", label: "Grant", confirm: "Confirm grant of the call shown" }
+      : { kind: "blocked", label: "Grant", why: "Open the arguments first: a grant names the preview the person saw." };
+  }
+  if (state !== undefined && blindStates.includes(state) && approval.tool_call !== null) {
+    if (approval.require_preview) {
+      return {
+        kind: "blocked",
+        label: "Grant",
+        why: "A policy requires that a person saw the arguments before a grant, and they could not be shown.",
+      };
+    }
+    return { kind: "grant", label: "Grant unseen", confirm: "Confirm grant without seeing the arguments" };
+  }
+  return { kind: "grant", label: "Grant", confirm: "Confirm grant" };
+}
+
 function PendingRow({
   approval,
   offer,
@@ -439,7 +471,7 @@ function PendingRow({
 }: {
   approval: Approval;
   offer: StandingGrantOffer;
-  onDecide: (id: string, decision: Decision) => Promise<void>;
+  onDecide: (id: string, decision: Decision, seenPvd: string | null) => Promise<void>;
   onAlwaysAllow: (id: string) => Promise<void>;
   highlighted: boolean;
   muted: boolean;
@@ -448,6 +480,24 @@ function PendingRow({
 }) {
   const chain = approval.on_behalf_of;
   const grantLine = standingGrantLine(offer);
+  // What the person was shown of the call (CLAUDE.md invariant 48): held here,
+  // while this row is on screen, and dropped with it.
+  const [opened, setOpened] = useState<ApprovalPreview | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const gate = grantGate(approval, opened);
+  const openPreview = async () => {
+    setOpening(true);
+    setOpenError(null);
+    try {
+      setOpened(await fetchApprovalPreview(approval.approval_id));
+    } catch (err) {
+      const e = err as { reason?: string; message?: string };
+      setOpenError(e.reason ?? e.message ?? "the preview could not be opened");
+    } finally {
+      setOpening(false);
+    }
+  };
   return (
     <div
       id={`approval-${approval.approval_id}`}
@@ -530,19 +580,39 @@ function PendingRow({
         </span>
       )}
 
+      {approval.preview?.state === "sealed" && opened === null && (
+        <div className="flex items-center gap-2">
+          <button type="button" className="icon-btn" disabled={opening} onClick={() => void openPreview()}>
+            {opening ? "Opening..." : "Show arguments"}
+          </button>
+          {openError && (
+            <span className="text-[11px]" style={{ color: "var(--sev-high)" }}>
+              {visibleText(openError)}
+            </span>
+          )}
+        </div>
+      )}
+      {opened?.document && <ArgumentPreview document={opened.document} pvd={opened.pvd} />}
+
       <div className="flex items-center gap-2 justify-end">
         <AlwaysAllowButton offer={offer} onAlwaysAllow={onAlwaysAllow} approvalId={approval.approval_id} />
-        <ConfirmButton
-          label="Grant"
-          confirmLabel="Confirm grant"
-          tone="var(--sev-low)"
-          onConfirm={() => onDecide(approval.approval_id, "grant")}
-        />
+        {gate.kind === "blocked" ? (
+          <button type="button" className="icon-btn" disabled title={gate.why}>
+            {gate.label}
+          </button>
+        ) : (
+          <ConfirmButton
+            label={gate.label}
+            confirmLabel={gate.confirm}
+            tone="var(--sev-low)"
+            onConfirm={() => onDecide(approval.approval_id, "grant", opened?.pvd ?? null)}
+          />
+        )}
         <ConfirmButton
           label="Deny"
           confirmLabel="Confirm deny"
           tone="var(--sev-critical)"
-          onConfirm={() => onDecide(approval.approval_id, "deny")}
+          onConfirm={() => onDecide(approval.approval_id, "deny", opened?.pvd ?? null)}
         />
       </div>
     </div>
@@ -666,7 +736,7 @@ export function ApprovalsInbox({
   policies: readonly PolicyRecord[];
   /** The signed-in role, `null` when the console has no session to read. */
   role: ConsoleRole | null | undefined;
-  onDecide: (id: string, decision: Decision) => Promise<void>;
+  onDecide: (id: string, decision: Decision, seenPvd: string | null) => Promise<void>;
   /** A standing grant (`lib/standingGrant.ts`), after the same ceremony as a grant. */
   onAlwaysAllow: (id: string) => Promise<void>;
   grantedTokens: readonly GrantedToken[];

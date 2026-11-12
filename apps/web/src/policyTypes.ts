@@ -61,6 +61,66 @@ export interface Approval {
   /** How the enforcement point knew the agent: `agent-token`, `client-key` or
    * `none`; `null` when the hold did not say. */
   identity_source: string | null;
+  /** The state of what a person can be shown of the call's arguments (wardryx
+   * invariant 51), and for a sealed preview the digest a grant names. Absent or
+   * `null` on a hold from a wardryx without previews. */
+  preview?: HeldPreview | null;
+  /** A matched policy says a grant needs a person who saw the arguments. */
+  require_preview?: boolean;
+}
+
+/** Mirrors `policy::commands::HeldPreviewDto`. */
+export interface HeldPreview {
+  /** `sealed`, `truncated`, `no_arguments`, `off` or `unavailable`. */
+  state: string;
+  pvd: string | null;
+}
+
+/** Mirrors `policy::preview::PreviewDto`: what the console opened of one hold's
+ * arguments. Held in the row's state while it is on screen, and nowhere else. */
+export interface ApprovalPreview {
+  approval_id: string;
+  state: string;
+  pvd: string | null;
+  ruleset: string | null;
+  expires_at: string | null;
+  document: PreviewDocument | null;
+}
+
+/** wardryx's preview document (internal/preview): a tree of typed nodes, never
+ * text or markup. */
+export interface PreviewDocument {
+  v: number;
+  ruleset: string;
+  root: PreviewNode;
+}
+
+export interface PreviewPart {
+  text?: string;
+  hidden?: string;
+  vault?: string;
+}
+
+export interface PreviewNode {
+  k: string;
+  members?: { key: PreviewNode; value: PreviewNode }[];
+  duplicate_keys?: boolean;
+  items?: PreviewNode[];
+  omitted?: number;
+  parts?: PreviewPart[];
+  runes?: number;
+  cut?: boolean;
+  sha256?: string;
+  flags?: string[];
+  lexeme?: string;
+  value?: boolean;
+  rule?: string;
+  type?: string;
+  name?: string;
+  bytes?: number;
+  mime?: string;
+  reason?: string;
+  count?: number;
 }
 
 /** Mirrors `policy::commands::HeldToolCallDto`: the call by name, target and the

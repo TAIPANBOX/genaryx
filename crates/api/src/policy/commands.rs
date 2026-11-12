@@ -692,6 +692,7 @@ pub async fn policy_decide_approval(
     seen_pvd: Option<String>,
     state: &PolicyState,
     approver: &crate::policy::approver::ApproverKey,
+    opened: &crate::policy::preview::SeenPreviews,
 ) -> Result<DecideOutcome, PolicyError> {
     let client = ready_client(&state).await?;
     // The web shell's signed-in principal when set (docs/CONSOLE-IDP.md), else
@@ -719,7 +720,15 @@ pub async fn policy_decide_approval(
             .into_iter()
             .find(|a| a.approval_id == id);
         if let Some(hold) = hold {
-            match crate::policy::preview::shown_for(&hold, decision.wire(), seen_pvd.as_deref()) {
+            let was_opened = seen_pvd
+                .as_deref()
+                .is_some_and(|p| opened.confirms(&operator, &id, p));
+            match crate::policy::preview::shown_for(
+                &hold,
+                decision.wire(),
+                seen_pvd.as_deref(),
+                was_opened,
+            ) {
                 Ok(s) => {
                     preview_note = match &s {
                         Some(s) => json!({"pvd": s.pvd}),

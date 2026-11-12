@@ -102,6 +102,7 @@ async fn decide(state: &PolicyState, decision: DecisionDto) -> Result<DecideOutc
         None,
         state,
         &ApproverKey::NotConfigured,
+        &genaryx_api::policy::preview::SeenPreviews::default(),
     )
     .await
 }
