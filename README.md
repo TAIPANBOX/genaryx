@@ -292,6 +292,18 @@ box; these frames are not it, and say so here rather than in a footnote.
   instead of the box's OS account. The local account stays the break-glass
   admin. Design and the honest limits in
   [`docs/CONSOLE-IDP.md`](docs/CONSOLE-IDP.md).
+- **The approver reads the call before deciding it.** A held call's
+  arguments reach the inbox as the preview wardryx built from the bytes the
+  grant is bound to, with secrets and personal data hidden by its fixed rules
+  and sealed to this console's preview key (`GENARYX_PREVIEW_KEY_FILE`; make
+  one with `genaryx-web preview-key --out <file>` and give wardryx the printed
+  recipient as `WARDRYX_PREVIEW_RECIPIENT`). Show arguments opens it; Grant
+  waits until it is open, and the signed approver statement names the call and
+  the preview the person read. A call whose arguments could not be shown is
+  granted with a button that says Grant unseen, and the record says so. The
+  preview is shown as text only, framed as data from the agent, and is kept
+  nowhere: no journal line, no browser storage, never Felyx (CLAUDE.md
+  invariant 48).
 - **A person's approval reaches the agent.** Granting a held call shows the
   raw `approval_token` once, with a copy button, the header it goes in
   (`x-fuse-approval-token`), the expiry countdown and a plain line: it allows

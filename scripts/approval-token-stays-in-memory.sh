@@ -162,7 +162,9 @@ if [ "$readers" -ne 2 ]; then
 fi
 
 # 7. Nothing between here and the browser keeps the answer.
-if ! grep -q 'Ok(no_store(reply(' <<<"$(grep -A12 '"policy_decide_approval" =>' "$dispatch")"; then
+# The window reaches the arm's first answer: the arm's argument struct grew a
+# field in invariant 48 (`seen_pvd`), which moved it down.
+if ! grep -q 'Ok(no_store(reply(' <<<"$(grep -A20 '"policy_decide_approval" =>' "$dispatch")"; then
 	note "$dispatch: the answer to a decision is not marked no-store"
 fi
 

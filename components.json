@@ -87,6 +87,9 @@
           "GENARYX_ORG_DOMAIN": {
             "required": false
           },
+          "GENARYX_PREVIEW_KEY_FILE": {
+            "required": false
+          },
           "GENARYX_SCAN_TARGET": {
             "required": false
           },
