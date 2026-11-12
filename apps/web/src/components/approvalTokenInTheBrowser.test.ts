@@ -57,6 +57,30 @@ function tokenOnScreen(): string | null {
   return document.querySelector('[data-testid="approval-token"]')?.textContent ?? null;
 }
 
+/** The token inside whatever holds the focus, or `null` when the focus is elsewhere. */
+function focusedToken(): string | null {
+  const focused = document.activeElement;
+  if (!focused || focused === document.body) return null;
+  return focused.querySelector('[data-testid="approval-token"]')?.textContent ?? null;
+}
+
+function notice(): Element | null {
+  return document.querySelector('[data-testid="granted-token-notice"]');
+}
+
+/** Whether the page asks before it goes: what a reload, a closed tab or a typed
+ * address raises, and what the browser turns into its own question. */
+function leavingIsQuestioned(): boolean {
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+function stubClipboard(): void {
+  const writeText = async (_text: string) => {};
+  vi.stubGlobal("navigator", Object.assign(Object.create(navigator), { clipboard: { writeText } }));
+}
+
 async function openPolicy(): Promise<void> {
   await press("Policy");
   await until("the approvals queue", () => buttonNamed("Grant"));
@@ -157,11 +181,14 @@ describe("a person's grant in the console", () => {
   });
 
   it("leaving_the_view_drops_the_token_and_coming_back_does_not_restore_it", async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
     await openPolicy();
     await grantTheFirstHold();
     await until("the token", tokenOnScreen);
 
     await press("Overview");
+    expect(confirm).toHaveBeenCalledTimes(1);
     await until("the policy view to go", () => (buttonNamed("Copy the approval token") ? null : true));
     expect(document.documentElement.innerHTML).not.toContain(DEMO_TOKEN);
 
@@ -192,6 +219,129 @@ describe("a person's grant in the console", () => {
     );
   });
 
+  it("a_grant_brings_the_token_into_view_and_puts_the_focus_on_it", async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    await openPolicy();
+    await grantTheFirstHold();
+    expect(await until("the token", tokenOnScreen)).toBe(DEMO_TOKEN);
+    expect(scrolled.some((element) => element.querySelector('[data-testid="approval-token"]') !== null)).toBe(true);
+    expect(focusedToken()).toBe(DEMO_TOKEN);
+  });
+
+  it("a_notice_says_a_token_is_on_screen_and_shows_it_again", async () => {
+    stubClipboard();
+    await openPolicy();
+    expect(notice()).toBeNull();
+    await grantTheFirstHold();
+    await until("the token", tokenOnScreen);
+    expect(notice()?.textContent).toContain("not copied yet");
+    expect(notice()?.textContent).toContain("cannot be shown again");
+    expect(notice()?.textContent).not.toContain(DEMO_TOKEN);
+
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(focusedToken()).toBeNull();
+    await press("Show the token");
+    expect(focusedToken()).toBe(DEMO_TOKEN);
+
+    await press("Copy the approval token");
+    await until("the copy to finish", () => (notice()?.textContent?.includes("Approval token copied") ? true : null));
+    await press("Dismiss");
+    expect(notice()).toBeNull();
+  });
+
+  it("reloading_the_page_with_an_uncopied_token_asks_first", async () => {
+    await openPolicy();
+    expect(leavingIsQuestioned()).toBe(false);
+    await grantTheFirstHold();
+    await until("the token", tokenOnScreen);
+    expect(leavingIsQuestioned()).toBe(true);
+  });
+
+  it("a_copied_or_dismissed_token_lets_the_page_go_without_asking", async () => {
+    stubClipboard();
+    await openPolicy();
+    await grantTheFirstHold();
+    await until("the token", tokenOnScreen);
+    await press("Copy the approval token");
+    await until("the copy to finish", () => (buttonNamed("Copied") ? true : null));
+    expect(leavingIsQuestioned()).toBe(false);
+
+    await settle(50);
+    await grantTheFirstHold();
+    await until("the second token", () =>
+      document.querySelectorAll('[data-testid="approval-token"]').length === 2 ? true : null,
+    );
+    expect(leavingIsQuestioned()).toBe(true);
+    await press("Dismiss");
+    expect(leavingIsQuestioned()).toBe(false);
+  });
+
+  it("a_copy_the_browser_refused_still_asks_before_the_page_goes", async () => {
+    vi.stubGlobal(
+      "navigator",
+      Object.assign(Object.create(navigator), {
+        clipboard: {
+          writeText: async () => {
+            throw new Error("not allowed");
+          },
+        },
+      }),
+    );
+    await openPolicy();
+    await grantTheFirstHold();
+    await until("the token", tokenOnScreen);
+    await press("Copy the approval token");
+    await until("the refusal", () => document.querySelector('[role="alert"]'));
+    expect(leavingIsQuestioned()).toBe(true);
+  });
+
+  it("a_token_copied_by_hand_counts_as_copied", async () => {
+    await openPolicy();
+    await grantTheFirstHold();
+    const token = await until("the token", () => document.querySelector('[data-testid="approval-token"]'));
+    expect(leavingIsQuestioned()).toBe(true);
+    await act(async () => {
+      token.dispatchEvent(new Event("copy", { bubbles: true, cancelable: true }));
+    });
+    expect(leavingIsQuestioned()).toBe(false);
+  });
+
+  it("leaving_the_view_with_an_uncopied_token_asks_first_and_staying_keeps_it", async () => {
+    const confirm = vi.fn((_question?: string) => false);
+    vi.stubGlobal("confirm", confirm);
+    await openPolicy();
+    await grantTheFirstHold();
+    await until("the token", tokenOnScreen);
+
+    await press("Overview");
+    await settle(50);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const question = confirm.mock.calls[0]?.[0] ?? "";
+    expect(question).toContain("cannot be shown again");
+    expect(question).not.toContain(DEMO_TOKEN);
+    expect(tokenOnScreen()).toBe(DEMO_TOKEN);
+  });
+
+  it("leaving_the_view_after_the_copy_does_not_ask", async () => {
+    stubClipboard();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    await openPolicy();
+    await grantTheFirstHold();
+    await until("the token", tokenOnScreen);
+    expect(leavingIsQuestioned()).toBe(true);
+    await press("Copy the approval token");
+    await until("the copy to finish", () => (buttonNamed("Copied") ? true : null));
+
+    await press("Overview");
+    await until("the policy view to go", () => (buttonNamed("Copied") ? null : true));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(document.documentElement.innerHTML).not.toContain(DEMO_TOKEN);
+  });
+
   it("the_token_reaches_no_browser_storage_no_url_no_cookie_and_no_console_line", async () => {
     const written: unknown[][] = [];
     const keep = (...args: unknown[]) => {
@@ -200,6 +350,8 @@ describe("a person's grant in the console", () => {
     for (const method of ["log", "info", "warn", "error", "debug", "trace"] as const) {
       vi.spyOn(console, method).mockImplementation(keep);
     }
+    // jsdom has no clipboard, so the copy fails and leaving asks first: say yes.
+    vi.stubGlobal("confirm", () => true);
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     const pushState = vi.spyOn(history, "pushState");
     const replaceState = vi.spyOn(history, "replaceState");

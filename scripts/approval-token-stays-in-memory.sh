@@ -19,6 +19,9 @@
 #   their own;
 # - AppShell mounts the two views that hold a token only while they are the
 #   active view, which is what makes leaving a view drop it;
+# - every change of view in AppShell goes through the one setter that asks
+#   first while a token on screen is not copied (lib/leaveGuard.ts), so no path
+#   added later drops a token without asking;
 # - nothing in the copilot crate names the token or the call that mints it;
 # - the token's type cannot be printed, and has no accessor;
 # - in the policy commands, exactly the two functions that have a reason to read
@@ -93,7 +96,7 @@ while IFS= read -r f; do
 	if grep -q 'approval_token' "$f" && ! is_one_of "$f" "${wire_field_allowed[@]}"; then
 		note "$f names approval_token: only ${wire_field_allowed[*]} may read the wire field"
 	fi
-	if grep -qE '\bGrantedToken\b|GrantedTokenPanel|grantedTokenFrom' "$f"; then
+	if grep -qE '\bGrantedToken\b|GrantedTokenPanel|GrantedTokenList|grantedTokenFrom' "$f"; then
 		holders_seen=$((holders_seen + 1))
 		is_one_of "$f" "${holders[@]}" ||
 			note "$f holds a granted token: add it to this gate on purpose, or do not hold one"
@@ -122,6 +125,13 @@ for pair in policy:PolicyView copilot:CopilotView; do
 	grep -q "<$component" <<<"$mounted" ||
 		note "$shell does not mount $component only while it is the active view, so leaving it would keep its tokens"
 done
+
+# 3b. A change of view asks before it drops a token nobody copied. `setView` is
+# the guarded setter; `setViewNow` is React's own, and only `setView` may call it.
+direct=$(grep -c 'setViewNow(' "$shell")
+if [ "$direct" -ne 1 ]; then
+	note "$shell calls setViewNow $direct times: once, inside setView, which asks first while a token on screen is not copied (lib/leaveGuard.ts)"
+fi
 
 # 4. Felyx has no road to a token.
 named=$(grep -rnE 'approval_token|decide_approval|ApprovalDecideResponse|RawApprovalToken|DecideOutcome' "$copilot")

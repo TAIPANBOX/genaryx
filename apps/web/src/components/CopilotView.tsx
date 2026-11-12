@@ -23,7 +23,7 @@ import { decideApproval, describePolicyError } from "../lib/policy";
 import type { IdentityError } from "../identityTypes";
 import type { MoneyError } from "../moneyTypes";
 import type { Decision, PolicyError } from "../policyTypes";
-import { GrantedTokenPanel } from "./ApprovalsInbox";
+import { GrantedTokenList } from "./ApprovalsInbox";
 import { ConfirmButton } from "./ConfirmButton";
 import { usePopover, PopoverHeader } from "../lib/popover";
 import { FelyxConnectCard, felyxConnectSupport } from "./FelyxConnectCard";
@@ -960,13 +960,10 @@ export function CopilotView({
 
       {grantedTokens.length > 0 && (
         <div className="px-5 pb-2 shrink-0 flex flex-col gap-2">
-          {grantedTokens.map((granted) => (
-            <GrantedTokenPanel
-              key={granted.approvalId}
-              granted={granted}
-              onDismiss={() => setGrantedTokens((list) => withoutGranted(list, granted.approvalId))}
-            />
-          ))}
+          <GrantedTokenList
+            tokens={grantedTokens}
+            onDismiss={(approvalId) => setGrantedTokens((list) => withoutGranted(list, approvalId))}
+          />
         </div>
       )}
 

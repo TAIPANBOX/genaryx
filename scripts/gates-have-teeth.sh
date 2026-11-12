@@ -1181,6 +1181,16 @@ run_case "approval-token: the policy view stays mounted across navigation" fail 
 	"$(py 'edit("apps/web/src/components/AppShell.tsx", "{view === \"policy\" && (\n          <PolicyView", "{(\n          <PolicyView")')" \
 	'does not mount PolicyView only while it is the active view'
 
+run_case "approval-token: a change of view skips the question" fail \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/components/AppShell.tsx", "    setView(\"replay\");", "    setViewNow(\"replay\");")')" \
+	'calls setViewNow 2 times'
+
+run_case "approval-token: the guarded setter no longer sets the view" fail \
+	"$token_gate" \
+	"$(py 'edit("apps/web/src/components/AppShell.tsx", "    setViewNow(next);", "    void next;")')" \
+	'calls setViewNow 0 times'
+
 run_case "approval-token: the copilot crate names the call that mints it" fail \
 	"$token_gate" \
 	"$(py 'edit("crates/copilot/src/tools/wardryx.rs", "pub(super) struct ApprovalsInbox;", "// decide_approval\npub(super) struct ApprovalsInbox;")')" \

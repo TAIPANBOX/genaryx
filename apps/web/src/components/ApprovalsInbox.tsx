@@ -1,12 +1,16 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cssVar } from "../lib/cssVars";
 import { formatTimestamp, formatUsd } from "../lib/format";
 import {
   APPROVAL_TOKEN_HEADER,
+  grantedTokenNotice,
+  isExpired,
   SINGLE_USE_EXCEPTION,
   tokenPlainLine,
   type GrantedToken,
 } from "../lib/approvalToken";
+import { useLeaveGuard } from "../lib/leaveGuard";
 import { agentIdFromMuteKey, muteKey } from "../lib/notifications";
 import { repeatOffers, standingGrantOffer, type RepeatOffer, type StandingGrantOffer } from "../lib/standingGrant";
 import type { ConsoleRole } from "../lib/transport";
@@ -118,8 +122,22 @@ type CopyState = "idle" | "copied" | "failed";
  * The token is held by this component's parent in plain state and rendered here
  * as text: `lib/approvalToken.ts` says why nothing else may hold it. Once it has
  * expired it is no use to anybody and is no longer drawn.
+ *
+ * `onCopied` tells {@link GrantedTokenList} the operator has the token, by the
+ * button or by copying the text by hand, which lets the page go without asking.
+ * `panelRef` is how the list brings this panel into view and focuses it.
  */
-export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToken; onDismiss: () => void }) {
+export function GrantedTokenPanel({
+  granted,
+  onDismiss,
+  onCopied,
+  panelRef,
+}: {
+  granted: GrantedToken;
+  onDismiss: () => void;
+  onCopied?: () => void;
+  panelRef?: (panel: HTMLDivElement | null) => void;
+}) {
   const { claims, raw } = granted;
   const countdown = useCountdown(claims?.exp_unix ?? 0);
   const [copy, setCopy] = useState<CopyState>("idle");
@@ -130,6 +148,7 @@ export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToke
     try {
       await navigator.clipboard.writeText(raw);
       setCopy("copied");
+      onCopied?.();
     } catch {
       // No clipboard outside a secure context, or the browser refused it.
       setCopy("failed");
@@ -138,6 +157,10 @@ export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToke
 
   return (
     <div
+      ref={panelRef}
+      tabIndex={-1}
+      role="region"
+      aria-label={`Approval token for ${granted.approvalId}, shown once`}
       className="panel px-4 py-3 flex flex-col gap-2"
       style={{
         background: "color-mix(in srgb, var(--sev-low) 10%, var(--panel-2))",
@@ -169,6 +192,7 @@ export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToke
               data-testid="approval-token"
               className="mono text-[11.5px] min-w-0 flex-1"
               style={{ color: "var(--fg)", wordBreak: "break-all", userSelect: "all" }}
+              onCopy={() => onCopied?.()}
             >
               {raw}
             </code>
@@ -216,6 +240,125 @@ export function GrantedTokenPanel({ granted, onDismiss }: { granted: GrantedToke
         {SINGLE_USE_EXCEPTION}
       </span>
     </div>
+  );
+}
+
+/** The clock a list of tokens reads expiry from. It ticks each second only while
+ * there is a token to read it for, and reads the time afresh when one arrives. */
+function useNowMs(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [ticking]);
+  return now;
+}
+
+/**
+ * Every token a view holds, made impossible to miss. A grant used to put its
+ * panel at the top of the inbox, above whatever part of the page was in view,
+ * with nothing that said it was there, and a reload lost it for good: on
+ * 2026-11-12 two grants in the lab were spent that way before a third was copied.
+ *
+ * So a token that arrives is brought into view and given the focus; a notice
+ * fixed to the window says a token is on screen for as long as one is alive, and
+ * brings it back into view; and while one is alive and not copied, leaving the
+ * page or the view asks first (`lib/leaveGuard.ts`). Expired, copied (by the
+ * button or by hand) or dismissed, it holds nothing.
+ *
+ * The tokens stay where they were: in the parent's state, passed down here. This
+ * keeps only which ones were copied and which were already brought into view, by
+ * approval id, and the notice names no part of a token.
+ */
+export function GrantedTokenList({
+  tokens,
+  onDismiss,
+}: {
+  tokens: readonly GrantedToken[];
+  onDismiss: (approvalId: string) => void;
+}) {
+  const now = useNowMs(tokens.length > 0);
+  const [copied, setCopied] = useState<ReadonlySet<string>>(() => new Set());
+  const panels = useRef(new Map<string, HTMLDivElement>());
+  const shown = useRef(new Set<string>());
+
+  const alive = tokens.filter((g) => !isExpired(g, now));
+  const notCopied = alive.filter((g) => !copied.has(g.approvalId));
+  useLeaveGuard(notCopied.length > 0);
+
+  const bringIntoView = useCallback((approvalId: string) => {
+    const panel = panels.current.get(approvalId);
+    if (!panel) return;
+    // jsdom has no scrollIntoView; a browser always does.
+    panel.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    panel.focus({ preventScroll: true });
+  }, []);
+
+  useEffect(() => {
+    const fresh = tokens.find((g) => !shown.current.has(g.approvalId));
+    for (const g of tokens) shown.current.add(g.approvalId);
+    if (fresh) bringIntoView(fresh.approvalId);
+  }, [tokens, bringIntoView]);
+
+  const markCopied = useCallback((approvalId: string) => {
+    setCopied((set) => (set.has(approvalId) ? set : new Set(set).add(approvalId)));
+  }, []);
+
+  const pointAt = notCopied[0] ?? alive[0];
+
+  return (
+    <>
+      {tokens.map((granted) => (
+        <GrantedTokenPanel
+          key={granted.approvalId}
+          granted={granted}
+          onDismiss={() => onDismiss(granted.approvalId)}
+          onCopied={() => markCopied(granted.approvalId)}
+          panelRef={(panel) => {
+            if (panel) panels.current.set(granted.approvalId, panel);
+            else panels.current.delete(granted.approvalId);
+          }}
+        />
+      ))}
+      {pointAt !== undefined &&
+        createPortal(
+          <div
+            data-testid="granted-token-notice"
+            role="status"
+            className="panel px-3 py-2 flex items-center gap-3"
+            style={{
+              position: "fixed",
+              left: "50%",
+              bottom: 16,
+              transform: "translateX(-50%)",
+              zIndex: 60,
+              width: "max-content",
+              maxWidth: "calc(100vw - 32px)",
+              background: "color-mix(in srgb, var(--sev-low) 16%, var(--panel-2))",
+              borderColor: "color-mix(in srgb, var(--sev-low) 60%, var(--line-2))",
+              boxShadow: "0 8px 24px rgba(0, 0, 0, 0.35)",
+            }}
+          >
+            <span className="badge" style={cssVar("tone", "var(--sev-low)")}>
+              token on screen
+            </span>
+            <span className="text-[12px]" style={{ color: "var(--fg)" }}>
+              {grantedTokenNotice(notCopied.length, alive.length)}
+            </span>
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ width: "auto", padding: "0 8px", fontSize: 11, whiteSpace: "nowrap" }}
+              onClick={() => bringIntoView(pointAt.approvalId)}
+            >
+              Show the token
+            </button>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -549,9 +692,7 @@ export function ApprovalsInbox({
 
   return (
     <div className="flex flex-col gap-3 px-5">
-      {grantedTokens.map((granted) => (
-        <GrantedTokenPanel key={granted.approvalId} granted={granted} onDismiss={() => onDismissToken(granted.approvalId)} />
-      ))}
+      <GrantedTokenList tokens={grantedTokens} onDismiss={onDismissToken} />
 
       <MutedAgentsStrip mutedAgents={mutedAgentIds} onUnmute={onToggleMuteAgent} />
 

@@ -296,9 +296,12 @@ box; these frames are not it, and say so here rather than in a footnote.
   raw `approval_token` once, with a copy button, the header it goes in
   (`x-fuse-approval-token`), the expiry countdown and a plain line: it allows
   one call, bound to that call, and it cannot be shown again. The agent retries
-  the call with that header. The token lives in that one answer and in the
-  memory of the view that shows it, so leaving the view drops it; it reaches no
-  log, no bus, no audit trail, no Felyx, no store and no URL
+  the call with that header. The panel is scrolled into view and takes the
+  focus, and a notice fixed to the window says a token is on screen for as long
+  as one is alive. The token lives in that one answer and in the memory of the
+  view that shows it, so leaving the view or reloading the page drops it, and
+  until it is copied the console asks first; it reaches no log, no bus, no audit
+  trail, no Felyx, no store and no URL
   (CLAUDE.md invariant 46, `scripts/approval-token-stays-in-memory.sh`). Each
   row of the inbox shows the reason for the hold and the target of the tool, and
   says so where wardryx sends no arguments or the arguments were truncated.

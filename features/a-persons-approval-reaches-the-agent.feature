@@ -113,6 +113,43 @@ Feature: A person's approval in the console reaches the agent
     And coming back does not bring it back
     And a token past its expiry is no longer drawn at all
 
+  # A grant used to put its panel at the top of the inbox, above the part of the
+  # page in view, with nothing saying it was there, and a reload lost the token
+  # for good: in the lab on 2026-11-12 two grants were spent that way before a
+  # third was copied.
+  # @test:a_grant_brings_the_token_into_view_and_puts_the_focus_on_it
+  # @test:a_grant_from_a_felyx_card_takes_the_focus_and_asks_before_the_page_goes
+  # @test:a_notice_says_a_token_is_on_screen_and_shows_it_again
+  # @test:the_notice_counts_the_tokens_not_copied_yet
+  Scenario: A grant's token is brought to the operator, not left out of view
+    Given the operator scrolled down the inbox to a held call
+    When they grant it
+    Then the token's panel is scrolled into view and holds the focus
+    And a notice fixed to the window says a token is on screen and not copied yet
+    And the notice brings the token back into view
+    And the notice names no part of the token
+
+  # @test:reloading_the_page_with_an_uncopied_token_asks_first
+  # @test:leaving_the_view_with_an_uncopied_token_asks_first_and_staying_keeps_it
+  # @test:a_copy_the_browser_refused_still_asks_before_the_page_goes
+  # @test:a_token_whose_claims_could_not_be_read_asks_until_it_is_dismissed
+  Scenario: Leaving or reloading with a token nobody copied asks first
+    Given a token on the screen that has not expired and was not copied
+    When the operator reloads the page, closes it, or opens another view
+    Then the console asks before the token is lost
+    And staying keeps the token on the screen
+
+  # @test:a_copied_or_dismissed_token_lets_the_page_go_without_asking
+  # @test:a_token_copied_by_hand_counts_as_copied
+  # @test:leaving_the_view_after_the_copy_does_not_ask
+  # @test:an_expired_token_neither_asks_nor_raises_the_notice
+  # @test:a_token_that_expires_on_screen_stops_asking
+  # @test:the_page_is_let_go_once_the_list_is_gone
+  Scenario: A token copied, dismissed or expired lets the page go
+    Given a token the operator copied by the button or by hand, dismissed, or that expired
+    When they leave or reload the page
+    Then nothing asks
+
   # @test:two_grants_in_a_row_keep_both_tokens_on_screen
   # @test:a_second_grant_never_takes_the_place_of_a_first_token
   Scenario: A second grant does not take the place of a first token
