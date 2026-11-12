@@ -48,6 +48,27 @@ export function withoutGranted(list: readonly GrantedToken[], approvalId: string
   return list.filter((g) => g.approvalId !== approvalId);
 }
 
+/** Whether a token is past the expiry it states. A token whose claims could not be
+ * read states none, so it is never taken for expired. */
+export function isExpired(granted: GrantedToken, nowMs: number): boolean {
+  return granted.claims !== null && granted.claims.exp_unix * 1000 <= nowMs;
+}
+
+/** The notice that stays on screen while any token there is alive, so a grant
+ * whose panel is out of view is still impossible to miss. It names how many are
+ * not copied yet and never any part of a token. */
+export function grantedTokenNotice(notCopied: number, alive: number): string {
+  if (notCopied === 1) {
+    return "An approval token is on screen and not copied yet. It cannot be shown again: leaving or reloading this page loses it.";
+  }
+  if (notCopied > 1) {
+    return `${notCopied} approval tokens are on screen and not copied yet. They cannot be shown again: leaving or reloading this page loses them.`;
+  }
+  return alive > 1
+    ? "Approval tokens copied. They stay on screen until they expire or you dismiss them."
+    : "Approval token copied. It stays on screen until it expires or you dismiss it.";
+}
+
 /** The plain line under a token. What it says it is bound to comes from the
  * token's own claims: wardryx binds a token to one call only when the hold named
  * one, so "bound to that call" would be false of any other. */
@@ -63,4 +84,4 @@ export function tokenPlainLine(claims: DecodedToken | null): string {
 
 /** The one exception to "one call", which this console cannot see from here. */
 export const SINGLE_USE_EXCEPTION =
-  "One call is what wardryx does unless a box sets WARDRYX_APPROVAL_SINGLE_USE=false. Leaving this view drops the token.";
+  "One call is what wardryx does unless a box sets WARDRYX_APPROVAL_SINGLE_USE=false. Leaving this view or reloading the page drops the token, so the console asks first until it is copied.";

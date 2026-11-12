@@ -35,6 +35,7 @@ import { RunReplayView } from "./RunReplayView";
 import { UnitCard } from "./UnitCard";
 import { UserCard } from "./UserCard";
 import { isUserId } from "../lib/graph";
+import { mayLeave } from "../lib/leaveGuard";
 import { userHandle } from "../lib/agentRecord";
 import { WatchDock } from "./WatchDock";
 
@@ -115,7 +116,17 @@ function writeStoredFlag(key: string, value: boolean): void {
  */
 export function AppShell() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [view, setView] = useState<ViewId>("overview");
+  const [view, setViewNow] = useState<ViewId>("overview");
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // Every change of view goes through here, and nothing else calls `setViewNow`
+  // (scripts/approval-token-stays-in-memory.sh). Leaving the view that shows an
+  // approval token nobody has copied drops it for good, so that asks first
+  // (lib/leaveGuard.ts).
+  const setView = useCallback((next: ViewId) => {
+    if (next !== viewRef.current && !mayLeave()) return;
+    setViewNow(next);
+  }, []);
   const { open } = usePopover();
 
   // Left rail collapse/expand (@decided 2026-07-24): lives here (not inside

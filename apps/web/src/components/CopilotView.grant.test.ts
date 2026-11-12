@@ -184,6 +184,17 @@ describe("a grant from a Felyx card", () => {
     }
   });
 
+  it("a_grant_from_a_felyx_card_takes_the_focus_and_asks_before_the_page_goes", async () => {
+    await grantFromTheCard();
+    const token = document.querySelector('[data-testid="approval-token"]');
+    const focused = document.activeElement;
+    expect(focused !== null && focused !== document.body && focused.contains(token)).toBe(true);
+    expect(document.querySelector('[data-testid="granted-token-notice"]')?.textContent).toContain("not copied yet");
+    const leaving = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(leaving);
+    expect(leaving.defaultPrevented).toBe(true);
+  });
+
   it("leaving_felyx_drops_the_token_a_card_showed", async () => {
     await grantFromTheCard();
     await act(async () => {
