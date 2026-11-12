@@ -16,6 +16,7 @@
 pub mod approver;
 pub mod es256;
 pub mod mldsa;
+pub mod preview;
 
 pub use es256::{
     Assurance, Es256Signer, SignedMutation, SigningError, SoftwareSigner, body_sha256_hex,
