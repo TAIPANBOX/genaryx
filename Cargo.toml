@@ -67,6 +67,13 @@ hmac = "0.12.1"
 # `deflate` is the only codec; in 9.x it pulls zopfli and flate2 (zlib-rs).
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 base64 = "0.22.1"
+# The console's preview key (crates/signing/src/preview.rs): opens the preview
+# wardryx seals of a held tool call's arguments (wardryx invariant 51). RFC 9180
+# from RustCrypto parts. X-Wing (ML-KEM-768 with X25519, KEM 0x647a) is the
+# default key, so a ciphertext kept in a backup stays closed to a later quantum
+# computer; DHKEM(X25519) is the other KEM wardryx accepts. Only the features
+# those two need, with ChaCha20-Poly1305 and HKDF-SHA256.
+hpke = { version = "0.15.1", default-features = false, features = ["alloc", "getrandom", "x25519", "mlkem", "chacha", "hkdfsha2"] }
 getrandom = "0.2.17"
 # The operator's WireGuard peer config as a scannable QR (crates/api/src/
 # remote/wg_operator.rs). Pure Rust and SVG-only on purpose: the console

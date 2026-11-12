@@ -57,6 +57,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Generate the console's preview key: the private key goes to a new file
+    /// only its owner can read, and the recipient wardryx reads as
+    /// `WARDRYX_PREVIEW_RECIPIENT` is printed (CLAUDE.md invariant 48).
+    PreviewKey {
+        /// The file to write the private key to; it must not exist.
+        #[arg(long)]
+        out: PathBuf,
+        /// DHKEM(X25519) instead of the default X-Wing (ML-KEM-768 with X25519).
+        #[arg(long)]
+        x25519: bool,
+    },
     /// Print the public JWKS of an approver key file: the key set wardryx reads
     /// as its approver keys (`WARDRYX_APPROVER_JWKS`).
     ApproverJwks {
@@ -138,6 +149,15 @@ async fn main() {
         .init();
 
     match Cli::parse().cmd {
+        Cmd::PreviewKey { out, x25519 } => {
+            match genaryx_api::policy::preview::generate_key_file(&out, x25519) {
+                Ok(recipient) => println!("{recipient}"),
+                Err(e) => {
+                    eprintln!("genaryx-web: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Cmd::ApproverJwks { key_file } => {
             match genaryx_api::policy::approver::jwks_for_key_file(&key_file) {
                 Ok(json) => println!("{json}"),
@@ -270,6 +290,7 @@ async fn main() {
                 delegation,
                 closure,
                 approver_key_file: Config::approver_key_file_from_env(),
+                preview_key_file: Config::preview_key_file_from_env(),
             };
             if let Some(note) = config::legacy_require_passkey_notice(
                 std::env::var_os(config::LEGACY_REQUIRE_PASSKEY_ENV).is_some(),
@@ -1470,6 +1491,7 @@ mod tests {
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
             approver_key_file: None,
+            preview_key_file: None,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {
@@ -2895,6 +2917,7 @@ mod tests {
             delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
             closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
             approver_key_file: None,
+            preview_key_file: None,
         };
         let (events_tx, _) = tokio::sync::broadcast::channel(512);
         let bus = genaryx_api::bus::AppState {

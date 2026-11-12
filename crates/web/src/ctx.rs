@@ -77,6 +77,12 @@ pub struct Ctx {
     /// The key the console signs approver statements with, read once from
     /// `GENARYX_APPROVER_KEY_FILE` at startup (CLAUDE.md invariant 35).
     pub approver: genaryx_api::policy::approver::ApproverKey,
+    /// The key the console opens held calls' previews with, read once from
+    /// `GENARYX_PREVIEW_KEY_FILE` (CLAUDE.md invariant 48).
+    pub preview_key: genaryx_api::policy::preview::PreviewKeyState,
+    /// Which previews each person opened here, so a decision names one only
+    /// after a real open (CLAUDE.md invariant 48).
+    pub seen_previews: genaryx_api::policy::preview::SeenPreviews,
     pub identity: IdentityState,
     /// I15 "key lifecycle health": the gateway's key-lifecycle report, an
     /// entirely independent plane from `identity` above (different
@@ -171,6 +177,10 @@ impl Ctx {
             approver: genaryx_api::policy::approver::ApproverKey::load(
                 cfg.approver_key_file.as_deref(),
             ),
+            preview_key: genaryx_api::policy::preview::PreviewKeyState::load(
+                cfg.preview_key_file.as_deref(),
+            ),
+            seen_previews: genaryx_api::policy::preview::SeenPreviews::default(),
             identity: IdentityState::pending(),
             credentials: CredentialsState::pending(),
             admission: AdmissionState::pending(),

@@ -1243,6 +1243,83 @@ run_case "approval-token: a test may name the field, and a read of the host is n
 	"$(py 'edit("apps/web/src/lib/recentEvents.test.ts", "import ", "// approval_token in a test file is a fixture\nimport ")
 edit("apps/web/src/components/PolicyView.tsx", "        void refresh();\n      } catch (err) {", "        void refresh();\n        void window.location.host;\n      } catch (err) {")')"
 
+preview_gate='./scripts/preview-stays-in-memory.sh'
+
+run_case "preview: the command that opens a preview journals it" fail \
+	"$preview_gate" \
+	"$(py 'edit("crates/api/src/policy/preview.rs", "    seen.record(&operator, &id, &pvd);", "    seen.record(&operator, &id, &pvd);\n    let _ = journal(&document);")')" \
+	'preview.rs journals'
+
+run_case "preview: Felyx is handed the preview key" fail \
+	"$preview_gate" \
+	"$(py 'edit("crates/copilot/src/lib.rs", "pub ", "type _Teeth = genaryx_api::policy::preview::PreviewKeyState;\npub ")')" \
+	'Felyx names the preview'
+
+run_case "preview: the preview component renders HTML" fail \
+	"$preview_gate" \
+	"$(py 'edit("apps/web/src/components/ArgumentPreview.tsx", "    case \"null\":\n      return <span>null</span>;", "    case \"null\":\n      return <span dangerouslySetInnerHTML={{ __html: \"null\" }} />;")')" \
+	'renders HTML'
+
+run_case "preview: a module outside the list holds a preview" fail \
+	"$preview_gate" \
+	"$(py 'edit("apps/web/src/lib/recentEvents.ts", "export ", "export type _Teeth = import(\"../policyTypes\").ApprovalPreview;\nexport ")')" \
+	'a module outside the list holds a preview'
+
+run_case "preview: a test may name the preview type" pass \
+	"$preview_gate" \
+	"$(py 'edit("apps/web/src/lib/recentEvents.test.ts", "import ", "// ApprovalPreview in a test file is a fixture\nimport ")')"
+
+run_case "preview: the preview component is gone" fail \
+	"$preview_gate" \
+	"$(py 'import os; os.remove("apps/web/src/components/ArgumentPreview.tsx")')" \
+	'measured nothing'
+
+# Invariant 48, the product: each mutant is a silent wrong answer, and a named
+# test must catch it.
+preview_key_tests='cargo test -q -p genaryx-signing --lib preview::'
+preview_api_tests='cargo test -q -p genaryx-api --lib policy::preview::'
+statement_tests='cargo test -q -p genaryx-signing --lib approver::'
+
+run_case "invariant 48: an opened preview is not checked against the hold's digest" fail \
+	"$preview_key_tests" \
+	"$(py 'edit("crates/signing/src/preview.rs", "        if preview_digest(&document) != binding.preview_digest {", "        if false {")')" \
+	"a_ciphertext_that_opens_to_another_document_is_refused_for_its_digest"
+
+run_case "invariant 48: the seal's binding leaves out the org" fail \
+	"$preview_key_tests" \
+	"$(py 'edit("crates/signing/src/preview.rs", "    for field in [&b.org, &b.tool_call_digest, &b.preview_digest, &b.ruleset] {", "    for field in [&b.tool_call_digest, &b.preview_digest, &b.ruleset] {")')" \
+	"the_info_and_the_digest_are_wardryxs_byte_for_byte"
+
+run_case "invariant 48: a digest the browser sends counts without an open" fail \
+	"$preview_api_tests" \
+	"$(py 'edit("crates/api/src/policy/preview.rs", "(true, Some(s)) if Some(s) == recorded.pvd.as_deref() && opened => s.to_string(),", "(true, Some(s)) if Some(s) == recorded.pvd.as_deref() => s.to_string(),")')" \
+	"a_digest_the_browser_sends_without_an_open_behind_it_is_refused"
+
+run_case "invariant 48: a grant of a sealed hold nobody opened is signed" fail \
+	"$preview_api_tests" \
+	"$(py 'edit("crates/api/src/policy/preview.rs", "        (true, None) if decision == \"deny\" => NONE.to_string(),", "        (true, None) => NONE.to_string(),")')" \
+	"a_grant_of_a_sealed_hold_nobody_opened_or_opened_stale_is_refused"
+
+run_case "invariant 48: require_preview is ignored" fail \
+	"$preview_api_tests" \
+	"$(py 'edit("crates/api/src/policy/preview.rs", "        && hold.require_preview()", "        && false")')" \
+	"require_preview_refuses_a_blind_grant_and_not_a_call_with_nothing_to_show"
+
+run_case "invariant 48: an open counts for any preview of the hold" fail \
+	"$preview_api_tests" \
+	"$(py 'edit("crates/api/src/policy/preview.rs", ".is_some_and(|(seen, at)| seen == pvd && at.elapsed() < SEEN_FOR)", ".is_some_and(|(_, at)| at.elapsed() < SEEN_FOR)")')" \
+	"an_open_is_remembered_for_that_person_and_that_hold_only"
+
+run_case "invariant 48: a malformed tcd or pvd is signed" fail \
+	"$statement_tests" \
+	"$(py 'edit("crates/signing/src/approver.rs", "        && (!digest_or_none(&shown.tcd) || !digest_or_none(&shown.pvd))", "        && false")')" \
+	"a_malformed_tcd_or_pvd_is_refused_before_anything_is_signed"
+
+run_case "invariant 48: a statement naming what was shown goes out as version 1" fail \
+	"$statement_tests" \
+	"$(py 'edit("crates/signing/src/approver.rs", "        payload[\"v\"] = serde_json::json!(2);", "        payload[\"v\"] = serde_json::json!(1);")')" \
+	"a_version_2_statement_names_the_call_and_the_preview_the_person_was_shown"
+
 token_tests='cargo test -q -p genaryx-api --test it approval_token_test'
 
 run_case "invariant 46: a grant answers with no raw token" fail \

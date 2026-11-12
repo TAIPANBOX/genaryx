@@ -2,6 +2,7 @@ import { hasBackend, invokeBackend, requiredRoleFromCommandError, type ConsoleRo
 import { invokeWithCeremony } from "./webauthn";
 import type {
   Approval,
+  ApprovalPreview,
   Decision,
   DecideOutcome,
   GrantToolOutcome,
@@ -86,8 +87,22 @@ export const fetchEnforcementStatus = (): Promise<WardryxStatus> =>
 // snake_case argument keys on purpose, matching the Rust side's own
 // snake_case field names, and `lib/money.ts`'s identical convention for its
 // mutation commands.
-export const decideApproval = (id: string, decision: Decision): Promise<DecideOutcome> =>
-  callWithCeremony<DecideOutcome>("policy_decide_approval", { id, decision });
+//
+// `seen_pvd` is the digest of the preview this browser showed for the hold, or
+// null when none was shown. It travels inside the arguments the passkey
+// assertion confirms, so the person's passkey covers what they saw (CLAUDE.md
+// invariant 48).
+export const decideApproval = (
+  id: string,
+  decision: Decision,
+  seenPvd: string | null = null,
+): Promise<DecideOutcome> =>
+  callWithCeremony<DecideOutcome>("policy_decide_approval", { id, decision, seen_pvd: seenPvd });
+
+/** Open the sealed preview of one hold's arguments. The answer is kept in the
+ * row's state while it is on screen and nowhere else. */
+export const fetchApprovalPreview = (id: string): Promise<ApprovalPreview> =>
+  call<ApprovalPreview>("policy_approval_preview", { id });
 
 /** Always allow the tool of one hold for its agent (`policy_grant_tool`), after the
  * same per-action ceremony as a grant. Only the hold's id is sent: the agent and

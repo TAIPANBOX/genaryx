@@ -23,6 +23,8 @@ base64 = { workspace = true }
 getrandom = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
+# Opens what wardryx shows a person of a held call (src/preview.rs).
+hpke = { workspace = true }
 
 # For the live-cloud spike drivers under examples/ only.
 [dev-dependencies]

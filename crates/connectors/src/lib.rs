@@ -147,8 +147,9 @@ pub use verdryx::{
     UnansweredReasonCount as VerdryxUnansweredReasonCount, VerdryxClient, VerdryxError,
 };
 pub use wardryx::{
-    Approval, ApprovalDecideResponse, ApprovalTokenClaims, ApprovalVerdict, DecideRequest,
-    DecideResponse, HeldToolCall, Policy, PolicyRecord, WardryxClient, WardryxError, WardryxStatus,
+    Approval, ApprovalDecideResponse, ApprovalPreview, ApprovalTokenClaims, ApprovalVerdict,
+    DecideRequest, DecideResponse, HeldPreview, HeldToolCall, PREVIEW_SEALED, Policy, PolicyRecord,
+    WardryxClient, WardryxError, WardryxStatus,
 };
 pub use wg::{WgConfig, WgError, WgInterfaceAddr, WgKeypair, WgPeer, WgTunnel};
 pub use wg_uapi::{
