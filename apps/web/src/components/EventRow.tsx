@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from "react";
 import type { UiEvent } from "../types";
+import { approvalClosureLine } from "../lib/approvalOutcome";
 import { JsonPreview } from "./JsonPreview";
 import { SeverityBadge } from "./SeverityBadge";
 import { SourceChip } from "./SourceChip";
@@ -58,6 +59,7 @@ export function EventRow({
     }
   };
 
+  const closure = approvalClosureLine(event);
   return (
     <div className={`bus-row${expanded ? " expanded" : ""}`} style={selected ? { opacity: 0.35 } : undefined}>
       <div
@@ -71,7 +73,7 @@ export function EventRow({
       >
         <SeverityBadge severity={event.severity} />
         <SourceChip source={event.source} />
-        <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={event.type}>
+        <span className="mono truncate text-[12px]" style={{ color: "var(--fg)" }} title={closure !== null ? `${event.type}: ${closure}` : event.type}>
           {event.type}
         </span>
         <span
@@ -107,6 +109,11 @@ export function EventRow({
 
       {expanded && (
         <div className="px-4 pb-3 pt-1 flex flex-col gap-3">
+          {closure !== null && (
+            <div data-approval-closure={event.type} className="text-[11.5px]" style={{ color: "var(--dim)" }}>
+              {closure}
+            </div>
+          )}
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 panel px-3 py-2" style={{ background: "var(--panel-2)" }}>
             <Meta label="env" value={event.env} />
             <Meta label="schema" value={event.schema} />

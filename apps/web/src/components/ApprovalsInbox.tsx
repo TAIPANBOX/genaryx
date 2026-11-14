@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cssVar } from "../lib/cssVars";
+import { ApprovalOutcomeBadge } from "./ApprovalOutcomeBadge";
 import { formatTimestamp, formatUsd } from "../lib/format";
 import {
   APPROVAL_TOKEN_HEADER,
@@ -628,16 +629,13 @@ function HistoryRow({
   highlighted: boolean;
   onOpenAgent: (agentId: string) => void;
 }) {
-  const granted = approval.decision === "grant";
   return (
     <div
       id={`approval-${approval.approval_id}`}
       className={`panel px-3 py-2 flex items-center gap-3${highlighted ? " approval-focused" : ""}`}
       style={{ background: "var(--panel-2)", opacity: 0.85 }}
     >
-      <span className="badge" style={cssVar("tone", granted ? "var(--sev-low)" : "var(--sev-critical)")}>
-        {approval.decision ?? "decided"}
-      </span>
+      <ApprovalOutcomeBadge approval={approval} />
       <div className="flex flex-col min-w-0 flex-1">
         <button
           type="button"

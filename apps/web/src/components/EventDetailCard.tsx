@@ -1,4 +1,5 @@
 import type { UiEvent } from "../types";
+import { approvalClosureLine } from "../lib/approvalOutcome";
 import { shortAgentLabel } from "../lib/graph";
 import { PopoverHeader } from "../lib/popover";
 import { JsonPreview } from "./JsonPreview";
@@ -36,6 +37,7 @@ export function EventDetailCard({
   onClose: () => void;
   onOpenAgent?: (agentId: string, rect: DOMRect) => void;
 }) {
+  const closure = approvalClosureLine(event);
   return (
     <div className="flex flex-col">
       <PopoverHeader kicker="Bus event" title={event.type} onClose={onClose} />
@@ -47,6 +49,16 @@ export function EventDetailCard({
           {event.ts}
         </span>
       </div>
+
+      {closure !== null && (
+        <div
+          data-approval-closure={event.type}
+          className="text-[11.5px]"
+          style={{ padding: "0 16px 10px", color: "var(--dim)" }}
+        >
+          {closure}
+        </div>
+      )}
 
       <div style={{ padding: "10px 16px", borderTop: "1px solid var(--line)" }}>
         <div className="flex items-center gap-2 min-w-0">
