@@ -68,6 +68,8 @@ const VIEW_BY_TYPE: Readonly<Record<string, ViewId>> = {
   approval_granted: "policy",
   approval_denied: "policy",
   approval_timeout: "policy",
+  approval_expired: "policy",
+  approval_withdrawn: "policy",
   // idryx
   excessive_privilege: "identity",
   behavior_anomaly: "identity",

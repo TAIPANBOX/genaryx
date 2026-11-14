@@ -196,7 +196,12 @@ export interface GrantToolOutcome {
 }
 
 /** Mirrors `policy::commands::DecisionDto` (`#[serde(rename_all = "snake_case")]`) -
- * the operator's verdict, sent as the `decision` argument to `policy_decide_approval`. */
+ * the operator's verdict, sent as the `decision` argument to `policy_decide_approval`.
+ *
+ * This is what a person can SEND, and it stays `grant | deny`. A hold also closes
+ * as `expired` (wardryx, after `WARDRYX_HOLD_TTL`) or `withdrawn` (its agent), and
+ * `Approval.decision` can carry those or a value this build has not heard of; how
+ * they read is `lib/approvalOutcome.ts`. No control closes a hold by hand. */
 export type Decision = "grant" | "deny";
 
 /** Mirrors `genaryx_connectors::WardryxStatus` (`GET /v1/status`): what the PDP

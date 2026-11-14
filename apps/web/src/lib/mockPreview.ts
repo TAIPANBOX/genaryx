@@ -2146,6 +2146,36 @@ function mockApprovals() {
       });
     }
   }
+
+  // Two holds nobody decided: one wardryx closed after its lifetime, one its own
+  // agent took back. Fixed rows, so the history shows all four outcomes.
+  const closer = needHuman[needHuman.length - 1];
+  if (closer) {
+    const closedRow = (suffix: string, decision: string, decidedBy: string, waitedMs: number, agoMs: number) => ({
+      approval_id: `ap_${(pseudo(closer.name + suffix) * 1e12).toString(16).slice(0, 10)}`,
+      agent_id: agentId(closer),
+      run_id: `${closer.name}-${suffix}`,
+      requested_at: ago(agoMs + waitedMs),
+      decided_at: ago(agoMs) as string | null,
+      decided_by: decidedBy as string | null,
+      decision: decision as string | null,
+      pending: false,
+      tool_names: ["runbook_apply"],
+      est_cost_usd: 4.2,
+      reason: "no grant for this tool call",
+      on_behalf_of: [userId(closer.owner)],
+      policy_version: "356f49daa246",
+      org: ORG,
+      model: closer.model,
+      tool_call: mockHeldCall("runbook_apply", `https://ops.${ORG}/${closer.name}`, false) as MockHeldCall | null,
+      hold_kind: "no_grant" as string | null,
+      identity_source: "agent-token" as string | null,
+    });
+    rows.push(
+      closedRow("expired", "expired", "wardryx:hold-ttl", 24 * 3600_000, 2 * 3600_000),
+      closedRow("withdrawn", "withdrawn", `agent:${agentId(closer)}`, 7 * 60_000, 5 * 3600_000),
+    );
+  }
   return rows;
 }
 

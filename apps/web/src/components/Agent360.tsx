@@ -1,4 +1,6 @@
 import { agentFeedLine } from "../lib/attribution";
+import { approvalClosureLine } from "../lib/approvalOutcome";
+import { ApprovalOutcomeBadge } from "./ApprovalOutcomeBadge";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { AgentSlice } from "../graphTypes";
@@ -1122,6 +1124,12 @@ export function Agent360({
                 <SeverityBadge severity={e.severity} />
                 <span className="mono truncate text-[11.5px]" style={{ color: "var(--fg)" }}>
                   {e.type}
+                  {approvalClosureLine(e) !== null && (
+                    <span data-approval-closure={e.type} style={{ color: "var(--dim)" }}>
+                      {" "}
+                      &middot; {approvalClosureLine(e)}
+                    </span>
+                  )}
                 </span>
                 <span className="mono tabular text-[10.5px] text-right" style={{ color: "var(--faint)" }}>
                   {formatTimestamp(e.ts)}
@@ -1148,15 +1156,7 @@ export function Agent360({
               </span>
               {approvals.map((a) => (
                 <div key={a.approval_id} className="flex items-center gap-2 min-w-0">
-                  <span
-                    className="badge"
-                    style={cssVar(
-                      "tone",
-                      a.pending ? "var(--sev-medium)" : a.decision === "grant" ? "var(--sev-low)" : "var(--sev-critical)",
-                    )}
-                  >
-                    {a.pending ? "pending" : (a.decision ?? "decided")}
-                  </span>
+                  <ApprovalOutcomeBadge approval={a} />
                   <span className="mono truncate text-[11px]" style={{ color: "var(--dim)" }}>
                     {a.approval_id}
                   </span>
