@@ -20,6 +20,7 @@ export type ViewId =
   | "egress"
   | "routines"
   | "notifications"
+  | "keys"
   | "copilot";
 
 /** The left rail is grouped by how an operator actually works, most-used at
@@ -83,6 +84,9 @@ export const NAV_SECTIONS: readonly {
       // What heraldyx recorded sending, and to whom: a record to show an
       // auditor, so it sits with the other evidence (invariant 51).
       { id: "notifications", label: "Notifications" },
+      // Keyryx custody's inventory and the witness's last signed head, read
+      // from their own read-only routes (invariant 53).
+      { id: "keys", label: "Keys" },
     ],
   },
   {

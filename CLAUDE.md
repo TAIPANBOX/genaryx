@@ -2519,6 +2519,39 @@ an absent invariant.
     stops on; the stacks still run `genaryx-console` until they pin a
     release.)*
 
+53. **The Keys tab shows what Keyryx custody holds and what its witness last
+    signed, read-only, and the console holds no way to change a key.**
+    `@decided 2026-11-23` (paraphrased): rotating and revoking a Keyryx key is
+    custody's command line over its own unix socket, as root, with no network
+    admin key; the console shows the state read-only. `keys_custody`
+    (`crates/api/src/keys`, a viewer read) sends three GETs and nothing else:
+    custody's `/v1/state` and `/v1/keys` where `GENARYX_KEYRYX_URL` names it,
+    and the witness's `/v1/witness/head` where `GENARYX_KEYRYX_WITNESS_URL`
+    names it (both declared in `components.json`, `http://` or `https://`
+    only). No credential, no redirect followed, 5 s, at most 1 MiB per answer,
+    500 entries newest first, 100 alarms, every string bounded. Each key name
+    shows its active and next key, when the next activates, and its last
+    rotation, read as when the newest inventory entry of that name was made; an
+    inventory that did not answer leaves the rotation unknown, never invented.
+    Not configured, refused, unreachable, and (for the witness) no head yet are
+    each said, never an empty inventory. The tab (`KeysView.tsx`, in Assure)
+    renders every string through `visibleText` and has no control. `@claude
+    2026-11-23`, open to reversal: reading custody's HTTP routes rather than its
+    data directory (mode 0700, root's), the caps and the wording.
+    *(test: `crates/api/src/keys/tests.rs`, four;
+    `crates/api/tests/it/keys_panel_test.rs`, eight, on a stub answering as
+    keyryx v0.1.5's `internal/api` and `internal/wlog` do;
+    `apps/web/src/components/KeysView.test.ts`, nine. Red first: the Rust
+    tests as a compile failure on the unfixed tree (no `keys` module), the web
+    suite against the unfixed tree, where the component did not exist.
+    Scenarios: `features/the-console-shows-what-keyryx-custody-holds.feature`, eight,
+    each bound.
+
+    Where it says nothing: neither launcher sets the two variables yet; the
+    witness head is shown as signed, and its signatures are not verified here
+    (`keyryx verify` does that offline); a key custody rotated after the read is
+    seen on the next one.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

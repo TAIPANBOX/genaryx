@@ -44,6 +44,7 @@ pub mod drills;
 pub mod egress;
 pub mod evidence;
 pub mod identity;
+pub mod keys;
 pub mod memory;
 pub mod money;
 pub mod notifications;
