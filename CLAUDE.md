@@ -2457,7 +2457,9 @@ an absent invariant.
     verifies, 3 chained, 1 head), one a 200-seed hostile sweep;
     `apps/web/src/components/NotificationsView.test.ts`, nine. Red first: the
     Rust tests against a scaffold that answered every journal as empty and
-    never verified, in a throwaway CI run, and the web suite against the
+    never verified, in a throwaway CI run: thirteen of the fourteen failed on
+    assertions, the hostile sweep passed by design (it holds that the counts
+    add up, which an empty answer does); and the web suite against the
     unfixed tree, where the component did not exist. Scenarios:
     `features/the-console-shows-what-heraldyx-sent.feature`, ten, each bound.
 
