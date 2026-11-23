@@ -82,6 +82,11 @@ RUN apt-get update \
  && mkdir -p /var/lib/stack /var/lib/stack/events \
  && chown -R stack:stack /var/lib/stack
 LABEL org.opencontainers.image.title="genaryx"
+# The source label links the package to this repository on its first push, as
+# vouchryx's does, so a package created by this repository's workflow takes the
+# repository's public visibility. `publish` still checks a stranger can pull it.
+LABEL org.opencontainers.image.source="https://github.com/TAIPANBOX/genaryx"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL dev.taipanbox.engine.wardryx="v2.8.0@sha256:f9b86a82114698f64a3251816ee0be6f80b4a6b2c239082b7035f1b4228f06aa"
 LABEL dev.taipanbox.engine.tokenfuse="v1.25.0@sha256:3a81dbcd116557eff54aae29e7d68104af8fc788265d58e71adf3f96fea03317"
 
