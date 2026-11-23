@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1491-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1505-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -155,7 +155,7 @@ Run the whole open stack locally with one command via [**stack-up**](https://git
 
 <div align="center">
 
-<img src="docs/console.png" alt="genaryx console: it reads each plane the way that plane exposes itself, writes only signed or bearer-keyed commands, with a passkey confirming a sensitive one wherever the operator has enrolled one, emits its own console_command onto the shared bus, and groups twenty tabs by how an operator works" width="960">
+<img src="docs/console.svg" alt="genaryx console: it reads each plane the way that plane exposes itself, writes only signed or bearer-keyed commands, with a passkey confirming a sensitive one wherever the operator has enrolled one, emits its own console_command onto the shared bus, and groups twenty-one tabs by how an operator works" width="960">
 
 <sub>How the console is put together, next to the four tabs below.</sub>
 
@@ -164,7 +164,7 @@ Run the whole open stack locally with one command via [**stack-up**](https://git
 
 ## What it looks like
 
-Four of the twenty tabs, from the demo build (`npm run build:demo`) on simulated
+Four of the twenty-one tabs, from the demo build (`npm run build:demo`) on simulated
 data, which is what anybody can click at [it-rat.com/demo](https://it-rat.com/demo/).
 The frozen e01 campaign further down is the run against a live plane on a real
 box; these frames are not it, and say so here rather than in a footnote.
@@ -562,10 +562,16 @@ event, and the action still happens here, behind a sign-in and, for anything
 destructive, a passkey. A link that ACTS would be an unauthenticated capability
 held by whoever forwards the message, and mail gateways prefetch links.
 
-What is NOT here yet is a notifications panel: what has been sent, and to whom.
-heraldyx writes that down (a hash-chained journal on its own volume), and the
-console will show it once that record reaches the record plane. A panel that
-could only echo an address back is the kind this console does not build.
+What heraldyx sent, and to whom, is the Notifications tab (Assure). heraldyx
+writes one hash-chained record per message to its own journal, `sent.ndjson`,
+on its own volume; mount that volume read-only and name the file in
+`GENARYX_HERALDYX_SENT`, and the tab lists each message (who was written to,
+what about, which transport, accepted or refused and why) and checks the
+chain the way `heraldyx --journal` does. "Accepted" means a mail server took
+it, not that it reached a mailbox. The tab reads the newest 4 MiB of the file,
+never follows a link, and sends nothing. A box that names no journal, a
+journal that cannot be read, and an empty journal are three different
+answers. Neither launcher mounts the journal yet.
 
 ## Not built yet (decided, on the roadmap)
 

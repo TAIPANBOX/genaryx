@@ -2426,6 +2426,50 @@ an absent invariant.
     `budget_proof`, `policy_proof`) are commands for other clients and are not
     read by this gate.)*
 
+51. **The Notifications tab shows what heraldyx recorded sending, and to whom,
+    read-only from heraldyx's own journal, and it never shows "nothing was
+    sent" for a box that could not look.** `@decided 2026-11-23` (paraphrased):
+    the console gets read-only screens over files already on the box,
+    Notifications first, over heraldyx's dispatch journal. heraldyx writes one
+    `alert_sent` agent-event per message to a SPEC 6.5 hash-chained
+    `sent.ndjson` on its own volume (heraldyx `internal/record`).
+    `notifications_sent` (`crates/api/src/notifications`, a viewer read) reads
+    the file `GENARYX_HERALDYX_SENT` names (declared in `components.json`):
+    only a regular file, never through a link or into a directory; only its
+    newest 4 MiB (`MAX_READ_BYTES`), dropping the window's partial first line
+    and saying the counts are over the tail; at most 500 records back, newest
+    first; every string bounded at 512 characters and 50 recipients. It checks
+    the chain as `heraldyx --journal` does, with the RFC 8785 hash of each line
+    less its `prev_hash` (`seal::jcs`): a mismatch is `broken` with its first
+    line, a malformed predecessor or one outside the window makes a line
+    `unverifiable`, not broken, and one record or none is `nothing_bound`,
+    never verified. A line that is not a heraldyx `alert_sent` is named by line
+    and reason and never counted. Four answers never render alike: not
+    configured (naming the variable), unreadable (naming the path and why), an
+    empty journal, and a read journal; a box that does not answer is a fifth.
+    The tab (`NotificationsView.tsx`, in Assure) renders every journal string
+    through `visibleText` as a text node and has no control. `@claude
+    2026-11-23`, open to reversal: the window, the caps, the wording and the
+    placement in Assure.
+    *(test: `crates/api/src/notifications/tests.rs`, fourteen, over
+    `testdata/heraldyx-sent.ndjson`, which heraldyx's own journal wrote
+    (`heraldyx --journal` over it: 4 records, 3 accepted, 1 refused, chain
+    verifies, 3 chained, 1 head), one a 200-seed hostile sweep;
+    `apps/web/src/components/NotificationsView.test.ts`, nine. Red first: the
+    Rust tests against a scaffold that answered every journal as empty and
+    never verified, in a throwaway CI run: thirteen of the fourteen failed on
+    assertions, the hostile sweep passed by design (it holds that the counts
+    add up, which an empty answer does); and the web suite against the
+    unfixed tree, where the component did not exist. Scenarios:
+    `features/the-console-shows-what-heraldyx-sent.feature`, ten, each bound.
+
+    Where it says nothing: neither launcher mounts heraldyx's volume into the
+    console or sets the variable yet (stack-single and stack-k8s, their own
+    repositories); a message heraldyx sent without a record (no agent to file
+    it under, or a failed write) is not in the file, and heraldyx counts those
+    only on its own stderr; a chain that starts before the window is judged
+    from the window on.)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.

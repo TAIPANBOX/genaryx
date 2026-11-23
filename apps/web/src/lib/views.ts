@@ -19,6 +19,7 @@ export type ViewId =
   | "bus"
   | "egress"
   | "routines"
+  | "notifications"
   | "copilot";
 
 /** The left rail is grouped by how an operator actually works, most-used at
@@ -79,6 +80,9 @@ export const NAV_SECTIONS: readonly {
       { id: "evidence", label: "Evidence" },
       { id: "posture", label: "Posture" },
       { id: "routines", label: "Routines" },
+      // What heraldyx recorded sending, and to whom: a record to show an
+      // auditor, so it sits with the other evidence (invariant 51).
+      { id: "notifications", label: "Notifications" },
     ],
   },
   {

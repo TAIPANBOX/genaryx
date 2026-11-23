@@ -81,6 +81,9 @@
           "GENARYX_EVENTS_EXTRA": {
             "required": false
           },
+          "GENARYX_HERALDYX_SENT": {
+            "required": false
+          },
           "GENARYX_HISTORY_DAYS": {
             "required": false
           },
