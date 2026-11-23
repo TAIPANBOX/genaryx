@@ -46,6 +46,7 @@ pub mod evidence;
 pub mod identity;
 pub mod memory;
 pub mod money;
+pub mod notifications;
 pub mod onboard;
 pub mod policy;
 pub mod proof;

@@ -120,6 +120,8 @@ const COMMANDS: &[Gate] = &[
     // Which gateways the Cloud still hears from, read-only.
     gate("money_gateways", Role::Viewer, false),
     gate("egress_recent", Role::Viewer, false),
+    // What heraldyx recorded sending, from its own journal, read-only.
+    gate("notifications_sent", Role::Viewer, false),
     gate("money_status", Role::Viewer, false),
     gate("onboard_status", Role::Viewer, false),
     gate("policy_list_approvals", Role::Viewer, false),

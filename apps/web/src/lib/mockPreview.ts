@@ -1307,6 +1307,37 @@ function mockSavings() {
  * served only at the navigation, and two refusals with different verdicts.
  * Deterministic (`pseudo`) so screenshots do not jitter. Hosts are RFC 2606
  * documentation domains, never anywhere real. */
+/** The Notifications panel's demo journal (invariant 51): what a heraldyx on
+ * this demo box recorded sending. One message refused by the transport, so the
+ * refused row and its reason are on screen; addresses are RFC 2606 example
+ * domains, never anywhere real. The chain verifies, as a real journal's does. */
+function mockNotifications() {
+  const day = "2026-11-23";
+  const rows = [
+    { ts: `${day}T19:00:00Z`, kind: "pulse", about: `pulse:${day}`, to: ["ops@meridian.example"], transport: "smtp", outcome: "accepted", error: null, agent_id: "agent://meridian.io/sre/rca-copilot", run_id: null },
+    { ts: `${day}T18:00:00Z`, kind: "digest", about: `digest:${day}`, to: ["ops@meridian.example"], transport: "smtp", outcome: "accepted", error: null, agent_id: "agent://meridian.io/sre/rca-copilot", run_id: null },
+    { ts: `${day}T14:21:07Z`, kind: "alert", about: "identity_mismatch:forge-probe-01", to: ["security@meridian.example"], transport: "smtp", outcome: "accepted", error: null, agent_id: "agent://meridian.io/finops/budget-forecaster", run_id: "forge-probe-01" },
+    { ts: `${day}T09:16:02Z`, kind: "alert", about: "kill_switch:rca-copilot-live", to: ["ops@meridian.example", "oncall@meridian.example"], transport: "smtp", outcome: "refused", error: "550 5.7.1 relay denied", agent_id: "agent://meridian.io/sre/rca-copilot", run_id: "rca-copilot-live" },
+    { ts: `${day}T09:14:00Z`, kind: "alert", about: "budget_exhausted:rca-copilot-live", to: ["ops@meridian.example"], transport: "smtp", outcome: "accepted", error: null, agent_id: "agent://meridian.io/sre/rca-copilot", run_id: "rca-copilot-live" },
+  ];
+  const records = rows.map((row, i) => ({ ...row, line: rows.length - i, to_total: row.to.length }));
+  const by_kind: Record<string, number> = {};
+  for (const row of records) by_kind[row.kind] = (by_kind[row.kind] ?? 0) + 1;
+  return {
+    state: "read",
+    path: "/var/lib/stack/heraldyx/sent.ndjson",
+    records,
+    total: records.length,
+    accepted: records.filter((x) => x.outcome === "accepted").length,
+    refused: records.filter((x) => x.outcome === "refused").length,
+    by_kind,
+    chain: { state: "verifies", chained: records.length - 1, heads: 1, unverifiable: 0 },
+    window_truncated: false,
+    skipped: [],
+    skipped_total: 0,
+  };
+}
+
 function mockEgress() {
   const hosts = [
     "https://docs.example.com",
@@ -4442,6 +4473,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // Web Egress holds no demo data, by design (see EgressView). The panel
     // shows its own "no backend" note for this answer.
     case "egress_recent": return r(mockEgress());
+    case "notifications_sent": return r(mockNotifications());
     // The refusals and the quality_drift event go ahead of the seed: a reader
     // asking for N events keeps the first N, and the Incidents tab asks for
     // exactly as many as the seed makes, so anything appended after it is cut

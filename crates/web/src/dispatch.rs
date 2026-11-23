@@ -380,6 +380,12 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
         // Takes no arguments: a refusal is bus-wide and has no window, because
         // a line refused an hour ago is still not on the bus now.
         "bus_quarantine" => Ok(ok(genaryx_api::bus::quarantine(&ctx.bus))),
+        // The Notifications panel: what heraldyx recorded sending, read from
+        // its dispatch journal where GENARYX_HERALDYX_SENT names it (invariant
+        // 51). A read, and classified as one in roles.rs.
+        "notifications_sent" => Ok(ok(genaryx_api::notifications::notifications_sent(
+            genaryx_api::notifications::sent_path_from_env().as_deref(),
+        ))),
         // The egress panel. A read, and classified as one in roles.rs.
         "egress_recent" => {
             #[derive(serde::Deserialize)]
