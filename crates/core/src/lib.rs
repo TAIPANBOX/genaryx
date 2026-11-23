@@ -6,9 +6,10 @@
 //! once in this crate and merely rendered by the shells. Shells collect intents;
 //! they contain no domain logic.
 //!
-//! Phase 0 status: [`event`] and [`conform`] are implemented (the heart of the
-//! ingest path). [`store`], [`ingest`], and [`demo`] are scaffolded stubs with
-//! stable signatures, delegated to Sonnet tracks (see `../../docs/PHASE0.md`).
+//! The ingest path runs through [`event`] and [`conform`] (envelope parsing
+//! and conformance), [`ingest`] (tailing the bus files into the store) and
+//! [`store`] (the durable SQLite record every panel reads); [`demo`] generates
+//! the synthetic stream the mock preview shows.
 
 pub mod attribution;
 pub mod bus;

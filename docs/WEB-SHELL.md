@@ -317,14 +317,35 @@ carries what the bus receives, and a stack nobody is calling receives nothing.
   object the frontend already sends, a 2xx body is the command's Ok value, and
   a **422 body is the command's own Err value unwrapped**, so each plane's
   existing error normaliser works untouched. 400 is malformed arguments, 401 is
-  no session, 404 is an unknown command. For the six sensitive commands, 428
-  means "send an assertion" and 403 means the ceremony was refused.
+  no session, 404 is an unknown command. For a sensitive command (the
+  `ceremony` column of `crates/web/src/roles.rs`), 428 means "send an
+  assertion" and 403 means the ceremony was refused. A command only the mock
+  preview answers (`apps/web/src/lib/previewOnly.ts`) is refused by the
+  browser before it is sent, with `{"error": "preview_only", "command": ...}`.
 - `GET /api/webauthn/passkeys`, `POST /api/webauthn/passkeys/remove`,
   `POST /api/webauthn/register/start` / `register/finish`,
   `POST /api/webauthn/action/start`: the passkey lifecycle and the ceremony.
 - `GET /api/events` is the live bus as Server-Sent Events (`event: bus`).
 
+A command's arguments are the fields of its `A` struct in
+`crates/web/src/dispatch.rs`; a field with `#[serde(default)]` may be left
+out, any other is required, and a missing one answers 400 `missing field`.
+One a script is likely to call, the Statistics panel's counts:
+
+```sh
+curl -s -b cookies.txt -X POST https://console.example/api/command/stats_counts \
+  -H 'content-type: application/json' \
+  -d '{"scan": 20000, "window_days": 30}'
+```
+
+`window_days` is the window, by each event's own timestamp; `0` or absent
+means the most recent `scan` lines whatever their age. The counts are exact
+for the whole window. `scan` is required and bounds only the second read, the
+full rows behind the columns a count cannot carry (which detector fired, the
+budget amounts, which agents a block halted); when it is reached, the answer's
+`detail_truncated` says so and those columns are marked partial.
+
 Signing in opens the console, at whatever role the session carries. It does
-not by itself run a destructive action: those six re-sign in the moment they
+not by itself run a destructive action: those re-sign in the moment they
 happen, with the operator's passkey, whenever one is enrolled (always, by default). docs/CONSOLE-IDP.md has the full contract
 and the honest limits.

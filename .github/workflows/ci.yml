@@ -141,6 +141,11 @@ jobs:
       # (invariant 48).
       - name: the preview of a held call stays in memory
         run: ./scripts/preview-stays-in-memory.sh
+      # Every command the console sends is handled by genaryx-web or listed as
+      # answered only by the preview, so no control does nothing silently
+      # (invariant 50).
+      - name: every command the console sends is handled or marked preview-only
+        run: ./scripts/backend-commands-are-handled.sh
       # This repository is public: a decision is recorded as @decided and a
       # paraphrase, never as the owner's own words or his name (invariant 21).
       - name: no tracked file quotes or names the owner

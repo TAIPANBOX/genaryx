@@ -1416,6 +1416,40 @@ run_case "invariant 47: a comment in the policy's own file reworded" pass \
 	"$grant_tests" \
 	"$(py 'edit("crates/api/src/policy/standing_grant.rs", "//! A standing grant: \"always allow this tool for this agent\", asked on a hold.", "//! A standing grant: \"always allow this tool for this agent\", offered on a hold.")')"
 
+# invariant 50: every command the console sends is handled by genaryx-web or
+# listed as preview-only. The agent card's owner picker read `org_directory`
+# for months, a name no box ever answered, and the 404 was swallowed into null.
+handled_gate='./scripts/backend-commands-are-handled.sh'
+
+run_case "invariant 50: the console sends a command no box handles" fail \
+	"$handled_gate" \
+	"$(py 'edit("apps/web/src/lib/agentActions.ts", "export async function fetchOrgDirectory", "export const _teeth = () => invokeBackend(\"org_mystery_command\");\n\nexport async function fetchOrgDirectory")')" \
+	'"org_mystery_command", which crates/web/src/dispatch.rs has no arm for'
+
+run_case "invariant 50: an unhandled name on the line after its call" fail \
+	"$handled_gate" \
+	"$(py 'edit("apps/web/src/lib/agentActions.ts", "export async function fetchOrgDirectory", "export const _teeth = () =>\n  invokeBackend<unknown>(\n    \"org_mystery_command\",\n  );\n\nexport async function fetchOrgDirectory")')" \
+	'"org_mystery_command", which crates/web/src/dispatch.rs has no arm for'
+
+run_case "invariant 50: a preview-only name the box now handles" fail \
+	"$handled_gate" \
+	"$(py 'edit("crates/web/src/dispatch.rs", "        \"money_kill_run\" => {", "        \"org_directory\" => Ok(reply(())),\n        \"money_kill_run\" => {")')" \
+	'"org_directory" is listed preview-only'
+
+run_case "invariant 50: a preview-only name the preview does not answer" fail \
+	"$handled_gate" \
+	"$(py 'edit("apps/web/src/lib/mockPreview.ts", "    case \"org_directory\":", "    case \"org_directory_gone\":")')" \
+	"does not answer it either"
+
+run_case "invariant 50: no preview-only list to read" fail \
+	"$handled_gate" \
+	"$(py 'edit("apps/web/src/lib/previewOnly.ts", "// preview-only-commands:begin", "// the list moved")')" \
+	"measured nothing"
+
+run_case "invariant 50: a method call with a command-shaped string" pass \
+	"$handled_gate" \
+	"$(py 'edit("apps/web/src/lib/agentActions.ts", "export async function fetchOrgDirectory", "export const _teeth = () => globalThis.localStorage?.getItem(\"genaryx_teeth_key\");\n\nexport async function fetchOrgDirectory")')"
+
 echo
 if [ -n "$(git status --porcelain)" ]; then
 	printf 'FAIL: this script left the tree dirty, so it cannot be trusted about anything above\n'

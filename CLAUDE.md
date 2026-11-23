@@ -52,6 +52,7 @@ the names change per build and stale ones are served forever otherwise.
 ./scripts/no-owner-quotes.sh         # invariant 21
 ./scripts/felyx-fences-plane-text.sh # invariant 38
 ./scripts/approval-token-stays-in-memory.sh # invariant 46
+./scripts/backend-commands-are-handled.sh # invariant 50
 ./scripts/readme-numbers.sh          # runs the whole suite; slow
 ./scripts/no-reader-leaves-a-pipe-early.sh  # invariant 45
 ./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
@@ -2378,6 +2379,52 @@ an absent invariant.
     *(test: `apps/web/src/lib/approvalOutcome.test.ts`, nineteen, one a 200-seed sweep of hostile decision values; scenarios: `features/a-hold-closes-three-ways-and-the-console-says-which.feature`, nine, each bound; gate: `scripts/features-are-bound.sh`. Red first: fifteen of the nineteen failed on assertions against a scaffold that kept the old reading (everything not a grant was red, no closure line, no mail link); the four green by design are the controls: a grant and a deny read as before, other events have no closure line, the decide type is `grant | deny`, and no control cancels a hold.)*
 
     Where it says nothing: the Statistics panel's blocked count (`crates/api/src/stats/mod.rs`) still lists `approval_denied`, `approval_timeout` and `approval_unanswered` and not `approval_expired`, and the remedy table (`crates/api/src/remedy/mod.rs`) does not classify the two new types, so an `approval_expired` incident is `unclassified` and offered no remedy, the safe direction; no live wardryx with the new states has been read by this build.
+
+50. **No control on the console does nothing and says nothing: every command
+    the console sends is one genaryx-web handles, or one marked on purpose as
+    answered only by the mock preview, and a box never sends the second kind.**
+    `@decided 2026-11-23` (paraphrased): on a real box the budget and owner
+    controls of the agent card are hidden or marked, and the store they need is
+    designed separately. Found in review the same day: the card's owner and
+    unit pickers read `org_directory`, which no box ever answered (only
+    `mockPreview.ts` does), and the four edits (`agent_set_budget`,
+    `agent_reassign_unit`, `agent_transfer_owner`, `agent_set_behaviour`) and
+    the three record reads (`agent_record`, `unit_record`, `user_record`) have
+    no dispatch arm either; each 404 was swallowed into `null`. The card also
+    hid its whole Manage section on a box, waiting for a record no box keeps,
+    and with it Freeze, Kill, Revoke, Stop and Lift, which do work there.
+    `apps/web/src/lib/previewOnly.ts` lists the preview-only commands
+    (`copilot_connect` among them, already refused by its card before sending,
+    invariant 24's neighbour); `transport.invokeBackend` refuses every listed
+    name on a web shell with `{"error":"preview_only","command":...}` before
+    any request. The agent card shows Manage on every box; the four edits only
+    where `canEditAgentRecord()` (the preview), and on a box a line saying they
+    need an ownership store the box does not keep yet. An edit the preview
+    refuses keeps its form open and says why, instead of closing as though it
+    landed. `@claude 2026-11-23`, open to reversal: the refusal shape, the
+    wording, and showing Manage on a box.
+    *(gate: `scripts/backend-commands-are-handled.sh`, which reads every quoted
+    command name passed as a first argument in the modules that reach the
+    transport (newlines folded, method calls dropped) and fails on a name that
+    is neither a dispatch arm nor listed, on a listed name that gained an arm,
+    and on a listed name the preview does not answer; it refuses OK on no arm,
+    no list or no name. Six cases in `scripts/gates-have-teeth.sh`. test:
+    `apps/web/src/components/AgentDetailCard.previewOnly.test.ts` (five) and
+    `apps/web/src/lib/previewOnly.test.ts` (three). Red first: against the
+    unfixed tree six failed on assertions or on the missing module, and the
+    two controls (a handled command is still sent, the preview offers all four
+    edits) passed by design. Scenarios:
+    `features/no-control-on-the-console-does-nothing-silently.feature`, six,
+    each bound.
+
+    Where it says nothing: a name built at run time is not read by the gate; a
+    failed Freeze, unit Stop or user Stop still resolves quietly
+    (`agentActions.ts`'s `act`, `entityRecords.ts`'s `blockUnit`/`blockUser`
+    catch into `null`, and `ConfirmButton` shows no rejection), which is the
+    same class of fault and not closed here; the five dispatch arms no
+    frontend module names (`case_seal`, `case_pack`, `remedy_check`,
+    `budget_proof`, `policy_proof`) are commands for other clients and are not
+    read by this gate.)*
 
 ## Decisions that have no gate yet
 
