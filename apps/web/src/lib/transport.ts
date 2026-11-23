@@ -1,4 +1,5 @@
 import { MOCK, mockInvoke, mockSubscribe } from "./mockPreview";
+import { isPreviewOnly, previewOnlyRefusal } from "./previewOnly";
 
 /**
  * The one place the UI decides HOW it reaches `genaryx-core`.
@@ -96,6 +97,12 @@ export async function invokeBackend<T>(
     throw new Error(
       `no backend: cannot invoke "${command}" without VITE_GENARYX_API`,
     );
+  }
+  // A command only the preview answers never leaves the browser (invariant
+  // 50): the box has no arm for it, and a request that can only come back
+  // 403/404 is a control that does nothing.
+  if (isPreviewOnly(command)) {
+    throw previewOnlyRefusal(command);
   }
   const resp = await fetch(`${WEB_API_BASE}/command/${command}`, {
     method: "POST",

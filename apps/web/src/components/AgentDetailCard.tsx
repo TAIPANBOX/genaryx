@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { fetchAgentRecord, userHandle, type AgentRecord } from "../lib/agentRecord";
 import {
   blockAgent,
+  canEditAgentRecord,
+  EDIT_NEEDS_STORE,
+  type EditOutcome,
   fetchOrgDirectory,
   reassignAgentUnit,
   setAgentBehaviour,
@@ -34,6 +37,7 @@ import type { IdryxIdentity } from "../identityTypes";
 import type { Run } from "../moneyTypes";
 import { UserCard } from "./UserCard";
 import { UnitCard } from "./UnitCard";
+import { hasBackend } from "../lib/transport";
 
 /**
  * The agent detail card, shown in the floating popover layer beside whatever
@@ -216,6 +220,18 @@ export function AgentDetailCard({
     if (rec) setRecord(rec);
     setAction(null);
   };
+  // An edit that did not land keeps its form open and says why, instead of
+  // closing as though it had (invariant 50).
+  const [editError, setEditError] = useState<string | null>(null);
+  const applyEdit = (outcome: EditOutcome) => {
+    if (outcome.ok) {
+      setEditError(null);
+      applyRecord(outcome.record);
+    } else {
+      setEditError(outcome.reason);
+    }
+  };
+  const editable = canEditAgentRecord();
 
   useEffect(() => {
     let cancelled = false;
@@ -392,8 +408,11 @@ export function AgentDetailCard({
         </Section>
       )}
 
-      {/* Governance actions: reassign, transfer, edit budget/behaviour */}
-      {record && (
+      {/* Governance actions. Freeze, kill, revoke, stop and lift act on the
+          planes and are offered on every box; transfer, reassign and the two
+          edits need an owned record only the preview keeps, so a real box
+          does not offer them and says why (invariant 50). */}
+      {hasBackend() && (
         <Section title="Manage">
           {!closed && (
             <div className="flex items-center gap-2" style={{ paddingBottom: 8 }}>
@@ -424,59 +443,70 @@ export function AgentDetailCard({
               <StopReportView report={stopOutcome} onClose={() => setStopOutcome(null)} align="inline" />
             </div>
           )}
-          <div className="flex flex-wrap gap-1.5">
-            {ACTION_LABELS.map(([k, label]) => {
-              const on = action === k;
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setAction(on ? null : (k as typeof action))}
-                  className="text-[11px]"
-                  style={{
-                    padding: "4px 10px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    border: `1px solid ${on ? "var(--iris)" : "var(--line-2)"}`,
-                    background: on ? "color-mix(in srgb, var(--iris) 14%, transparent)" : "var(--panel)",
-                    color: on ? "var(--fg)" : "var(--dim)",
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          {action && (
-            <div style={{ marginTop: 8 }}>
-              {action === "owner" && (
-                <SelectForm
-                  options={dir ? dir.users.map((u) => u.handle) : [record.owner]}
-                  current={record.owner}
-                  onCancel={() => setAction(null)}
-                  onApply={(v) => void transferAgentOwner(agentId, v).then(applyRecord)}
-                />
+          {editable && record ? (
+            <>
+              <div className="flex flex-wrap gap-1.5">
+                {ACTION_LABELS.map(([k, label]) => {
+                  const on = action === k;
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => {
+                        setEditError(null);
+                        setAction(on ? null : (k as typeof action));
+                      }}
+                      className="text-[11px]"
+                      style={{
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        border: `1px solid ${on ? "var(--iris)" : "var(--line-2)"}`,
+                        background: on ? "color-mix(in srgb, var(--iris) 14%, transparent)" : "var(--panel)",
+                        color: on ? "var(--fg)" : "var(--dim)",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {action && (
+                <div style={{ marginTop: 8 }}>
+                  {action === "owner" && (
+                    <SelectForm
+                      options={dir ? dir.users.map((u) => u.handle) : [record.owner]}
+                      current={record.owner}
+                      onCancel={() => setAction(null)}
+                      onApply={(v) => void transferAgentOwner(agentId, v).then(applyEdit)}
+                    />
+                  )}
+                  {action === "unit" && (
+                    <SelectForm
+                      options={dir ? dir.teams.map((t) => t.team) : [record.team]}
+                      current={record.team}
+                      labelFor={prettyUnit}
+                      onCancel={() => setAction(null)}
+                      onApply={(v) => void reassignAgentUnit(agentId, v).then(applyEdit)}
+                    />
+                  )}
+                  {action === "budget" && (
+                    <NumberForm current={record.budgetUsd} onCancel={() => setAction(null)} onApply={(v) => void setAgentBudget(agentId, v).then(applyEdit)} />
+                  )}
+                  {action === "behaviour" && (
+                    <BehaviourForm current={record.allowed} onCancel={() => setAction(null)} onApply={(v) => void setAgentBehaviour(agentId, v).then(applyEdit)} />
+                  )}
+                </div>
               )}
-              {action === "unit" && (
-                <SelectForm
-                  options={dir ? dir.teams.map((t) => t.team) : [record.team]}
-                  current={record.team}
-                  labelFor={prettyUnit}
-                  onCancel={() => setAction(null)}
-                  onApply={(v) => void reassignAgentUnit(agentId, v).then(applyRecord)}
-                />
+              {editError && (
+                <span role="alert" data-testid="agent-edit-error" className="text-[10.5px]" style={{ color: "var(--sev-high)", display: "block", marginTop: 6 }}>
+                  not changed: {editError}
+                </span>
               )}
-              {action === "budget" && (
-                <NumberForm current={record.budgetUsd} onCancel={() => setAction(null)} onApply={(v) => void setAgentBudget(agentId, v).then(applyRecord)} />
-              )}
-              {action === "behaviour" && (
-                <BehaviourForm current={record.allowed} onCancel={() => setAction(null)} onApply={(v) => void setAgentBehaviour(agentId, v).then(applyRecord)} />
-              )}
-            </div>
-          )}
-          {record === null && (
-            <span className="text-[10.5px]" style={{ color: "var(--faint)" }}>
-              editing needs a records store, which this box does not keep.
+            </>
+          ) : (
+            <span data-testid="agent-edit-unavailable" className="text-[10.5px]" style={{ color: "var(--faint)" }}>
+              {EDIT_NEEDS_STORE}
             </span>
           )}
         </Section>
