@@ -1449,6 +1449,39 @@ run_case "invariant 50: no preview-only list to read" fail \
 run_case "invariant 50: a method call with a command-shaped string" pass \
 	"$handled_gate" \
 	"$(py 'edit("apps/web/src/lib/agentActions.ts", "export async function fetchOrgDirectory", "export const _teeth = () => globalThis.localStorage?.getItem(\"genaryx_teeth_key\");\n\nexport async function fetchOrgDirectory")')"
+# invariant 52: the release workflow runs on pull requests on purpose, so a
+# job that can publish, sign or release must never be able to run on one.
+release_gate='./scripts/release-publishes-only-on-a-tag.sh'
+
+run_case "invariant 52: the publish job loses its if" fail \
+	"$release_gate" \
+	"$(py 'edit(".github/workflows/release.yml", "    name: manifest list, signature, attestations\n    if: github.event_name == '"'"'push'"'"' && github.repository == '"'"'TAIPANBOX/genaryx'"'"'\n", "    name: manifest list, signature, attestations\n")')" \
+	"job publish holds"
+
+run_case "invariant 52: the pull request build gains the package scope" fail \
+	"$release_gate" \
+	"$(py 'edit(".github/workflows/release.yml", "    timeout-minutes: 90\n    permissions:\n      contents: read\n    strategy:", "    timeout-minutes: 90\n    permissions:\n      contents: read\n      packages: write\n    strategy:")')" \
+	"job image-build"
+
+run_case "invariant 52: an action pinned by a tag" fail \
+	"$release_gate" \
+	"$(py 'edit(".github/workflows/release.yml", "sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532", "sigstore/cosign-installer@v4.1.3")')" \
+	"is not pinned by a full commit SHA"
+
+run_case "invariant 52: the image builds the demo" fail \
+	"$release_gate" \
+	"$(py 'edit("Dockerfile", "vite build --mode web", "vite build --mode mock")')" \
+	"builds the demo"
+
+run_case "invariant 52: no release workflow to read" fail \
+	"$release_gate" \
+	"$(py 'import os
+os.rename(".github/workflows/release.yml", ".github/workflows/release.yml.gone")')" \
+	"measured nothing"
+
+run_case "invariant 52: a comment in the workflow reworded" pass \
+	"$release_gate" \
+	"$(py 'edit(".github/workflows/release.yml", "# Build, publish and release the Genaryx console.", "# Build, publish and release the console.")')"
 
 echo
 if [ -n "$(git status --porcelain)" ]; then

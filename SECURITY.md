@@ -20,8 +20,14 @@ advisory unless you prefer otherwise.
 
 ## Supported versions
 
-Genaryx is pre-1.0; only `main` is supported. Fixes land on `main` and are not
-backported.
+Genaryx is pre-1.0; only `main` and the newest release are supported. Fixes
+land on `main` and ship in the next release; they are not backported.
+
+Releases are the image `ghcr.io/taipanbox/genaryx`, signed keyless by
+`.github/workflows/release.yml` on a `v*` tag, with build provenance and an
+SBOM attested to the same digest. README "Releases" has the two commands that
+verify an image before you pin it. A version, once published, is never
+replaced.
 
 ## What this console assumes, so you know what is in scope
 
