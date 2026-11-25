@@ -39,6 +39,7 @@ export type VerifyState =
   | { state: "not_run" }
   | { state: "verified"; root: string; at: number; millis: number; findings: string[] }
   | { state: "not_verified"; root: string; at: number; millis: number; findings: string[] }
+  | { state: "refused"; root: string; at: number; reason: string }
   | { state: "not_checked"; at: number; reason: string };
 
 export interface RecordPanel {

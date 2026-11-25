@@ -180,6 +180,14 @@ pub enum VerifyState {
         millis: u64,
         findings: Vec<String>,
     },
+    /// trailryx-node refused to pack this store (it exits 2 when a journal
+    /// does not reproduce its manifest, among other refusals): a red state,
+    /// with the node's own words.
+    Refused {
+        root: String,
+        at: u64,
+        reason: String,
+    },
     /// The check could not be made; this is not a verdict.
     NotChecked { at: u64, reason: String },
 }
@@ -240,15 +248,32 @@ fn read_small(path: &Path, max: u64) -> Result<Option<Vec<u8>>, String> {
     if meta.len() > max {
         return Err(format!("{} is larger than {max} bytes", path.display()));
     }
-    std::fs::read(path)
-        .map(Some)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))
+    // Judged again on the open file, and read no further than the cap, so a
+    // file swapped or grown after the check above is still refused.
+    use std::io::Read;
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let opened = file
+        .metadata()
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if !opened.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    let mut out = Vec::new();
+    file.take(max + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if out.len() as u64 > max {
+        return Err(format!("{} is larger than {max} bytes", path.display()));
+    }
+    Ok(Some(out))
 }
 
 /// `key=value` lines with exactly the keys in `want`, each once.
 fn fields<'a>(text: &'a str, want: &[&str]) -> Result<Vec<(&'a str, &'a str)>, String> {
     let mut out: Vec<(&str, &str)> = Vec::new();
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+    // Every line, as the node reads it: an empty line is not key=value.
+    for line in text.lines() {
         let (k, v) = line
             .split_once('=')
             .ok_or_else(|| "a line is not key=value".to_string())?;
@@ -361,11 +386,12 @@ fn signature_of(dir: &Path, root_hex: &str) -> Signature {
 /// `segment_of`: `s0-` then digits then `.mf`.
 fn segment_of(name: &str) -> Option<u64> {
     let prefix = format!("{SHARD}-");
-    let digits = name.strip_prefix(&prefix)?.strip_suffix(".mf")?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse().ok()
+    // `parse::<u64>`, exactly as trailryx-node's `segment_of` reads it, so
+    // the two list the same files.
+    name.strip_prefix(&prefix)?
+        .strip_suffix(".mf")?
+        .parse()
+        .ok()
 }
 
 fn is_other_shard_manifest(name: &str) -> bool {
@@ -499,18 +525,39 @@ fn last_verify() -> VerifyState {
         .unwrap_or(VerifyState::NotRun)
 }
 
+fn verdict_at(v: &VerifyState) -> Option<u64> {
+    match v {
+        VerifyState::Verified { at, .. }
+        | VerifyState::NotVerified { at, .. }
+        | VerifyState::Refused { at, .. } => Some(*at),
+        _ => None,
+    }
+}
+
+/// Keep `result` as the last verdict when it is one and is not older than the
+/// one kept. A check that could not be made replaces nothing.
+pub fn keep_verdict(kept: &mut VerifyState, result: &VerifyState) {
+    if let Some(at) = verdict_at(result) {
+        if verdict_at(kept).is_none_or(|k| at >= k) {
+            *kept = result.clone();
+        }
+    }
+}
+
 fn panel(seal: SealState, verify: VerifyState) -> RecordPanel {
     let shown = match &seal {
         SealState::Sealed { root, .. } => Some(root.clone()),
         _ => None,
     };
     let verified_root = match &verify {
-        VerifyState::Verified { root, .. } | VerifyState::NotVerified { root, .. } => {
-            Some(root.clone())
-        }
+        VerifyState::Verified { root, .. }
+        | VerifyState::NotVerified { root, .. }
+        | VerifyState::Refused { root, .. } => Some(root.clone()),
         _ => None,
     };
-    let verify_stale = matches!((&shown, &verified_root), (Some(a), Some(b)) if a != b);
+    // A verdict is current only for the root shown now: another root, or no
+    // readable root at all, makes it stale.
+    let verify_stale = verified_root.is_some() && shown != verified_root;
     RecordPanel {
         seal,
         verify,
@@ -542,6 +589,8 @@ pub fn judge_verify(exit: Option<i32>, stdout: &str) -> Result<bool, String> {
     match (exit, last) {
         (Some(0), "VERIFIED") => Ok(true),
         (Some(1), "NOT VERIFIED") => Ok(false),
+        // trailryx-verify read the pack and found it broken (exit 1).
+        (Some(1), line) if line.starts_with("BROKEN:") => Ok(false),
         (Some(2), _) => Err("trailryx-verify could not read the pack".to_string()),
         (code, line) => Err(format!(
             "trailryx-verify answered exit {} with a last line of {:?}, which is no verdict",
@@ -575,8 +624,8 @@ pub fn verify_in(slots: &Slots, cfg: &RecordConfig, timeout: Duration) -> Verify
         Ok(None) => return not_checked(format!("{DATA_ENV} is not set on this box")),
         Err(reason) => return not_checked(format!("{DATA_ENV} {reason}")),
     };
-    let root = match read_store(&dir) {
-        Ok(Some(summary)) => summary.root,
+    let (root, segments, records) = match read_store(&dir) {
+        Ok(Some(summary)) => (summary.root, summary.segments, summary.records),
         Ok(None) => return not_checked("nothing is sealed yet".to_string()),
         Err(reason) => return not_checked(reason),
     };
@@ -617,6 +666,13 @@ pub fn verify_in(slots: &Slots, cfg: &RecordConfig, timeout: Duration) -> Verify
         Ok(f) => f,
         Err(e) => return not_checked(format!("making the pack: {e:?}")),
     };
+    if made.exit == Some(2) {
+        return VerifyState::Refused {
+            root,
+            at,
+            reason: bounded(made.stderr.trim(), 512),
+        };
+    }
     if made.exit != Some(0) {
         return not_checked(format!(
             "trailryx-node could not make the pack (exit {}): {}",
@@ -625,6 +681,35 @@ pub fn verify_in(slots: &Slots, cfg: &RecordConfig, timeout: Duration) -> Verify
                 .unwrap_or_else(|| "none".to_string()),
             bounded(made.stderr.trim(), 300)
         ));
+    }
+    // The pack is of the root read above only if the store did not move
+    // while it was made: roots only grow, so the same store before and after
+    // is that root. The node's own count must agree with this read too.
+    match read_store(&dir) {
+        Ok(Some(after))
+            if after.root == root && after.segments == segments && after.records == records => {}
+        Ok(_) => {
+            return not_checked(
+                "the record was sealed further while it was packed; ask again".to_string(),
+            );
+        }
+        Err(reason) => {
+            return not_checked(format!(
+                "the store could not be read after packing: {reason}"
+            ));
+        }
+    }
+    let expected = format!("{segments} sealed segment(s), {records} record(s), in ");
+    if !made
+        .stdout
+        .lines()
+        .next()
+        .unwrap_or("")
+        .starts_with(&expected)
+    {
+        return not_checked(
+            "trailryx-node packed a store that does not match what this console read".to_string(),
+        );
     }
     match std::fs::symlink_metadata(&pack) {
         Ok(m) if m.file_type().is_file() && m.len() <= MAX_PACK_BYTES => {}
@@ -646,8 +731,6 @@ pub fn verify_in(slots: &Slots, cfg: &RecordConfig, timeout: Duration) -> Verify
         Err(e) => return not_checked(format!("verifying the pack: {e:?}")),
     };
     let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    // The root may have moved while the pack was made; the verdict is about
-    // the root read before, and the panel says when that differs from now.
     match judge_verify(checked.exit, &checked.stdout) {
         Ok(true) => VerifyState::Verified {
             root,
@@ -676,7 +759,7 @@ pub async fn record_verify(cfg: RecordConfig) -> RecordPanel {
             reason: bounded(&e.to_string(), 512),
         });
     if let Ok(mut g) = LAST_VERIFY.lock() {
-        *g = result.clone();
+        keep_verdict(&mut g, &result);
     }
     panel(seal_state(&cfg), result)
 }

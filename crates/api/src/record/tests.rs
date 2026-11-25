@@ -298,6 +298,7 @@ fn a_signing_file_this_console_cannot_read_is_unreadable_never_unsigned() {
         signed_text(1).replace("public_key=04", "public_key=02"),
         signed_text(1).replace(&"ab".repeat(96), &"ab".repeat(95)),
         format!("{}extra=1\n", signed_text(1)),
+        signed_text(1).replace("\nalgorithm", "\n\nalgorithm"),
         signed_text(1).replace("generated_at=1", "generated_at=x"),
         signed_text(1).to_uppercase(),
     ] {
@@ -318,6 +319,10 @@ fn a_verdict_needs_the_exit_code_and_the_last_line_to_agree() {
     assert!(judge_verify(Some(0), "NOT VERIFIED\n").is_err());
     assert!(judge_verify(Some(1), "VERIFIED\n").is_err());
     assert!(judge_verify(Some(2), "BROKEN: short\n").is_err());
+    assert_eq!(
+        judge_verify(Some(1), "BROKEN: the history does not chain\n"),
+        Ok(false)
+    );
     assert!(judge_verify(None, "VERIFIED\n").is_err());
     assert!(judge_verify(Some(0), "VERIFIED\n[note] a line after\n").is_err());
 }
@@ -392,4 +397,58 @@ fn two_hundred_seeds_of_hostile_signing_files_never_read_as_signed() {
         );
         let _ = parse_pending(&text);
     }
+}
+
+#[test]
+fn a_verdict_is_stale_when_the_root_shown_is_another_or_none() {
+    let verified = VerifyState::Verified {
+        root: expected_root(1),
+        at: 10,
+        millis: 1,
+        findings: vec![],
+    };
+    let dir = store("stale1", 1);
+    assert!(!panel(seal_state(&cfg(&dir)), verified.clone()).verify_stale);
+    let dir = store("stale2", 2);
+    assert!(panel(seal_state(&cfg(&dir)), verified.clone()).verify_stale);
+    let gone = scratch("stale-gone").join("nope");
+    assert!(panel(seal_state(&cfg(&gone)), verified.clone()).verify_stale);
+    assert!(!panel(seal_state(&cfg(&gone)), VerifyState::NotRun).verify_stale);
+}
+
+#[test]
+fn a_check_that_made_no_verdict_or_an_older_one_does_not_replace_the_kept_verdict() {
+    let red = VerifyState::NotVerified {
+        root: "r".into(),
+        at: 20,
+        millis: 1,
+        findings: vec![],
+    };
+    let mut kept = VerifyState::NotRun;
+    keep_verdict(&mut kept, &red);
+    assert_eq!(kept, red);
+    keep_verdict(
+        &mut kept,
+        &VerifyState::NotChecked {
+            at: 30,
+            reason: "busy".into(),
+        },
+    );
+    assert_eq!(kept, red);
+    let older = VerifyState::Verified {
+        root: "r".into(),
+        at: 10,
+        millis: 1,
+        findings: vec![],
+    };
+    keep_verdict(&mut kept, &older);
+    assert_eq!(kept, red);
+    let newer = VerifyState::Verified {
+        root: "r".into(),
+        at: 40,
+        millis: 1,
+        findings: vec![],
+    };
+    keep_verdict(&mut kept, &newer);
+    assert_eq!(kept, newer);
 }

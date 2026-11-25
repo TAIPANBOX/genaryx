@@ -72,6 +72,8 @@ Feature: The Record tab shows what Trailryx sealed, and verifies it on request
     And it shows Verified only when the exit code is 0 and the last line is VERIFIED
 
   # @test:not_verified_is_said_with_its_findings
+  # @test:a_store_the_node_refuses_to_pack_is_refused_with_its_words
+  # @test:a_store_the_node_refuses_reads_as_refused_in_red
   # @test:a_verdict_needs_the_exit_code_and_the_last_line_to_agree
   # @test:findings_are_bounded_and_only_the_bracketed_lines
   Scenario: A record that does not verify says so with its findings
@@ -93,9 +95,15 @@ Feature: The Record tab shows what Trailryx sealed, and verifies it on request
     Then no process starts and the screen says why
 
   # @test:a_verdict_for_an_earlier_root_says_so
-  Scenario: A verdict for an earlier root says so
-    Given the record was sealed further after the last verification
-    Then the screen says the result was for an earlier root
+  # @test:a_verdict_is_stale_when_the_root_shown_is_another_or_none
+  # @test:a_verdict_with_no_readable_root_now_is_stale
+  # @test:a_record_sealed_further_while_it_was_packed_is_no_verdict
+  # @test:a_check_that_made_no_verdict_or_an_older_one_does_not_replace_the_kept_verdict
+  Scenario: A verdict holds only for the root it was taken for
+    Given the record was sealed further during or after the last verification, or can no longer be read
+    Then a verification that saw the store move is no verdict
+    And a kept verdict names its root and says it is not the root shown now
+    And a later check that made no verdict does not replace it
 
   # @test:reading_the_record_and_verifying_it_are_viewer_reads
   # @test:the_only_control_is_verify

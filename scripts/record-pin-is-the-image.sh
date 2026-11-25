@@ -14,8 +14,9 @@
 #
 #  1. Every trailryx git dependency in crates/api/Cargo.toml names one and the
 #     same `rev`.
-#  2. The Dockerfile copies the binaries from exactly one trailryx-node tag,
-#     pinned by digest, and labels the same reference.
+#  2. The Dockerfile copies both binaries from exactly one trailryx-node tag,
+#     pinned by digest, and labels exactly that reference; every trailryx
+#     dependency is the trailryx repository at a full rev.
 #  3. The `rev` is the commit that tag names, as the comment table below
 #     records it; a new pin must add its row.
 #
@@ -34,15 +35,27 @@ done
 # peeled commit). One row per pin this repository has used.
 known="cc3d2e8a7c49bf6843b735461032c6fc2c17df3b v1.6.0"
 
-revs=$(grep -E '^trailryx-[a-z]+ = \{ git = "https://github.com/TAIPANBOX/trailryx"' "$cargo_toml" |
-	grep -oE 'rev = "[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}' | sort -u)
-[ -n "$revs" ] || { echo "measured nothing: no trailryx git dependency in $cargo_toml"; exit 2; }
+deps=$(grep -E '^trailryx-[a-z-]+ *=' "$cargo_toml" || true)
+[ -n "$deps" ] || { echo "measured nothing: no trailryx dependency in $cargo_toml"; exit 2; }
+revs=$(grep -oE 'rev = "[0-9a-f]{40}"' <<<"$deps" | grep -oE '[0-9a-f]{40}' | sort -u)
 
 tags=$(grep -oE '^FROM ghcr\.io/taipanbox/trailryx-node:v[0-9.]+@sha256:[0-9a-f]{64}' "$dockerfile" |
 	grep -oE ':v[0-9.]+@' | tr -d ':@' | sort -u)
 [ -n "$tags" ] || { echo "measured nothing: no trailryx-node image pinned by digest in $dockerfile"; exit 2; }
 
 fail=0
+# Every trailryx dependency is the git repository at a full rev, so none can
+# slip past by being spelled another way (a tag, a version, a path).
+while IFS= read -r line; do
+	if ! grep -qE '^trailryx-[a-z-]+ = \{ git = "https://github.com/TAIPANBOX/trailryx", rev = "[0-9a-f]{40}" \}$' <<<"$line"; then
+		echo "FAIL: $cargo_toml: $line is not the trailryx repository at a full rev"
+		fail=1
+	fi
+done <<<"$deps"
+if [ -z "$revs" ]; then
+	echo "FAIL: no trailryx dependency in $cargo_toml names a rev"
+	exit 1
+fi
 if [ "$(wc -l <<<"$revs" | tr -d ' ')" -ne 1 ]; then
 	echo "FAIL: the trailryx crates in $cargo_toml name more than one rev: $(tr '\n' ' ' <<<"$revs")"
 	fail=1
@@ -61,10 +74,17 @@ elif [ "$named" != "$tag" ]; then
 	echo "FAIL: the crates are trailryx $named (rev $rev) but the image copies trailryx-node $tag"
 	fail=1
 fi
-if ! grep -qE "^LABEL dev\.taipanbox\.engine\.trailryx=\"$tag@sha256:" "$dockerfile"; then
-	echo "FAIL: $dockerfile does not label the trailryx engine as $tag"
+from_ref=$(grep -oE '^FROM ghcr\.io/taipanbox/trailryx-node:v[0-9.]+@sha256:[0-9a-f]{64}' "$dockerfile" | head -1 | sed 's#^FROM ghcr.io/taipanbox/trailryx-node:##')
+if ! grep -qxF "LABEL dev.taipanbox.engine.trailryx=\"$from_ref\"" "$dockerfile"; then
+	echo "FAIL: $dockerfile does not label the trailryx engine as the image it copies ($from_ref)"
 	fail=1
 fi
+for bin in trailryx-node trailryx-verify; do
+	if ! grep -qxF "COPY --from=trailryx-engine /usr/local/bin/$bin /usr/local/bin/$bin" "$dockerfile"; then
+		echo "FAIL: $dockerfile does not copy $bin from the pinned trailryx-node image"
+		fail=1
+	fi
+done
 
 [ "$fail" -eq 0 ] || exit 1
 echo "OK: the record is decoded with trailryx $tag's crates and verified with trailryx $tag's binaries"

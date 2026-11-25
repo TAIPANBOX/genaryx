@@ -190,7 +190,7 @@ describe("the Record tab", () => {
       verify_stale: true,
     });
     await render();
-    expect(byTestId("record-verify-stale")?.textContent).toContain("That result was for an earlier root");
+    expect(byTestId("record-verify-stale")?.textContent).toMatch(/That result was for root 00, which is not the root shown now/);
   });
 
   it("the_only_control_is_verify", async () => {
@@ -213,5 +213,21 @@ describe("the Record tab", () => {
     expect(byTestId("record-findings")?.textContent).toContain("<b>bad</b>");
     expect(byTestId("record-findings")?.textContent).toContain("\\u{0}");
     expect(byTestId("record-unreadable")?.textContent).toContain("\\u{202e}");
+  });
+
+  it("a_store_the_node_refuses_reads_as_refused_in_red", async () => {
+    box.answer = panel({ verify: { state: "refused", root: "a".repeat(96), at: 1764000000, reason: "s0-000001.trlx does not reproduce its manifest" } });
+    await render();
+    expect(byTestId("record-verify-state")?.textContent).toMatch(/refused to pack this store.*does not reproduce/);
+  });
+
+  it("a_verdict_with_no_readable_root_now_is_stale", async () => {
+    box.answer = {
+      seal: { state: "unreadable", path: "/d", reason: "no directory there" },
+      verify: { state: "verified", root: "b".repeat(96), at: 1764000000, millis: 5, findings: [] },
+      verify_stale: true,
+    };
+    await render();
+    expect(byTestId("record-verify-stale")?.textContent).toContain("bbbbbbbbbbbbbbbb");
   });
 });

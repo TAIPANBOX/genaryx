@@ -25,12 +25,10 @@ fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-/// A data directory with one sealed segment.
-fn data_dir(tag: &str) -> PathBuf {
-    let dir = temp_dir(&format!("{tag}-data"));
-    let m = SegmentManifest {
+fn manifest(segment: u64) -> SegmentManifest {
+    SegmentManifest {
         format_version: 1,
-        segment: SegmentId(1),
+        segment: SegmentId(segment),
         shard: ShardIx(0),
         records: 3,
         history_root: Hash([7u8; 48]),
@@ -43,24 +41,50 @@ fn data_dir(tag: &str) -> PathBuf {
         first_recorded_at: Timestamp(1_763_900_000_000_000_000),
         last_recorded_at: Timestamp(1_763_900_001_000_000_000),
         algorithms: Algorithms::default(),
-    };
-    std::fs::write(dir.join("s0-000001.mf"), encode_manifest(&m)).expect("mf");
+    }
+}
+
+/// A data directory with one sealed segment of three records.
+fn data_dir(tag: &str) -> PathBuf {
+    let dir = temp_dir(&format!("{tag}-data"));
+    std::fs::write(dir.join("s0-000001.mf"), encode_manifest(&manifest(1))).expect("mf");
     dir
 }
 
-/// A `trailryx-node` that records its arguments and environment and writes a
-/// pack where `--pack` points, then exits `code`.
+/// A `trailryx-node` that records its arguments and environment, prints the
+/// summary line the real one prints for the store `data_dir` builds, writes a
+/// pack where `--pack` points, and exits `code`. With `plant`, it copies that
+/// file into the data directory first, as a node sealing a segment would.
 fn fake_node(dir: &Path, code: i32, sleep: u32) -> PathBuf {
+    fake_node_with(dir, code, sleep, None, "")
+}
+
+fn fake_node_with(
+    dir: &Path,
+    code: i32,
+    sleep: u32,
+    plant: Option<&Path>,
+    stderr: &str,
+) -> PathBuf {
     let d = dir.display();
+    std::fs::write(dir.join("node-err.txt"), stderr).expect("stderr");
+    let plant_line = match plant {
+        Some(p) => format!("cp '{}' \"$data/s0-000002.mf\"\n", p.display()),
+        None => String::new(),
+    };
     let script = format!(
         "#!/bin/sh\n\
          printf '%s\\n' \"$@\" > '{d}/node-args.txt'\n\
          env | sort > '{d}/node-env.txt'\n\
          prev=''\n\
          for a in \"$@\"; do\n\
+           if [ \"$prev\" = '--data' ]; then data=\"$a\"; fi\n\
            if [ \"$prev\" = '--pack' ]; then printf 'pack' > \"$a\"; echo \"$a\" > '{d}/pack.path'; fi\n\
            prev=\"$a\"\n\
          done\n\
+         {plant_line}\
+         echo \"1 sealed segment(s), 3 record(s), in $data\"\n\
+         cat '{d}/node-err.txt' 1>&2\n\
          if [ {sleep} -gt 0 ]; then sleep {sleep}; fi\n\
          exit {code}\n"
     );
@@ -225,7 +249,7 @@ fn a_pack_step_that_fails_or_overruns_could_not_be_checked() {
     let data = data_dir("packfail");
     let c = cfg(
         &data,
-        fake_node(&bins, 2, 0),
+        fake_node(&bins, 3, 0),
         fake_verify(&bins, VERIFIED_OUT, 0),
         None,
     );
@@ -286,4 +310,45 @@ fn a_busy_box_or_no_data_dir_runs_nothing() {
         VerifyState::NotChecked { .. }
     ));
     assert!(!bins.join("node-args.txt").exists());
+}
+
+#[test]
+fn a_record_sealed_further_while_it_was_packed_is_no_verdict() {
+    let bins = temp_dir("moved");
+    let data = data_dir("moved");
+    let spare = bins.join("spare.mf");
+    std::fs::write(&spare, encode_manifest(&manifest(2))).expect("spare");
+    let node = fake_node_with(&bins, 0, 0, Some(&spare), "");
+    let c = cfg(&data, node, fake_verify(&bins, VERIFIED_OUT, 0), None);
+    match verify_in(&Slots::new(2), &c, Duration::from_secs(20)) {
+        VerifyState::NotChecked { reason, .. } => {
+            assert!(reason.contains("sealed further"), "{reason}")
+        }
+        other => panic!("expected not checked, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_store_the_node_refuses_to_pack_is_refused_with_its_words() {
+    let bins = temp_dir("refused");
+    let data = data_dir("refused");
+    let node = fake_node_with(
+        &bins,
+        2,
+        0,
+        None,
+        "s0-000001.trlx does not reproduce its manifest",
+    );
+    let c = cfg(&data, node, fake_verify(&bins, VERIFIED_OUT, 0), None);
+    match verify_in(&Slots::new(2), &c, Duration::from_secs(20)) {
+        VerifyState::Refused { reason, root, .. } => {
+            assert!(reason.contains("does not reproduce"), "{reason}");
+            assert_eq!(root.len(), 96);
+        }
+        other => panic!("expected refused, got {other:?}"),
+    }
+    assert!(
+        !bins.join("verify-args.txt").exists(),
+        "verify ran after a refusal"
+    );
 }

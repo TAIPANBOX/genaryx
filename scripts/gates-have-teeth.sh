@@ -1515,6 +1515,16 @@ s = "\n".join(l for l in s.split("\n") if not l.startswith("trailryx-"))
 open(p, "w").write(s)')" \
 	"measured nothing"
 
+run_case "invariant 54: the label names another digest than the image copied" fail \
+	"$record_pin_gate" \
+	"$(py 'edit("Dockerfile", "LABEL dev.taipanbox.engine.trailryx=\"v1.6.0@sha256:68c4", "LABEL dev.taipanbox.engine.trailryx=\"v1.6.0@sha256:00c4")')" \
+	"does not label the trailryx engine as the image it copies"
+
+run_case "invariant 54: a trailryx crate taken by tag instead of rev" fail \
+	"$record_pin_gate" \
+	"$(py 'edit("crates/api/Cargo.toml", "trailryx-index = { git = \"https://github.com/TAIPANBOX/trailryx\", rev = \"cc3d2e8a7c49bf6843b735461032c6fc2c17df3b\" }", "trailryx-index = { git = \"https://github.com/TAIPANBOX/trailryx\", tag = \"v1.7.0\" }")')" \
+	"is not the trailryx repository at a full rev"
+
 run_case "invariant 54: a comment beside the pin reworded" pass \
 	"$record_pin_gate" \
 	"$(py 'edit("crates/api/Cargo.toml", "These crates have no third-party dependencies.", "Those crates have no third-party dependencies.")')"

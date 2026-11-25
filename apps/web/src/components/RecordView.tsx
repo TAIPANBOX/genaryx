@@ -160,9 +160,10 @@ function Body({
           </Note>
         )}
         <VerifyLine verify={verify} />
-        {verify_stale && (verify.state === "verified" || verify.state === "not_verified") && (
-          <Note tone="calm" testId="record-verify-stale">
-            That result was for an earlier root; the record has been sealed further since.
+        {verify_stale && (verify.state === "verified" || verify.state === "not_verified" || verify.state === "refused") && (
+          <Note tone="warn" testId="record-verify-stale">
+            That result was for root {visibleText(verify.root.slice(0, 16))}, which is not the root shown now: the
+            record was sealed further since, or it can no longer be read.
           </Note>
         )}
       </Section>
@@ -266,7 +267,7 @@ function VerifyLine({ verify }: { verify: VerifyState }) {
         <div className="flex flex-col" style={{ gap: 6 }}>
           <Note tone="calm" testId="record-verify-state">
             <span style={{ color: "var(--mint)", fontWeight: 600 }}>Verified</span> at {when(verify.at)} in{" "}
-            {verify.millis} ms.
+            {verify.millis} ms, root {visibleText(verify.root.slice(0, 16))}.
           </Note>
           <Findings findings={verify.findings} />
         </div>
@@ -275,10 +276,16 @@ function VerifyLine({ verify }: { verify: VerifyState }) {
       return (
         <div className="flex flex-col" style={{ gap: 6 }}>
           <Note tone="bad" testId="record-verify-state">
-            NOT verified at {when(verify.at)}.
+            NOT verified at {when(verify.at)}, root {visibleText(verify.root.slice(0, 16))}.
           </Note>
           <Findings findings={verify.findings} />
         </div>
+      );
+    case "refused":
+      return (
+        <Note tone="bad" testId="record-verify-state">
+          trailryx-node refused to pack this store at {when(verify.at)}: {visibleText(verify.reason)}
+        </Note>
       );
     case "not_checked":
       return (

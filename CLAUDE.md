@@ -2577,16 +2577,24 @@ an absent invariant.
     `run_bounded` (no shell, `PATH` alone plus `TRAILRYX_WITNESS_ATTESTATIONS`
     for the pack step only), under the proof slots, one 60 s deadline, a pack
     of at most 256 MiB: verified is exit 0 with a last line of exactly
-    `VERIFIED`, not verified exit 1 with `NOT VERIFIED`, anything else could not
-    be checked and is no verdict. The last result is kept in the process with
-    the root it was for; the tab says when that is an earlier root. `@claude
+    `VERIFIED`, not verified exit 1 with `NOT VERIFIED` or `BROKEN:`, and a
+    node that refuses to pack the store (exit 2, as when a journal does not
+    reproduce its manifest) is `refused`, in red, with its words. The store is
+    read again after packing and must be the same root, segments and records,
+    and the node's own summary line must name the same counts, or the check is
+    no verdict ("sealed further while it was packed"). Anything else could not
+    be checked and is no verdict. The last verdict is kept in the process with
+    the root it was for; a check that made none, or an older one, does not
+    replace it; the tab names that root and says when it is not the root shown
+    now, including when no root can be read. `@claude
     2026-11-23`, open to reversal: the caps, the in-process cache, a missing
     directory as unreadable, and showing the signature as on file rather than
     checking it in process.
-    *(gate: `scripts/record-pin-is-the-image.sh`: one `rev` for every trailryx
-    crate, one `trailryx-node` tag by digest in the Dockerfile and its label,
-    and the rev is that tag's commit by the gate's table; four cases in
-    `scripts/gates-have-teeth.sh`. test: `crates/api/src/record/tests.rs` over
+    *(gate: `scripts/record-pin-is-the-image.sh`: every trailryx dependency is
+    the trailryx repository at a full `rev` and all name one, one
+    `trailryx-node` tag by digest in the Dockerfile, the label naming exactly
+    that reference, both binaries copied from it, and the rev is that tag's
+    commit by the gate's table; six cases in `scripts/gates-have-teeth.sh`. test: `crates/api/src/record/tests.rs` over
     data directories built with trailryx's own `encode_manifest`, two of them
     200-seed sweeps; `crates/api/tests/it/record_verify_test.rs` on stand-in
     binaries recording their arguments and environment;
@@ -2598,7 +2606,9 @@ an absent invariant.
 
     Where it says nothing: one shard; Verify is O(history), and past 60 s or
     256 MiB the command line on the box is the way; the cached verdict is per
-    console process; neither launcher mounts the trailryx data directory into
+    console process; a manifest or signing file is judged on the open file,
+    but a link in a directory above it is followed, as the node follows it;
+    neither launcher mounts the trailryx data directory into
     the console or sets the variable yet; a store written by a newer manifest
     format reads unreadable until the pin moves.)*
 
