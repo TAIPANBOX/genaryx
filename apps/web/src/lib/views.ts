@@ -21,6 +21,7 @@ export type ViewId =
   | "routines"
   | "notifications"
   | "keys"
+  | "record"
   | "copilot";
 
 /** The left rail is grouped by how an operator actually works, most-used at
@@ -87,6 +88,9 @@ export const NAV_SECTIONS: readonly {
       // Keyryx custody's inventory and the witness's last signed head, read
       // from their own read-only routes (invariant 53).
       { id: "keys", label: "Keys" },
+      // The Trailryx record: what is sealed, and whether its root is signed
+      // and verifies (invariant 54). Read-only, with one verify control.
+      { id: "record", label: "Record" },
     ],
   },
   {

@@ -167,10 +167,10 @@ pub(crate) fn check_candidate(candidate: &str) -> Result<(), ProofError> {
 }
 
 /// A private directory that is removed when it goes out of scope.
-pub(super) struct Scratch(pub(super) PathBuf);
+pub(crate) struct Scratch(pub(crate) PathBuf);
 
 impl Scratch {
-    pub(super) fn new() -> std::io::Result<Self> {
+    pub(crate) fn new() -> std::io::Result<Self> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -205,16 +205,16 @@ fn capped(mut stream: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec
 }
 
 /// What a finished child left.
-pub(super) struct Finished {
-    pub(super) exit: Option<i32>,
-    pub(super) stdout: String,
-    pub(super) stderr: String,
+pub(crate) struct Finished {
+    pub(crate) exit: Option<i32>,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 /// Run `bin` with exactly these arguments, bounded in time and in output, with no
 /// shell and an environment of `PATH` and the `extra` variables alone. The child
 /// is killed at `deadline`, and `seconds` is what a timeout reports.
-pub(super) fn run_bounded(
+pub(crate) fn run_bounded(
     bin: &Path,
     args: &[OsString],
     extra: &[(&str, &OsStr)],

@@ -31,7 +31,7 @@ docker run --rm --entrypoint /bin/sh "$img" -c '
   # code: another architecture, a missing loader or library, a C library too
   # old for it. Exit 126 or 127 is the shell failing to run it at all.
   broken="exec format error|error while loading shared libraries|GLIBC_|GLIBCXX_|not a dynamic executable|Traceback|ModuleNotFoundError|ImportError"
-  for t in qryx mockryx verdryx wardryx "tokenfuse constants" genaryx-web "engram-mcp --help"; do
+  for t in qryx mockryx verdryx wardryx "tokenfuse constants" "trailryx-node --help" "trailryx-verify --version" genaryx-web "engram-mcp --help"; do
     if ! command -v "${t%% *}" >/dev/null 2>&1; then
       echo "  $t: not on PATH in this image"; fail=1; continue
     fi

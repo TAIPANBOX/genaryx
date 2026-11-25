@@ -52,6 +52,7 @@ pub mod onboard;
 pub mod policy;
 pub mod proof;
 pub mod quality;
+pub mod record;
 pub mod remedy;
 pub mod remote;
 pub mod routines;

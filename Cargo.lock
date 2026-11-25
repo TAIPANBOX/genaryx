@@ -1000,6 +1000,9 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+ "trailryx-index",
+ "trailryx-record",
+ "trailryx-store",
 ]
 
 [[package]]
@@ -3267,6 +3270,86 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "trailryx-contracts"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+dependencies = [
+ "trailryx-record",
+]
+
+[[package]]
+name = "trailryx-crypto"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+dependencies = [
+ "trailryx-record",
+]
+
+[[package]]
+name = "trailryx-index"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+dependencies = [
+ "trailryx-crypto",
+ "trailryx-record",
+]
+
+[[package]]
+name = "trailryx-journal"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+dependencies = [
+ "trailryx-crypto",
+ "trailryx-record",
+ "trailryx-sim",
+]
+
+[[package]]
+name = "trailryx-publish"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+dependencies = [
+ "trailryx-contracts",
+ "trailryx-crypto",
+ "trailryx-record",
+ "trailryx-sim",
+]
+
+[[package]]
+name = "trailryx-record"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+
+[[package]]
+name = "trailryx-sign"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+dependencies = [
+ "trailryx-crypto",
+ "trailryx-record",
+]
+
+[[package]]
+name = "trailryx-sim"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+
+[[package]]
+name = "trailryx-store"
+version = "1.6.0"
+source = "git+https://github.com/TAIPANBOX/trailryx?rev=cc3d2e8a7c49bf6843b735461032c6fc2c17df3b#cc3d2e8a7c49bf6843b735461032c6fc2c17df3b"
+dependencies = [
+ "trailryx-contracts",
+ "trailryx-crypto",
+ "trailryx-index",
+ "trailryx-journal",
+ "trailryx-publish",
+ "trailryx-record",
+ "trailryx-sign",
+ "trailryx-sim",
 ]
 
 [[package]]

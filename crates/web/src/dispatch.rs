@@ -387,6 +387,17 @@ pub async fn dispatch(ctx: &Arc<Ctx>, name: &str, args: Value) -> Result<Respons
             let (cfg, refused) = genaryx_api::keys::KeysConfig::from_env();
             Ok(ok(genaryx_api::keys::keys_custody(&cfg, &refused).await))
         }
+        // The Record panel: what Trailryx sealed and whether the current root
+        // is signed, from the node's own files (invariant 54). A read.
+        "record_status" => Ok(ok(genaryx_api::record::record_status(
+            &genaryx_api::record::RecordConfig::from_env(),
+        ))),
+        // Verify the record now: pack it and run trailryx-verify, under the
+        // proof slots. A read, and classified as one: it changes nothing.
+        "record_verify" => Ok(ok(genaryx_api::record::record_verify(
+            genaryx_api::record::RecordConfig::from_env(),
+        )
+        .await)),
         // The Notifications panel: what heraldyx recorded sending, read from
         // its dispatch journal where GENARYX_HERALDYX_SENT names it (invariant
         // 51). A read, and classified as one in roles.rs.

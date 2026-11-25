@@ -156,3 +156,7 @@ jobs:
       # job that can publish, sign or release off them (invariant 52).
       - name: the release workflow publishes only from a tag
         run: ./scripts/release-publishes-only-on-a-tag.sh
+      # The record is decoded with the trailryx release whose binaries verify it
+      # (invariant 54).
+      - name: the trailryx crates are the image's trailryx
+        run: ./scripts/record-pin-is-the-image.sh

@@ -1,6 +1,6 @@
 # Genaryx
 
-![tests](https://img.shields.io/badge/tests-1517-brightgreen.svg)
+![tests](https://img.shields.io/badge/tests-1542-brightgreen.svg)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 The **control room** over the TAIPANBOX agent-governance stack: one window over
@@ -155,7 +155,7 @@ Run the whole open stack locally with one command via [**stack-up**](https://git
 
 <div align="center">
 
-<img src="docs/console.svg" alt="genaryx console: it reads each plane the way that plane exposes itself, writes only signed or bearer-keyed commands, with a passkey confirming a sensitive one wherever the operator has enrolled one, emits its own console_command onto the shared bus, and groups twenty-two tabs by how an operator works" width="960">
+<img src="docs/console.svg" alt="genaryx console: it reads each plane the way that plane exposes itself, writes only signed or bearer-keyed commands, with a passkey confirming a sensitive one wherever the operator has enrolled one, emits its own console_command onto the shared bus, and groups twenty-three tabs by how an operator works" width="960">
 
 <sub>How the console is put together, next to the four tabs below.</sub>
 
@@ -164,7 +164,7 @@ Run the whole open stack locally with one command via [**stack-up**](https://git
 
 ## What it looks like
 
-Four of the twenty-two tabs, from the demo build (`npm run build:demo`) on simulated
+Four of the twenty-three tabs, from the demo build (`npm run build:demo`) on simulated
 data, which is what anybody can click at [it-rat.com/demo](https://it-rat.com/demo/).
 The frozen e01 campaign further down is the run against a live plane on a real
 box; these frames are not it, and say so here rather than in a footnote.
@@ -580,6 +580,14 @@ head. It reads custody's `GET /v1/state` and `GET /v1/keys` where
 `GENARYX_KEYRYX_URL` names custody, and `GET /v1/witness/head` where
 `GENARYX_KEYRYX_WITNESS_URL` names the witness, with no credential. It has no
 control: rotating or revoking a key is custody's own command line on the box.
+
+What Trailryx sealed is the Record tab (Assure): the segments and records, the
+last segment, the store root computed with Trailryx's own decoder, and whether
+a Keyryx signature for that root is on file or queued. Name the node's data
+directory in `GENARYX_TRAILRYX_DATA_DIR`. Verify, the tab's one control, packs
+the record with `trailryx-node read --pack` and runs `trailryx-verify` on it;
+"verified" is only what that said, and a check that could not be made is
+never a verdict.
 
 ## Not built yet (decided, on the roadmap)
 
