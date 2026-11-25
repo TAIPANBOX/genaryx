@@ -6,10 +6,12 @@
 #   scripts/image-smoke.sh <image> <version, e.g. v0.1.0>
 #
 # What it holds, each a way a correct-looking image has been wrong:
-#  1. Every bundled tool EXECUTES here. A binary built for another
-#     architecture does not exit non-zero, the kernel refuses it with
-#     "exec format error", so that is what is looked for, plus no output at
-#     all; exit codes are ignored (qryx answers --help with 1).
+#  1. Every bundled tool STARTS here. A binary built for another
+#     architecture, one whose loader or C library is missing or too old, and a
+#     Python entry point whose imports fail all print a recognisable line
+#     whatever their exit code, and a shell that cannot run a file exits 126 or
+#     127; any of those fails. Other exit codes are not judged (qryx answers
+#     with usage and 1).
 #  2. verdryx can read a Parquet trace (pyarrow is in the image).
 #  3. `genaryx-web --version` is the version being released.
 #  4. The image runs as 10001:10001, numerically.
@@ -25,16 +27,26 @@ fail=0
 echo "== on $(uname -m), image $img"
 docker run --rm --entrypoint /bin/sh "$img" -c '
   fail=0
-  for t in qryx mockryx verdryx wardryx "tokenfuse constants" genaryx-web; do
-    out=$(command -v "${t%% *}" >/dev/null 2>&1 && $t 2>&1 | head -5 || echo "__NOT_ON_PATH__")
-    case "$out" in
-      *"exec format error"*) echo "  $t: EXEC FORMAT ERROR, built for another architecture"; fail=1 ;;
-      __NOT_ON_PATH__)       echo "  $t: not on PATH in this image"; fail=1 ;;
-      "")                    echo "  $t: ran and said nothing at all"; fail=1 ;;
-      *)                     echo "  $t: runs" ;;
-    esac
+  # A tool that cannot start says so in one of these ways, whatever its exit
+  # code: another architecture, a missing loader or library, a C library too
+  # old for it. Exit 126 or 127 is the shell failing to run it at all.
+  broken="exec format error|error while loading shared libraries|GLIBC_|GLIBCXX_|not a dynamic executable|Traceback|ModuleNotFoundError|ImportError"
+  for t in qryx mockryx verdryx wardryx "tokenfuse constants" genaryx-web "engram-mcp --help"; do
+    if ! command -v "${t%% *}" >/dev/null 2>&1; then
+      echo "  $t: not on PATH in this image"; fail=1; continue
+    fi
+    out=$(timeout 20 $t </dev/null 2>&1); rc=$?
+    head=$(printf "%s" "$out" | head -5)
+    if [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
+      echo "  $t: could not be run (exit $rc): $head"; fail=1
+    elif printf "%s" "$out" | grep -Eq "$broken"; then
+      echo "  $t: does not start: $head"; fail=1
+    elif [ -z "$out" ] && [ "$rc" -ne 0 ]; then
+      echo "  $t: exited $rc and said nothing"; fail=1
+    else
+      echo "  $t: runs"
+    fi
   done
-  command -v engram-mcp >/dev/null 2>&1 && echo "  engram-mcp: on PATH" || { echo "  engram-mcp: not on PATH"; fail=1; }
   if python3 -c "import pyarrow.parquet" 2>/dev/null; then
     echo "  verdryx can read a Parquet trace"
   else

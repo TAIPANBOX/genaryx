@@ -47,8 +47,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY . ./
-# The compiler in the image is the one rust-toolchain.toml names, so rustup has
-# nothing to fetch during the build and a bump of one without the other stops.
+# The compiler in the image is the one rust-toolchain.toml names, and rustup
+# is told to use the installed one, so it does not read the file and fetch the
+# components it lists during a release build. A bump of one without the other
+# stops here.
+ENV RUSTUP_TOOLCHAIN=1.96.1
 RUN want=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml) \
  && rustc --version | grep -q "^rustc $want " \
  && cargo build --release --locked -p genaryx-web

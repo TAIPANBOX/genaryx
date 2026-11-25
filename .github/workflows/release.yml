@@ -290,8 +290,7 @@ jobs:
             dev.taipanbox.source.mockryx=${{ env.MOCKRYX_REF }}
             dev.taipanbox.source.verdryx=${{ env.VERDRYX_REF }}
             dev.taipanbox.source.engram=${{ env.ENGRAM_REF }}
-          cache-from: type=gha,scope=genaryx-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=genaryx-${{ matrix.arch }}
+          # No build cache: what is signed is built from nothing but the sources.
 
       - name: the image runs, as the real console, on the architecture that built it
         env:
@@ -362,8 +361,11 @@ jobs:
           refs=()
           for d in *; do refs+=("$IMAGE@sha256:$d"); done
           [ "${#refs[@]}" -eq 2 ] || { echo "::error::expected 2 digests, found ${#refs[@]}"; exit 1; }
+          # Named by the commit only, for now. The version tag is the last
+          # thing this job writes, after the signature and the attestations,
+          # so a failure on the way leaves no unsigned :vX.Y.Z behind and a
+          # re-run starts again from here.
           docker buildx imagetools create \
-            -t "$IMAGE:$VERSION" \
             -t "$IMAGE:sha-${GITHUB_SHA::7}" \
             "${refs[@]}"
 
@@ -373,18 +375,18 @@ jobs:
         id: created
         run: |
           set -euo pipefail
-          manifest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}')
+          manifest=$(docker buildx imagetools inspect "$IMAGE:sha-${GITHUB_SHA::7}" --format '{{json .Manifest}}')
           for p in linux/amd64 linux/arm64; do
             if ! jq -e --arg p "$p" \
               '[.manifests[].platform | "\(.os)/\(.architecture)"] | index($p) != null' \
               <<<"$manifest" >/dev/null; then
-              echo "::error::$IMAGE:$VERSION has no $p image"; exit 1
+              echo "::error::$IMAGE:sha-${GITHUB_SHA::7} has no $p image"; exit 1
             fi
           done
           digest=$(jq -r .digest <<<"$manifest")
           case "$digest" in
             sha256:*) ;;
-            *) echo "::error::no manifest-list digest for $IMAGE:$VERSION: got '$digest'"; exit 1 ;;
+            *) echo "::error::no manifest-list digest for $IMAGE:sha-${GITHUB_SHA::7}: got '$digest'"; exit 1 ;;
           esac
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "published $IMAGE@$digest"
@@ -443,6 +445,12 @@ jobs:
       # package is the one place this can be wrong, and the fix is one click in
       # the package's settings, then a manual dispatch of this workflow with
       # the tag to build the release page.
+      # Signed and attested: only now does the version name point at it.
+      - name: tag the version
+        env:
+          DIGEST: ${{ steps.created.outputs.digest }}
+        run: docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
+
       - name: a stranger can pull it
         env:
           DIGEST: ${{ steps.created.outputs.digest }}
@@ -488,7 +496,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          digest=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          digest=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
           case "$digest" in
             sha256:*) ;;
             *) echo "::error::$IMAGE:$TAG is not in the registry: got '$digest'"; exit 1 ;;

@@ -2497,17 +2497,27 @@ an absent invariant.
     *(gate: `scripts/release-publishes-only-on-a-tag.sh`: top-level
     permissions are `contents: read`; no `pull_request_target`; every job
     holding `packages`, `id-token`, `attestations` or `contents` write has an
-    `if:` naming a push or a dispatch and no pull request; a pull request job
-    holds no write, logs in nowhere and pushes nothing; every action is pinned
-    by a 40-character SHA; the Dockerfile builds `--mode web` and never the
-    demo. Six cases in `scripts/gates-have-teeth.sh`. The smoke test runs on
-    every pull request that touches the image.
+    `if:` each of whose `||` alternatives names a push or a dispatch, and no
+    pull request; no job's permissions are a string such as `write-all`; a
+    pull request job holds no write, logs in nowhere and pushes nothing; every
+    action and reusable workflow is pinned by a 40-character SHA; the
+    Dockerfile builds `--mode web` and never the demo. Eight cases in
+    `scripts/gates-have-teeth.sh`. The smoke test runs on every pull request
+    that touches the image: a tool that cannot start (another architecture, a
+    missing loader or library, a failing Python import, exit 126/127) fails it.
+    `publish` names the list by its commit first and writes the version tag
+    last, after the signature and both attestations, so a failure on the way
+    leaves no unsigned version. The tag build uses no build cache.
 
     Where it says nothing: the sign, attest and release steps run only on a
     tag, so a pull request does not exercise them (they are the steps
-    stack-k8s already runs for this image); a first publication under a
-    personal account may land private, which `publish` detects and stops on;
-    the stacks still run `genaryx-console` until they pin a release.)*
+    stack-k8s already runs for this image), and `cosign verify` as README
+    writes it has not been run against a legacy-format signature yet; the
+    Python tools' transitive dependencies come from PyPI at build time with no
+    hash lock, so two builds of one tag can differ there; a first publication
+    under a personal account may land private, which `publish` detects and
+    stops on; the stacks still run `genaryx-console` until they pin a
+    release.)*
 
 ## Decisions that have no gate yet
 

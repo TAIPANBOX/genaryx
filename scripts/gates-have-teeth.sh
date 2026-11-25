@@ -1479,6 +1479,16 @@ run_case "invariant 52: no release workflow to read" fail \
 os.rename(".github/workflows/release.yml", ".github/workflows/release.yml.gone")')" \
 	"measured nothing"
 
+run_case "invariant 52: the pull request build is given write-all" fail \
+	"$release_gate" \
+	"$(py 'edit(".github/workflows/release.yml", "    timeout-minutes: 90\n    permissions:\n      contents: read\n    strategy:", "    timeout-minutes: 90\n    permissions: write-all\n    strategy:")')" \
+	"only an explicit map of scopes"
+
+run_case "invariant 52: the publish condition is widened with an alternative" fail \
+	"$release_gate" \
+	"$(py 'edit(".github/workflows/release.yml", "    name: manifest list, signature, attestations\n    if: github.event_name == '"'"'push'"'"' && github.repository == '"'"'TAIPANBOX/genaryx'"'"'\n", "    name: manifest list, signature, attestations\n    if: github.event_name == '"'"'push'"'"' || always()\n")')" \
+	"job publish holds"
+
 run_case "invariant 52: a comment in the workflow reworded" pass \
 	"$release_gate" \
 	"$(py 'edit(".github/workflows/release.yml", "# Build, publish and release the Genaryx console.", "# Build, publish and release the console.")')"

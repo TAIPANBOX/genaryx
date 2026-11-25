@@ -15,8 +15,10 @@
 #  1. The workflow's top-level permissions are `contents: read` and nothing
 #     else, and no workflow here triggers on `pull_request_target`.
 #  2. Every job that holds `packages: write`, `id-token: write`,
-#     `attestations: write` or `contents: write` has an `if:` that names a
-#     push or a workflow_dispatch event and names no pull request.
+#     `attestations: write` or `contents: write` has an `if:` every one of
+#     whose `||` alternatives names a push or a workflow_dispatch event, and
+#     that names no pull request; and no job sets its permissions to a string
+#     such as `write-all`.
 #  3. A job that runs on a pull request holds nothing beyond
 #     `contents: read`, logs in to no registry, and pushes nothing.
 #  4. Every action is pinned by a full 40-character commit SHA.
@@ -51,16 +53,30 @@ ruby -ryaml -e '
   bad = []
   top = wf["permissions"]
   bad << "top-level permissions are #{top.inspect}, not {contents: read}" unless top == { "contents" => "read" }
+  tag_event = /event_name\s*==\s*.(push|workflow_dispatch)./
   jobs.each do |name, job|
-    perms = job["permissions"].is_a?(Hash) ? job["permissions"] : {}
+    raw = job["permissions"]
+    # A string (`write-all`, `read-all`) grants every scope at once, and a job
+    # with no block inherits the top level; only an explicit map is judged.
+    if !raw.nil? && !raw.is_a?(Hash)
+      bad << "job #{name} sets permissions to #{raw.inspect}; only an explicit map of scopes is allowed"
+    end
+    perms = raw.is_a?(Hash) ? raw : {}
     cond = job["if"].to_s
     strong = perms.select { |k, v| v == "write" }.keys
     on_pr = cond.include?("pull_request")
     if !strong.empty?
-      names_tag_event = cond =~ /event_name\s*==\s*.(push|workflow_dispatch)./
-      if cond.strip.empty? || !names_tag_event || on_pr || cond.include?("!=")
+      # Every alternative of the condition must itself name a push or a
+      # dispatch, so `push || always()` cannot widen it.
+      alternatives = cond.split("||")
+      widened = alternatives.any? { |a| a !~ tag_event }
+      if cond.strip.empty? || cond !~ tag_event || widened || on_pr || cond.include?("!=")
         bad << "job #{name} holds #{strong.join(", ")} but its if: (#{cond.strip.empty? ? "none" : cond.strip}) does not restrict it to a push or a dispatch"
       end
+    end
+    juses = job["uses"].to_s
+    if !juses.empty? && !juses.start_with?("./") && juses !~ /@[0-9a-f]{40}\z/
+      bad << "job #{name}: #{juses} is not pinned by a full commit SHA"
     end
     if on_pr
       bad << "job #{name} runs on a pull request and holds #{strong.join(", ")}" unless strong.empty?
