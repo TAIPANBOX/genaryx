@@ -48,6 +48,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 #[derive(Parser)]
 #[command(
     name = "genaryx-web",
+    version,
     about = "Genaryx console, served on your own box"
 )]
 struct Cli {

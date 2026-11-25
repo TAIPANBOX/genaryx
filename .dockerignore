@@ -1,0 +1,13 @@
+# The image is built from this repository with the four tools as named
+# contexts (Dockerfile). Nothing below reaches a build stage.
+.git
+.github
+.claude
+target
+_tools
+apps/web/node_modules
+apps/web/dist
+docs
+live-campaign
+features
+**/*.log

@@ -53,6 +53,7 @@ the names change per build and stale ones are served forever otherwise.
 ./scripts/felyx-fences-plane-text.sh # invariant 38
 ./scripts/approval-token-stays-in-memory.sh # invariant 46
 ./scripts/backend-commands-are-handled.sh # invariant 50
+./scripts/release-publishes-only-on-a-tag.sh # invariant 52
 ./scripts/readme-numbers.sh          # runs the whole suite; slow
 ./scripts/no-reader-leaves-a-pipe-early.sh  # invariant 45
 ./scripts/gates-have-teeth.sh        # invariant 7; needs a clean tree
@@ -2469,6 +2470,54 @@ an absent invariant.
     it under, or a failed write) is not in the file, and heraldyx counts those
     only on its own stderr; a chain that starts before the window is judged
     from the window on.)*
+52. **The console is released from this repository: a `v*` tag on `main`
+    publishes one signed image, and nothing else ever publishes, signs or
+    releases it.** `@decided 2026-11-23` (paraphrased): Genaryx gets its own
+    tags and releases like the other planes; the tag is cut separately. Until
+    then the image was composed and versioned by stack-k8s. The `Dockerfile`
+    builds the console (`cargo build --release --locked -p genaryx-web`, the
+    compiler checked against `rust-toolchain.toml`), the real-box UI (`vite
+    build --mode web`, pnpm pinned by version and tarball hash in
+    `packageManager`), the four tools it spawns from named build contexts at
+    the commits `release.yml` pins, and the two proof engines by digest, and
+    runs as 10001:10001. `release.yml`: the `version` job requires
+    `Cargo.toml`, `Cargo.lock` and `apps/web/package.json` to agree and, on a
+    tag, the tag to be `v` plus that version and on `main`; each architecture
+    builds on its own runner and passes `scripts/image-smoke.sh` (every tool
+    executes, `genaryx-web --version` is the release, the user, `/healthz`,
+    and a `/` whose assets are at `/assets/`); `publish` refuses a version
+    already in the registry, merges the two digests, requires both
+    architectures, signs the list digest keyless, attests provenance and the
+    image SBOM, and checks a stranger can pull it; `release` writes the page.
+    A pull request that touches what the image is built from runs the build
+    and smoke test with no registry login and no token that can push. `@claude
+    2026-11-23`, open to reversal: the image name `ghcr.io/taipanbox/genaryx`
+    (one package, one version line, one signing identity), the first version
+    v0.1.0, and the python slim base.
+    *(gate: `scripts/release-publishes-only-on-a-tag.sh`: top-level
+    permissions are `contents: read`; no `pull_request_target`; every job
+    holding `packages`, `id-token`, `attestations` or `contents` write has an
+    `if:` each of whose `||` alternatives names a push or a dispatch, and no
+    pull request; no job's permissions are a string such as `write-all`; a
+    pull request job holds no write, logs in nowhere and pushes nothing; every
+    action and reusable workflow is pinned by a 40-character SHA; the
+    Dockerfile builds `--mode web` and never the demo. Eight cases in
+    `scripts/gates-have-teeth.sh`. The smoke test runs on every pull request
+    that touches the image: a tool that cannot start (another architecture, a
+    missing loader or library, a failing Python import, exit 126/127) fails it.
+    `publish` names the list by its commit first and writes the version tag
+    last, after the signature and both attestations, so a failure on the way
+    leaves no unsigned version. The tag build uses no build cache.
+
+    Where it says nothing: the sign, attest and release steps run only on a
+    tag, so a pull request does not exercise them (they are the steps
+    stack-k8s already runs for this image), and `cosign verify` as README
+    writes it has not been run against a legacy-format signature yet; the
+    Python tools' transitive dependencies come from PyPI at build time with no
+    hash lock, so two builds of one tag can differ there; a first publication
+    under a personal account may land private, which `publish` detects and
+    stops on; the stacks still run `genaryx-console` until they pin a
+    release.)*
 
 ## Decisions that have no gate yet
 

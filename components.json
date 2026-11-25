@@ -32,7 +32,7 @@
   ],
   "schema": "taipanbox.dev/components/v1",
   "repo": "TAIPANBOX/genaryx",
-  "distribution": "ghcr.io/taipanbox/genaryx-console; built and tagged by stack-k8s's image composition, not by this repository's own CI",
+  "distribution": "ghcr.io/taipanbox/genaryx; built, signed and released by this repository's .github/workflows/release.yml on a v* tag (the console with its four tools and two engines). Until the first tag, stacks run ghcr.io/taipanbox/genaryx-console, composed by stack-k8s",
   "components": [
     {
       "name": "console",

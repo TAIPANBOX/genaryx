@@ -99,9 +99,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # pnpm's exact version and tarball hash come from apps/web/package.json's
+      # `packageManager`, the same pin the image build uses (invariant 52).
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 11
+          package_json_file: apps/web/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -150,3 +152,7 @@ jobs:
       # paraphrase, never as the owner's own words or his name (invariant 21).
       - name: no tracked file quotes or names the owner
         run: ./scripts/no-owner-quotes.sh
+      # The release workflow runs on pull requests on purpose; this keeps every
+      # job that can publish, sign or release off them (invariant 52).
+      - name: the release workflow publishes only from a tag
+        run: ./scripts/release-publishes-only-on-a-tag.sh

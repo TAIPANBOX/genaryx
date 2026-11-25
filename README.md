@@ -631,6 +631,36 @@ cd apps/web && pnpm build     # -> apps/web/dist
 cd ../..    && cargo build -p genaryx-web --release
 ```
 
+## Releases
+
+The console ships as one image, `ghcr.io/taipanbox/genaryx`, for linux/amd64
+and linux/arm64. It holds the console, its web UI, the four tools the console
+runs as child processes (qryx, mockryx, verdryx, engram-mcp) at the commits
+`.github/workflows/release.yml` pins, and the two engines its proofs run
+(wardryx, tokenfuse) at the digests the `Dockerfile` pins and its labels name.
+
+A release is a `v*` tag on `main` whose name equals the workspace version in
+`Cargo.toml` (`apps/web/package.json` and `Cargo.lock` carry the same one).
+The tag builds each architecture on its own runner, smoke-tests it, publishes
+`:vX.Y.Z` and `:sha-<commit>`, signs the digest keyless with cosign, attests
+its build provenance and its SBOM, and writes a release page with the SBOMs,
+the digest and checksums. There is no `latest` tag, and a published version is
+never replaced. A pull request that touches what the image is built from runs
+the same build and smoke test and publishes nothing.
+
+Verify before you pin:
+
+```sh
+cosign verify ghcr.io/taipanbox/genaryx@sha256:<digest> \
+  --certificate-identity-regexp '^https://github.com/TAIPANBOX/genaryx/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/taipanbox/genaryx@sha256:<digest> -R TAIPANBOX/genaryx
+```
+
+Until the first tag the stacks run `ghcr.io/taipanbox/genaryx-console`, which
+stack-k8s composes under its own version; they move to this image by pinning a
+release.
+
 ## Architecture source of truth
 
 The plan lives in `~/Development/itrat-console`, a private repository: decisions
