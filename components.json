@@ -32,7 +32,7 @@
   ],
   "schema": "taipanbox.dev/components/v1",
   "repo": "TAIPANBOX/genaryx",
-  "distribution": "ghcr.io/taipanbox/genaryx; built, signed and released by this repository's .github/workflows/release.yml on a v* tag (the console with its four tools and two engines). Until the first tag, stacks run ghcr.io/taipanbox/genaryx-console, composed by stack-k8s",
+  "distribution": "ghcr.io/taipanbox/genaryx; built, signed and released by this repository's .github/workflows/release.yml on a v* tag (the console with its four tools and two engines). First release v0.1.0 (sha256:4030bc819e7df40c2a307e68f33519476d0858570bbdccb9326fd5fad256d2ee); the stacks run ghcr.io/taipanbox/genaryx-console, composed by stack-k8s, until their next release pins this image",
   "components": [
     {
       "name": "console",

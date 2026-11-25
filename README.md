@@ -673,9 +673,14 @@ cosign verify ghcr.io/taipanbox/genaryx@sha256:<digest> \
 gh attestation verify oci://ghcr.io/taipanbox/genaryx@sha256:<digest> -R TAIPANBOX/genaryx
 ```
 
-Until the first tag the stacks run `ghcr.io/taipanbox/genaryx-console`, which
-stack-k8s composes under its own version; they move to this image by pinning a
-release.
+The current release is v0.1.0 (2026-11-25):
+
+```text
+ghcr.io/taipanbox/genaryx:v0.1.0@sha256:4030bc819e7df40c2a307e68f33519476d0858570bbdccb9326fd5fad256d2ee
+```
+
+The stacks still run `ghcr.io/taipanbox/genaryx-console`, which stack-k8s
+composes under its own version, until their next release pins this image.
 
 ## Architecture source of truth
 
