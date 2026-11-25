@@ -2552,6 +2552,7 @@ an absent invariant.
     witness head is shown as signed, and its signatures are not verified here
     (`keyryx verify` does that offline); a key custody rotated after the read is
     seen on the next one.)*
+
 54. **The Record tab shows what Trailryx sealed and whether the current root
     carries a signature, read from the node's own files with the node's own
     decoder, and "verified" is only what `trailryx-verify` said about a pack

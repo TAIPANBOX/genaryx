@@ -1387,6 +1387,9 @@ function mockKeys() {
       es384_kid: "witness.es384-2026-09",
       ml_dsa_65_kid: "witness.ml-dsa-65-2026-09",
     },
+  };
+}
+
 /** The Record panel's demo (invariant 54): a sealed store with its root signed,
  * and a verification that passed. Times are unix seconds. */
 function mockRecord(root: string) {
