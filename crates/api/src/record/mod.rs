@@ -537,10 +537,13 @@ fn verdict_at(v: &VerifyState) -> Option<u64> {
 /// Keep `result` as the last verdict when it is one and is not older than the
 /// one kept. A check that could not be made replaces nothing.
 pub fn keep_verdict(kept: &mut VerifyState, result: &VerifyState) {
-    if let Some(at) = verdict_at(result) {
-        if verdict_at(kept).is_none_or(|k| at >= k) {
-            *kept = result.clone();
-        }
+    let newer = match (verdict_at(result), verdict_at(kept)) {
+        (Some(at), Some(k)) => at >= k,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    if newer {
+        *kept = result.clone();
     }
 }
 
