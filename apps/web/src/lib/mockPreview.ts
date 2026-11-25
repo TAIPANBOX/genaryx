@@ -1360,7 +1360,7 @@ function mockKeys() {
     },
   ];
   const entries = [
-    { name: "wardryx.approval", alg: "ES384", kid: "wardryx.approval-2026-12", mode: "held", state: "pending", created: 1763900000, activate_at: 1769900000 },
+    { name: "wardryx.approval", alg: "ES384", kid: "wardryx.approval-2026-12", mode: "held", state: "next", created: 1763900000, activate_at: 1769900000 },
     { name: "wardryx.approval", alg: "ES384", kid: "wardryx.approval-2026-09", mode: "held", state: "active", created: 1758700000, activate_at: 1758700000 },
     { name: "trailryx.seal", alg: "ML-DSA-65", kid: "trailryx.seal-2026-10", mode: "held", state: "active", created: 1761300000, activate_at: 1761300000 },
     { name: "vouchryx.delegation", alg: "ES256", kid: "vouchryx.delegation-2026-08", mode: "delegated", state: "active", created: 1754000000, activate_at: 1754000000, owner: "vouchryx" },
