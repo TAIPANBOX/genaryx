@@ -32,6 +32,7 @@ import { QualityView } from "./QualityView";
 import { RemoteView } from "./RemoteView";
 import { RoutinesView } from "./RoutinesView";
 import { NotificationsView } from "./NotificationsView";
+import { KeysView } from "./KeysView";
 import { RunReplayView } from "./RunReplayView";
 import { UnitCard } from "./UnitCard";
 import { UserCard } from "./UserCard";
@@ -521,6 +522,7 @@ export function AppShell() {
         {view === "bus" && <BusExplorer />}
         {view === "routines" && <RoutinesView />}
         {view === "notifications" && <NotificationsView />}
+        {view === "keys" && <KeysView />}
         {view === "copilot" && (
           <CopilotView explainRequest={explainRequest} onExplainRequestHandled={onExplainRequestHandled} />
         )}

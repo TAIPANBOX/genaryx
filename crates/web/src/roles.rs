@@ -122,6 +122,8 @@ const COMMANDS: &[Gate] = &[
     gate("egress_recent", Role::Viewer, false),
     // What heraldyx recorded sending, from its own journal, read-only.
     gate("notifications_sent", Role::Viewer, false),
+    // Keyryx custody's inventory and the witness head, read-only.
+    gate("keys_custody", Role::Viewer, false),
     gate("money_status", Role::Viewer, false),
     gate("onboard_status", Role::Viewer, false),
     gate("policy_list_approvals", Role::Viewer, false),

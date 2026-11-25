@@ -87,6 +87,12 @@
           "GENARYX_HISTORY_DAYS": {
             "required": false
           },
+          "GENARYX_KEYRYX_URL": {
+            "required": false
+          },
+          "GENARYX_KEYRYX_WITNESS_URL": {
+            "required": false
+          },
           "GENARYX_ORG_DOMAIN": {
             "required": false
           },

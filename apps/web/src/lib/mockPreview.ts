@@ -1338,6 +1338,58 @@ function mockNotifications() {
   };
 }
 
+function mockKeys() {
+  const names = [
+    {
+      name: "wardryx.approval", alg: "ES384", mode: "held",
+      active_kid: "wardryx.approval-2026-09", active_since: 1758700000,
+      next_kid: "wardryx.approval-2026-12", next_activates_at: 1769900000,
+      last_rotation: 1763900000, states: { active: 1, pending: 1 }, renew_due: false,
+    },
+    {
+      name: "trailryx.seal", alg: "ML-DSA-65", mode: "held",
+      active_kid: "trailryx.seal-2026-10", active_since: 1761300000,
+      next_kid: null, next_activates_at: null,
+      last_rotation: 1761300000, states: { active: 1 }, renew_due: false,
+    },
+    {
+      name: "vouchryx.delegation", alg: "ES256", mode: "delegated",
+      active_kid: "vouchryx.delegation-2026-08", active_since: 1754000000,
+      next_kid: null, next_activates_at: null,
+      last_rotation: 1754000000, states: { active: 1, retired: 1 }, renew_due: false,
+    },
+  ];
+  const entries = [
+    { name: "wardryx.approval", alg: "ES384", kid: "wardryx.approval-2026-12", mode: "held", state: "next", created: 1763900000, activate_at: 1769900000 },
+    { name: "wardryx.approval", alg: "ES384", kid: "wardryx.approval-2026-09", mode: "held", state: "active", created: 1758700000, activate_at: 1758700000 },
+    { name: "trailryx.seal", alg: "ML-DSA-65", kid: "trailryx.seal-2026-10", mode: "held", state: "active", created: 1761300000, activate_at: 1761300000 },
+    { name: "vouchryx.delegation", alg: "ES256", kid: "vouchryx.delegation-2026-08", mode: "delegated", state: "active", created: 1754000000, activate_at: 1754000000, owner: "vouchryx" },
+    { name: "vouchryx.delegation", alg: "ES256", kid: "vouchryx.delegation-2026-03", mode: "delegated", state: "retired", created: 1741000000, activate_at: 1741000000, retired: 1754000000, owner: "vouchryx" },
+  ];
+  return {
+    custody: {
+      state: "read",
+      url: "https://keyryx.meridian.example",
+      version: "1.4.0",
+      names,
+      alarms: [],
+      alarms_total: 0,
+      entries,
+      entries_total: entries.length,
+      inventory_error: null,
+    },
+    witness: {
+      state: "read",
+      url: "https://witness.meridian.example",
+      size: 4242,
+      root: "9f2c4e1a7b03d856e2f1c0a94b7d3e58f61a2c09d4e7b8a3f0c1d2e5b6a7f809",
+      at: 1763990000,
+      es384_kid: "witness.es384-2026-09",
+      ml_dsa_65_kid: "witness.ml-dsa-65-2026-09",
+    },
+  };
+}
+
 function mockEgress() {
   const hosts = [
     "https://docs.example.com",
@@ -4474,6 +4526,7 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     // shows its own "no backend" note for this answer.
     case "egress_recent": return r(mockEgress());
     case "notifications_sent": return r(mockNotifications());
+    case "keys_custody": return r(mockKeys());
     // The refusals and the quality_drift event go ahead of the seed: a reader
     // asking for N events keeps the first N, and the Incidents tab asks for
     // exactly as many as the seed makes, so anything appended after it is cut

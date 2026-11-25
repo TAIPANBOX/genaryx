@@ -23,6 +23,7 @@ mod cloud_stub;
 mod delegation_revoke_test;
 mod felyx_bench_test;
 mod gateway_posture_test;
+mod keys_panel_test;
 mod money_gateways_test;
 mod money_runs_budgets_test;
 mod money_runs_status_test;
