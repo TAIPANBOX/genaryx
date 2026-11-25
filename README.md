@@ -649,7 +649,7 @@ cd ../..    && cargo build -p genaryx-web --release
 
 ## Releases
 
-The console ships as one image, `ghcr.io/taipanbox/genaryx`, for linux/amd64
+The console ships as one image, `ghcr.io/taipanbox/genaryx:v0.1.0`, for linux/amd64
 and linux/arm64. It holds the console, its web UI, the four tools the console
 runs as child processes (qryx, mockryx, verdryx, engram-mcp) at the commits
 `.github/workflows/release.yml` pins, and the two engines its proofs run
@@ -667,10 +667,10 @@ the same build and smoke test and publishes nothing.
 Verify before you pin:
 
 ```sh
-cosign verify ghcr.io/taipanbox/genaryx@sha256:<digest> \
+cosign verify ghcr.io/taipanbox/genaryx:v0.1.0@sha256:<digest> \
   --certificate-identity-regexp '^https://github.com/TAIPANBOX/genaryx/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-gh attestation verify oci://ghcr.io/taipanbox/genaryx@sha256:<digest> -R TAIPANBOX/genaryx
+gh attestation verify oci://ghcr.io/taipanbox/genaryx:v0.1.0@sha256:<digest> -R TAIPANBOX/genaryx
 ```
 
 The current release is v0.1.0 (2026-11-25):
@@ -679,7 +679,7 @@ The current release is v0.1.0 (2026-11-25):
 ghcr.io/taipanbox/genaryx:v0.1.0@sha256:4030bc819e7df40c2a307e68f33519476d0858570bbdccb9326fd5fad256d2ee
 ```
 
-The stacks still run `ghcr.io/taipanbox/genaryx-console`, which stack-k8s
+The stacks still run the earlier `genaryx-console` image, which stack-k8s
 composes under its own version, until their next release pins this image.
 
 ## Architecture source of truth
