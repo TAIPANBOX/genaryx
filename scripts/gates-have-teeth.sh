@@ -1493,6 +1493,42 @@ run_case "invariant 52: a comment in the workflow reworded" pass \
 	"$release_gate" \
 	"$(py 'edit(".github/workflows/release.yml", "# Build, publish and release the Genaryx console.", "# Build, publish and release the console.")')"
 
+# invariant 54: the trailryx crates the record is decoded with are the release
+# whose binaries verify it.
+record_pin_gate='./scripts/record-pin-is-the-image.sh'
+
+run_case "invariant 54: the image copies another trailryx release" fail \
+	"$record_pin_gate" \
+	"$(py 'edit("Dockerfile", "FROM ghcr.io/taipanbox/trailryx-node:v1.6.0@", "FROM ghcr.io/taipanbox/trailryx-node:v1.5.0@")')" \
+	"but the image copies trailryx-node v1.5.0"
+
+run_case "invariant 54: one trailryx crate pinned to another commit" fail \
+	"$record_pin_gate" \
+	"$(py 'edit("crates/api/Cargo.toml", "trailryx-record = { git = \"https://github.com/TAIPANBOX/trailryx\", rev = \"cc3d2e8a7c49bf6843b735461032c6fc2c17df3b\" }", "trailryx-record = { git = \"https://github.com/TAIPANBOX/trailryx\", rev = \"0000000000000000000000000000000000000000\" }")')" \
+	"more than one rev"
+
+run_case "invariant 54: no trailryx dependency to read" fail \
+	"$record_pin_gate" \
+	"$(py 'p = "crates/api/Cargo.toml"
+s = open(p).read()
+s = "\n".join(l for l in s.split("\n") if not l.startswith("trailryx-"))
+open(p, "w").write(s)')" \
+	"measured nothing"
+
+run_case "invariant 54: the label names another digest than the image copied" fail \
+	"$record_pin_gate" \
+	"$(py 'edit("Dockerfile", "LABEL dev.taipanbox.engine.trailryx=\"v1.6.0@sha256:68c4", "LABEL dev.taipanbox.engine.trailryx=\"v1.6.0@sha256:00c4")')" \
+	"does not label the trailryx engine as the image it copies"
+
+run_case "invariant 54: a trailryx crate taken by tag instead of rev" fail \
+	"$record_pin_gate" \
+	"$(py 'edit("crates/api/Cargo.toml", "trailryx-index = { git = \"https://github.com/TAIPANBOX/trailryx\", rev = \"cc3d2e8a7c49bf6843b735461032c6fc2c17df3b\" }", "trailryx-index = { git = \"https://github.com/TAIPANBOX/trailryx\", tag = \"v1.7.0\" }")')" \
+	"is not the trailryx repository at a full rev"
+
+run_case "invariant 54: a comment beside the pin reworded" pass \
+	"$record_pin_gate" \
+	"$(py 'edit("crates/api/Cargo.toml", "These crates have no third-party dependencies.", "Those crates have no third-party dependencies.")')"
+
 echo
 if [ -n "$(git status --porcelain)" ]; then
 	printf 'FAIL: this script left the tree dirty, so it cannot be trusted about anything above\n'

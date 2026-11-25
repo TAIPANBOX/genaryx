@@ -1390,6 +1390,25 @@ function mockKeys() {
   };
 }
 
+/** The Record panel's demo (invariant 54): a sealed store with its root signed,
+ * and a verification that passed. Times are unix seconds. */
+function mockRecord(root: string) {
+  return {
+    seal: {
+      state: "sealed",
+      path: "/var/lib/stack/trailryx/data",
+      segments: 412,
+      records: 98213,
+      last: { segment: 412, records: 240, first_recorded_at: 1764000000, last_recorded_at: 1764000420 },
+      root,
+      signature: { state: "signed", key: "3f9a1c0b7e2d4a65", algorithm: "es384", at: 1764000480 },
+      other_shards: 0,
+    },
+    verify: { state: "not_run" },
+    verify_stale: false,
+  };
+}
+
 function mockEgress() {
   const hosts = [
     "https://docs.example.com",
@@ -4527,6 +4546,18 @@ export async function mockInvoke<T>(command: string, args?: Record<string, unkno
     case "egress_recent": return r(mockEgress());
     case "notifications_sent": return r(mockNotifications());
     case "keys_custody": return r(mockKeys());
+    case "record_status": return r(mockRecord("fb1dda22152e30ba3dc5ef2c01684b580fce0708a0c13cdf26193c2b0f16cfb7410f85010b284aaa0fbec98617a402b2"));
+    case "record_verify":
+      return r({
+        ...mockRecord("fb1dda22152e30ba3dc5ef2c01684b580fce0708a0c13cdf26193c2b0f16cfb7410f85010b284aaa0fbec98617a402b2"),
+        verify: {
+          state: "verified",
+          root: "fb1dda22152e30ba3dc5ef2c01684b580fce0708a0c13cdf26193c2b0f16cfb7410f85010b284aaa0fbec98617a402b2",
+          at: 1764000600,
+          millis: 2140,
+          findings: ['[note] root-signature: "es384" by key 3f9a1c0b7e2d4a65', "[note] witnesses: 1 attestation"],
+        },
+      });
     // The refusals and the quality_drift event go ahead of the seed: a reader
     // asking for N events keeps the first N, and the Incidents tab asks for
     // exactly as many as the seed makes, so anything appended after it is cut

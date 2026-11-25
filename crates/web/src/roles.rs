@@ -124,6 +124,9 @@ const COMMANDS: &[Gate] = &[
     gate("notifications_sent", Role::Viewer, false),
     // Keyryx custody's inventory and the witness head, read-only.
     gate("keys_custody", Role::Viewer, false),
+    // What Trailryx sealed, and verifying it on request: reads.
+    gate("record_status", Role::Viewer, false),
+    gate("record_verify", Role::Viewer, false),
     gate("money_status", Role::Viewer, false),
     gate("onboard_status", Role::Viewer, false),
     gate("policy_list_approvals", Role::Viewer, false),
@@ -372,6 +375,16 @@ mod tests {
             required_role("copilot_explain")
         );
         assert!(!requires_ceremony("copilot_explain_case"));
+    }
+
+    /// Reading what Trailryx sealed, and verifying a pack of it, change
+    /// nothing: reads, with no ceremony (invariant 54).
+    #[test]
+    fn reading_the_record_and_verifying_it_are_viewer_reads() {
+        for c in ["record_status", "record_verify"] {
+            assert_eq!(required_role(c), Role::Viewer, "{c}");
+            assert!(!requires_ceremony(c), "{c}");
+        }
     }
 
     /// A policy proof runs `wardryx replay` over the recorded decisions and

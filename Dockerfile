@@ -75,6 +75,11 @@ RUN cd qryx    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/qryx
 # release with the new pin.
 FROM ghcr.io/taipanbox/wardryx:v2.8.0@sha256:f9b86a82114698f64a3251816ee0be6f80b4a6b2c239082b7035f1b4228f06aa AS wardryx-engine
 FROM ghcr.io/taipanbox/tokenfuse:v1.25.0@sha256:3a81dbcd116557eff54aae29e7d68104af8fc788265d58e71adf3f96fea03317 AS tokenfuse-engine
+# The Record tab (invariant 54) packs the store with `trailryx-node read
+# --pack` and checks the pack with `trailryx-verify`, so both come from the
+# trailryx release whose crates crates/api pins (scripts/record-pin-is-the-image.sh
+# holds the two equal). They are statically linked (musl).
+FROM ghcr.io/taipanbox/trailryx-node:v1.6.0@sha256:68c413c2d6d0bd3bde4ad3478e6ee9ebc3a95e5a0d1b26d1d1ca5f588baf20a8 AS trailryx-engine
 
 # --- runtime ----------------------------------------------------------------
 FROM python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54
@@ -92,6 +97,7 @@ LABEL org.opencontainers.image.source="https://github.com/TAIPANBOX/genaryx"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL dev.taipanbox.engine.wardryx="v2.8.0@sha256:f9b86a82114698f64a3251816ee0be6f80b4a6b2c239082b7035f1b4228f06aa"
 LABEL dev.taipanbox.engine.tokenfuse="v1.25.0@sha256:3a81dbcd116557eff54aae29e7d68104af8fc788265d58e71adf3f96fea03317"
+LABEL dev.taipanbox.engine.trailryx="v1.6.0@sha256:68c413c2d6d0bd3bde4ad3478e6ee9ebc3a95e5a0d1b26d1d1ca5f588baf20a8"
 
 # The two Python tools, installed as real commands (`verdryx`, `engram-mcp`).
 # `[traces]` is pyarrow: `verdryx slo` reads the gateway's Parquet traces.
@@ -105,6 +111,8 @@ COPY --from=gotools /out/qryx    /usr/local/bin/qryx
 COPY --from=gotools /out/mockryx /usr/local/bin/mockryx
 COPY --from=wardryx-engine /usr/local/bin/service /usr/local/bin/wardryx
 COPY --from=tokenfuse-engine /usr/local/bin/tokenfuse /usr/local/bin/tokenfuse
+COPY --from=trailryx-engine /usr/local/bin/trailryx-node /usr/local/bin/trailryx-node
+COPY --from=trailryx-engine /usr/local/bin/trailryx-verify /usr/local/bin/trailryx-verify
 COPY --from=rust /src/target/release/genaryx-web /usr/local/bin/genaryx-web
 COPY --from=web  /w/dist /srv/ui
 

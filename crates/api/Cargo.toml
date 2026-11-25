@@ -48,6 +48,14 @@ qrcode = { workspace = true }
 # transitive one, the same promotion this crate's dev-dependencies note below
 # already relies on for tests.
 reqwest = { workspace = true }
+# The Record panel (invariant 54) reads Trailryx's sealed segment manifests
+# with Trailryx's own decoder and tree, so the root it shows is the root the
+# node signs. Pinned to the commit of the release whose binaries the image
+# carries (trailryx v1.6.0); scripts/record-pin-is-the-image.sh holds the two
+# equal. These crates have no third-party dependencies.
+trailryx-store = { git = "https://github.com/TAIPANBOX/trailryx", rev = "cc3d2e8a7c49bf6843b735461032c6fc2c17df3b" }
+trailryx-index = { git = "https://github.com/TAIPANBOX/trailryx", rev = "cc3d2e8a7c49bf6843b735461032c6fc2c17df3b" }
+trailryx-record = { git = "https://github.com/TAIPANBOX/trailryx", rev = "cc3d2e8a7c49bf6843b735461032c6fc2c17df3b" }
 
 [dev-dependencies]
 # The bench's scripted model implements the copilot crate's `LlmProvider`, whose

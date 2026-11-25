@@ -33,6 +33,7 @@ import { RemoteView } from "./RemoteView";
 import { RoutinesView } from "./RoutinesView";
 import { NotificationsView } from "./NotificationsView";
 import { KeysView } from "./KeysView";
+import { RecordView } from "./RecordView";
 import { RunReplayView } from "./RunReplayView";
 import { UnitCard } from "./UnitCard";
 import { UserCard } from "./UserCard";
@@ -523,6 +524,7 @@ export function AppShell() {
         {view === "routines" && <RoutinesView />}
         {view === "notifications" && <NotificationsView />}
         {view === "keys" && <KeysView />}
+        {view === "record" && <RecordView />}
         {view === "copilot" && (
           <CopilotView explainRequest={explainRequest} onExplainRequestHandled={onExplainRequestHandled} />
         )}
