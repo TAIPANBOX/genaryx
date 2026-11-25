@@ -467,12 +467,7 @@ jobs:
   release:
     name: release page
     needs: [version, publish]
-    if: >-
-      ${{ !cancelled()
-          && github.repository == 'TAIPANBOX/genaryx'
-          && needs.version.result == 'success'
-          && ((github.event_name == 'push' && needs.publish.result == 'success')
-              || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && github.repository == 'TAIPANBOX/genaryx' && needs.version.result == 'success' && ((github.event_name == 'push' && needs.publish.result == 'success') || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
