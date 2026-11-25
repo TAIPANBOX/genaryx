@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "genaryx-api"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1007,7 +1007,7 @@ dependencies = [
 
 [[package]]
 name = "genaryx-connectors"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "base64",
  "futures-util",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "genaryx-copilot"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "genaryx-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "jsonschema",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "genaryx-signing"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "base64",
  "genaryx-core",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "genaryx-web"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "argon2",
  "async-trait",
