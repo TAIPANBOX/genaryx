@@ -11,5 +11,13 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // `pnpm exec vitest run --coverage` (CI's web job). Every source file
+    // counts, not only the ones some test imports, so a module no test loads
+    // shows as uncovered instead of vanishing from the total.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.ts", "src/**/*.d.ts"],
+    },
   },
 });
