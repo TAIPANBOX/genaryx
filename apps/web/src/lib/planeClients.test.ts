@@ -202,8 +202,8 @@ describe("with no box at all nothing reaches the transport", () => {
     expect(await policy.fetchPolicyStatus()).toEqual({ state: "no_environment" });
     expect(await identity.fetchIdentityStatus()).toEqual({ state: "no_environment" });
     expect((await admission.fetchAdmissionStatus()).gateway).toEqual({ state: "no_environment" });
-    expect((await remote.fetchRemoteStatus()).environment).toBeNull();
-    expect((await evidence.fetchEvidenceStatus()).qryx_available).toBe(false);
+    expect(await remote.fetchRemoteStatus()).toMatchObject({ environment: null });
+    expect(await evidence.fetchEvidenceStatus()).toMatchObject({ qryx_available: false });
   });
 });
 
@@ -283,8 +283,8 @@ describe("a status read the box fails is a settled, named state", () => {
   it("crypto, drills, evidence and remote fall back to their unavailable status", async () => {
     expect(await crypto.fetchCryptoStatus()).toEqual({ state: "no_environment" });
     expect(await drills.fetchDrillsStatus()).toEqual({ state: "no_environment" });
-    expect((await evidence.fetchEvidenceStatus()).tokenfuse_available).toBe(false);
-    expect((await remote.fetchRemoteStatus()).tunnel).toEqual({ state: "disconnected" });
+    expect(await evidence.fetchEvidenceStatus()).toMatchObject({ tokenfuse_available: false });
+    expect(await remote.fetchRemoteStatus()).toMatchObject({ tunnel: { state: "disconnected" } });
   });
 });
 
