@@ -5,4 +5,5 @@
 # Set 2026-11-26 from the first CI measurement, 49.6%.
 # Raised 2026-11-27 to 80.2 from the CI measurement 81.28% (web tests, #171).
 # Raised 2026-11-27 to 87.4 from the CI measurement 88.46% (web tests, #173).
-87.4
+# Raised 2026-11-27 to 89.3 from the CI measurement 90.31% (web tests, #177).
+89.3
