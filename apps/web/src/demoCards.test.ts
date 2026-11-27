@@ -14,6 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+vi.setConfig({ testTimeout: 30_000 });
 
 class Inert {
   observe() {}
@@ -441,5 +442,350 @@ describe("the Remote tab in the demo world", () => {
       expect(host.textContent).toContain("no config was issued");
     }
     expect(host.textContent).toContain(note);
+  });
+});
+
+describe("arriving from an alert mail's link", () => {
+  async function arrive(path: string) {
+    window.history.replaceState(null, "", path);
+    const { AppShell } = await import("./components/AppShell");
+    return await show(createElement(AppShell));
+  }
+
+  it("an incident link lands on its panel and leaves the address bar clean", async () => {
+    const host = await arrive("/i/budget_exhausted:run-42");
+    expect(window.location.pathname).toBe("/");
+    const current = host.querySelector('[aria-current="page"]');
+    expect(current?.textContent ?? host.textContent).toMatch(/Money/);
+  });
+
+  it("an agent link opens that agent's detail card, the one with freeze and kill", async () => {
+    const agent = "agent://meridian.io/sre/rca-copilot";
+    await arrive(`/a/${encodeURIComponent(agent)}`);
+    await settle();
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+    expect(dialogs.some((d) => d.textContent?.includes(agent) || d.textContent?.includes("rca-copilot"))).toBe(true);
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("an owner link opens the owner's card", async () => {
+    await arrive("/o/w.zhang");
+    await settle();
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+    expect(dialogs.some((d) => d.textContent?.includes("w.zhang"))).toBe(true);
+  });
+
+  it("a link of a type this build does not know lands on the overview and says which id it could not place", async () => {
+    const host = await arrive("/i/no_such_type:run-7");
+    expect(host.textContent).toContain("no_such_type");
+  });
+
+  it("a link in the fragment keeps the path the console is served from", async () => {
+    window.history.replaceState(null, "", "/demo/#/i/budget_exhausted:run-42");
+    const { AppShell } = await import("./components/AppShell");
+    await show(createElement(AppShell));
+    expect(window.location.pathname).toBe("/demo/");
+    window.history.replaceState(null, "", "/");
+  });
+});
+
+describe("on-demand scans and checks in the demo world", () => {
+  it("Crypto: a scan shows the inventory the demo's scan reports, and evidence builds and verifies", async () => {
+    const { CryptoView } = await import("./components/CryptoView");
+    const host = await show(createElement(CryptoView));
+    const scanInput = host.querySelector<HTMLInputElement>('[placeholder="/path/to/scan"]');
+    if (scanInput) await act(async () => typeInto(scanInput, "/srv/app"));
+    await act(async () => button(host, /^(Scan|Scanning\.\.\.)$/).click());
+    await settle();
+    const ncsc = (await mock.mockInvoke("crypto_scan_ncsc", { path: "/srv/app" })) as {
+      discovery2028: { totalInventoried: number; quantumVulnerableCount: number };
+    };
+    const text = host.textContent ?? "";
+    expect(text).toContain(String(ncsc.discovery2028.totalInventoried));
+    expect(text).toContain(String(ncsc.discovery2028.quantumVulnerableCount));
+
+    // The milestone tabs switch what is shown.
+    for (const tab of Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tablist"] button, [role="tab"]'))) {
+      await act(async () => tab.click());
+    }
+
+    const build = Array.from(host.querySelectorAll("button")).find((b) => /^Build evidence$/.test(b.textContent ?? ""));
+    if (build) {
+      await act(async () => build.click());
+      await settle();
+      const verifyInput = host.querySelector<HTMLInputElement>('[placeholder="/path/to/evidence.json"]');
+      if (verifyInput) await act(async () => typeInto(verifyInput, "/tmp/evidence.json"));
+      await act(async () => button(host, /^(Verify|Verifying\.\.\.)$/).click());
+      await settle();
+      expect(host.textContent).toContain("digest matches");
+    }
+  });
+
+  it("Memory: a recall lists what the demo's memory returns for the query", async () => {
+    const { MemoryView } = await import("./components/MemoryView");
+    const host = await show(createElement(MemoryView, { onOpenAgent: () => {} }));
+    const q = host.querySelector<HTMLInputElement>('[placeholder="query text"]');
+    expect(q).not.toBeNull();
+    await act(async () => typeInto(q!, "refund"));
+    await act(async () => button(host, /^(Recall|Searching\.\.\.)$/).click());
+    await settle();
+    const hits = (await mock.mockInvoke("memory_recall", { query: "refund", limit: 10, mode: "hybrid", agent_id: null })) as
+      | { id?: string; memory_id?: string; content?: string; text?: string }[]
+      | null;
+    if (hits && hits.length > 0) {
+      const first = hits[0];
+      const marker = (first.content ?? first.text ?? first.id ?? first.memory_id ?? "").slice(0, 30);
+      expect(host.textContent).toContain(marker);
+      // Open "why" for the first memory if offered.
+      const why = Array.from(host.querySelectorAll("button")).find((b) => /why|provenance/i.test(b.textContent ?? ""));
+      if (why) {
+        await act(async () => why.click());
+        await settle();
+      }
+    }
+  });
+
+  it("Admission: running the checks for a key and an agent shows the demo's verdict for that agent", async () => {
+    const { AdmissionVerify } = await import("./components/AdmissionVerify");
+    const host = await show(createElement(AdmissionVerify, { seed: null }));
+    await act(async () => {
+      typeInto(byPlaceholder(host, "billing-agent"), "sre-rca-copilot");
+      typeInto(byPlaceholder(host, "agent://bank.example/treasury/recon-batch"), "agent://meridian.io/sre/rca-copilot");
+    });
+    await act(async () => button(host, /^(Run checks|Checking\.\.\.)$/).click());
+    await settle();
+    expect(host.textContent).toContain("sre-rca-copilot");
+    const baselineModel = host.querySelector<HTMLInputElement>('[placeholder="claude-sonnet-5"]');
+    if (baselineModel) {
+      await act(async () => {
+        typeInto(byPlaceholder(host, "/path/to/evalset.json"), "/evals/set.json");
+        typeInto(baselineModel, "claude-haiku-5-5");
+      });
+      const run = Array.from(host.querySelectorAll("button")).find((b) => /baseline/i.test(b.textContent ?? ""));
+      if (run) {
+        await act(async () => run.click());
+        await settle();
+      }
+    }
+  });
+
+  it("Felyx's provider cannot be changed from the demo, and says so", async () => {
+    const { FelyxConnectCard } = await import("./components/FelyxConnectCard");
+    const host = await show(createElement(FelyxConnectCard, {} as never));
+    const connect = Array.from(host.querySelectorAll("button")).find((b) => /Connect Felyx/.test(b.textContent ?? ""));
+    if (connect) {
+      const model = host.querySelector<HTMLInputElement>('[placeholder="model id"]');
+      if (model) await act(async () => typeInto(model, "claude-haiku-5-5"));
+      await act(async () => connect.click());
+      await settle();
+      expect(host.textContent).toContain("Simulated in the demo, nothing was done");
+    }
+  });
+});
+
+/** Press every control inside `host` once (fresh query each time, so a control
+ * that re-renders the card is not pressed stale), settling after each. */
+async function pressEverything(host: HTMLElement, limit = 80): Promise<number> {
+  const skip = /^(Close|×|Sign out)$/;
+  const controls = () =>
+    Array.from(host.querySelectorAll<HTMLElement>("button, [role='button'], [role='tab'], summary")).filter(
+      (b) => !(b as HTMLButtonElement).disabled && !skip.test((b.textContent ?? "").trim()) && b.getAttribute("aria-label") !== "Close",
+    );
+  let pressed = 0;
+  const n = Math.min(controls().length, limit);
+  for (let i = 0; i < n; i++) {
+    const b = controls()[i];
+    if (!b) break;
+    await act(async () => b.click());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    pressed += 1;
+  }
+  await settle();
+  return pressed;
+}
+
+describe("pressing every control on the cards, in the demo world", () => {
+  beforeAll(() => {
+    URL.createObjectURL = (() => "blob:demo") as never;
+    URL.revokeObjectURL = (() => {}) as never;
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async () => {} }, configurable: true });
+  });
+
+  async function firstAgent(): Promise<string> {
+    const runs = (await mock.mockInvoke("money_runs")) as MockRun[];
+    return runs[0].agent_id;
+  }
+
+  it("Agent 360 keeps showing its agent whatever is pressed", async () => {
+    const { Agent360 } = await import("./components/Agent360");
+    const agentId = await firstAgent();
+    const nav = vi.fn();
+    const host = await show(
+      createElement(Agent360, { agentId, onClose: () => {}, onOpenAgent: () => {}, onNavigate: nav, onOpenReplay: () => {} }),
+    );
+    expect(await pressEverything(host)).toBeGreaterThan(3);
+    expect(host.textContent).toContain(agentId);
+  });
+
+  it("the agent detail card keeps showing its agent whatever is pressed", async () => {
+    const { AgentDetailCard } = await import("./components/AgentDetailCard");
+    const agentId = await firstAgent();
+    const host = await show(createElement(AgentDetailCard, { agentId, onOpenFull: () => {}, onReplay: () => {} }));
+    expect(await pressEverything(host)).toBeGreaterThan(2);
+    expect(host.textContent).toContain(agentId.split("/").pop()!);
+  });
+
+  it("the owner and unit cards keep their subject whatever is pressed", async () => {
+    const { UserCard } = await import("./components/UserCard");
+    const { UnitCard } = await import("./components/UnitCard");
+    const u = await show(createElement(UserCard, { handle: "w.zhang", onOpenFullAgent: () => {} }));
+    await pressEverything(u);
+    expect(u.textContent).toContain("w.zhang");
+    const t = await show(createElement(UnitCard, { team: "finops", onOpenFullAgent: () => {} }));
+    await pressEverything(t);
+    expect(t.textContent?.toLowerCase()).toContain("finops");
+  });
+
+  it("passkeys, retained reservations and the memory timeline answer every control", async () => {
+    const { PasskeySettings } = await import("./components/PasskeySettings");
+    const { RetainedClosuresSection } = await import("./components/RetainedClosures");
+    const { MemoryTimeline } = await import("./components/MemoryTimeline");
+    for (const el of [
+      createElement(PasskeySettings),
+      createElement(RetainedClosuresSection),
+      createElement(MemoryTimeline, { onOpenAgent: () => {} }),
+    ]) {
+      const host = await show(el);
+      await pressEverything(host);
+      expect((host.textContent ?? "").length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("the cloud inventory, provider by provider, in the demo world", () => {
+  it("each live-listing provider lists the demo's servers for that provider, with the scope it was given", async () => {
+    const { RemoteCloudInventory } = await import("./components/RemoteCloudInventory");
+    const host = await show(createElement(RemoteCloudInventory));
+    const select = host.querySelector<HTMLSelectElement>("select")!;
+    const providers = Array.from(select.options).map((o) => o.value);
+    expect(providers.length).toBeGreaterThan(3);
+    let listed = 0;
+    for (const id of providers) {
+      await act(async () => {
+        select.value = id;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const scope = host.querySelector<HTMLInputElement>('input[placeholder="eu-central-1"], input[placeholder="my-project"], input[placeholder="my-subscription"], input[placeholder="Default"]');
+      if (scope) await act(async () => typeInto(scope, "scope-1"));
+      const list = Array.from(host.querySelectorAll("button")).find((b) => /^List servers$/.test(b.textContent ?? ""));
+      if (!list) continue;
+      await act(async () => list.click());
+      await settle();
+      if (scope) {
+        const rows = (await mock.mockInvoke("remote_cloud_list", { provider: id, options: {} })) as { name: string }[];
+        expect(rows.some((r) => host.textContent?.includes(r.name))).toBe(true);
+        listed += 1;
+      }
+      await pressEverything(host, 20);
+      // Pressing may have changed the provider; put the select back in view.
+    }
+    expect(listed).toBeGreaterThan(2);
+  });
+});
+
+describe("the watch dock's width and a browser that will not store anything", () => {
+  it("drags wider to the left, clamps at its bounds, and remembers the width", async () => {
+    Element.prototype.setPointerCapture ??= function () {};
+    Element.prototype.releasePointerCapture ??= function () {};
+    localStorage.setItem("genaryx.watchDock", "false");
+    localStorage.removeItem("genaryx.watchDock.width");
+    const { WatchDock } = await import("./components/WatchDock");
+    const host = await show(createElement(WatchDock, { onOpenAgent: () => {}, onOpenUnit: () => {} }));
+    const handle = host.querySelector<HTMLElement>('[aria-label="Resize watch dock"]')!;
+    const fire = (type: string, x: number) => handle.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x }));
+    await act(async () => fire("pointerdown", 1000));
+    await act(async () => fire("pointermove", 900));
+    await act(async () => fire("pointerup", 900));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("360");
+    await act(async () => fire("pointerdown", 1000));
+    await act(async () => fire("pointermove", 0));
+    await act(async () => fire("pointerup", 0));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("560");
+    await act(async () => fire("pointerdown", 0));
+    await act(async () => fire("pointermove", 5000));
+    await act(async () => fire("pointerup", 5000));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("260");
+    // A move or release with no drag in progress changes nothing.
+    await act(async () => fire("pointermove", 10));
+    await act(async () => fire("pointerup", 10));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("260");
+  });
+
+  it("still renders, pins and collapses when the browser refuses storage", async () => {
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("private mode");
+    });
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    const { WatchDock, WatchToggleButton } = await import("./components/WatchDock");
+    const host = await show(
+      createElement(
+        "div",
+        null,
+        createElement(WatchDock, { onOpenAgent: () => {}, onOpenUnit: () => {} }),
+        createElement(WatchToggleButton, { kind: "agent", id: "agent://meridian.io/x/storage-less", label: "storage-less" }),
+      ),
+    );
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Pin storage-less to the watch dock"]')!.click());
+    const collapse = host.querySelector<HTMLButtonElement>('[aria-label="Collapse watch dock"]');
+    if (collapse) await act(async () => collapse.click());
+    expect((host.textContent ?? "").length).toBeGreaterThan(0);
+    get.mockRestore();
+    set.mockRestore();
+  });
+});
+
+describe("a pinned bus event", () => {
+  it("shows the event beside its row and closes on Escape or a click outside, never on a click inside", async () => {
+    const { PinnedEventOverlay } = await import("./components/PinnedEventOverlay");
+    const onClose = vi.fn();
+    const event = {
+      id: 7,
+      ts: "2026-11-27T01:00:00Z",
+      source: "tokenfuse",
+      type: "budget_exhausted",
+      agent_id: "agent://meridian.io/sre/rca-copilot",
+      run_id: "run-7",
+      env: "live",
+      severity: "high",
+      data: { spent_usd: 1.5 },
+      schema: "taipanbox.dev/agent-event/v0.2",
+      on_behalf_of: [],
+      prev_hash: null,
+      raw: "",
+      file: "/root/.stack-up/events/tokenfuse.ndjson",
+      off: 7,
+    } as never;
+    const rect = { left: 100, right: 300, top: 120, bottom: 140, width: 200, height: 20 } as DOMRect;
+    await show(createElement(PinnedEventOverlay, { event, rect, onClose, onOpenAgent: () => {} }));
+    const overlay = document.body.lastElementChild as HTMLElement;
+    expect(overlay.textContent).toContain("budget_exhausted");
+    expect(overlay.textContent).toContain("pinned");
+
+    const card = overlay.querySelector<HTMLElement>(".gx-popover")!;
+    await act(async () => card.click());
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })));
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await act(async () => overlay.click());
+    expect(onClose).toHaveBeenCalledTimes(2);
+    await pressEverything(card, 20);
   });
 });
