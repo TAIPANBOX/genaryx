@@ -46,6 +46,16 @@ const crashes: string[] = [];
 beforeAll(() => {
   vi.stubGlobal("ResizeObserver", Inert);
   vi.stubGlobal("IntersectionObserver", Inert);
+  // The sign-in session is not a command: it is a plain GET the gate makes.
+  // Here the box still answers it (signed in, viewer), so what is under test
+  // is the commands refusing, not the session read. (A session read that
+  // fails outright is not caught by lib/useSession.ts today.)
+  vi.stubGlobal("fetch", async () =>
+    new Response(
+      JSON.stringify({ configured: true, signed_in: true, user: "ops", role: "viewer", method: "local", oidc_available: false }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
   Element.prototype.scrollIntoView ??= function () {};
   Element.prototype.scrollTo ??= function () {} as never;
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
