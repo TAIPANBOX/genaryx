@@ -1545,6 +1545,18 @@ mod tests {
         }
     }
 
+    /// Dispatch arguments that cannot decode: `decode` answers through the
+    /// `Err` side with its own 400, before any plane is touched.
+    async fn refused(ctx: &Arc<Ctx>, name: &str, args: Value) -> Answer {
+        match dispatch(ctx, name, args).await {
+            Ok(resp) => panic!(
+                "{name} accepted arguments it cannot decode ({})",
+                resp.status()
+            ),
+            Err(resp) => answer_of(resp).await,
+        }
+    }
+
     #[tokio::test]
     async fn every_command_on_a_pending_plane_answers_422_bootstrapping() {
         let ctx = pending_ctx();
@@ -2078,7 +2090,7 @@ mod tests {
             "run_events",
         ];
         for name in needs_args {
-            let a = run(&ctx, name, json!({})).await;
+            let a = refused(&ctx, name, json!({})).await;
             assert_eq!(a.status, StatusCode::BAD_REQUEST, "{name}: {}", a.body);
             assert_eq!(a.body["error"], "bad arguments", "{name}");
             assert!(
@@ -2111,7 +2123,7 @@ mod tests {
                 json!({ "incident_id": "bus:1", "per_run_usd": true }),
             ),
         ] {
-            let a = run(&ctx, name, args).await;
+            let a = refused(&ctx, name, args).await;
             assert_eq!(a.status, StatusCode::BAD_REQUEST, "{name}: {}", a.body);
             assert_eq!(a.body["error"], "bad arguments", "{name}");
         }
