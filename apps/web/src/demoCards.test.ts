@@ -314,3 +314,59 @@ describe("Felyx in the demo world", () => {
     expect(host.textContent).toContain(expected.text.slice(0, 60));
   });
 });
+
+describe("the watch dock in the demo world", () => {
+  it("seeds the demo's pins once, pins and unpins from a toggle, collapses, and opens what is pinned", async () => {
+    const { WatchDock, WatchToggleButton } = await import("./components/WatchDock");
+    const onOpenAgent = vi.fn();
+    const onOpenUnit = vi.fn();
+    const seeded = "agent://meridian.io/sre/rca-copilot";
+    const host = await show(
+      createElement(
+        "div",
+        null,
+        createElement(WatchDock, { onOpenAgent, onOpenUnit }),
+        createElement(WatchToggleButton, { kind: "agent", id: "agent://meridian.io/data/new-bot", label: "new-bot" }),
+        createElement(WatchToggleButton, { kind: "unit", id: "treasury", label: "treasury" }),
+        createElement(WatchToggleButton, { kind: "user", id: "a.new", label: "a.new" }),
+      ),
+    );
+    expect(JSON.parse(localStorage.getItem("genaryx.watch.agents") ?? "[]")).toContain(seeded);
+    const dock = () => host.querySelector<HTMLElement>('[aria-label="Watch dock"]');
+    expect(dock()).not.toBeNull();
+
+    // Pin three new things from their toggles; each shows in the dock and is persisted.
+    for (const label of ["new-bot", "treasury", "a.new"]) {
+      const pin = host.querySelector<HTMLButtonElement>(`[aria-label="Pin ${label} to the watch dock"]`)!;
+      expect(pin.getAttribute("aria-pressed")).toBe("false");
+      await act(async () => pin.click());
+      const now = host.querySelector<HTMLButtonElement>(`[aria-label="Unpin ${label} from the watch dock"]`)!;
+      expect(now.getAttribute("aria-pressed")).toBe("true");
+    }
+    await settle();
+    expect(localStorage.getItem("genaryx.watch.agents")).toContain("agent://meridian.io/data/new-bot");
+
+    // Unpin one from the dock itself.
+    const unpin = host.querySelector<HTMLButtonElement>('[aria-label^="Unpin "]:not([aria-pressed])');
+    expect(unpin).not.toBeNull();
+    const before = (localStorage.getItem("genaryx.watch.agents") ?? "") + (localStorage.getItem("genaryx.watch.units") ?? "");
+    await act(async () => unpin!.click());
+    const after = (localStorage.getItem("genaryx.watch.agents") ?? "") + (localStorage.getItem("genaryx.watch.units") ?? "");
+    expect(after.length).toBeLessThan(before.length);
+
+    // Collapse and expand, remembered across a reload of the dock.
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Collapse watch dock"]')!.click());
+    expect(host.querySelector('[aria-label="Watch dock (collapsed)"]')).not.toBeNull();
+    expect(localStorage.getItem("genaryx.watchDock")).toBe("true");
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Expand watch dock"]')!.click());
+    expect(dock()).not.toBeNull();
+
+    // Opening a pinned agent hands its id to the shell.
+    const openers = Array.from(dock()!.querySelectorAll<HTMLElement>("button, [role='button']")).filter(
+      (b) => !(b.getAttribute("aria-label") ?? "").match(/^(Unpin|Collapse|Expand|Resize)/),
+    );
+    for (const b of openers) await act(async () => b.click());
+    await settle();
+    expect(onOpenAgent.mock.calls.length + onOpenUnit.mock.calls.length).toBeGreaterThan(0);
+  });
+});

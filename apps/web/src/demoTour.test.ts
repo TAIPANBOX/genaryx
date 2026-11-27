@@ -179,4 +179,26 @@ describe("the demo console, view by view", () => {
     const values = ids.flatMap((i) => Object.values(i).filter((x): x is string => typeof x === "string" && x.length > 6));
     expect(values.some((v) => text.includes(v))).toBe(true);
   });
+
+  it("each incident on the Incidents tab opens its Incident 360 over the console, which closes again", async () => {
+    await act(async () => navButton("Incidents").click());
+    await settle();
+    const rows = () => Array.from(document.querySelectorAll<HTMLElement>(".d-arow.clk[role='button']"));
+    const count = rows().length;
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < Math.min(count, 6); i++) {
+      const row = rows()[i];
+      const title = (row.querySelector(".m")?.textContent ?? "").trim();
+      await act(async () => row.click());
+      await settle();
+      const close = document.querySelector<HTMLButtonElement>('[aria-label="Close Incident 360"]');
+      expect(close).not.toBeNull();
+      const overlay = close!.parentElement!;
+      const words = title.split(/\s+/).filter((w) => w.length > 4).slice(0, 2);
+      for (const w of words) expect(overlay.textContent).toContain(w);
+      await act(async () => close!.click());
+      expect(document.querySelector('[aria-label="Close Incident 360"]')).toBeNull();
+    }
+    expect(crashes).toEqual([]);
+  });
 });
