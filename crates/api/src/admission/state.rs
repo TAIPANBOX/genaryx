@@ -278,4 +278,38 @@ mod tests {
             .expect("connect must succeed against a mock 200");
         let _ = client;
     }
+
+    #[tokio::test]
+    async fn any_other_failed_probe_carries_the_gateways_own_status_and_body() {
+        let port = spawn_mock_gateway(
+            "HTTP/1.1 500 Internal Server Error",
+            r#"{"error":"store locked"}"#,
+        );
+        let resolved = ResolvedEnv {
+            source: EnvSource::Taipan {
+                name: "test".to_string(),
+            },
+            gateway_url: format!("http://127.0.0.1:{port}"),
+            admin_key: None,
+        };
+        let err = connect(&resolved)
+            .await
+            .expect_err("a 500 must fail connect");
+        assert_eq!(
+            err,
+            r#"gateway returned HTTP 500: {"error":"store locked"}"#
+        );
+    }
+
+    #[test]
+    fn the_two_key_problems_are_described_in_the_operators_terms() {
+        let unauthorized = describe(GatewayError::Unauthorized);
+        assert!(unauthorized.starts_with("the gateway refused the console's key"));
+        let required = describe(GatewayError::AdminKeysRequired);
+        assert!(required.contains("non-loopback"));
+        assert_eq!(
+            describe(GatewayError::ResponseTooLarge { limit: 10 }),
+            "the gateway's response exceeded 10 bytes; refused to read further"
+        );
+    }
 }

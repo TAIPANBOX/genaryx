@@ -1045,4 +1045,223 @@ mod tests {
             "refused calls were counted as calls of the model they named: {got:?}"
         );
     }
+
+    // ---- hostile CLI output -----------------------------------------------
+
+    #[test]
+    fn an_amount_that_is_not_a_dollar_figure_is_refused_not_guessed() {
+        for bad in [
+            "",
+            "$",
+            "$.5",
+            "1.00",
+            "$-1",
+            "$1.2.3",
+            "$1.x",
+            "$ 1",
+            "$1e3",
+            "USD 1",
+            "$99999999999999999999",
+        ] {
+            assert_eq!(
+                parse_usd_to_microusd(bad),
+                None,
+                "{bad:?} was read as money"
+            );
+        }
+        assert_eq!(parse_usd_to_microusd("-$1.5"), Some(-1_500_000));
+        assert_eq!(parse_usd_to_microusd("  $12 "), Some(12_000_000));
+        assert_eq!(
+            parse_usd_to_microusd("$0.1234567"),
+            Some(123_456),
+            "truncated, not rounded"
+        );
+        assert_eq!(parse_usd_to_microusd("$3.000001"), Some(3_000_001));
+        assert_eq!(parse_usd_to_microusd("$7."), Some(7_000_000));
+    }
+
+    /// The `detail` of a savings parse failure, after checking it is one.
+    fn savings_failure(text: &str) -> String {
+        match parse_savings_text(text) {
+            Err(TokenfuseError::Parse { command, detail }) => {
+                assert_eq!(command, "savings");
+                detail
+            }
+            other => panic!("expected a parse failure for {text:?}, got {other:?}"),
+        }
+    }
+
+    const HEADER: &str = "TokenFuse savings - from /tmp/t\n";
+    const CACHE: &str = "  cache saved:             $0.000000\n";
+    const ROUTER: &str = "  router saved:            $0.000000\n";
+
+    fn with_runaway(runaway: &str) -> String {
+        format!("{HEADER}  runaway spend stopped:   {runaway}\n{CACHE}{ROUTER}")
+    }
+
+    #[test]
+    fn every_malformed_savings_line_is_named_in_the_failure() {
+        assert_eq!(savings_failure(""), "empty output");
+        let cases = [
+            ("$1.000000", "no `(...)` clause in runaway line"),
+            (
+                "$x (1 blocked call(s) across 1 budget break(s))",
+                "could not parse USD amount in runaway line",
+            ),
+            (
+                "$1.0 (1 blocked call(s) across 1 budget break(s",
+                "runaway line clause missing its closing paren",
+            ),
+            (
+                "$1.0 (many blocked call(s) across 1 budget break(s))",
+                "could not read the blocked-call count",
+            ),
+            (
+                "$1.0 (1 blocked call(s) over 1 budget break(s))",
+                "expected the word \"across\"",
+            ),
+            (
+                "$1.0 (1 blocked across)",
+                "could not read the budget-break count",
+            ),
+            (
+                "$1.0 (1 blocked call(s) across some budget break(s))",
+                "could not read the budget-break count",
+            ),
+        ];
+        for (runaway, want) in cases {
+            let detail = savings_failure(&with_runaway(runaway));
+            assert!(detail.starts_with(want), "{runaway:?}: {detail}");
+        }
+
+        let runaway =
+            "  runaway spend stopped:   $1.0   (1 blocked call(s) across 1 budget break(s))\n";
+        let detail = savings_failure(&format!("{HEADER}{runaway}  cache saved: free\n{ROUTER}"));
+        assert!(
+            detail.starts_with("could not parse USD amount in cache-saved line"),
+            "{detail}"
+        );
+        let detail = savings_failure(&format!("{HEADER}{runaway}{CACHE}  router saved: $-\n"));
+        assert!(
+            detail.starts_with("could not parse USD amount in router-saved line"),
+            "{detail}"
+        );
+        let detail = savings_failure(&format!(
+            "{HEADER}{runaway}{CACHE}{ROUTER}    budget exceeded  $1.0\n"
+        ));
+        assert!(
+            detail.starts_with("unrecognized savings output line"),
+            "{detail}"
+        );
+        let detail = savings_failure(&format!(
+            "{HEADER}{runaway}{CACHE}{ROUTER}    budget_exceeded  1.0\n"
+        ));
+        assert!(
+            detail.starts_with("could not parse USD amount in reason line"),
+            "{detail}"
+        );
+        let detail = savings_failure(&format!("{HEADER}{CACHE}{ROUTER}"));
+        assert!(detail.starts_with("missing one of the three"), "{detail}");
+    }
+
+    #[test]
+    fn a_report_with_nothing_blocked_has_no_reasons_and_blank_lines_are_skipped() {
+        let text = format!(
+            "{HEADER}\n  runaway spend stopped:   $0.000000   (0 blocked call(s) across 0 budget break(s))\n\n{CACHE}{ROUTER}\n"
+        );
+        let s = parse_savings_text(&text).expect("a quiet report parses");
+        assert_eq!(
+            s,
+            TokenfuseSavings {
+                trace_data_found: true,
+                ..Default::default()
+            }
+        );
+    }
+
+    fn sql_failure(text: &str) -> String {
+        match parse_cost_rows(text, "model") {
+            Err(TokenfuseError::Parse { command, detail }) => {
+                assert_eq!(command, "sql");
+                detail
+            }
+            other => panic!("expected a parse failure, got {other:?}"),
+        }
+    }
+
+    const COST_HEADER: &str =
+        "| calls | model | total_cost_microusd | tool_calls_known_rows | total_tool_calls |\n";
+
+    #[test]
+    fn a_cost_row_that_is_short_or_not_numeric_is_named_in_the_failure() {
+        let cases = [
+            ("| 3 | m-a |\n", "is shorter than the header"),
+            ("| x | m-a | 1 | 1 | 1 |\n", "non-numeric `calls` cell"),
+            ("| -1 | m-a | 1 | 1 | 1 |\n", "non-numeric `calls` cell"),
+            (
+                "| 3 | m-a | 1.5 | 1 | 1 |\n",
+                "non-numeric `total_cost_microusd` cell",
+            ),
+            (
+                "| 3 | m-a | 1 | 1 | many |\n",
+                "non-numeric `total_tool_calls` cell",
+            ),
+            (
+                "| 3 | m-a | 1 | ? | 1 |\n",
+                "non-numeric `tool_calls_known_rows` cell",
+            ),
+        ];
+        for (row, want) in cases {
+            let detail = sql_failure(&format!("{COST_HEADER}{row}"));
+            assert!(detail.contains(want), "{row:?}: {detail}");
+        }
+    }
+
+    #[test]
+    fn cost_columns_are_found_by_name_whatever_their_order() {
+        let text = format!(
+            "+---+\n{COST_HEADER}+---+\n| 3 | m-b | -10 | 2 | 3 |\n| 1 | m-a | 50 | 1 | 0 |\n+---+\n"
+        );
+        let rows = parse_cost_rows(&text, "model").expect("reordered columns parse");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0],
+            CostBreakdownRow {
+                label: "m-b".into(),
+                calls: 3,
+                total_cost_microusd: -10,
+                total_tool_calls: 3,
+                tool_calls_known_rows: 2,
+                cost_per_tool_call_microusd: Some(-3),
+            }
+        );
+        assert_eq!(
+            rows[1].cost_per_tool_call_microusd, None,
+            "known rows but zero tool calls is no rate"
+        );
+        let detail =
+            sql_failure(&format!("{COST_HEADER}| 1 | m | 1 | 1 | 1 |\n").replace("model", "label"));
+        assert!(
+            detail.contains("missing expected column `model`"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn every_tokenfuse_error_says_which_command_failed() {
+        let cli = TokenfuseError::Cli {
+            command: "sql",
+            code: 0,
+            stderr: "sql error: x".into(),
+        };
+        assert_eq!(cli.to_string(), "tokenfuse sql exited 0: sql error: x");
+        let parse = TokenfuseError::Parse {
+            command: "savings",
+            detail: "empty output".into(),
+        };
+        assert_eq!(
+            parse.to_string(),
+            "could not parse tokenfuse savings output: empty output"
+        );
+    }
 }

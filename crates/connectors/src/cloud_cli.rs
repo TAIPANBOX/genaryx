@@ -1001,4 +1001,166 @@ mod tests {
             other => panic!("expected CliNotFound, got {other:?}"),
         }
     }
+
+    // ---- a stand-in CLI: what run_cli does with each way a CLI can end -----
+
+    /// An executable `/bin/sh` script standing in for a cloud CLI, by
+    /// absolute path (never a real `aws`/`gcloud`/`az`/`ibmcloud`), and the
+    /// directory to remove afterwards.
+    fn stand_in(body: &str) -> (&'static str, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt as _;
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "gx-cloudcli-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let bin = dir.join("fake-cloud-cli");
+        std::fs::write(&bin, format!("#!/bin/sh\n{body}")).expect("write");
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        // `run_cli` takes the CLI name as `&'static str`; a test leaks one path.
+        let cli: &'static str = Box::leak(bin.display().to_string().into_boxed_str());
+        (cli, dir)
+    }
+
+    /// `run_cli`, again while a script written a moment ago was only refused
+    /// as "text file busy" by another test forking in parallel.
+    fn run_settled(cli: &'static str, args: &[String]) -> Result<Vec<u8>, CloudCliError> {
+        for _ in 0..50 {
+            let r = run_cli(cli, args);
+            let busy = matches!(
+                &r,
+                Err(CloudCliError::Exec { code: None, stderr, .. })
+                    if stderr.to_lowercase().contains("text file busy")
+            );
+            if !busy {
+                return r;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        run_cli(cli, args)
+    }
+
+    #[test]
+    fn a_cli_that_succeeds_hands_back_its_stdout_and_got_exactly_its_args() {
+        let (cli, dir) = stand_in("printf '%s\\n' \"$@\"\n");
+        let args = build_args(CloudProvider::Aws, &CloudListOptions::default());
+        let out = run_settled(cli, &args);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(
+            String::from_utf8(out.expect("success")).unwrap(),
+            "ec2\ndescribe-instances\n--output\njson\n"
+        );
+    }
+
+    #[test]
+    fn a_cli_that_says_it_is_not_logged_in_is_not_authenticated() {
+        let (cli, dir) = stand_in("echo 'ERROR: You are not logged in' >&2\nexit 1\n");
+        let r = run_settled(cli, &[]);
+        std::fs::remove_dir_all(&dir).ok();
+        match r {
+            Err(CloudCliError::NotAuthenticated { cli: got, hint }) => {
+                assert_eq!(got, cli);
+                assert_eq!(hint, format!("authenticate the `{cli}` CLI"));
+            }
+            other => panic!("expected NotAuthenticated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn any_other_failure_carries_its_exit_code_and_stderr() {
+        let (cli, dir) = stand_in("echo 'InvalidParameterValue: bad region' >&2\nexit 254\n");
+        let r = run_settled(cli, &[]);
+        std::fs::remove_dir_all(&dir).ok();
+        match r {
+            Err(CloudCliError::Exec { code, stderr, .. }) => {
+                assert_eq!(code, Some(254));
+                assert_eq!(stderr, "InvalidParameterValue: bad region");
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_cli_gets_its_own_sign_in_hint() {
+        assert_eq!(auth_hint("aws"), "run `aws configure` (or set AWS_PROFILE)");
+        assert_eq!(auth_hint("gcloud"), "run `gcloud auth login`");
+        assert_eq!(auth_hint("az"), "run `az login`");
+        assert!(auth_hint("ibmcloud").starts_with("run `ibmcloud login`"));
+        assert_eq!(auth_hint("oci"), "authenticate the `oci` CLI");
+        for (p, name) in [
+            (CloudProvider::Aws, "aws"),
+            (CloudProvider::Gcp, "gcloud"),
+            (CloudProvider::Azure, "az"),
+            (CloudProvider::Ibm, "ibmcloud"),
+        ] {
+            assert_eq!(p.cli_name(), name);
+        }
+        assert_eq!(
+            CloudCliError::NotAuthenticated {
+                cli: "az".into(),
+                hint: auth_hint("az"),
+            }
+            .to_string(),
+            "az: not authenticated - run `az login`"
+        );
+    }
+
+    #[test]
+    fn hostile_shapes_parse_to_what_is_there_and_never_invent_a_field() {
+        // A non-array where an array belongs is no rows, not a failure.
+        assert!(parse_aws(r#"{"Reservations": 5}"#).unwrap().is_empty());
+        assert!(
+            parse_aws(r#"{"Reservations":[{"Instances":"x"}]}"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(parse_gcp(r#"{"items": []}"#).unwrap().is_empty());
+        assert!(parse_azure("{}").unwrap().is_empty());
+        assert!(parse_ibm("null").unwrap().is_empty());
+
+        // An instance with nothing in it is listed with nothing invented.
+        let bare = parse_aws(r#"{"Reservations":[{"Instances":[{"InstanceId": 123, "Tags": [{"Key":"Env","Value":"x"}]}]}]}"#)
+            .unwrap();
+        assert_eq!(bare.len(), 1);
+        assert_eq!(bare[0].id, "123", "a numeric id is kept as its digits");
+        assert_eq!((bare[0].name.as_str(), bare[0].status.as_str()), ("", ""));
+        assert_eq!(
+            (bare[0].public_ip.clone(), bare[0].private_ip.clone()),
+            (None, None)
+        );
+
+        let gcp = parse_gcp(r#"[{"id":"1","name":"g","networkInterfaces":[{"networkIP":"","accessConfigs":[{"natIP":""}]}],"machineType":"e2-small"}]"#)
+            .unwrap();
+        assert_eq!(
+            (gcp[0].public_ip.clone(), gcp[0].private_ip.clone()),
+            (None, None)
+        );
+        assert_eq!(
+            gcp[0].server_type, "e2-small",
+            "a bare name has no path to strip"
+        );
+
+        let az =
+            parse_azure(r#"[{"name":"vm-1","vmId":"","publicIps":"","privateIps":"10.0.0.4"}]"#)
+                .unwrap();
+        assert_eq!(az[0].id, "vm-1", "no vmId falls back to the name");
+        assert_eq!(az[0].public_ip, None);
+        assert_eq!(az[0].private_ip.as_deref(), Some("10.0.0.4"));
+        assert_eq!(az[0].server_type, "");
+
+        let ibm = parse_ibm(r#"[{"id":"i","primary_network_interface":{"primary_ip":{"address":"10.1.0.5"},"floating_ips":[]}}]"#)
+            .unwrap();
+        assert_eq!(
+            ibm[0].public_ip.as_deref(),
+            Some("10.1.0.5"),
+            "no floating IP falls back to the private one"
+        );
+        let none = parse_ibm(r#"[{"id":"i"}]"#).unwrap();
+        assert_eq!(
+            (none[0].public_ip.clone(), none[0].private_ip.clone()),
+            (None, None)
+        );
+    }
 }

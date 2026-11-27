@@ -379,4 +379,35 @@ mod tests {
             other => panic!("expected a fail-closed error, got {other:?}"),
         }
     }
+
+    #[test]
+    fn the_default_port_is_pinned_under_the_bare_host_name() {
+        let mut t = target();
+        t.port = 22;
+        t.pinned_host_key = "  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItestkeynotreal  ".into();
+        assert_eq!(
+            known_hosts_line(&t),
+            "203.0.113.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItestkeynotreal\n",
+            "OpenSSH looks a port-22 host up without brackets"
+        );
+        let args = base_ssh_args(&t, Path::new("/k"));
+        assert_eq!(args[args.len() - 2..], ["22", "root@203.0.113.7"]);
+    }
+
+    #[test]
+    fn a_pin_that_cannot_be_written_is_its_own_error_naming_the_path() {
+        let path = Path::new("/nonexistent/genaryx-ssh-test/known_hosts");
+        match write_pinned_known_hosts(path, "h k\n") {
+            Err(SshError::Pin { path: p, .. }) => assert_eq!(p, path.display().to_string()),
+            other => panic!("expected a Pin error, got {other:?}"),
+        }
+        assert_eq!(
+            SshError::Remote {
+                code: 255,
+                stderr: "Host key verification failed.".into(),
+            }
+            .to_string(),
+            "ssh remote exited 255: Host key verification failed."
+        );
+    }
 }

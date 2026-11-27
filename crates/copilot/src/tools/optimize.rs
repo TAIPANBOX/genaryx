@@ -313,4 +313,91 @@ mod tests {
             .expect("tokenfuse is installed but cost_per_action errored");
         assert!(cost["by_model"].as_array().is_some_and(|a| !a.is_empty()));
     }
+
+    // ---- through the blocking bridge, against a stand-in `tokenfuse` -------
+
+    /// Prints a fixed savings report for `savings`, and for `sql` one table
+    /// carrying both label columns, so either fixed query parses it.
+    const STAND_IN: &str = r##"#!/bin/sh
+if [ "$1" = "savings" ]; then cat <<'EOF'
+TokenFuse savings - from the trace
+  runaway spend stopped:   $3.500000   (3 blocked call(s) across 2 budget break(s))
+  cache saved:             $0.750000
+  router saved:            $0.100000
+    budget_exceeded  $3.500000
+EOF
+exit 0
+fi
+cat <<'EOF'
+| model | agent_id                 | calls | total_cost_microusd | total_tool_calls | tool_calls_known_rows |
+| m-a   | agent://acme.example/bot | 4     | 2000000             | 5                | 4                     |
+EOF
+"##;
+
+    fn clients_with_stand_in() -> (Clients, PathBuf) {
+        use std::os::unix::fs::PermissionsExt as _;
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "gx-copilot-optimize-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let bin = dir.join("tokenfuse");
+        std::fs::write(&bin, STAND_IN).expect("write the stand-in");
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let clients = Clients {
+            tokenfuse: Some(TokenfuseTraces {
+                bin,
+                traces_dir: dir.clone(),
+            }),
+            ..Default::default()
+        };
+        (clients, dir)
+    }
+
+    /// Run a tool, again while the stand-in written a moment ago was only
+    /// refused as "text file busy" (another test forking in parallel).
+    async fn run_settled(tool: &dyn Tool, clients: &Clients) -> Result<Value, ToolError> {
+        for _ in 0..50 {
+            let r = tool.run(clients, &json!({})).await;
+            let busy = matches!(
+                &r,
+                Err(ToolError::Connector { detail, .. })
+                    if detail.to_lowercase().contains("text file busy")
+            );
+            if !busy {
+                return r;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        tool.run(clients, &json!({})).await
+    }
+
+    #[tokio::test]
+    async fn both_tools_hand_the_model_dollars_read_off_the_real_cli_output() {
+        let (clients, dir) = clients_with_stand_in();
+        let savings = run_settled(&SavingsBreakdown, &clients)
+            .await
+            .expect("savings_breakdown");
+        let cost = run_settled(&CostPerAction, &clients)
+            .await
+            .expect("cost_per_action");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(savings["trace_data_found"], json!(true));
+        assert_eq!(savings["blocked_spend_usd"], json!(3.5));
+        assert_eq!(savings["blocked_calls"], json!(3));
+        assert_eq!(savings["budget_breaks_prevented"], json!(2));
+        assert_eq!(savings["by_reason_usd"]["budget_exceeded"], json!(3.5));
+
+        assert_eq!(cost["by_model"][0]["label"], json!("m-a"));
+        assert_eq!(cost["by_model"][0]["total_cost_usd"], json!(2.0));
+        assert_eq!(cost["by_model"][0]["cost_per_tool_call_usd"], json!(0.4));
+        assert_eq!(
+            cost["by_agent"][0]["label"],
+            json!("agent://acme.example/bot")
+        );
+        assert!(cost["by_agent"][0].get("total_cost_microusd").is_none());
+    }
 }
