@@ -764,6 +764,12 @@ describe("a pinned bus event", () => {
       env: "live",
       severity: "high",
       data: { spent_usd: 1.5 },
+      schema: "taipanbox.dev/agent-event/v0.2",
+      on_behalf_of: [],
+      prev_hash: null,
+      raw: "",
+      file: "/root/.stack-up/events/tokenfuse.ndjson",
+      off: 7,
     } as never;
     const rect = { left: 100, right: 300, top: 120, bottom: 140, width: 200, height: 20 } as DOMRect;
     await show(createElement(PinnedEventOverlay, { event, rect, onClose, onOpenAgent: () => {} }));
