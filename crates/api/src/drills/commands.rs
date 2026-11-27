@@ -280,23 +280,18 @@ mod tests {
     /// `args.log`, then runs `tail` (the report and exit code).
     #[cfg(unix)]
     fn fake_mockryx(dir: &Path, tail: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let script = dir.join("mockryx");
         let log = dir.join("args.log");
-        std::fs::write(
+        crate::test_exec::write_executable(
             &script,
-            format!(
+            &format!(
                 "#!/bin/sh\n\
                  echo \"$@\" > '{log}'\n\
                  echo \"key=$MOCKRYX_API_KEY\" >> '{log}'\n\
                  {tail}\n",
                 log = log.display()
             ),
-        )
-        .expect("write the stand-in");
-        let mut perms = std::fs::metadata(&script).expect("stat").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod");
+        );
         script
     }
 

@@ -240,8 +240,6 @@ for line in sys.stdin:
     #[cfg(unix)]
     #[tokio::test]
     async fn spawn_client_reports_ready_over_a_mock_engram_mcp_process() {
-        use std::os::unix::fs::PermissionsExt;
-
         if which_python3().is_none() {
             eprintln!("skip: python3 not found");
             return;
@@ -255,16 +253,10 @@ for line in sys.stdin:
         std::fs::create_dir_all(&dir).expect("create scratch dir");
 
         let bin_path = dir.join("mock-engram-mcp");
-        std::fs::write(
+        crate::test_exec::write_executable(
             &bin_path,
-            format!("#!/usr/bin/env python3\n{MOCK_ENGRAM_MCP_SOURCE}"),
-        )
-        .expect("write mock engram-mcp script");
-        let mut perms = std::fs::metadata(&bin_path)
-            .expect("stat mock script")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&bin_path, perms).expect("chmod mock script executable");
+            &format!("#!/usr/bin/env python3\n{MOCK_ENGRAM_MCP_SOURCE}"),
+        );
 
         let db_path = dir.join(".engram");
         std::fs::write(&db_path, b"not a real sqlite file, just needs to exist")

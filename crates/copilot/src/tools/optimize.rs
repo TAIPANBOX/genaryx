@@ -335,7 +335,6 @@ EOF
 "##;
 
     fn clients_with_stand_in() -> (Clients, PathBuf) {
-        use std::os::unix::fs::PermissionsExt as _;
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "gx-copilot-optimize-{}-{}",
@@ -344,8 +343,7 @@ EOF
         ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let bin = dir.join("tokenfuse");
-        std::fs::write(&bin, STAND_IN).expect("write the stand-in");
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        crate::test_exec::write_executable(&bin, STAND_IN);
         let clients = Clients {
             tokenfuse: Some(TokenfuseTraces {
                 bin,

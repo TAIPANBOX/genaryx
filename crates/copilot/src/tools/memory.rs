@@ -122,7 +122,6 @@ impl Tool for MemoryWhy {
 mod tests {
     use super::*;
     use genaryx_connectors::EngramClient;
-    use std::os::unix::fs::PermissionsExt as _;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
@@ -178,8 +177,7 @@ for line in sys.stdin:
         ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let bin = dir.join("engram-mcp");
-        std::fs::write(&bin, "#!/bin/sh\nexec python3 \"$0.py\" \"$@\"\n").expect("write");
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        crate::test_exec::write_executable(&bin, "#!/bin/sh\nexec python3 \"$0.py\" \"$@\"\n");
         std::fs::write(dir.join("engram-mcp.py"), ENGRAM_MCP).expect("write the server");
         // A script written a moment ago can be refused once as "text file
         // busy" while another test forks; that is the only failure retried.

@@ -3,7 +3,6 @@
 //! binary, so a test fixes exactly what the "tool" prints and how it exits,
 //! and can read back the arguments and environment it was given.
 
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -24,8 +23,7 @@ pub fn scratch_dir(tag: &str) -> PathBuf {
 /// Write an executable `/bin/sh` script named `name` into `dir`.
 pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}")).expect("write stand-in");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    crate::test_exec::write_executable(&path, &format!("#!/bin/sh\n{body}"));
     path
 }
 

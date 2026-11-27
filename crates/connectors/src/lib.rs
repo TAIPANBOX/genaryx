@@ -103,6 +103,9 @@ mod wardryx;
 mod wg;
 mod wg_uapi;
 
+#[cfg(all(test, unix))]
+mod test_exec;
+
 pub use cloud_cli::{CloudCliError, CloudListOptions, CloudProvider, CloudServer, list_servers};
 pub use cloud_rest::{
     AckResponse, AgentAgg, AgentWindowSpend, Alert, AuditVerifyResponse, BudgetResponse,

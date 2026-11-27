@@ -50,3 +50,6 @@ mod remedy_check_test;
 mod retained_close_test;
 mod standing_grant_test;
 mod stats_scale;
+
+#[path = "../../../connectors/src/test_exec.rs"]
+mod test_exec;

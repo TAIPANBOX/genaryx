@@ -1008,7 +1008,6 @@ mod tests {
     /// absolute path (never a real `aws`/`gcloud`/`az`/`ibmcloud`), and the
     /// directory to remove afterwards.
     fn stand_in(body: &str) -> (&'static str, std::path::PathBuf) {
-        use std::os::unix::fs::PermissionsExt as _;
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "gx-cloudcli-{}-{}",
@@ -1017,8 +1016,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let bin = dir.join("fake-cloud-cli");
-        std::fs::write(&bin, format!("#!/bin/sh\n{body}")).expect("write");
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        crate::test_exec::write_executable(&bin, &format!("#!/bin/sh\n{body}"));
         // `run_cli` takes the CLI name as `&'static str`; a test leaks one path.
         let cli: &'static str = Box::leak(bin.display().to_string().into_boxed_str());
         (cli, dir)
