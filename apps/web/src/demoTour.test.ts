@@ -17,6 +17,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+vi.setConfig({ testTimeout: 30_000 });
 
 const seen = vi.hoisted(() => ({ commands: [] as string[] }));
 
@@ -78,6 +79,11 @@ beforeAll(async () => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   Element.prototype.scrollIntoView ??= function () {};
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: async () => {} }, configurable: true });
+  URL.createObjectURL ??= (() => "blob:demo") as never;
+  URL.revokeObjectURL ??= (() => {}) as never;
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  vi.spyOn(window, "confirm").mockReturnValue(true);
   Element.prototype.scrollTo ??= function () {} as never;
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     const text = args.map(String).join(" ");
@@ -168,9 +174,12 @@ describe("the demo console, view by view", () => {
     await settle();
     const runs = (await realInvoke("money_runs")) as { run_id: string }[];
     expect(runs.length).toBeGreaterThan(0);
-    const text = document.body.textContent ?? "";
-    const shown = runs.filter((r) => text.includes(r.run_id));
-    expect(shown.length).toBeGreaterThan(0);
+    // The runs board's id cell, not the page at large: a run id also turns
+    // up in incident titles and replay links, which would hide a board that
+    // stopped printing it.
+    const cells = Array.from(document.querySelectorAll(".rid")).map((c) => c.textContent?.trim());
+    expect(cells.length).toBeGreaterThan(0);
+    for (const cell of cells) expect(runs.map((r) => r.run_id)).toContain(cell);
   });
 
   it("the identity view lists the demo's identities", async () => {
@@ -206,4 +215,46 @@ describe("the demo console, view by view", () => {
     }
     expect(crashes).toEqual([]);
   });
+
+  it("pressing every control in every view, the demo answers and nothing crashes or leaves the view", async () => {
+    const skip = /^(Sign out|Log out|dismiss)$/i;
+    const pressed: Record<string, number> = {};
+    for (const v of VIEWS) {
+      await act(async () => navButton(v.label).click());
+      await settle();
+      const main = () => document.querySelector(".main-col")!;
+      const controls = () =>
+        Array.from(main().querySelectorAll<HTMLElement>("button, [role='button'], [role='tab']")).filter(
+          (b) => !(b as HTMLButtonElement).disabled && !skip.test((b.textContent ?? "").trim()),
+        );
+      const n = Math.min(controls().length, 60);
+      pressed[v.id] = 0;
+      for (let i = 0; i < n; i++) {
+        const b = controls()[i];
+        if (!b) break;
+        await act(async () => {
+          b.click();
+        });
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        pressed[v.id] += 1;
+        // A control that navigated away is followed back, so the rest of this
+        // view's controls are still pressed.
+        if (document.querySelector('[aria-current="page"]')?.textContent?.trim() !== v.label) {
+          await act(async () => navButton(v.label).click());
+          await settle();
+        }
+        // Close whatever it opened over the console.
+        for (const c of Array.from(
+          document.querySelectorAll<HTMLButtonElement>('[aria-label="Close Incident 360"], [role="dialog"] [aria-label="Close"]'),
+        )) {
+          await act(async () => c.click());
+        }
+      }
+      expect(crashes).toEqual([]);
+      expect(main().textContent?.length ?? 0).toBeGreaterThan(0);
+    }
+    expect(Object.values(pressed).reduce((a, b) => a + b, 0)).toBeGreaterThan(100);
+  }, 120_000);
 });

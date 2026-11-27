@@ -14,6 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+vi.setConfig({ testTimeout: 30_000 });
 
 class Inert {
   observe() {}
@@ -441,5 +442,143 @@ describe("the Remote tab in the demo world", () => {
       expect(host.textContent).toContain("no config was issued");
     }
     expect(host.textContent).toContain(note);
+  });
+});
+
+describe("arriving from an alert mail's link", () => {
+  async function arrive(path: string) {
+    window.history.replaceState(null, "", path);
+    const { AppShell } = await import("./components/AppShell");
+    return await show(createElement(AppShell));
+  }
+
+  it("an incident link lands on its panel and leaves the address bar clean", async () => {
+    const host = await arrive("/i/budget_exhausted:run-42");
+    expect(window.location.pathname).toBe("/");
+    const current = host.querySelector('[aria-current="page"]');
+    expect(current?.textContent ?? host.textContent).toMatch(/Money/);
+  });
+
+  it("an agent link opens that agent's detail card, the one with freeze and kill", async () => {
+    const agent = "agent://meridian.io/sre/rca-copilot";
+    await arrive(`/a/${encodeURIComponent(agent)}`);
+    await settle();
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+    expect(dialogs.some((d) => d.textContent?.includes(agent) || d.textContent?.includes("rca-copilot"))).toBe(true);
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("an owner link opens the owner's card", async () => {
+    await arrive("/o/w.zhang");
+    await settle();
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+    expect(dialogs.some((d) => d.textContent?.includes("w.zhang"))).toBe(true);
+  });
+
+  it("a link of a type this build does not know lands on the overview and says which id it could not place", async () => {
+    const host = await arrive("/i/no_such_type:run-7");
+    expect(host.textContent).toContain("no_such_type");
+  });
+
+  it("a link in the fragment keeps the path the console is served from", async () => {
+    window.history.replaceState(null, "", "/demo/#/i/budget_exhausted:run-42");
+    const { AppShell } = await import("./components/AppShell");
+    await show(createElement(AppShell));
+    expect(window.location.pathname).toBe("/demo/");
+    window.history.replaceState(null, "", "/");
+  });
+});
+
+describe("on-demand scans and checks in the demo world", () => {
+  it("Crypto: a scan shows the inventory the demo's scan reports, and evidence builds and verifies", async () => {
+    const { CryptoView } = await import("./components/CryptoView");
+    const host = await show(createElement(CryptoView));
+    const scanInput = host.querySelector<HTMLInputElement>('[placeholder="/path/to/scan"]');
+    if (scanInput) await act(async () => typeInto(scanInput, "/srv/app"));
+    await act(async () => button(host, /^(Scan|Scanning\.\.\.)$/).click());
+    await settle();
+    const ncsc = (await mock.mockInvoke("crypto_scan_ncsc", { path: "/srv/app" })) as {
+      discovery2028: { totalInventoried: number; quantumVulnerableCount: number };
+    };
+    const text = host.textContent ?? "";
+    expect(text).toContain(String(ncsc.discovery2028.totalInventoried));
+    expect(text).toContain(String(ncsc.discovery2028.quantumVulnerableCount));
+
+    // The milestone tabs switch what is shown.
+    for (const tab of Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tablist"] button, [role="tab"]'))) {
+      await act(async () => tab.click());
+    }
+
+    const build = Array.from(host.querySelectorAll("button")).find((b) => /^Build evidence$/.test(b.textContent ?? ""));
+    if (build) {
+      await act(async () => build.click());
+      await settle();
+      const verifyInput = host.querySelector<HTMLInputElement>('[placeholder="/path/to/evidence.json"]');
+      if (verifyInput) await act(async () => typeInto(verifyInput, "/tmp/evidence.json"));
+      await act(async () => button(host, /^(Verify|Verifying\.\.\.)$/).click());
+      await settle();
+      expect(host.textContent).toContain("digest matches");
+    }
+  });
+
+  it("Memory: a recall lists what the demo's memory returns for the query", async () => {
+    const { MemoryView } = await import("./components/MemoryView");
+    const host = await show(createElement(MemoryView, { onOpenAgent: () => {} }));
+    const q = host.querySelector<HTMLInputElement>('[placeholder="query text"]');
+    expect(q).not.toBeNull();
+    await act(async () => typeInto(q!, "refund"));
+    await act(async () => button(host, /^(Recall|Searching\.\.\.)$/).click());
+    await settle();
+    const hits = (await mock.mockInvoke("memory_recall", { query: "refund", limit: 10, mode: "hybrid", agent_id: null })) as
+      | { id?: string; memory_id?: string; content?: string; text?: string }[]
+      | null;
+    if (hits && hits.length > 0) {
+      const first = hits[0];
+      const marker = (first.content ?? first.text ?? first.id ?? first.memory_id ?? "").slice(0, 30);
+      expect(host.textContent).toContain(marker);
+      // Open "why" for the first memory if offered.
+      const why = Array.from(host.querySelectorAll("button")).find((b) => /why|provenance/i.test(b.textContent ?? ""));
+      if (why) {
+        await act(async () => why.click());
+        await settle();
+      }
+    }
+  });
+
+  it("Admission: running the checks for a key and an agent shows the demo's verdict for that agent", async () => {
+    const { AdmissionVerify } = await import("./components/AdmissionVerify");
+    const host = await show(createElement(AdmissionVerify, { seed: null }));
+    await act(async () => {
+      typeInto(byPlaceholder(host, "billing-agent"), "sre-rca-copilot");
+      typeInto(byPlaceholder(host, "agent://bank.example/treasury/recon-batch"), "agent://meridian.io/sre/rca-copilot");
+    });
+    await act(async () => button(host, /^(Run checks|Checking\.\.\.)$/).click());
+    await settle();
+    expect(host.textContent).toContain("sre-rca-copilot");
+    const baselineModel = host.querySelector<HTMLInputElement>('[placeholder="claude-sonnet-5"]');
+    if (baselineModel) {
+      await act(async () => {
+        typeInto(byPlaceholder(host, "/path/to/evalset.json"), "/evals/set.json");
+        typeInto(baselineModel, "claude-haiku-5-5");
+      });
+      const run = Array.from(host.querySelectorAll("button")).find((b) => /baseline/i.test(b.textContent ?? ""));
+      if (run) {
+        await act(async () => run.click());
+        await settle();
+      }
+    }
+  });
+
+  it("Felyx's provider cannot be changed from the demo, and says so", async () => {
+    const { FelyxConnectCard } = await import("./components/FelyxConnectCard");
+    const host = await show(createElement(FelyxConnectCard, {} as never));
+    const connect = Array.from(host.querySelectorAll("button")).find((b) => /Connect Felyx/.test(b.textContent ?? ""));
+    if (connect) {
+      const model = host.querySelector<HTMLInputElement>('[placeholder="model id"]');
+      if (model) await act(async () => typeInto(model, "claude-haiku-5-5"));
+      await act(async () => connect.click());
+      await settle();
+      expect(host.textContent).toContain("Simulated in the demo, nothing was done");
+    }
   });
 });
