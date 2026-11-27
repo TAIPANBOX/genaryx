@@ -1052,4 +1052,437 @@ mod tests {
             WgUapiError::NoSocket(_)
         ));
     }
+
+    // ---- hostile bytes from the daemon (or whatever answers in its place) --
+
+    /// The reason a `Malformed` carries, so a test can hold the exact cause.
+    fn malformed(err: &WgUapiError) -> Option<&'static str> {
+        match err {
+            WgUapiError::Malformed(m) => Some(*m),
+            _ => None,
+        }
+    }
+
+    fn bad_key_text(err: &WgUapiError) -> Option<String> {
+        match err {
+            WgUapiError::BadKey(m) => Some(m.clone()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_line_without_an_equals_sign_is_malformed_not_skipped() {
+        let err = parse_get("listen_port=51820\ngarbage line\nerrno=0\n").unwrap_err();
+        assert_eq!(malformed(&err), Some("a line carried no '='"), "{err:?}");
+    }
+
+    #[test]
+    fn an_errno_that_is_not_a_number_is_malformed_in_both_parsers() {
+        for raw in [
+            "errno=zero\n",
+            "errno=\n",
+            "errno=0x0\n",
+            "errno=99999999999999999999\n",
+        ] {
+            let err = parse_get(raw).unwrap_err();
+            assert_eq!(malformed(&err), Some("errno was not a number"), "{raw:?}");
+            let err = parse_set_result(raw).unwrap_err();
+            assert_eq!(malformed(&err), Some("errno was not a number"), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_response_truncated_inside_a_peer_is_malformed_not_a_short_listing() {
+        let raw = format!("private_key={SERVER_PRIV}\npublic_key={PEER_A}\nallowed_ip=10.9.0.2/32\n");
+        let err = parse_get(&raw).unwrap_err();
+        assert_eq!(malformed(&err), Some("response carried no errno"));
+    }
+
+    #[test]
+    fn a_nonzero_errno_after_the_peers_still_refuses_the_whole_state() {
+        let raw = format!("public_key={PEER_A}\nallowed_ip=10.9.0.2/32\nerrno=-5\n");
+        assert!(matches!(parse_get(&raw), Err(WgUapiError::Errno(-5))));
+    }
+
+    #[test]
+    fn peer_fields_before_any_peer_are_dropped_not_attached_to_the_interface() {
+        let raw = "allowed_ip=10.9.0.9/32\nendpoint=198.51.100.1:1\n\
+                   last_handshake_time_sec=5\nrx_bytes=1\ntx_bytes=2\nerrno=0\n";
+        let s = parse_get(raw).unwrap();
+        assert!(s.peers.is_empty(), "{s:?}");
+        assert!(
+            taken_host_octets(&s).is_empty(),
+            "an orphan allowed_ip must not consume an address"
+        );
+    }
+
+    #[test]
+    fn counters_that_are_not_numbers_read_as_zero_and_never() {
+        let raw = format!(
+            "listen_port=70000\npublic_key={PEER_A}\nrx_bytes=lots\n\
+             tx_bytes=184467440737095516160\nlast_handshake_time_sec=yesterday\nerrno=0\n"
+        );
+        let s = parse_get(&raw).unwrap();
+        assert_eq!(s.listen_port, None, "a port past u16 is not a port");
+        let p = &s.peers[0];
+        assert_eq!((p.rx_bytes, p.tx_bytes), (0, 0));
+        assert_eq!(p.last_handshake_unix, None);
+        let s = parse_get("listen_port=abc\nerrno=0\n").unwrap();
+        assert_eq!(s.listen_port, None);
+    }
+
+    #[test]
+    fn the_first_private_key_wins_and_a_substituted_public_half_overrides_it() {
+        // Two private keys: the identity comes from the first, never the last.
+        let raw = format!("private_key={SERVER_PRIV}\nprivate_key={PEER_A}\nerrno=0\n");
+        let s = parse_get(&raw).unwrap();
+        assert_eq!(s.public_key_hex.as_deref(), Some(SERVER_PUB));
+
+        // A relay's substitution is the identity whichever order it arrives in.
+        let after = format!("private_key={SERVER_PRIV}\ninterface_public_key={PEER_B}\nerrno=0\n");
+        assert_eq!(
+            parse_get(&after).unwrap().public_key_hex.as_deref(),
+            Some(PEER_B)
+        );
+        let before = format!("interface_public_key={PEER_B}\nprivate_key={SERVER_PRIV}\nerrno=0\n");
+        assert_eq!(
+            parse_get(&before).unwrap().public_key_hex.as_deref(),
+            Some(PEER_B)
+        );
+
+        // A private key that is not 32 bytes of hex names no server at all.
+        let s = parse_get("private_key=zz\nerrno=0\n").unwrap();
+        assert_eq!(s.public_key_hex, None);
+    }
+
+    #[test]
+    fn lines_are_trimmed_unknown_keys_ignored_and_a_value_may_hold_an_equals_sign() {
+        let raw = format!(
+            "  listen_port=51820  \r\nprotocol_version=1\nfwmark=0\n\
+             public_key={PEER_A}\r\nendpoint=a=b\nallowed_ip=10.9.0.2/32\n\
+             allowed_ip=10.9.0.3/32\nerrno=0\r\n"
+        );
+        let s = parse_get(&raw).unwrap();
+        assert_eq!(s.listen_port, Some(51820));
+        assert_eq!(s.peers.len(), 1);
+        assert_eq!(s.peers[0].endpoint.as_deref(), Some("a=b"));
+        assert_eq!(s.peers[0].allowed_ips, vec!["10.9.0.2/32", "10.9.0.3/32"]);
+    }
+
+    #[test]
+    fn a_set_result_is_read_from_its_first_errno_line() {
+        assert!(parse_set_result("errno=0\n\n").is_ok());
+        assert!(parse_set_result("  errno=0  \r\n").is_ok());
+        assert!(
+            parse_set_result("errno=0\nerrno=-1\n").is_ok(),
+            "the first errno is the answer"
+        );
+        assert!(matches!(
+            parse_set_result("protocol_version=1\nerrno=-17\n"),
+            Err(WgUapiError::Errno(-17))
+        ));
+        for raw in ["", "\n\n", "protocol_version=1\n", "errno 0\n"] {
+            let err = parse_set_result(raw).unwrap_err();
+            assert_eq!(malformed(&err), Some("response carried no errno"), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn base64_keys_that_are_not_keys_are_refused_with_the_reason() {
+        let err = b64_to_hex("!!!!not-base64!!!!").unwrap_err();
+        let text = bad_key_text(&err).expect("a BadKey");
+        assert!(text.starts_with("not base64"), "{text}");
+
+        // 33 bytes is valid base64 and still not a Curve25519 key.
+        let long = base64::Engine::encode(&B64, [7u8; 33]);
+        let text = bad_key_text(&b64_to_hex(&long).unwrap_err()).expect("a BadKey");
+        assert_eq!(text, "a wireguard key is 32 bytes, got 33");
+
+        // Whitespace around a real key (a pasted line) is not part of it.
+        let b64 = hex_to_b64(PEER_A).unwrap();
+        assert_eq!(b64_to_hex(&format!("  {b64}\n")).unwrap(), PEER_A);
+    }
+
+    #[test]
+    fn hex_keys_are_case_insensitive_and_a_wrong_length_is_named_without_echoing_it() {
+        assert_eq!(
+            hex_to_b64(&PEER_A.to_uppercase()).unwrap(),
+            hex_to_b64(PEER_A).unwrap()
+        );
+        let too_long = format!("{PEER_A}0");
+        let text = bad_key_text(&hex_to_b64(&too_long).unwrap_err()).expect("a BadKey");
+        assert!(text.starts_with("expected 64 hex characters"), "{text}");
+        assert!(
+            !text.contains(&too_long),
+            "only a short prefix of a rejected key is repeated: {text}"
+        );
+        let all_zero = "0".repeat(64);
+        assert_eq!(
+            hex_to_b64(&all_zero).unwrap(),
+            base64::Engine::encode(&B64, [0u8; 32])
+        );
+    }
+
+    #[test]
+    fn rendered_operations_are_exact_and_the_key_is_trimmed() {
+        let body = render_add_peer(&format!(" {PEER_A}\n"), &[]).unwrap();
+        assert_eq!(
+            body,
+            format!("set=1\npublic_key={PEER_A}\nreplace_allowed_ips=true\n\n")
+        );
+        let body =
+            render_add_peer(PEER_A, &["10.9.0.3/32".to_string(), "fd00::3/128".to_string()]).unwrap();
+        assert!(
+            body.ends_with("allowed_ip=10.9.0.3/32\nallowed_ip=fd00::3/128\n\n"),
+            "{body}"
+        );
+        assert_eq!(
+            render_remove_peer(PEER_B).unwrap(),
+            format!("set=1\npublic_key={PEER_B}\nremove=true\n\n")
+        );
+        assert_eq!(render_get(), "get=1\n\n");
+        assert!(bad_key_text(&render_remove_peer("abc").unwrap_err()).is_some());
+    }
+
+    #[test]
+    fn the_server_key_is_offered_in_base64_only_when_it_is_a_key() {
+        let s = parse_get(&get_response()).unwrap();
+        assert_eq!(s.public_key_b64(), Some(hex_to_b64(SERVER_PUB).unwrap()));
+        assert_eq!(InterfaceState::default().public_key_b64(), None);
+        let broken = InterfaceState {
+            public_key_hex: Some("zz".into()),
+            ..Default::default()
+        };
+        assert_eq!(broken.public_key_b64(), None);
+        assert!(s.has_peer(&format!(" {PEER_B}\n")), "a pasted key is trimmed");
+    }
+
+    #[test]
+    fn only_well_formed_tunnel_addresses_consume_a_slot() {
+        let s = InterfaceState {
+            peers: vec![PeerState {
+                public_key_hex: PEER_A.to_string(),
+                allowed_ips: [
+                    "10.9.0.300/32",
+                    "10.9.0.4.5/32",
+                    "10.9.0/24",
+                    "10.9.1.7/32",
+                    "10.9.0.x/32",
+                    "10.9.0.9/32",
+                    "10.9.0.6",
+                    "10.9.0.6/32",
+                ]
+                .iter()
+                .map(|c| c.to_string())
+                .collect(),
+                last_handshake_unix: None,
+                endpoint: None,
+                rx_bytes: 0,
+                tx_bytes: 0,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(taken_host_octets(&s), vec![6, 9], "sorted and deduplicated");
+        assert_eq!(next_free_client_ip(&s).as_deref(), Some("10.9.0.2"));
+    }
+
+    // ---- endpoints ----------------------------------------------------------
+
+    #[test]
+    fn an_interface_socket_lives_in_the_daemons_directory_and_is_local() {
+        let sock = UapiSocket::for_interface("wg7");
+        assert_eq!(sock.describe(), "/var/run/wireguard/wg7.sock");
+        assert!(!sock.is_network());
+        assert!(UapiSocket::tls("wg:9090", "/x.crt", "t").is_network());
+        assert!(!UapiSocket::at("/nonexistent/genaryx-test/wg9.sock").exists());
+    }
+
+    #[test]
+    fn a_tls_endpoint_exists_only_when_something_answers_at_its_address() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        assert!(UapiSocket::tls(addr, "/x.crt", "t").exists());
+        // No port at all: not resolvable, and no lookup is made for it.
+        assert!(!UapiSocket::tls("no-port-here", "/x.crt", "t").exists());
+    }
+
+    /// A port nothing listens on: bound once to learn a free number, then
+    /// released.
+    fn closed_port() -> u16 {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        l.local_addr().expect("addr").port()
+    }
+
+    fn committed_ca() -> PathBuf {
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ca.crt")).to_path_buf()
+    }
+
+    fn transport(err: WgUapiError) -> (String, String) {
+        match err {
+            WgUapiError::Transport { endpoint, message } => (endpoint, message),
+            other => panic!("expected a Transport error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_tls_endpoint_nobody_listens_on_names_every_address_it_tried() {
+        let addr = format!("127.0.0.1:{}", closed_port());
+        let (endpoint, message) =
+            transport(UapiSocket::tls(addr.clone(), committed_ca(), "t").state().unwrap_err());
+        assert_eq!(endpoint, addr);
+        assert!(
+            message.starts_with("cannot connect to any of 1 address(es), last was 127.0.0.1:"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_tls_host_that_is_no_server_name_is_refused_before_dialling() {
+        let (_, message) = transport(
+            UapiSocket::tls("bad name!:9", committed_ca(), "t")
+                .state()
+                .unwrap_err(),
+        );
+        assert_eq!(message, "bad name! is not a valid server name");
+    }
+
+    #[test]
+    fn a_tls_address_with_no_port_cannot_be_resolved() {
+        let (endpoint, message) = transport(
+            UapiSocket::tls("uapiproxy", committed_ca(), "t")
+                .add_peer(PEER_A, &[])
+                .unwrap_err(),
+        );
+        assert_eq!(endpoint, "uapiproxy");
+        assert!(message.starts_with("cannot resolve:"), "{message}");
+    }
+
+    #[test]
+    fn a_peer_that_hangs_up_mid_handshake_is_a_transport_failure_not_a_state() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        let server = std::thread::spawn(move || {
+            // Accept and hang up without a word: no TLS server answers here.
+            let (conn, _) = listener.accept().expect("accept");
+            drop(conn);
+        });
+        let (endpoint, message) = transport(
+            UapiSocket::tls(addr.clone(), committed_ca(), "t")
+                .remove_peer(PEER_B)
+                .unwrap_err(),
+        );
+        server.join().expect("server thread");
+        assert_eq!(endpoint, addr);
+        assert!(
+            message.starts_with("write failed") || message.starts_with("read failed"),
+            "{message}"
+        );
+    }
+
+    // ---- a stand-in daemon on a unix socket --------------------------------
+
+    static SOCK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// A unix socket in the temp dir that answers ONE exchange with `reply`,
+    /// after reading the request to its end (the client half-closes), and
+    /// hands back what it was sent.
+    fn one_exchange(reply: Vec<u8>) -> (UapiSocket, PathBuf, std::thread::JoinHandle<String>) {
+        let path = std::env::temp_dir().join(format!(
+            "wgu-{}-{}.sock",
+            std::process::id(),
+            SOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind a test socket");
+        let handle = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().expect("accept");
+            let mut got = String::new();
+            std::io::Read::read_to_string(&mut conn, &mut got).expect("read the request");
+            std::io::Write::write_all(&mut conn, &reply).expect("write the reply");
+            got
+        });
+        (UapiSocket::at(path.clone()), path, handle)
+    }
+
+    #[test]
+    fn state_is_read_over_the_socket_with_a_get_and_nothing_else() {
+        let (sock, path, daemon) = one_exchange(get_response().into_bytes());
+        assert!(sock.exists());
+        let s = sock.state();
+        let sent = daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        let s = s.expect("a healthy reply parses");
+        assert_eq!(sent, "get=1\n\n");
+        assert_eq!(s.peers.len(), 2);
+        assert_eq!(s.public_key_hex.as_deref(), Some(SERVER_PUB));
+    }
+
+    #[test]
+    fn add_peer_sends_exactly_the_rendered_operation_and_reads_its_errno() {
+        let (sock, path, daemon) = one_exchange(b"errno=0\n\n".to_vec());
+        let r = sock.add_peer(PEER_A, &["10.9.0.3/32".to_string()]);
+        let sent = daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        r.expect("errno=0 is success");
+        assert_eq!(
+            sent,
+            render_add_peer(PEER_A, &["10.9.0.3/32".to_string()]).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_remove_the_daemon_refuses_is_its_errno() {
+        let (sock, path, daemon) = one_exchange(b"errno=-2\n\n".to_vec());
+        let r = sock.remove_peer(PEER_B);
+        let sent = daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(r, Err(WgUapiError::Errno(-2))), "{r:?}");
+        assert!(sent.contains("remove=true\n"), "{sent}");
+    }
+
+    #[test]
+    fn a_reply_that_is_not_utf8_is_an_io_error_naming_the_socket() {
+        let (sock, path, daemon) = one_exchange(vec![b'e', 0xff, 0xfe, b'\n']);
+        let r = sock.state();
+        daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        match r {
+            Err(WgUapiError::Io { endpoint, .. }) => {
+                assert_eq!(endpoint, path.display().to_string());
+            }
+            other => panic!("expected an Io error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_reply_is_malformed_never_an_empty_interface() {
+        let (sock, path, daemon) = one_exchange(Vec::new());
+        let r = sock.state();
+        daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        let err = r.unwrap_err();
+        assert_eq!(malformed(&err), Some("response carried no errno"));
+    }
+
+    #[test]
+    fn a_malformed_key_never_dials_the_socket() {
+        // The path does not exist: reaching for it would be NoSocket, so a
+        // BadKey proves the key was refused before anything was dialled.
+        let sock = UapiSocket::at("/nonexistent/genaryx-test/wg1.sock");
+        assert!(bad_key_text(&sock.add_peer("abc", &[]).unwrap_err()).is_some());
+        assert!(bad_key_text(&sock.remove_peer("").unwrap_err()).is_some());
+    }
+
+    #[test]
+    fn a_path_that_is_not_a_socket_is_an_io_error_not_no_socket() {
+        let path = std::env::temp_dir().join(format!(
+            "wgu-plain-{}-{}",
+            std::process::id(),
+            SOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::write(&path, b"not a socket").unwrap();
+        let r = UapiSocket::at(path.clone()).state();
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(r, Err(WgUapiError::Io { .. })), "{r:?}");
+    }
 }

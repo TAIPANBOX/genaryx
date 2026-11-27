@@ -998,4 +998,274 @@ mod tests {
         assert!(got.ends_with("... [truncated]"));
         assert!(got.len() < long.len());
     }
+
+    #[test]
+    fn a_gateway_answer_too_large_to_read_names_the_limit() {
+        match AdmissionError::from(GatewayError::ResponseTooLarge { limit: 65536 }) {
+            AdmissionError::Gateway { status, message } => {
+                assert_eq!(status, None);
+                assert_eq!(message, "the gateway's response exceeded 65536 bytes");
+            }
+            other => panic!("expected Gateway, got {other:?}"),
+        }
+    }
+
+    // ---- run_baseline_blocking, end to end against a stand-in verdryx ----
+    //
+    // The same hermetic shape as
+    // `spawn_verdryx_redacts_the_api_key_out_of_a_nonzero_exit_stderr`: a
+    // shell script in a temp dir plays verdryx, and a SQLite file seeded here
+    // plays the store it writes. Nothing reaches a provider or a real CLI.
+
+    const TEST_KEY: &str = "test-key-not-a-secret-42";
+    const GATEWAY: &str = "http://127.0.0.1:4100";
+
+    #[cfg(unix)]
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "genaryx-admission-baseline-{tag}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// A stand-in verdryx: appends its argv and the gateway URL it was given
+    /// to `args.log`, then runs `eval_body` or `baseline_body` by subcommand.
+    #[cfg(unix)]
+    fn fake_verdryx(dir: &Path, eval_body: &str, baseline_body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("verdryx");
+        let log = dir.join("args.log");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\n\
+                 echo \"$@\" >> '{log}'\n\
+                 echo \"base=$ANTHROPIC_BASE_URL\" >> '{log}'\n\
+                 case \"$1\" in\n\
+                 eval) {eval_body} ;;\n\
+                 baseline) {baseline_body} ;;\n\
+                 esac\n",
+                log = log.display()
+            ),
+        )
+        .expect("write the stand-in");
+        let mut perms = std::fs::metadata(&script).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).expect("chmod");
+        script
+    }
+
+    /// A verdryx store holding run `r-adm-1` with two scored cases, or none.
+    #[cfg(unix)]
+    fn seed_store(dir: &Path, with_run: bool) -> std::path::PathBuf {
+        let path = dir.join("verdryx.db");
+        let conn = rusqlite::Connection::open(&path).expect("open writer");
+        conn.execute_batch(
+            "CREATE TABLE eval_runs (id TEXT PRIMARY KEY, model TEXT NOT NULL,
+                started_at TEXT NOT NULL, finished_at TEXT);
+             CREATE TABLE scores (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL REFERENCES eval_runs(id), case_id TEXT NOT NULL,
+                value REAL NOT NULL, tokens INTEGER NOT NULL DEFAULT 0,
+                cost_usd REAL NOT NULL DEFAULT 0.0);",
+        )
+        .expect("schema");
+        if with_run {
+            conn.execute_batch(
+                "INSERT INTO eval_runs VALUES ('r-adm-1', 'claude-test', '2026-11-26T10:00:00Z', NULL);
+                 INSERT INTO scores (run_id, case_id, value, tokens, cost_usd)
+                    VALUES ('r-adm-1', 'c1', 1.0, 10, 0.25), ('r-adm-1', 'c2', 0.0, 20, 0.5);",
+            )
+            .expect("seed");
+        }
+        drop(conn);
+        path
+    }
+
+    /// `run_baseline_blocking` with this module's fixed arguments, retried
+    /// only on ETXTBSY: another test thread forking while the script was
+    /// still open for writing is a property of the test process, not of
+    /// the code under test.
+    #[cfg(unix)]
+    fn run_fake(script: &Path, db: &Path) -> Result<AdmissionBaselineDto, AdmissionError> {
+        let mut last = None;
+        for _ in 0..5 {
+            let result = run_baseline_blocking(
+                script,
+                "/tmp/evalset.jsonl",
+                "claude-test",
+                "agent://acme.example/a",
+                TEST_KEY,
+                GATEWAY,
+                db,
+                "admission-agent://acme.example/a",
+            );
+            let busy = matches!(
+                &result,
+                Err(AdmissionError::Verdryx { message }) if message.contains("os error 26")
+            );
+            if !busy {
+                return result;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            last = Some(result);
+        }
+        last.expect("at least one attempt")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_baseline_runs_eval_then_baseline_and_reads_the_run_back() {
+        let dir = scratch_dir("ok");
+        let script = fake_verdryx(
+            &dir,
+            "printf '\\nEval run r-adm-1  (model=claude-test, db=x)\\n  c1: 1.0\\n'",
+            "printf '\\nBaseline b-adm-9  (run=r-adm-1, mean_score=0.5)\\n'",
+        );
+        let db = seed_store(&dir, true);
+        let dto = run_fake(&script, &db).expect("the baseline completes");
+        assert_eq!(dto.run_id, "r-adm-1");
+        assert_eq!(dto.case_count, 2);
+        assert_eq!(dto.mean_score, Some(0.5));
+        assert!((dto.total_cost_usd - 0.75).abs() < 1e-9);
+        assert_eq!(dto.baseline_id_or_label, "b-adm-9");
+
+        let log = std::fs::read_to_string(dir.join("args.log")).expect("the stand-in ran");
+        let db_str = db.display().to_string();
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                format!(
+                    "eval /tmp/evalset.jsonl --model claude-test --agent-id agent://acme.example/a --db {db_str}"
+                )
+                .as_str(),
+                "base=http://127.0.0.1:4100",
+                format!("baseline r-adm-1 --db {db_str} --label admission-agent://acme.example/a")
+                    .as_str(),
+                "base=http://127.0.0.1:4100",
+            ]
+        );
+        assert!(!log.contains(TEST_KEY), "the key never rides in argv");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_baseline_id_falls_back_to_the_requested_label() {
+        let dir = scratch_dir("label");
+        let script = fake_verdryx(
+            &dir,
+            "printf 'Eval run r-adm-1\\n'",
+            "printf 'saved\\n'",
+        );
+        let db = seed_store(&dir, true);
+        let dto = run_fake(&script, &db).expect("the baseline completes");
+        assert_eq!(dto.baseline_id_or_label, "admission-agent://acme.example/a");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_eval_with_no_run_id_is_refused_and_its_output_is_redacted() {
+        let dir = scratch_dir("unparseable");
+        let script = fake_verdryx(
+            &dir,
+            "echo \"provider said no to $ANTHROPIC_API_KEY\"",
+            "exit 0",
+        );
+        let db = seed_store(&dir, true);
+        match run_fake(&script, &db) {
+            Err(AdmissionError::UnparseableOutput {
+                context,
+                stdout_excerpt,
+            }) => {
+                assert_eq!(context, "eval run id");
+                assert!(!stdout_excerpt.contains(TEST_KEY), "{stdout_excerpt}");
+                assert!(stdout_excerpt.contains("[redacted]"), "{stdout_excerpt}");
+            }
+            other => panic!("expected UnparseableOutput, got {other:?}"),
+        }
+        let log = std::fs::read_to_string(dir.join("args.log")).expect("ran");
+        assert!(
+            !log.contains("baseline "),
+            "no baseline is taken of a run that cannot be named"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_run_the_store_does_not_hold_is_reported_not_invented() {
+        let dir = scratch_dir("missing-run");
+        let script = fake_verdryx(
+            &dir,
+            "printf 'Eval run r-adm-1\\n'",
+            "printf 'Baseline b-1\\n'",
+        );
+        let db = seed_store(&dir, false);
+        match run_fake(&script, &db) {
+            Err(AdmissionError::RunNotFound { run_id }) => assert_eq!(run_id, "r-adm-1"),
+            other => panic!("expected RunNotFound, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_store_that_cannot_be_opened_is_a_verdryx_error() {
+        let dir = scratch_dir("no-store");
+        let script = fake_verdryx(
+            &dir,
+            "printf 'Eval run r-adm-1\\n'",
+            "printf 'Baseline b-1\\n'",
+        );
+        match run_fake(&script, &dir.join("absent.db")) {
+            Err(AdmissionError::Verdryx { message }) => {
+                assert!(message.contains("absent.db"), "{message}");
+            }
+            other => panic!("expected Verdryx, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_baseline_step_stops_with_its_exit_code() {
+        let dir = scratch_dir("baseline-fails");
+        let script = fake_verdryx(&dir, "printf 'Eval run r-adm-1\\n'", "exit 3");
+        let db = seed_store(&dir, true);
+        match run_fake(&script, &db) {
+            Err(AdmissionError::Verdryx { message }) => {
+                assert!(message.starts_with("verdryx exited 3"), "{message}");
+            }
+            other => panic!("expected Verdryx, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verdryx_binary_that_is_not_there_cannot_be_spawned() {
+        let missing = std::env::temp_dir().join("genaryx-admission-no-such-verdryx-bin");
+        match spawn_verdryx(&missing, &["eval"], GATEWAY, TEST_KEY) {
+            Err(AdmissionError::Verdryx { message }) => {
+                assert!(message.starts_with("could not spawn "), "{message}");
+                assert!(!message.contains(TEST_KEY));
+            }
+            other => panic!("expected Verdryx, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_blocking_hands_back_the_closures_own_result() {
+        let ok = run_blocking(|| Ok::<u32, AdmissionError>(7)).await;
+        assert!(matches!(ok, Ok(7)));
+        let err = run_blocking(|| Err::<u32, AdmissionError>(AdmissionError::VerdryxDbMissing)).await;
+        assert!(matches!(err, Err(AdmissionError::VerdryxDbMissing)));
+    }
 }

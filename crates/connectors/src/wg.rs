@@ -602,4 +602,190 @@ mod tests {
         // No WgTunnel returned -> nothing to leak; the ChildGuard never held a
         // real child (spawn failed before it was constructed).
     }
+
+    #[test]
+    fn render_uapi_is_exact_for_a_listen_port_and_several_peers() {
+        let a = "aa".repeat(32);
+        let b = "bb".repeat(32);
+        let c = "cc".repeat(32);
+        let cfg = WgConfig {
+            private_key_hex: a.clone(),
+            listen_port: Some(51820),
+            peers: vec![
+                WgPeer {
+                    public_key_hex: b.clone(),
+                    endpoint: "198.51.100.1:1".into(),
+                    allowed_ips: vec!["10.9.0.1/32".into(), "10.9.0.0/24".into()],
+                    persistent_keepalive: None,
+                },
+                WgPeer {
+                    public_key_hex: c.clone(),
+                    endpoint: "198.51.100.2:2".into(),
+                    allowed_ips: Vec::new(),
+                    persistent_keepalive: Some(25),
+                },
+            ],
+        };
+        assert_eq!(
+            cfg.render_uapi(),
+            format!(
+                "set=1\nprivate_key={a}\nlisten_port=51820\nreplace_peers=true\n\
+                 public_key={b}\nendpoint=198.51.100.1:1\nreplace_allowed_ips=true\n\
+                 allowed_ip=10.9.0.1/32\nallowed_ip=10.9.0.0/24\n\
+                 public_key={c}\nendpoint=198.51.100.2:2\npersistent_keepalive_interval=25\n\
+                 replace_allowed_ips=true\n\n"
+            )
+        );
+        let empty = WgConfig {
+            private_key_hex: a.clone(),
+            listen_port: None,
+            peers: Vec::new(),
+        };
+        assert_eq!(
+            empty.render_uapi(),
+            format!("set=1\nprivate_key={a}\nreplace_peers=true\n\n"),
+            "a config with no peers still replaces them, so none survives"
+        );
+    }
+
+    #[test]
+    fn an_all_zero_private_key_is_clamped_and_its_encodings_agree() {
+        let kp = WgKeypair::from_private([0u8; 32]);
+        assert_eq!(kp.private[0], 0);
+        assert_eq!(kp.private[31], 64, "bit 254 set, bit 255 clear");
+        assert_eq!(
+            crate::wg_uapi::b64_to_hex(&kp.public_b64()).unwrap(),
+            kp.public_hex(),
+            "the base64 and hex forms name the same key"
+        );
+        let debug = format!("{kp:?}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains(&kp.public_b64()), "{debug}");
+        assert!(!debug.contains(&kp.private_hex()), "{debug}");
+        assert_eq!(to_hex(&[0x00, 0x0f, 0xff]), "000fff");
+        assert_eq!(b64(&[0xff, 0xfe]), "//4=");
+    }
+
+    #[test]
+    fn every_error_says_what_failed() {
+        assert_eq!(
+            WgError::UapiTimeout(Duration::from_secs(5)).to_string(),
+            "wireguard-go UAPI socket did not appear within 5s"
+        );
+        assert_eq!(
+            WgError::NoHandshake(Duration::from_millis(1500)).to_string(),
+            "wg handshake did not complete within 1.5s"
+        );
+        assert_eq!(
+            WgError::Spawn(std::io::Error::new(std::io::ErrorKind::NotFound, "gone")).to_string(),
+            "wireguard-go spawn: gone"
+        );
+        assert_eq!(
+            WgError::Network("ip exited 2".into()).to_string(),
+            "wg interface address/route: ip exited 2"
+        );
+        assert_eq!(
+            WgError::KeyGen("no entropy".into()).to_string(),
+            "wg keygen: no entropy"
+        );
+    }
+
+    static SOCK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn scratch(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "wgt-{tag}-{}-{}",
+            std::process::id(),
+            SOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
+
+    /// A wireguard-go stand-in on a unix socket: reads one operation up to
+    /// its terminating blank line, answers `reply`, hangs up, and hands back
+    /// what it was sent.
+    fn uapi_stand_in(reply: &'static str) -> (PathBuf, std::thread::JoinHandle<String>) {
+        let path = scratch("sock");
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind a test socket");
+        let handle = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().expect("accept");
+            let mut got = Vec::new();
+            let mut buf = [0u8; 512];
+            while !got.ends_with(b"\n\n") {
+                let n = conn.read(&mut buf).expect("read the operation");
+                if n == 0 {
+                    break;
+                }
+                got.extend_from_slice(&buf[..n]);
+            }
+            conn.write_all(reply.as_bytes()).expect("write the reply");
+            String::from_utf8_lossy(&got).into_owned()
+        });
+        (path, handle)
+    }
+
+    #[test]
+    fn uapi_set_writes_the_operation_and_accepts_errno_zero() {
+        let (path, daemon) = uapi_stand_in("errno=0\n\n");
+        let body = "set=1\nprivate_key=aa\nreplace_peers=true\n\n";
+        let r = uapi_set(&path, body);
+        let sent = daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        r.expect("errno=0 is success");
+        assert_eq!(sent, body);
+    }
+
+    #[test]
+    fn uapi_set_refused_by_the_daemon_carries_its_answer() {
+        let (path, daemon) = uapi_stand_in("errno=-22\n\n");
+        let r = uapi_set(&path, "set=1\n\n");
+        daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        match r {
+            Err(WgError::Configure(m)) => assert_eq!(m, "uapi rejected config: errno=-22"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn uapi_get_asks_for_the_state_and_returns_it_verbatim() {
+        let (path, daemon) = uapi_stand_in("last_handshake_time_sec=42\nerrno=0\n\n");
+        let r = uapi_get(&path);
+        let sent = daemon.join().expect("daemon thread");
+        std::fs::remove_file(&path).ok();
+        assert_eq!(sent, "get=1\n\n");
+        assert_eq!(
+            r.expect("a reply"),
+            "last_handshake_time_sec=42\nerrno=0\n\n"
+        );
+    }
+
+    #[test]
+    fn a_missing_uapi_socket_is_a_configure_error_never_a_silent_success() {
+        let missing = Path::new("/nonexistent/genaryx-wg-test/x.sock");
+        for r in [uapi_set(missing, "set=1\n\n"), uapi_get(missing).map(|_| ())] {
+            match r {
+                Err(WgError::Configure(m)) => {
+                    assert!(m.starts_with("connect uapi:"), "{m}");
+                }
+                other => panic!("expected a connect failure, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_existing_socket_path_is_found_at_once_and_the_name_file_is_read_on_macos() {
+        wait_for_socket(&std::env::temp_dir()).expect("an existing path needs no wait");
+
+        let name_file = scratch("name");
+        std::fs::write(&name_file, " utun9\n").unwrap();
+        let got = wait_for_real_name(&name_file, "wg-test");
+        std::fs::remove_file(&name_file).ok();
+        let got = got.expect("a name");
+        if cfg!(target_os = "macos") {
+            assert_eq!(got, "utun9", "the kernel-chosen utun name, trimmed");
+        } else {
+            assert_eq!(got, "wg-test", "Linux uses the requested name");
+        }
+    }
 }

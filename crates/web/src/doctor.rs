@@ -408,3 +408,192 @@ pub fn log(report: &Report) {
         tracing::warn!(plane = f.plane, "{}", f.detail);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "gw-doctor-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn needs(plane: &str) -> &'static Needs {
+        NEEDS
+            .iter()
+            .find(|n| n.plane == plane)
+            .expect("a plane in the table")
+    }
+
+    fn descriptor(v: serde_json::Value) -> Descriptor {
+        serde_json::from_value(v).expect("a descriptor")
+    }
+
+    fn keys(v: serde_json::Value) -> KeyFile {
+        serde_json::from_value(v).expect("a key file")
+    }
+
+    #[test]
+    fn with_no_descriptor_the_explanation_says_so() {
+        let why = explain(needs("money"), None, &KeyFile::default());
+        assert!(why.starts_with("no descriptor found"), "{why}");
+    }
+
+    #[test]
+    fn a_missing_service_is_named_with_the_descriptor() {
+        let d = descriptor(json!({ "name": "lab" }));
+        let why = explain(needs("policy"), Some(&d), &KeyFile::default());
+        assert!(
+            why.contains("descriptor 'lab' has no services.wardryx"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_path_service_that_is_not_a_file_is_called_a_filesystem_path() {
+        let missing = scratch_dir("svc").join("verdryx.db");
+        let d = descriptor(json!({
+            "name": "lab",
+            "services": { "verdryx": { "url": missing.display().to_string() } },
+        }));
+        let why = explain(needs("quality"), Some(&d), &KeyFile::default());
+        assert!(why.contains("services.verdryx.url is"), "{why}");
+        assert!(why.contains("FILESYSTEM PATH"), "{why}");
+
+        // The same descriptor with the file present is complete for a plane
+        // that needs no key.
+        std::fs::write(&missing, b"not a real database").unwrap();
+        let why = explain(needs("quality"), Some(&d), &KeyFile::default());
+        assert!(why.starts_with("the descriptor looks complete"), "{why}");
+        let _ = std::fs::remove_dir_all(missing.parent().unwrap());
+    }
+
+    #[test]
+    fn an_endpoint_service_is_not_checked_on_disk() {
+        // `money`'s cloud url is an endpoint, so it is never tested as a file:
+        // the explanation moves on to the missing key instead.
+        let d = descriptor(json!({
+            "name": "lab",
+            "services": { "cloud": { "url": "http://127.0.0.1:8080" } },
+        }));
+        let why = explain(needs("money"), Some(&d), &KeyFile::default());
+        assert!(
+            why.contains("descriptor 'lab' has the service but no keys.cloud_admin_ref"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_key_reference_absent_from_the_sibling_secrets_is_named_by_its_label() {
+        let d = descriptor(json!({
+            "name": "lab",
+            "services": { "wardryx": { "url": "http://127.0.0.1:9090" } },
+            "keys": { "wardryx_admin_ref": "keys/lab/wardryx-admin" },
+        }));
+        let why = explain(
+            needs("policy"),
+            Some(&d),
+            &keys(json!({ "secrets": { "other": "x" } })),
+        );
+        assert!(
+            why.contains("keys.wardryx_admin_ref points at 'wardryx-admin'"),
+            "{why}"
+        );
+        assert!(why.contains("sibling lab.keys.json"), "{why}");
+
+        let why = explain(
+            needs("policy"),
+            Some(&d),
+            &keys(json!({ "secrets": { "wardryx-admin": "test-key-not-a-secret" } })),
+        );
+        assert!(why.starts_with("the descriptor looks complete"), "{why}");
+    }
+
+    #[test]
+    fn a_plane_with_no_service_is_complete_on_any_descriptor() {
+        let d = descriptor(json!({ "name": "lab" }));
+        for plane in ["crypto", "evidence"] {
+            let why = explain(needs(plane), Some(&d), &KeyFile::default());
+            assert!(
+                why.starts_with("the descriptor looks complete"),
+                "{plane}: {why}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_newest_descriptor_wins_and_key_and_pid_files_never_count() {
+        let dir = scratch_dir("newest");
+        assert_eq!(newest_descriptor(&dir.join("absent")), None);
+        assert_eq!(newest_descriptor(&dir), None, "nothing to pick");
+
+        for name in [
+            "old.json",
+            "new.json",
+            "new.keys.json",
+            "new.pid.json",
+            "notes.txt",
+        ] {
+            std::fs::write(dir.join(name), b"{}").unwrap();
+        }
+        let set = |name: &str, secs: u64| {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(dir.join(name))
+                .unwrap();
+            let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+            f.set_modified(when).unwrap();
+        };
+        set("old.json", 1_000);
+        set("new.json", 2_000);
+        // Newer still, and never a descriptor.
+        set("new.keys.json", 3_000);
+        set("new.pid.json", 3_000);
+        set("notes.txt", 3_000);
+        assert_eq!(newest_descriptor(&dir), Some(dir.join("new.json")));
+
+        set("old.json", 4_000);
+        assert_eq!(newest_descriptor(&dir), Some(dir.join("old.json")));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_report_is_ok_only_when_every_plane_is() {
+        let finding = |plane: &'static str, ok: bool| Finding {
+            plane,
+            ok,
+            detail: format!("{plane} detail"),
+        };
+        let good = Report {
+            environments_dir: Some(PathBuf::from("/nonexistent/environments")),
+            descriptor: Some(PathBuf::from("/nonexistent/environments/lab.json")),
+            findings: vec![finding("bus", true), finding("money", true)],
+        };
+        assert!(good.all_ok());
+        print(&good);
+        log(&good);
+
+        let bad = Report {
+            environments_dir: None,
+            descriptor: None,
+            findings: vec![finding("bus", true), finding("policy", false)],
+        };
+        assert!(!bad.all_ok());
+        print(&bad);
+        log(&bad);
+
+        let empty = Report {
+            environments_dir: None,
+            descriptor: None,
+            findings: Vec::new(),
+        };
+        assert!(empty.all_ok(), "nothing failing is all ok");
+    }
+}

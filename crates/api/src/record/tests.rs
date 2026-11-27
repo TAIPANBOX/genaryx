@@ -452,3 +452,171 @@ fn a_check_that_made_no_verdict_or_an_older_one_does_not_replace_the_kept_verdic
     keep_verdict(&mut kept, &newer);
     assert_eq!(kept, newer);
 }
+
+#[test]
+fn each_way_a_signed_file_is_not_one_is_named() {
+    let key = public_key();
+    let sig = "ab".repeat(96);
+    let cases: [(String, &str); 9] = [
+        (
+            format!("generated_at=x\nalgorithm=es384\npublic_key={key}\nsignature={sig}\n"),
+            "generated_at is not a number",
+        ),
+        (
+            format!("generated_at=1\nalgorithm=es256\npublic_key={key}\nsignature={sig}\n"),
+            "the algorithm is not es384",
+        ),
+        (
+            format!("generated_at=1\nalgorithm=es384\npublic_key=ZZ\nsignature={sig}\n"),
+            "public_key is not lowercase hex",
+        ),
+        (
+            format!(
+                "generated_at=1\nalgorithm=es384\npublic_key=05{}\nsignature={sig}\n",
+                "11".repeat(96)
+            ),
+            "public_key is not an uncompressed P-384 point",
+        ),
+        (
+            format!("generated_at=1\nalgorithm=es384\npublic_key=0411\nsignature={sig}\n"),
+            "public_key is not an uncompressed P-384 point",
+        ),
+        (
+            format!("generated_at=1\nalgorithm=es384\npublic_key={key}\nsignature=abc\n"),
+            "signature is not lowercase hex",
+        ),
+        (
+            format!("generated_at=1\nalgorithm=es384\npublic_key={key}\nsignature=abab\n"),
+            "signature is not 96 bytes",
+        ),
+        (
+            format!("generated_at=1\ngenerated_at=2\nalgorithm=es384\npublic_key={key}\nsignature={sig}\n"),
+            "the field generated_at twice",
+        ),
+        (
+            format!("generated_at=1\nalgorithm=es384\npublic_key={key}\n"),
+            "no signature field",
+        ),
+    ];
+    for (text, want) in cases {
+        assert_eq!(parse_signed(&text), Err(want.to_string()), "{text:?}");
+    }
+    assert_eq!(
+        parse_signed("generated_at=1\nnot a field line\n"),
+        Err("a line is not key=value".to_string())
+    );
+    assert_eq!(
+        parse_signed(&format!("{}extra=1\n", signed_text(1))),
+        Err("an unknown field extra".to_string())
+    );
+}
+
+#[test]
+fn a_signed_file_names_its_key_by_digest_and_its_time_in_seconds() {
+    use sha2::{Digest, Sha256};
+    let want_key = hex(&Sha256::digest(unhex(&public_key()).expect("hex")))[..16].to_string();
+    assert_eq!(
+        parse_signed(&signed_text(1_769_000_000_123_456_789)),
+        Ok(Signature::Signed {
+            key: want_key,
+            algorithm: "es384".to_string(),
+            at: 1_769_000_000,
+        })
+    );
+}
+
+#[test]
+fn a_pending_file_is_queued_since_its_time_or_named_as_unreadable() {
+    assert_eq!(
+        parse_pending("tenant=acme\ngenerated_at=2000000000\n"),
+        Ok(Signature::Queued { since: 2 })
+    );
+    assert_eq!(
+        parse_pending("tenant=acme\ngenerated_at=soon\n"),
+        Err("generated_at is not a number".to_string())
+    );
+    assert_eq!(
+        parse_pending("generated_at=1\n"),
+        Err("no tenant field".to_string())
+    );
+}
+
+#[test]
+fn hex_is_read_only_when_it_is_even_and_lowercase() {
+    assert_eq!(unhex("00ff7a"), Some(vec![0x00, 0xff, 0x7a]));
+    assert_eq!(unhex(""), Some(Vec::new()));
+    assert_eq!(unhex("abc"), None, "odd length");
+    assert_eq!(unhex("AB"), None, "uppercase is not the node's form");
+    assert_eq!(unhex("zz"), None);
+    assert_eq!(hex(&[0x0a, 0xbc]), "0abc");
+}
+
+#[test]
+fn long_text_is_bounded_by_characters_not_bytes() {
+    assert_eq!(bounded("short", 8), "short");
+    assert_eq!(bounded("abcdefghij", 4), "abcd...");
+    assert_eq!(bounded("ééééé", 2), "éé...");
+    assert_eq!(unix_seconds(2_999_999_999), 2);
+}
+
+#[test]
+fn only_shard_zero_manifest_names_are_segments() {
+    assert_eq!(segment_of("s0-17.mf"), Some(17));
+    assert_eq!(segment_of("s0-0.mf"), Some(0));
+    assert_eq!(segment_of("s0-x.mf"), None);
+    assert_eq!(segment_of("s0-17.idx"), None);
+    assert_eq!(segment_of("s1-17.mf"), None);
+    assert!(is_other_shard_manifest("s1-17.mf"));
+    assert!(!is_other_shard_manifest("s0-17.mf"));
+    assert!(!is_other_shard_manifest("notes.txt"));
+}
+
+#[test]
+fn a_signing_file_that_is_too_large_a_directory_or_garbled_is_unreadable() {
+    let dir = scratch("signing-hostile");
+    let root = "ab".repeat(32);
+
+    // Too large.
+    signing_file(&dir, "signed", &root, &"x".repeat(MAX_SIGNING_BYTES as usize + 1));
+    match signature_of(&dir, &root) {
+        Signature::Unreadable { reason } => {
+            assert!(reason.contains("is larger than"), "{reason}");
+        }
+        other => panic!("expected Unreadable, got {other:?}"),
+    }
+    std::fs::remove_file(dir.join("signing").join("signed").join(&root)).expect("rm");
+
+    // A directory where the file should be.
+    std::fs::create_dir_all(dir.join("signing").join("signed").join(&root)).expect("mkdir");
+    match signature_of(&dir, &root) {
+        Signature::Unreadable { reason } => {
+            assert!(reason.ends_with("is not a regular file"), "{reason}");
+        }
+        other => panic!("expected Unreadable, got {other:?}"),
+    }
+    std::fs::remove_dir(dir.join("signing").join("signed").join(&root)).expect("rmdir");
+
+    // Not UTF-8.
+    let d = dir.join("signing").join("signed");
+    std::fs::write(d.join(&root), [0xff_u8, 0xfe, 0x00]).expect("write");
+    match signature_of(&dir, &root) {
+        Signature::Unreadable { reason } => {
+            assert_eq!(reason, format!("signing/signed/{}: not UTF-8", &root[..16]));
+        }
+        other => panic!("expected Unreadable, got {other:?}"),
+    }
+    std::fs::remove_file(d.join(&root)).expect("rm");
+
+    // A pending file that is not one.
+    signing_file(&dir, "pending", &root, "tenant=acme\n");
+    match signature_of(&dir, &root) {
+        Signature::Unreadable { reason } => {
+            assert_eq!(
+                reason,
+                format!("signing/pending/{}: no generated_at field", &root[..16])
+            );
+        }
+        other => panic!("expected Unreadable, got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

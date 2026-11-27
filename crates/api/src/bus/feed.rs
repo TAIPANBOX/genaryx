@@ -1277,4 +1277,389 @@ mod tests {
         assert_eq!(ingest.store().event_count().expect("event_count"), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    // ========================================================================
+    // the feeder's own pieces, and hostile bytes on a stream
+    // ========================================================================
+
+    /// A sink that keeps what it was handed, so a test can read what the
+    /// feeder forwarded.
+    #[derive(Clone, Default)]
+    struct Collect(std::sync::Arc<std::sync::Mutex<Vec<UiEvent>>>);
+
+    impl EventSink for Collect {
+        fn emit(&self, event: UiEvent) {
+            self.0.lock().expect("sink lock").push(event);
+        }
+    }
+
+    impl Collect {
+        fn types(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .expect("sink lock")
+                .iter()
+                .map(|e| e.event_type.clone())
+                .collect()
+        }
+    }
+
+    /// One conforming wardryx event of `event_type`, as the ingest path would
+    /// broadcast it.
+    fn console_event(event_type: &str) -> ConsoleEvent {
+        let raw = serde_json::json!({
+            "schema": "taipanbox.dev/agent-event/v0.2",
+            "ts": "2026-10-20T09:00:00.000Z",
+            "source": "wardryx",
+            "type": event_type,
+            "agent_id": "agent://acme.example/agents/a",
+        })
+        .to_string();
+        let event: genaryx_core::event::AgentEvent =
+            serde_json::from_str(&raw).expect("a conforming envelope");
+        ConsoleEvent {
+            event,
+            provenance: genaryx_core::event::Provenance {
+                env: "single".to_string(),
+                connector: "filetail:wardryx".to_string(),
+                file: None,
+                offset: None,
+                endpoint: None,
+                received_ts: "2026-10-20T09:00:01Z".to_string(),
+            },
+            raw,
+            schema_version: genaryx_core::event::SchemaVersion::V0_2,
+        }
+    }
+
+    #[test]
+    fn drain_forwards_every_broadcast_event_in_order_and_returns_when_empty() {
+        let (tx, mut rx) = broadcast::channel::<ConsoleEvent>(16);
+        for t in ["policy_allow", "policy_deny", "approval_granted"] {
+            tx.send(console_event(t)).expect("a receiver exists");
+        }
+        let sink = Collect::default();
+        drain_and_emit(&mut rx, &sink);
+        assert_eq!(
+            sink.types(),
+            vec!["policy_allow", "policy_deny", "approval_granted"]
+        );
+        // Nothing new: a second drain forwards nothing and does not block.
+        drain_and_emit(&mut rx, &sink);
+        assert_eq!(sink.types().len(), 3);
+        assert!(
+            sink.0.lock().expect("sink lock").iter().all(|e| e.id < 0),
+            "a live row carries a synthetic id that cannot collide with a store id"
+        );
+    }
+
+    /// A receiver that fell behind logs the gap and still forwards what the
+    /// channel kept, rather than stopping the feed.
+    #[test]
+    fn a_lagged_receiver_still_forwards_what_the_channel_kept() {
+        let (tx, mut rx) = broadcast::channel::<ConsoleEvent>(2);
+        for t in ["t1", "t2", "t3", "t4", "t5"] {
+            tx.send(console_event(t)).expect("a receiver exists");
+        }
+        let sink = Collect::default();
+        drain_and_emit(&mut rx, &sink);
+        assert_eq!(sink.types(), vec!["t4", "t5"]);
+    }
+
+    #[test]
+    fn a_closed_channel_ends_the_drain_after_what_it_still_held() {
+        let (tx, mut rx) = broadcast::channel::<ConsoleEvent>(4);
+        tx.send(console_event("last_words")).expect("sent");
+        drop(tx);
+        let sink = Collect::default();
+        drain_and_emit(&mut rx, &sink);
+        assert_eq!(sink.types(), vec!["last_words"]);
+    }
+
+    #[test]
+    fn the_feeder_writes_to_its_own_sources_file_or_else_the_first() {
+        let files = [
+            PathBuf::from("/e/engram.ndjson"),
+            PathBuf::from("/e/wardryx.ndjson"),
+        ];
+        assert_eq!(pick_file(&files, "wardryx"), Some(&files[1]));
+        assert_eq!(pick_file(&files, "engram"), Some(&files[0]));
+        assert_eq!(
+            pick_file(&files, "verdryx"),
+            Some(&files[0]),
+            "no exact match falls back to the first file"
+        );
+        assert_eq!(pick_file(&[], "wardryx"), None);
+    }
+
+    #[test]
+    fn append_line_adds_one_terminated_line_and_never_creates_a_file() {
+        let root = scratch("append-line");
+        let path = root.join("wardryx.ndjson");
+        std::fs::write(&path, "first\n").expect("seed");
+        append_line(&path, "second").expect("append to an existing file");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back"),
+            "first\nsecond\n"
+        );
+        let missing = root.join("absent.ndjson");
+        assert!(
+            append_line(&missing, "x").is_err(),
+            "the feeder appends only to a seeded file"
+        );
+        assert!(!missing.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_feeder_cycles_four_sources_and_every_line_it_writes_conforms() {
+        let expected = ["wardryx", "verdryx", "mockryx", "engram"];
+        for tick in 0..8u64 {
+            let (source, line) = feeder_line(tick);
+            assert_eq!(source, expected[(tick % 4) as usize], "tick {tick}");
+            assert!(!line.contains('\n'), "one line: {line}");
+            let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
+            assert_eq!(v["source"], source);
+            assert_eq!(v["agent_id"], "agent://taipanbox.dev/demo/live-feed");
+            assert_eq!(v["run_id"], "live-feed");
+            assert_eq!(v["severity"], "info");
+        }
+        let engram: serde_json::Value =
+            serde_json::from_str(&feeder_line(3).1).expect("the engram line");
+        assert_eq!(engram["schema"], "taipanbox.dev/agent-event/v0.1");
+        assert_eq!(engram["type"], "memory_written");
+        assert_eq!(engram["data"]["memory_id"], "mem-live-000003");
+        let wardryx: serde_json::Value =
+            serde_json::from_str(&feeder_line(4).1).expect("the wardryx line");
+        assert_eq!(wardryx["schema"], "taipanbox.dev/agent-event/v0.2");
+        assert_eq!(wardryx["data"]["policy"], "default-allow");
+        let verdryx: serde_json::Value =
+            serde_json::from_str(&feeder_line(5).1).expect("the verdryx line");
+        assert_eq!(verdryx["data"]["eval_suite"], "live-feed-qa");
+        let mockryx: serde_json::Value =
+            serde_json::from_str(&feeder_line(6).1).expect("the mockryx line");
+        assert_eq!(mockryx["data"]["scenario"], "live-feed-heartbeat");
+
+        // Written where the feeder writes them and ingested: every one stored,
+        // none quarantined, each in the file named for its source.
+        let root = scratch("feeder-lines");
+        for name in expected {
+            std::fs::write(root.join(format!("{name}.ndjson")), "").expect("seed file");
+        }
+        let files = collect_ndjson_files(&root).expect("list");
+        let mut ingest = live_ingest(&root);
+        for path in &files {
+            add_source(&mut ingest, path).expect("tail");
+        }
+        for tick in 0..8 {
+            let (source, line) = feeder_line(tick);
+            append_line(pick_file(&files, source).expect("a file"), &line).expect("append");
+        }
+        let stats = ingest.poll_once().expect("poll");
+        assert_eq!((stats.inserted, stats.quarantined), (8, 0));
+        for e in ingest.store().recent_events(8).expect("recent") {
+            let want = format!("{}.ndjson", e.source);
+            assert!(
+                e.file.as_deref().is_some_and(|f| f.ends_with(&want)),
+                "{} landed in {:?}",
+                e.source,
+                e.file
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_ndjson_files_are_collected_sorted_and_a_missing_dir_lists_nothing() {
+        let root = scratch("collect");
+        for name in [
+            "b.ndjson",
+            "a.ndjson",
+            "notes.txt",
+            "console.sqlite",
+            "c.ndjson.bak",
+        ] {
+            std::fs::write(root.join(name), "").expect("write");
+        }
+        assert_eq!(
+            collect_ndjson_files(&root).expect("list"),
+            vec![root.join("a.ndjson"), root.join("b.ndjson")]
+        );
+        let absent = root.join("absent");
+        assert!(collect_ndjson_files(&absent).is_err());
+        // The tailer asks every tick: a directory that is not there yet is no
+        // sources, never a failed tick.
+        let paths = BusPaths {
+            dir: absent,
+            extra: Vec::new(),
+        };
+        assert!(collect_sources(&paths).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Bytes a producer must never be able to turn into a stored event, or
+    /// into a failed poll: truncated JSON, bytes that are not UTF-8, the right
+    /// keys with the wrong types, an array, and a megabyte with no envelope.
+    /// Each is quarantined with a reason, the one good line between them is
+    /// stored, and a line whose newline has not arrived is not read until it
+    /// does.
+    #[test]
+    fn hostile_bytes_on_a_stream_are_quarantined_never_stored_and_never_fatal() {
+        let root = scratch("hostile");
+        let bus = root.join("events");
+        std::fs::create_dir_all(&bus).expect("bus dir");
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.extend_from_slice(b"{\"schema\":\"taipanbox.dev/agent-event/v0.2\",\"ts\":\n");
+        bytes.extend_from_slice(&[0xff, 0xfe, 0x00, b'g', 0x80, b'\n']);
+        bytes.extend_from_slice(
+            b"{\"schema\":\"taipanbox.dev/agent-event/v0.2\",\"ts\":12345,\"source\":\"wardryx\",\
+              \"type\":\"policy_allow\",\"agent_id\":\"agent://acme.example/agents/a\"}\n",
+        );
+        bytes.extend_from_slice(
+            b"{\"schema\":\"taipanbox.dev/agent-event/v0.2\",\"ts\":\"2026-10-20T09:00:00.000Z\",\
+              \"source\":\"wardryx\",\"type\":\"policy_allow\",\"agent_id\":7}\n",
+        );
+        bytes.extend_from_slice(b"[1,2,3]\n");
+        bytes.extend_from_slice(b"{\"pad\":\"");
+        bytes.resize(bytes.len() + (1 << 20), b'x');
+        bytes.extend_from_slice(b"\"}\n");
+        bytes.extend_from_slice(BUS_LINE.as_bytes());
+        let pending = BUS_LINE.replace("08:59:00", "08:59:30");
+        bytes.extend_from_slice(pending.trim_end().as_bytes());
+        let file = bus.join("wardryx.ndjson");
+        std::fs::write(&file, &bytes).expect("write the stream");
+
+        let paths = BusPaths {
+            dir: bus,
+            extra: Vec::new(),
+        };
+        let mut ingest = live_ingest(&root);
+        let mut tailed = Vec::new();
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
+        let stats = ingest
+            .poll_once()
+            .expect("hostile bytes never fail the poll");
+        assert_eq!(stats.inserted, 1, "only the one good, complete line");
+        assert_eq!(stats.quarantined, 6, "every hostile line is kept");
+        assert_eq!(ingest.store().event_count().expect("count"), 1);
+        assert_eq!(ingest.store().quarantine_count().expect("count"), 6);
+        let reasons = ingest
+            .store()
+            .quarantine_by_reason(20)
+            .expect("quarantine_by_reason");
+        assert_eq!(reasons.iter().map(|r| r.count).sum::<u64>(), 6);
+        for r in &reasons {
+            let excerpt = r.raw_excerpt.clone().unwrap_or_default();
+            assert!(
+                excerpt.chars().count() <= genaryx_core::store::QUARANTINE_EXCERPT_CHARS + 3,
+                "an excerpt, never the whole refused line: {} chars",
+                excerpt.chars().count()
+            );
+            assert!(
+                r.example_file
+                    .as_deref()
+                    .is_some_and(|f| f.ends_with("wardryx.ndjson")),
+                "{r:?}"
+            );
+        }
+
+        // The partial line is read once its newline arrives, and nothing read
+        // before is read again.
+        append_line(&file, "").expect("finish the partial line");
+        let stats = ingest.poll_once().expect("second poll");
+        assert_eq!((stats.inserted, stats.quarantined), (1, 0));
+        assert_eq!(ingest.store().event_count().expect("count"), 2);
+        assert_eq!(ingest.store().quarantine_count().expect("count"), 6);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Retention drops what is past the horizon and keeps what is inside it.
+    /// Reads `GENARYX_HISTORY_DAYS`, which nothing in this crate's tests sets,
+    /// so the 90-day default is what is measured.
+    #[test]
+    fn history_past_the_retention_window_is_pruned_and_recent_history_is_kept() {
+        if std::env::var_os("GENARYX_HISTORY_DAYS").is_some() {
+            eprintln!("skipped: GENARYX_HISTORY_DAYS is set, so the default is not in force");
+            return;
+        }
+        let root = scratch("prune");
+        let bus = root.join("events");
+        std::fs::create_dir_all(&bus).expect("bus dir");
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let old = BUS_LINE.replace("2026-10-20T08:59:00.000Z", "2020-01-01T00:00:00.000Z");
+        let recent = BUS_LINE.replace("2026-10-20T08:59:00.000Z", &now);
+        std::fs::write(bus.join("wardryx.ndjson"), format!("{old}{recent}")).expect("write");
+        let paths = BusPaths {
+            dir: bus,
+            extra: Vec::new(),
+        };
+        let mut ingest = live_ingest(&root);
+        let mut tailed = Vec::new();
+        pick_up_new_sources(&mut ingest, &paths, &mut tailed);
+        ingest.poll_once().expect("poll");
+        assert_eq!(ingest.store().event_count().expect("count"), 2);
+
+        prune_history(ingest.store());
+        let kept = ingest.store().recent_events(10).expect("recent");
+        assert_eq!(kept.len(), 1, "the 2020 event is past ninety days");
+        assert_eq!(kept[0].ts, now);
+
+        // Nothing left to drop is not an error and drops nothing more.
+        prune_history(ingest.store());
+        assert_eq!(ingest.store().event_count().expect("count"), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_demo_store_directory_is_fresh_scratch_named_for_this_process() {
+        let dir = unique_events_dir();
+        assert_eq!(dir.parent(), Some(std::env::temp_dir().as_path()));
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("a file name");
+        assert!(
+            name.starts_with(&format!("genaryx-desktop-events-{}-", std::process::id())),
+            "{name}"
+        );
+    }
+
+    /// Demo mode is labelled demo, seeds its store from fixtures that all
+    /// conform, and its feeder forwards a live row within a tick or two.
+    #[test]
+    fn the_demo_bus_is_labelled_demo_seeded_and_fed_live() {
+        let sink = Collect::default();
+        let boot = bootstrap_demo(sink.clone()).expect("demo bootstrap");
+        assert_eq!(
+            boot.mode,
+            BusMode::Demo {
+                dir: boot.events_dir.display().to_string()
+            }
+        );
+        assert_eq!(
+            boot.source_events_dir, boot.events_dir,
+            "demo seeds and tails one directory"
+        );
+        let store = Store::open(&boot.events_dir.join("console.sqlite")).expect("store");
+        assert!(store.event_count().expect("count") > 0, "seeded at startup");
+        assert_eq!(store.quarantine_count().expect("count"), 0);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while sink.0.lock().expect("sink lock").is_empty() && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let first = sink
+            .0
+            .lock()
+            .expect("sink lock")
+            .first()
+            .cloned()
+            .expect("the demo feeder forwards a live row");
+        assert!(first.id < 0, "a live row has a synthetic id");
+        assert_eq!(first.env, "demo");
+        assert_eq!(first.agent_id, "agent://taipanbox.dev/demo/live-feed");
+        assert_eq!(first.run_id.as_deref(), Some("live-feed"));
+        let _ = std::fs::remove_dir_all(&boot.events_dir);
+    }
 }

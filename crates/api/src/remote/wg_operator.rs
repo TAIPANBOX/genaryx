@@ -603,17 +603,28 @@ fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
     // Resolved BEFORE minting anything: failing after a peer is live would
     // leave an authorized device nobody holds a config for.
     let host = endpoint_host()?;
+    issue_on(&backend, &iface, &host, console_tunnel_url)
+}
 
-    let state = read_state(&backend)?;
+/// The body of [`issue_blocking`] once the backend, the interface name and
+/// the endpoint host are resolved, so it runs against a daemon a test stands
+/// up without reading the environment.
+fn issue_on(
+    backend: &PeerBackend,
+    iface: &str,
+    host: &str,
+    tunnel_url: fn() -> String,
+) -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
+    let state = read_state(backend)?;
     let server_public_key = state.public_key_b64().ok_or_else(|| {
         not_configured(
-            &iface,
+            iface,
             format!("interface '{iface}' reports no public key, so it is not a running server"),
         )
     })?;
     let listen_port = state.listen_port.ok_or_else(|| {
         not_configured(
-            &iface,
+            iface,
             format!("interface '{iface}' reports no listen port"),
         )
     })?;
@@ -637,7 +648,7 @@ fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
 
     // Authorize before rendering: the operator must never walk away with a
     // config that was never going to connect.
-    add_peer(&backend, &client_public_hex, &client_ip)?;
+    add_peer(backend, &client_public_hex, &client_ip)?;
 
     let endpoint = format!("{host}:{listen_port}");
     let conf = render_conf(
@@ -655,15 +666,23 @@ fn issue_blocking() -> Result<RemoteWgOperatorConfigDto, WgOperatorError> {
         endpoint,
         server_public_key,
         peer_public_key: client_public_b64,
-        console_tunnel_url: console_tunnel_url(),
+        console_tunnel_url: tunnel_url(),
     })
 }
 
 fn peers_blocking() -> Result<RemoteWgPeersDto, WgOperatorError> {
     let backend = resolve_backend()?;
-    let state = read_state(&backend)?;
+    peers_on(&backend, iface_name)
+}
+
+/// The body of [`peers_blocking`] once the backend is resolved.
+fn peers_on(
+    backend: &PeerBackend,
+    iface: fn() -> String,
+) -> Result<RemoteWgPeersDto, WgOperatorError> {
+    let state = read_state(backend)?;
     Ok(RemoteWgPeersDto {
-        iface: iface_name(),
+        iface: iface(),
         server_public_key: state.public_key_b64(),
         listen_port: state.listen_port,
         backend: backend.label(),
@@ -685,15 +704,23 @@ fn peers_blocking() -> Result<RemoteWgPeersDto, WgOperatorError> {
 
 fn revoke_blocking(public_key_b64: &str) -> Result<RemoteWgRevokeDto, WgOperatorError> {
     let backend = resolve_backend()?;
+    revoke_on(&backend, public_key_b64)
+}
+
+/// The body of [`revoke_blocking`] once the backend is resolved.
+fn revoke_on(
+    backend: &PeerBackend,
+    public_key_b64: &str,
+) -> Result<RemoteWgRevokeDto, WgOperatorError> {
     let hex = genaryx_connectors::b64_to_hex(public_key_b64).map_err(|e| {
         WgOperatorError::Misconfigured {
             message: format!("not a WireGuard public key: {e}"),
         }
     })?;
-    let before = read_state(&backend)?;
+    let before = read_state(backend)?;
     let was_present = before.has_peer(&hex);
-    remove_peer(&backend, &hex)?;
-    let after = read_state(&backend)?;
+    remove_peer(backend, &hex)?;
+    let after = read_state(backend)?;
     Ok(RemoteWgRevokeDto {
         public_key: public_key_b64.to_string(),
         was_present,
@@ -1001,5 +1028,490 @@ mod tests {
             .label(),
             "wg"
         );
+    }
+
+    // ---- a stand-in wireguard-go UAPI daemon on a temp unix socket ----
+    //
+    // Issue, list and revoke run end to end against it through the real
+    // `UapiSocket`, so nothing here needs `wg`, a tun device or the
+    // environment.
+
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    /// A test-only interface key; its public half below is the value `wg
+    /// pubkey` prints for it (the connector's own fixture), so a broken
+    /// derivation cannot pass.
+    const SERVER_PRIV_HEX: &str =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    const SERVER_PUB_HEX: &str = "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13";
+    const PEER_A_HEX: &str = "aa11bb22cc33dd44ee55ff6677889900112233445566778899aabbccddeeff00";
+    const PEER_B_HEX: &str = "bb11cc22dd33ee44ff5500667788990011223344556677889900aabbccddeeff";
+
+    #[derive(Default)]
+    struct Daemon {
+        private_key_hex: Option<String>,
+        listen_port: Option<u16>,
+        peers: Vec<(String, Vec<String>)>,
+        set_errno: i64,
+        requests: Vec<String>,
+    }
+
+    fn answer(state: &Mutex<Daemon>, req: &str) -> String {
+        let mut d = state.lock().unwrap();
+        d.requests.push(req.to_string());
+        if req.starts_with("get=1") {
+            let mut out = String::new();
+            if let Some(k) = &d.private_key_hex {
+                out.push_str(&format!("private_key={k}\n"));
+            }
+            if let Some(p) = d.listen_port {
+                out.push_str(&format!("listen_port={p}\n"));
+            }
+            for (key, ips) in &d.peers {
+                out.push_str(&format!("public_key={key}\n"));
+                for ip in ips {
+                    out.push_str(&format!("allowed_ip={ip}\n"));
+                }
+            }
+            out.push_str("errno=0\n\n");
+            return out;
+        }
+        if d.set_errno != 0 {
+            return format!("errno={}\n\n", d.set_errno);
+        }
+        let key = req
+            .lines()
+            .find_map(|l| l.strip_prefix("public_key="))
+            .unwrap_or_default()
+            .to_string();
+        let ips: Vec<String> = req
+            .lines()
+            .filter_map(|l| l.strip_prefix("allowed_ip="))
+            .map(str::to_string)
+            .collect();
+        d.peers.retain(|(k, _)| *k != key);
+        if !req.lines().any(|l| l == "remove=true") {
+            d.peers.push((key, ips));
+        }
+        "errno=0\n\n".to_string()
+    }
+
+    struct FakeDaemon {
+        path: std::path::PathBuf,
+        state: Arc<Mutex<Daemon>>,
+        stop: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl FakeDaemon {
+        fn start(daemon: Daemon) -> Self {
+            static N: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "gx-wgop-{}-{}.sock",
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = std::fs::remove_file(&path);
+            let listener = UnixListener::bind(&path).expect("bind a test UAPI socket");
+            let state = Arc::new(Mutex::new(daemon));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (st, sp) = (state.clone(), stop.clone());
+            let thread = std::thread::spawn(move || {
+                for conn in listener.incoming() {
+                    if sp.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let Ok(mut conn) = conn else { continue };
+                    let mut req = String::new();
+                    if conn.read_to_string(&mut req).is_err() {
+                        continue;
+                    }
+                    let reply = answer(&st, &req);
+                    let _ = conn.write_all(reply.as_bytes());
+                }
+            });
+            Self {
+                path,
+                state,
+                stop,
+                thread: Some(thread),
+            }
+        }
+
+        fn backend(&self) -> PeerBackend {
+            PeerBackend::Uapi(UapiSocket::at(self.path.clone()))
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.state.lock().unwrap().requests.clone()
+        }
+
+        fn peers(&self) -> Vec<(String, Vec<String>)> {
+            self.state.lock().unwrap().peers.clone()
+        }
+    }
+
+    impl Drop for FakeDaemon {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            // Wake the accept loop so it sees the flag and returns.
+            let _ = UnixStream::connect(&self.path);
+            if let Some(t) = self.thread.take() {
+                let _ = t.join();
+            }
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    fn serving_daemon(peers: Vec<(String, Vec<String>)>) -> FakeDaemon {
+        FakeDaemon::start(Daemon {
+            private_key_hex: Some(SERVER_PRIV_HEX.to_string()),
+            listen_port: Some(51820),
+            peers,
+            ..Daemon::default()
+        })
+    }
+
+    fn not_configured_message(err: WgOperatorError) -> (String, String) {
+        match err {
+            WgOperatorError::ServerNotConfigured { iface, message } => (iface, message),
+            other => panic!("expected ServerNotConfigured, got {other:?}"),
+        }
+    }
+
+    fn missing_socket_backend(tag: &str) -> PeerBackend {
+        PeerBackend::Uapi(UapiSocket::at(std::env::temp_dir().join(format!(
+            "gx-wgop-missing-{tag}-{}.sock",
+            std::process::id()
+        ))))
+    }
+
+    #[test]
+    fn issuing_adds_the_next_free_address_and_hands_out_the_matching_private_key() {
+        let daemon = serving_daemon(vec![(
+            PEER_A_HEX.to_string(),
+            vec!["10.9.0.2/32".to_string()],
+        )]);
+        let dto = issue_on(&daemon.backend(), "wg-op", "198.51.100.9", || {
+            "https://console.test:7443".to_string()
+        })
+        .expect("a running server issues");
+
+        assert_eq!(dto.client_ip, "10.9.0.3", ".2 is taken, so .3 is next");
+        assert_eq!(dto.endpoint, "198.51.100.9:51820");
+        assert_eq!(dto.server_public_key, hex_to_b64(SERVER_PUB_HEX).unwrap());
+        assert_eq!(dto.console_tunnel_url, "https://console.test:7443");
+        assert!(dto.conf.contains("Address = 10.9.0.3/32"));
+        assert!(
+            dto.conf
+                .contains(&format!("PublicKey = {}", dto.server_public_key))
+        );
+        assert!(dto.conf.contains("Endpoint = 198.51.100.9:51820"));
+        assert!(dto.qr_svg.starts_with("<svg"));
+
+        // The private key in the conf is the half of the peer the daemon
+        // was told to authorize, not some other key.
+        let private_b64 = dto
+            .conf
+            .lines()
+            .find_map(|l| l.strip_prefix("PrivateKey = "))
+            .expect("a private key line");
+        let private_hex = genaryx_connectors::b64_to_hex(private_b64).unwrap();
+        let mut bytes = [0u8; 32];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&private_hex[2 * i..2 * i + 2], 16).unwrap();
+        }
+        assert_eq!(
+            WgKeypair::from_private(bytes).public_b64(),
+            dto.peer_public_key
+        );
+
+        let peer_hex = genaryx_connectors::b64_to_hex(&dto.peer_public_key).unwrap();
+        let peers = daemon.peers();
+        assert_eq!(peers.len(), 2, "the existing device stays");
+        assert_eq!(peers[0].0, PEER_A_HEX);
+        assert_eq!(peers[1], (peer_hex, vec!["10.9.0.3/32".to_string()]));
+        assert_eq!(daemon.requests().len(), 2, "one get, one set");
+    }
+
+    #[test]
+    fn an_interface_without_a_key_is_not_a_server_and_nothing_is_added() {
+        let daemon = FakeDaemon::start(Daemon {
+            listen_port: Some(51820),
+            ..Daemon::default()
+        });
+        let (iface, message) = not_configured_message(
+            issue_on(&daemon.backend(), "wg-op", "198.51.100.9", String::new)
+                .expect_err("no server key"),
+        );
+        assert_eq!(iface, "wg-op");
+        assert_eq!(
+            message,
+            "interface 'wg-op' reports no public key, so it is not a running server"
+        );
+        assert_eq!(daemon.requests().len(), 1, "only the read, no set");
+        assert!(daemon.peers().is_empty());
+    }
+
+    #[test]
+    fn an_interface_without_a_listen_port_is_refused_by_name() {
+        let daemon = FakeDaemon::start(Daemon {
+            private_key_hex: Some(SERVER_PRIV_HEX.to_string()),
+            ..Daemon::default()
+        });
+        let (_, message) = not_configured_message(
+            issue_on(&daemon.backend(), "wg-x", "198.51.100.9", String::new)
+                .expect_err("no port"),
+        );
+        assert_eq!(message, "interface 'wg-x' reports no listen port");
+        assert_eq!(daemon.requests().len(), 1);
+    }
+
+    #[test]
+    fn a_full_subnet_refuses_rather_than_reusing_an_address() {
+        let peers: Vec<(String, Vec<String>)> = (2u32..=254)
+            .map(|n| (format!("{n:064x}"), vec![format!("10.9.0.{n}/32")]))
+            .collect();
+        let daemon = serving_daemon(peers);
+        match issue_on(&daemon.backend(), "wg-op", "198.51.100.9", String::new) {
+            Err(WgOperatorError::SubnetExhausted { message }) => {
+                assert!(message.contains("(253 peers)"), "{message}");
+            }
+            other => panic!("expected SubnetExhausted, got {other:?}"),
+        }
+        assert_eq!(daemon.requests().len(), 1, "no peer is added");
+        assert_eq!(daemon.peers().len(), 253);
+    }
+
+    #[test]
+    fn a_daemon_that_refuses_the_set_fails_the_issue_with_its_errno() {
+        let daemon = FakeDaemon::start(Daemon {
+            private_key_hex: Some(SERVER_PRIV_HEX.to_string()),
+            listen_port: Some(51820),
+            set_errno: -13,
+            ..Daemon::default()
+        });
+        match issue_on(&daemon.backend(), "wg-op", "198.51.100.9", String::new) {
+            Err(WgOperatorError::Exec { message }) => {
+                assert_eq!(message, "wireguard UAPI refused the operation: errno=-13");
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
+        assert!(daemon.peers().is_empty());
+    }
+
+    #[test]
+    fn the_peer_list_is_backend_agnostic_and_keeps_an_unreadable_key_verbatim() {
+        let daemon = serving_daemon(vec![
+            (PEER_A_HEX.to_string(), vec!["10.9.0.2/32".to_string()]),
+            ("not-a-hex-key".to_string(), vec![]),
+        ]);
+        let dto = peers_on(&daemon.backend(), || "wg-test".to_string()).expect("listed");
+        assert_eq!(dto.iface, "wg-test");
+        assert_eq!(dto.backend, "uapi");
+        assert_eq!(dto.listen_port, Some(51820));
+        assert_eq!(
+            dto.server_public_key,
+            Some(hex_to_b64(SERVER_PUB_HEX).unwrap())
+        );
+        assert_eq!(dto.peers.len(), 2);
+        assert_eq!(dto.peers[0].public_key, hex_to_b64(PEER_A_HEX).unwrap());
+        assert_eq!(dto.peers[0].allowed_ips, vec!["10.9.0.2/32".to_string()]);
+        assert_eq!(dto.peers[0].last_handshake_unix, None);
+        assert_eq!(dto.peers[1].public_key, "not-a-hex-key");
+        assert!(dto.peers[1].allowed_ips.is_empty());
+    }
+
+    #[test]
+    fn revoking_a_present_peer_removes_only_that_peer() {
+        let daemon = serving_daemon(vec![
+            (PEER_A_HEX.to_string(), vec!["10.9.0.2/32".to_string()]),
+            (PEER_B_HEX.to_string(), vec!["10.9.0.3/32".to_string()]),
+        ]);
+        let key = hex_to_b64(PEER_A_HEX).unwrap();
+        let dto = revoke_on(&daemon.backend(), &key).expect("revoked");
+        assert_eq!(dto.public_key, key);
+        assert!(dto.was_present);
+        assert_eq!(dto.remaining_peers, 1);
+        let peers = daemon.peers();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].0, PEER_B_HEX);
+        let requests = daemon.requests();
+        assert_eq!(requests.len(), 3, "read, remove, read again");
+        assert!(requests[1].contains(&format!("public_key={PEER_A_HEX}")));
+        assert!(requests[1].contains("remove=true"));
+    }
+
+    #[test]
+    fn revoking_an_unknown_key_succeeds_and_says_it_was_not_there() {
+        let daemon = serving_daemon(vec![(
+            PEER_B_HEX.to_string(),
+            vec!["10.9.0.3/32".to_string()],
+        )]);
+        let dto = revoke_on(&daemon.backend(), &hex_to_b64(PEER_A_HEX).unwrap()).expect("ok");
+        assert!(!dto.was_present);
+        assert_eq!(dto.remaining_peers, 1);
+        assert_eq!(daemon.peers().len(), 1);
+    }
+
+    #[test]
+    fn revoking_something_that_is_not_a_key_refuses_before_any_exchange() {
+        let backend = missing_socket_backend("revoke-bad-key");
+        for bad in ["not base64 at all!", "AAAA"] {
+            match revoke_on(&backend, bad) {
+                Err(WgOperatorError::Misconfigured { message }) => {
+                    assert!(
+                        message.starts_with("not a WireGuard public key: "),
+                        "{message}"
+                    );
+                }
+                other => panic!("expected Misconfigured for {bad:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_missing_socket_reads_as_a_server_that_is_not_running() {
+        let backend = missing_socket_backend("read");
+        let (_, message) = not_configured_message(
+            peers_on(&backend, || "wg-op".to_string()).expect_err("no socket"),
+        );
+        assert!(
+            message.starts_with("the WireGuard tunnel is not running: no UAPI socket at "),
+            "{message}"
+        );
+        assert!(message.contains("docker compose up -d wg"));
+        let (_, message) = not_configured_message(
+            revoke_on(&backend, &hex_to_b64(PEER_A_HEX).unwrap()).expect_err("no socket"),
+        );
+        assert!(message.contains("no UAPI socket at"));
+    }
+
+    #[test]
+    fn a_uapi_error_other_than_a_missing_socket_is_an_exec_error() {
+        match WgOperatorError::from(WgUapiError::Errno(-1)) {
+            WgOperatorError::Exec { message } => {
+                assert_eq!(message, "wireguard UAPI refused the operation: errno=-1");
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
+        match WgOperatorError::from(WgUapiError::Malformed("bad")) {
+            WgOperatorError::Exec { message } => {
+                assert_eq!(message, "wireguard UAPI response malformed: bad");
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_error_displays_as_its_own_message() {
+        assert_eq!(
+            not_configured("wg-op", "down").to_string(),
+            "no WireGuard server on wg-op: down"
+        );
+        assert_eq!(exec_err("boom".to_string()).to_string(), "boom");
+        assert_eq!(
+            WgOperatorError::Misconfigured {
+                message: "unset".to_string()
+            }
+            .to_string(),
+            "unset"
+        );
+        assert_eq!(
+            WgOperatorError::SubnetExhausted {
+                message: "full".to_string()
+            }
+            .to_string(),
+            "full"
+        );
+    }
+
+    #[test]
+    fn a_cli_that_is_not_installed_is_named_as_not_found() {
+        match run("genaryx-test-no-such-cli-7f3a", &["--version"]) {
+            Err(WgOperatorError::Exec { message }) => assert_eq!(
+                message,
+                "genaryx-test-no-such-cli-7f3a: command not found (is it installed and on PATH?)"
+            ),
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_wg_dump_skips_what_it_cannot_read_and_splits_allowed_ips() {
+        let dump = format!(
+            "priv=\t(none)\tnot-a-port\toff\n\
+             \n\
+             \t(none)\t(none)\t10.9.0.9/32\t0\t0\t0\toff\n\
+             not-base64!!\t(none)\t(none)\t10.9.0.8/32\t0\t0\t0\toff\n\
+             {PEER_B64}\t(none)\t198.51.100.7:4000\t10.9.0.2/32, 10.9.0.3/32\tlater\tx\t7\toff\n\
+             {SERVER_B64}\t(none)\t\t(none)\n"
+        );
+        let state = parse_wg_dump(&dump);
+        assert_eq!(state.public_key_hex, None, "(none) is no key");
+        assert_eq!(state.listen_port, None, "not a port");
+        assert_eq!(state.peers.len(), 2, "unreadable peers are skipped");
+        let p = &state.peers[0];
+        assert_eq!(
+            p.public_key_hex,
+            genaryx_connectors::b64_to_hex(PEER_B64).unwrap()
+        );
+        assert_eq!(p.allowed_ips, vec!["10.9.0.2/32", "10.9.0.3/32"]);
+        assert_eq!(p.endpoint.as_deref(), Some("198.51.100.7:4000"));
+        assert_eq!(p.last_handshake_unix, None, "not a number");
+        assert_eq!((p.rx_bytes, p.tx_bytes), (0, 7));
+        let short = &state.peers[1];
+        assert!(short.allowed_ips.is_empty(), "(none) routes nothing");
+        assert_eq!(short.endpoint, None, "an empty endpoint is none");
+        assert_eq!((short.rx_bytes, short.tx_bytes), (0, 0));
+    }
+
+    #[test]
+    fn a_config_too_long_for_a_qr_is_an_error_not_a_blank_code() {
+        let huge = "x".repeat(8000);
+        for result in [render_qr_svg(&huge), render_qr_terminal(&huge, true)] {
+            match result {
+                Err(WgOperatorError::Exec { message }) => {
+                    assert!(
+                        message.starts_with("could not encode the config as a QR: "),
+                        "{message}"
+                    );
+                }
+                other => panic!("expected Exec, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_peer_action_is_journaled_into_the_consoles_own_chain() {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "genaryx-wgop-journal-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let bus = crate::money::state::BusHandle::from_dirs(&dir, &dir);
+        journal_peer_action(
+            Some(&bus),
+            "console.revoke_wg_peer",
+            PEER_B64,
+            "revoked:was_present=true remaining=0".to_string(),
+        );
+        let body = std::fs::read_to_string(&bus.console_events_path).unwrap_or_default();
+        let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1, "exactly one record");
+        let v: serde_json::Value = serde_json::from_str(lines[0]).expect("a JSON line");
+        assert_eq!(v["type"], "console_command");
+        assert_eq!(v["data"]["action"], "console.revoke_wg_peer");
+        assert_eq!(v["data"]["target"], PEER_B64);
+        assert_eq!(
+            v["data"]["verify_result"],
+            "revoked:was_present=true remaining=0"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

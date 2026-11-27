@@ -726,6 +726,298 @@ mod tests {
         let jws = sign(&k, &claims()).unwrap();
         assert_eq!(verify(&x, &jws, 1_010).unwrap(), claims());
     }
+
+    // ---- forged statements: each signed with the REAL console key, so the
+    // only thing wrong with it is the thing the test names ------------------
+
+    fn b64(v: &serde_json::Value) -> String {
+        URL_SAFE_NO_PAD.encode(v.to_string())
+    }
+
+    /// A compact JWS over exactly this header and payload, signed with `k`.
+    fn forge(k: &SoftwareSigner, header: &serde_json::Value, payload: &serde_json::Value) -> String {
+        let input = format!("{}.{}", b64(header), b64(payload));
+        let sig = k.sign_raw(input.as_bytes()).unwrap();
+        format!("{input}.{}", URL_SAFE_NO_PAD.encode(sig))
+    }
+
+    fn good_header(k: &SoftwareSigner) -> serde_json::Value {
+        let kid = thumbprint(&k.public_key_x963().unwrap()).unwrap();
+        serde_json::json!({ "alg": "ES256", "kid": kid, "typ": TYP })
+    }
+
+    fn good_payload() -> serde_json::Value {
+        serde_json::json!({
+            "v": 1, "sub": "person://acme/alice", "cred": "Y3JlZC0x", "aid": "appr-7",
+            "dec": "grant", "iat": 1_000, "exp": 1_120, "jti": "stmt-1",
+        })
+    }
+
+    fn malformed_reason(r: Result<Claims, StatementError>) -> &'static str {
+        match r {
+            Err(StatementError::Malformed(m)) => m,
+            other => panic!("expected a malformed statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_untampered_forge_is_accepted_so_every_refusal_below_is_about_its_one_change() {
+        let k = key();
+        let x = k.public_key_x963().unwrap();
+        let jws = forge(&k, &good_header(&k), &good_payload());
+        assert_eq!(verify(&x, &jws, 1_010).unwrap(), claims());
+    }
+
+    #[test]
+    fn a_header_that_names_another_algorithm_type_or_key_is_refused() {
+        let k = key();
+        let x = k.public_key_x963().unwrap();
+        let mut cases: Vec<(serde_json::Value, &str)> = Vec::new();
+        for (field, value, why) in [
+            ("alg", serde_json::json!("none"), "the algorithm is not ES256"),
+            ("alg", serde_json::json!("HS256"), "the algorithm is not ES256"),
+            ("typ", serde_json::json!("JWT"), "the type is not the approver statement type"),
+            (
+                "kid",
+                serde_json::json!("another-key"),
+                "the key id is not the console key's thumbprint",
+            ),
+            (
+                "jwk",
+                serde_json::json!({"kty": "EC"}),
+                "the header carries a key of its own",
+            ),
+            (
+                "x5c",
+                serde_json::json!(["MIIB"]),
+                "the header carries a key of its own",
+            ),
+        ] {
+            let mut h = good_header(&k);
+            h[field] = value;
+            cases.push((h, why));
+        }
+        let mut no_alg = good_header(&k);
+        no_alg.as_object_mut().unwrap().remove("alg");
+        cases.push((no_alg, "the algorithm is not ES256"));
+        for (header, why) in cases {
+            let jws = forge(&k, &header, &good_payload());
+            assert_eq!(malformed_reason(verify(&x, &jws, 1_010)), why, "{header}");
+        }
+    }
+
+    #[test]
+    fn a_statement_that_is_not_three_base64url_json_parts_is_refused() {
+        let k = key();
+        let x = k.public_key_x963().unwrap();
+        let good = forge(&k, &good_header(&k), &good_payload());
+        let p = parts(&good);
+        for (jws, why) in [
+            ("a.b".to_string(), "not a compact JWS of three parts"),
+            (format!("{good}.extra"), "not a compact JWS of three parts"),
+            (String::new(), "not a compact JWS of three parts"),
+            (format!("!!.{}.{}", p[1], p[2]), "the header is not base64url"),
+            (
+                format!("{}.{}.{}", URL_SAFE_NO_PAD.encode("not json"), p[1], p[2]),
+                "the header is not JSON",
+            ),
+            (format!("{}.{}.%%", p[0], p[1]), "the signature is not base64url"),
+        ] {
+            assert_eq!(malformed_reason(verify(&x, &jws, 1_010)), why, "{jws}");
+        }
+        // A signature that decodes but is not one for this input.
+        let wrong_sig = format!("{}.{}.{}", p[0], p[1], URL_SAFE_NO_PAD.encode([0u8; 64]));
+        assert!(matches!(
+            verify(&x, &wrong_sig, 1_010),
+            Err(StatementError::Unverified)
+        ));
+        let short_sig = format!("{}.{}.{}", p[0], p[1], URL_SAFE_NO_PAD.encode([1u8; 10]));
+        assert!(matches!(
+            verify(&x, &short_sig, 1_010),
+            Err(StatementError::Unverified)
+        ));
+    }
+
+    #[test]
+    fn a_validly_signed_payload_that_is_not_a_statement_is_still_refused() {
+        // Each of these carries a GOOD signature: the signer alone is never
+        // enough, the payload must also be a statement of this shape.
+        let k = key();
+        let x = k.public_key_x963().unwrap();
+        let h = good_header(&k);
+        let input = format!("{}.{}", b64(&h), URL_SAFE_NO_PAD.encode("not json"));
+        let sig = URL_SAFE_NO_PAD.encode(k.sign_raw(input.as_bytes()).unwrap());
+        assert_eq!(
+            malformed_reason(verify(&x, &format!("{input}.{sig}"), 1_010)),
+            "the payload is not JSON"
+        );
+        let input = format!("{}.%%%", b64(&h));
+        let sig = URL_SAFE_NO_PAD.encode(k.sign_raw(input.as_bytes()).unwrap());
+        assert_eq!(
+            malformed_reason(verify(&x, &format!("{input}.{sig}"), 1_010)),
+            "the payload is not base64url"
+        );
+
+        let mut cases: Vec<(serde_json::Value, &str)> = Vec::new();
+        let mut v3 = good_payload();
+        v3["v"] = serde_json::json!(3);
+        cases.push((v3, "the claim version is not 1 or 2"));
+        let mut no_v = good_payload();
+        no_v.as_object_mut().unwrap().remove("v");
+        cases.push((no_v, "the claim version is not 1 or 2"));
+        let mut v1_with_tcd = good_payload();
+        v1_with_tcd["tcd"] = serde_json::json!(NONE);
+        cases.push((v1_with_tcd, "a version 1 statement carries tcd or pvd"));
+        let mut v1_with_pvd = good_payload();
+        v1_with_pvd["pvd"] = serde_json::json!(NONE);
+        cases.push((v1_with_pvd, "a version 1 statement carries tcd or pvd"));
+        let mut v2_without_pvd = good_payload();
+        v2_without_pvd["v"] = serde_json::json!(2);
+        v2_without_pvd["tcd"] = serde_json::json!(NONE);
+        cases.push((v2_without_pvd, "a required text claim is missing"));
+        for claim in ["sub", "cred", "aid", "dec", "jti"] {
+            let mut p = good_payload();
+            p[claim] = serde_json::json!(7);
+            cases.push((p, "a required text claim is missing"));
+        }
+        for claim in ["iat", "exp"] {
+            let mut p = good_payload();
+            p[claim] = serde_json::json!("1000");
+            cases.push((p, "a required number claim is missing"));
+        }
+        for (payload, why) in cases {
+            let jws = forge(&k, &h, &payload);
+            assert_eq!(malformed_reason(verify(&x, &jws, 1_010)), why, "{payload}");
+        }
+    }
+
+    #[test]
+    fn signed_claims_outside_the_rules_are_refused_on_the_verifying_side_too() {
+        // A statement wardryx would refuse is refused here even though the
+        // console key signed it (a different console build, or a forged one).
+        let k = key();
+        let x = k.public_key_x963().unwrap();
+        let h = good_header(&k);
+        let mut maybe = good_payload();
+        maybe["dec"] = serde_json::json!("maybe");
+        let mut long_life = good_payload();
+        long_life["exp"] = serde_json::json!(1_000 + MAX_LIFETIME_SECS + 1);
+        let mut zero_life = good_payload();
+        zero_life["exp"] = serde_json::json!(1_000);
+        let mut bad_digest = good_payload();
+        bad_digest["v"] = serde_json::json!(2);
+        bad_digest["tcd"] = serde_json::json!("A".repeat(64));
+        bad_digest["pvd"] = serde_json::json!(NONE);
+        for p in [maybe, long_life, zero_life, bad_digest] {
+            let jws = forge(&k, &h, &p);
+            assert!(
+                matches!(verify(&x, &jws, 1_010), Err(StatementError::Claims(_))),
+                "{p}"
+            );
+        }
+        // Thirty seconds of clock skew is allowed, and not a second more.
+        let jws = forge(&k, &h, &good_payload());
+        assert!(verify(&x, &jws, 1_000 - MAX_FUTURE_SKEW_SECS).is_ok());
+        assert!(matches!(
+            verify(&x, &jws, 1_000 - MAX_FUTURE_SKEW_SECS - 1),
+            Err(StatementError::Claims("the statement is issued in the future"))
+        ));
+        assert!(verify(&x, &jws, 1_119).is_ok(), "valid until the second before exp");
+    }
+
+    #[test]
+    fn every_claim_rule_has_its_own_boundary() {
+        let k = key();
+        let mut ok = claims();
+        ok.sub = "s".repeat(256);
+        ok.cred = "c".repeat(512);
+        ok.jti = "j".repeat(128);
+        ok.exp = ok.iat + MAX_LIFETIME_SECS;
+        assert!(sign(&k, &ok).is_ok(), "every limit is inclusive");
+        let mut cases: Vec<(Claims, &str)> = Vec::new();
+        let mut c = claims();
+        c.sub = "s".repeat(257);
+        cases.push((c, "a 257-byte subject"));
+        let mut c = claims();
+        c.cred = String::new();
+        cases.push((c, "an empty credential id"));
+        let mut c = claims();
+        c.cred = "c".repeat(513);
+        cases.push((c, "a 513-byte credential id"));
+        let mut c = claims();
+        c.aid = String::new();
+        cases.push((c, "no approval id"));
+        let mut c = claims();
+        c.jti = "j".repeat(129);
+        cases.push((c, "a 129-byte statement id"));
+        let mut c = claims();
+        c.exp = c.iat;
+        cases.push((c, "a zero lifetime"));
+        let mut c = claims();
+        c.exp = c.iat - 1;
+        cases.push((c, "a negative lifetime"));
+        let mut c = claims();
+        c.sub = "person://acme/\u{2066}alice".into();
+        cases.push((c, "an isolate in the subject"));
+        let mut c = claims();
+        c.sub = "person://acme/\u{061C}alice".into();
+        cases.push((c, "an Arabic letter mark in the subject"));
+        for (c, name) in cases {
+            assert!(
+                matches!(sign(&k, &c), Err(StatementError::Claims(_))),
+                "{name} must be refused"
+            );
+        }
+        let mut deny = claims();
+        deny.dec = "deny".into();
+        assert!(sign(&k, &deny).is_ok(), "deny is a decision too");
+    }
+
+    #[test]
+    fn a_console_key_that_is_not_an_uncompressed_p256_point_is_refused() {
+        let x = key().public_key_x963().unwrap();
+        let mut compressed = x[..33].to_vec();
+        compressed[0] = 0x02;
+        let mut wrong_tag = x.clone();
+        wrong_tag[0] = 0x05;
+        let mut off_curve = x;
+        off_curve[64] ^= 0x01;
+        assert_eq!(
+            thumbprint(&compressed).unwrap_err().to_string(),
+            "the console key is not an uncompressed P-256 point"
+        );
+        assert!(matches!(
+            thumbprint(&wrong_tag),
+            Err(StatementError::Malformed(_))
+        ));
+        assert!(matches!(
+            public_jwks(&[]),
+            Err(StatementError::Malformed(_))
+        ));
+        assert_eq!(
+            thumbprint(&off_curve).unwrap_err().to_string(),
+            "the console key is not a point on P-256"
+        );
+        // A statement checked against a key that is not a key is refused,
+        // never verified.
+        let jws = sign(&key(), &claims()).unwrap();
+        assert!(matches!(
+            verify(&off_curve, &jws, 1_010),
+            Err(StatementError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn statement_errors_say_what_failed() {
+        assert_eq!(
+            StatementError::Claims("dec must be grant or deny").to_string(),
+            "the approver statement's claims are refused: dec must be grant or deny"
+        );
+        assert_eq!(
+            StatementError::Unverified.to_string(),
+            "the approver statement does not verify under the console key"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -786,5 +1078,205 @@ mod loader_tests {
                 "{name} must be refused, not loaded"
             );
         }
+    }
+
+
+    // ---- the DER reader, held element by element --------------------------
+
+    fn info(version: &[u8], alg_oid: &[u8], curve: &[u8], ec: &[u8]) -> Vec<u8> {
+        let mut algorithm = der_tlv(0x06, alg_oid);
+        algorithm.extend(der_tlv(0x06, curve));
+        let mut info = der_tlv(0x02, version);
+        info.extend(der_tlv(0x30, &algorithm));
+        info.extend(der_tlv(0x04, &der_tlv(0x30, ec)));
+        der_tlv(0x30, &info)
+    }
+
+    fn ec(version: &[u8], scalar: &[u8], extra: &[u8]) -> Vec<u8> {
+        let mut e = der_tlv(0x02, version);
+        e.extend(der_tlv(0x04, scalar));
+        e.extend_from_slice(extra);
+        e
+    }
+
+    fn public_of(scalar: [u8; 32]) -> Vec<u8> {
+        SoftwareSigner::from_scalar(&scalar)
+            .unwrap()
+            .public_key_x963()
+            .unwrap()
+    }
+
+    fn public_field(bits: &[u8]) -> Vec<u8> {
+        der_tlv(0xA1, &der_tlv(0x03, bits))
+    }
+
+    #[test]
+    fn der_lengths_round_trip_in_the_short_and_both_long_forms() {
+        for n in [0usize, 127, 128, 255, 256, 300, 65_535] {
+            let body = vec![0x5a; n];
+            let tlv = der_tlv(0x04, &body);
+            let (tag, value, rest) = der_read(&tlv).expect("readable");
+            assert_eq!((tag, value.len(), rest.len()), (0x04, n, 0), "length {n}");
+        }
+        assert_eq!(&der_tlv(0x04, &[0; 200])[..3], &[0x04, 0x81, 200]);
+        assert_eq!(&der_tlv(0x04, &[0; 300])[..4], &[0x04, 0x82, 0x01, 0x2c]);
+    }
+
+    #[test]
+    fn der_that_lies_about_its_length_is_unreadable() {
+        for (name, bad) in [
+            ("nothing", &[][..]),
+            ("a tag alone", &[0x30][..]),
+            ("a long form naming no length bytes", &[0x30, 0x80][..]),
+            ("a long form of five length bytes", &[0x30, 0x85, 0, 0, 0, 0, 1][..]),
+            ("length bytes that are not there", &[0x30, 0x82, 0x01][..]),
+            ("a length past the end", &[0x30, 0x03, 0x01][..]),
+            ("a long length past the end", &[0x30, 0x81, 0x80, 0x00][..]),
+        ] {
+            assert!(der_read(bad).is_none(), "{name} was read");
+        }
+        assert_eq!(der_read(&[0x05, 0x00, 0xff]), Some((0x05, &[][..], &[0xff][..])));
+    }
+
+    #[test]
+    fn the_hand_built_structure_is_the_encoder_s_so_each_change_below_is_the_only_one() {
+        let good = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &[7u8; 32], &[]));
+        assert_eq!(good, pkcs8_der(&[7u8; 32], None));
+        let (scalar, public) = parse_p256_pkcs8(&good).expect("the encoder's own output parses");
+        assert_eq!((scalar, public), ([7u8; 32], None));
+    }
+
+    #[test]
+    fn a_pkcs8_structure_off_its_shape_anywhere_is_refused() {
+        let scalar = [7u8; 32];
+        let public = public_of(scalar);
+        let mut unused_bits = vec![1u8];
+        unused_bits.extend_from_slice(&public);
+        let mut short_point = vec![0u8];
+        short_point.extend_from_slice(&public[..64]);
+        let mut compressed = vec![0u8, 0x02];
+        compressed.extend_from_slice(&public[1..33]);
+        let mut good = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &[]));
+        good.push(0x00);
+        let rsa: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+        let p384: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
+        let mut bits_in_octets = vec![0u8];
+        bits_in_octets.extend_from_slice(&public);
+        let cases = [
+            ("trailing bytes after the key", good),
+            (
+                "PrivateKeyInfo version 1",
+                info(&[1], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &[])),
+            ),
+            ("an RSA algorithm", info(&[0], rsa, OID_PRIME256V1, &ec(&[1], &scalar, &[]))),
+            ("the P-384 curve", info(&[0], OID_EC_PUBLIC_KEY, p384, &ec(&[1], &scalar, &[]))),
+            (
+                "a 31-byte scalar",
+                info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar[..31], &[])),
+            ),
+            (
+                "ECPrivateKey version 2",
+                info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[2], &scalar, &[])),
+            ),
+            (
+                "a public key with unused bits",
+                info(
+                    &[0],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[1], &scalar, &public_field(&unused_bits)),
+                ),
+            ),
+            (
+                "a public point one byte short",
+                info(
+                    &[0],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[1], &scalar, &public_field(&short_point)),
+                ),
+            ),
+            (
+                "a compressed public point",
+                info(
+                    &[0],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[1], &scalar, &public_field(&compressed)),
+                ),
+            ),
+            (
+                "a public key that is not a BIT STRING",
+                info(
+                    &[0],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[1], &scalar, &der_tlv(0xA1, &der_tlv(0x04, &bits_in_octets))),
+                ),
+            ),
+            (
+                "an unknown trailing element",
+                info(
+                    &[0],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[1], &scalar, &der_tlv(0x05, &[])),
+                ),
+            ),
+            ("not DER at all", vec![0xff]),
+        ];
+        for (name, der) in cases {
+            assert!(
+                matches!(parse_p256_pkcs8(&der), Err(StatementError::Malformed(_))),
+                "{name} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn named_curve_parameters_are_skipped_and_the_public_half_is_still_read() {
+        let scalar = [7u8; 32];
+        let public = public_of(scalar);
+        let params = der_tlv(0xA0, &der_tlv(0x06, OID_PRIME256V1));
+        let mut bits = vec![0u8];
+        bits.extend_from_slice(&public);
+        let mut extra = params.clone();
+        extra.extend(public_field(&bits));
+        let with_both = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &extra));
+        let (got_scalar, got_public) = parse_p256_pkcs8(&with_both).expect("parses");
+        assert_eq!(got_scalar, scalar);
+        assert_eq!(got_public.as_deref(), Some(public.as_slice()));
+        let params_only = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &params));
+        assert_eq!(parse_p256_pkcs8(&params_only).expect("parses").1, None);
+    }
+
+    #[test]
+    fn a_pem_whose_body_or_scalar_is_wrong_is_refused_by_name() {
+        let not_base64 = "-----BEGIN PRIVATE KEY-----\n%%%%\n-----END PRIVATE KEY-----\n";
+        assert_eq!(
+            signer_from_pkcs8_pem(not_base64).err().map(|e| e.to_string()),
+            Some("the approver key file's PEM body is not base64".to_string())
+        );
+        // A zero scalar is well-formed DER and is not a P-256 private key.
+        let zero = pkcs8_pem(&[0u8; 32], None);
+        assert_eq!(
+            signer_from_pkcs8_pem(&zero).err().map(|e| e.to_string()),
+            Some("the approver key's scalar is not a P-256 scalar".to_string())
+        );
+        // Line breaks inside the body, as every PEM writer wraps it, are fine.
+        let pem = pkcs8_pem(&[9u8; 32], None);
+        let body = pem
+            .trim()
+            .strip_prefix("-----BEGIN PRIVATE KEY-----")
+            .and_then(|r| r.strip_suffix("-----END PRIVATE KEY-----"))
+            .unwrap()
+            .trim()
+            .to_string();
+        let (head, tail) = body.split_at(20);
+        let wrapped = format!("-----BEGIN PRIVATE KEY-----\n{head}\n{tail}\n-----END PRIVATE KEY-----");
+        assert_eq!(
+            signer_from_pkcs8_pem(&wrapped).expect("loads").to_scalar_bytes(),
+            [9u8; 32]
+        );
     }
 }

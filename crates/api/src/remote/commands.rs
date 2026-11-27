@@ -1223,4 +1223,590 @@ mod tests {
         let guard = state.inner.lock().await;
         assert!(matches!(&*guard, RemoteInner::Bootstrapping));
     }
+
+    // ---- the commands themselves, over a hand-built state ----
+    //
+    // None of these spawns ssh, wireguard-go or a cloud CLI: every path below
+    // either refuses before any connector call, or (for Connect) points at a
+    // wireguard-go path that does not exist, so the spawn fails at once.
+
+    fn ready_state(client: &RemoteClient) -> RemoteState {
+        RemoteState {
+            inner: tokio::sync::Mutex::new(RemoteInner::Ready(client.clone())),
+        }
+    }
+
+    fn sample_request() -> RemoteEnvironmentRequest {
+        RemoteEnvironmentRequest {
+            name: "campaign-2".to_string(),
+            wireguard_go_bin: String::new(),
+            wg_peer_public_key_hex: "cc".repeat(32),
+            wg_endpoint: "203.0.113.10:51820".to_string(),
+            wg_allowed_ips: vec!["10.9.0.1/32".to_string()],
+            wg_persistent_keepalive: None,
+            wg_listen_port: Some(51821),
+            wg_local_ip: "10.9.0.2".to_string(),
+            wg_peer_ip: "10.9.0.1".to_string(),
+            ssh_host: "203.0.113.10".to_string(),
+            ssh_port: 2222,
+            ssh_user: "ops".to_string(),
+            ssh_identity_file: "/tmp/genaryx-remote-cmd-test-identity-2".to_string(),
+            ssh_pinned_host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIdef".to_string(),
+        }
+    }
+
+    fn invalid_message(err: RemoteError) -> String {
+        match err {
+            RemoteError::Invalid { message } => message,
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    /// Poison `cell` the only way a std mutex can be: a thread panics while
+    /// holding it.
+    fn poison<T: Send + 'static>(cell: &Arc<StdMutex<T>>) {
+        let held = cell.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            panic!("poisoning the cell on purpose");
+        })
+        .join();
+        assert!(cell.is_poisoned());
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingSink {
+        lines: Arc<StdMutex<Vec<RemoteTailLine>>>,
+        ended: Arc<StdMutex<Vec<RemoteTailEnded>>>,
+    }
+
+    impl TailSink for RecordingSink {
+        fn line(&self, line: RemoteTailLine) {
+            self.lines.lock().unwrap().push(line);
+        }
+        fn ended(&self, ended: RemoteTailEnded) {
+            self.ended.lock().unwrap().push(ended);
+        }
+    }
+
+    impl RecordingSink {
+        /// Wait (bounded) for the reader to report its end.
+        fn wait_ended(&self) -> Vec<RemoteTailEnded> {
+            for _ in 0..200 {
+                let ended = self.ended.lock().unwrap().clone();
+                if !ended.is_empty() {
+                    return ended;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            self.ended.lock().unwrap().clone()
+        }
+    }
+
+    fn sleeping_child(stdout: std::process::Stdio) -> std::process::Child {
+        std::process::Command::new("sleep")
+            .arg("30")
+            .stdout(stdout)
+            .spawn()
+            .expect("spawn a real long-lived child")
+    }
+
+    #[tokio::test]
+    async fn remote_status_reports_bootstrapping_then_ready() {
+        let pending = RemoteState::pending();
+        assert!(matches!(
+            remote_status(&pending).await,
+            Ok(RemoteStatusDto::Bootstrapping)
+        ));
+        let client = empty_client();
+        *client.environment.lock().unwrap() = Some(sample_env());
+        match remote_status(&ready_state(&client)).await {
+            Ok(RemoteStatusDto::Ready { environment, .. }) => {
+                assert_eq!(
+                    environment.expect("the saved environment").name,
+                    "hetzner-campaign-1"
+                );
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_environment_names_every_blank_required_field_before_anything_else() {
+        let fields = [
+            "name",
+            "wg_peer_public_key_hex",
+            "wg_endpoint",
+            "wg_local_ip",
+            "wg_peer_ip",
+            "ssh_host",
+            "ssh_user",
+            "ssh_identity_file",
+            "ssh_pinned_host_key",
+        ];
+        // A Ready state with a tunnel marked Failed: a refused request must
+        // leave every cell exactly as it was.
+        let client = empty_client();
+        *client.tunnel.lock().unwrap() = TunnelState::Failed("before".to_string());
+        let state = ready_state(&client);
+        for field in fields {
+            let mut req = sample_request();
+            let slot = match field {
+                "name" => &mut req.name,
+                "wg_peer_public_key_hex" => &mut req.wg_peer_public_key_hex,
+                "wg_endpoint" => &mut req.wg_endpoint,
+                "wg_local_ip" => &mut req.wg_local_ip,
+                "wg_peer_ip" => &mut req.wg_peer_ip,
+                "ssh_host" => &mut req.ssh_host,
+                "ssh_user" => &mut req.ssh_user,
+                "ssh_identity_file" => &mut req.ssh_identity_file,
+                _ => &mut req.ssh_pinned_host_key,
+            };
+            *slot = "  \t ".to_string();
+            let message = invalid_message(
+                remote_set_environment(req, &state)
+                    .await
+                    .expect_err("a blank required field must be refused"),
+            );
+            assert_eq!(message, format!("{field} is required"));
+        }
+        assert!(client.environment.lock().unwrap().is_none());
+        assert!(client.ssh.lock().unwrap().is_none());
+        assert!(matches!(
+            &*client.tunnel.lock().unwrap(),
+            TunnelState::Failed(m) if m == "before"
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_environment_while_bootstrapping_is_refused_as_bootstrapping() {
+        let err = remote_set_environment(sample_request(), &RemoteState::pending())
+            .await
+            .expect_err("no client yet");
+        assert!(matches!(err, RemoteError::Bootstrapping));
+    }
+
+    #[tokio::test]
+    async fn set_environment_saves_pins_and_resets_the_tunnel_but_keeps_the_identity() {
+        let client = empty_client();
+        let keypair = WgKeypair::generate().expect("keygen");
+        let public_before = keypair.public_b64();
+        *client.console_keypair.lock().unwrap() = Some(keypair);
+        *client.tunnel.lock().unwrap() = TunnelState::Failed("old box".to_string());
+        let state = ready_state(&client);
+
+        let status = remote_set_environment(sample_request(), &state)
+            .await
+            .expect("a complete request saves");
+        match status {
+            RemoteStatusDto::Ready {
+                environment,
+                console_public_b64,
+                tunnel,
+                tail,
+                ..
+            } => {
+                let env = environment.expect("saved");
+                assert_eq!(env.name, "campaign-2");
+                assert_eq!(env.ssh_host, "203.0.113.10");
+                assert_eq!(env.ssh_port, 2222);
+                assert_eq!(env.ssh_user, "ops");
+                assert_eq!(env.wg_listen_port, Some(51821));
+                assert_eq!(env.wg_peer_public_key_hex, "cc".repeat(32));
+                assert_eq!(console_public_b64.as_deref(), Some(public_before.as_str()));
+                assert!(matches!(tunnel, TunnelStatusDto::Disconnected));
+                assert!(tail.is_none());
+            }
+            RemoteStatusDto::Bootstrapping => panic!("a Ready state never reports Bootstrapping"),
+        }
+        assert!(client.ssh.lock().unwrap().is_some(), "the new target is pinned");
+        assert_eq!(
+            client
+                .environment
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|e| e.ssh_target.pinned_host_key.clone()),
+            Some("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIdef".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn set_environment_stops_a_tail_left_over_from_the_previous_box() {
+        let client = empty_client();
+        *client.tail.lock().unwrap() = Some(TailSession {
+            child: sleeping_child(std::process::Stdio::null()),
+            path: "/var/log/old.log".to_string(),
+        });
+        remote_set_environment(sample_request(), &ready_state(&client))
+            .await
+            .expect("saves");
+        assert!(client.tail.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn hetzner_list_refuses_a_blank_token_before_any_call() {
+        for token in ["", "   "] {
+            let message = invalid_message(
+                remote_hetzner_list(token.to_string(), None)
+                    .await
+                    .expect_err("blank token"),
+            );
+            assert_eq!(message, "token is required");
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_list_refuses_an_unknown_provider_by_name() {
+        let message = invalid_message(
+            remote_cloud_list("digitalocean".to_string(), None)
+                .await
+                .expect_err("unknown provider"),
+        );
+        assert_eq!(message, "unknown cloud provider 'digitalocean'");
+    }
+
+    #[tokio::test]
+    async fn wg_connect_refuses_while_bootstrapping_and_without_an_environment() {
+        assert!(matches!(
+            remote_wg_connect(&RemoteState::pending()).await,
+            Err(RemoteError::Bootstrapping)
+        ));
+        let client = empty_client();
+        assert!(matches!(
+            remote_wg_connect(&ready_state(&client)).await,
+            Err(RemoteError::NoEnvironment)
+        ));
+        assert!(client.console_keypair.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn wg_connect_without_any_binary_fails_honestly_and_mints_no_identity() {
+        let client = empty_client(); // no default binary
+        *client.environment.lock().unwrap() = Some(sample_env()); // blank override
+        assert!(matches!(
+            remote_wg_connect(&ready_state(&client)).await,
+            Err(RemoteError::NoWireguardGoBinary)
+        ));
+        assert!(
+            client.console_keypair.lock().unwrap().is_none(),
+            "no identity is minted for a connect that could not even start"
+        );
+        assert!(matches!(
+            &*client.tunnel.lock().unwrap(),
+            TunnelState::Disconnected
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_failed_bring_up_is_recorded_as_failed_and_the_identity_is_reused() {
+        let client = empty_client();
+        let mut env = sample_env();
+        env.wireguard_go_bin = "/nonexistent/genaryx-remote-cmd-test/wireguard-go".to_string();
+        *client.environment.lock().unwrap() = Some(env);
+        let state = ready_state(&client);
+
+        let first = remote_wg_connect(&state).await.expect("Ok even on failure");
+        let first_key = match first {
+            RemoteStatusDto::Ready {
+                tunnel,
+                console_public_b64,
+                ..
+            } => {
+                match tunnel {
+                    TunnelStatusDto::Failed { message } => assert!(!message.is_empty()),
+                    other => panic!("a missing binary must be Failed, got {other:?}"),
+                }
+                console_public_b64.expect("the identity is minted on first use")
+            }
+            RemoteStatusDto::Bootstrapping => panic!("Ready state"),
+        };
+        assert!(matches!(
+            &*client.tunnel.lock().unwrap(),
+            TunnelState::Failed(_)
+        ));
+
+        let second = remote_wg_connect(&state).await.expect("Ok even on failure");
+        match second {
+            RemoteStatusDto::Ready {
+                console_public_b64, ..
+            } => assert_eq!(console_public_b64, Some(first_key)),
+            RemoteStatusDto::Bootstrapping => panic!("Ready state"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wg_connect_falls_back_to_the_discovered_default_binary() {
+        let mut client = empty_client();
+        client.default_wireguard_go_bin = Some(PathBuf::from(
+            "/nonexistent/genaryx-remote-cmd-test/default-wireguard-go",
+        ));
+        *client.environment.lock().unwrap() = Some(sample_env()); // blank override
+        match remote_wg_connect(&ready_state(&client)).await {
+            Ok(RemoteStatusDto::Ready {
+                default_wireguard_go_bin,
+                tunnel,
+                ..
+            }) => {
+                assert_eq!(
+                    default_wireguard_go_bin.as_deref(),
+                    Some("/nonexistent/genaryx-remote-cmd-test/default-wireguard-go")
+                );
+                assert!(matches!(tunnel, TunnelStatusDto::Failed { .. }));
+            }
+            other => panic!("expected Ready with a Failed tunnel, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wg_disconnect_clears_a_failed_tunnel() {
+        assert!(matches!(
+            remote_wg_disconnect(&RemoteState::pending()).await,
+            Err(RemoteError::Bootstrapping)
+        ));
+        let client = empty_client();
+        *client.tunnel.lock().unwrap() = TunnelState::Failed("eperm".to_string());
+        match remote_wg_disconnect(&ready_state(&client)).await {
+            Ok(RemoteStatusDto::Ready { tunnel, .. }) => {
+                assert!(matches!(tunnel, TunnelStatusDto::Disconnected));
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
+        assert!(matches!(
+            &*client.tunnel.lock().unwrap(),
+            TunnelState::Disconnected
+        ));
+    }
+
+    #[tokio::test]
+    async fn ssh_commands_without_a_saved_environment_say_so() {
+        let client = empty_client();
+        let state = ready_state(&client);
+        assert!(matches!(
+            remote_ssh_check_reachable(&state).await,
+            Err(RemoteError::NoEnvironment)
+        ));
+        assert!(matches!(
+            remote_ssh_read_file("/etc/hostname".to_string(), &state).await,
+            Err(RemoteError::NoEnvironment)
+        ));
+        assert!(matches!(
+            remote_ssh_tail_start("/var/log/x.log".to_string(), 0, RecordingSink::default(), &state)
+                .await,
+            Err(RemoteError::NoEnvironment)
+        ));
+        assert!(client.tail.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn ssh_commands_refuse_a_blank_path_and_report_bootstrapping() {
+        let client = empty_client();
+        let state = ready_state(&client);
+        assert_eq!(
+            invalid_message(
+                remote_ssh_read_file(" ".to_string(), &state)
+                    .await
+                    .expect_err("blank path")
+            ),
+            "path is required"
+        );
+        assert_eq!(
+            invalid_message(
+                remote_ssh_tail_start(String::new(), 0, RecordingSink::default(), &state)
+                    .await
+                    .expect_err("blank path")
+            ),
+            "path is required"
+        );
+        let pending = RemoteState::pending();
+        assert!(matches!(
+            remote_ssh_check_reachable(&pending).await,
+            Err(RemoteError::Bootstrapping)
+        ));
+        assert!(matches!(
+            remote_ssh_read_file("/x".to_string(), &pending).await,
+            Err(RemoteError::Bootstrapping)
+        ));
+        assert!(matches!(
+            remote_ssh_tail_start("/x".to_string(), 0, RecordingSink::default(), &pending).await,
+            Err(RemoteError::Bootstrapping)
+        ));
+        assert!(matches!(
+            remote_ssh_tail_stop(&pending).await,
+            Err(RemoteError::Bootstrapping)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_running_tail_shows_in_the_status_and_tail_stop_clears_it() {
+        let client = empty_client();
+        *client.tail.lock().unwrap() = Some(TailSession {
+            child: sleeping_child(std::process::Stdio::null()),
+            path: "/var/log/app.log".to_string(),
+        });
+        match build_status(&client).await {
+            RemoteStatusDto::Ready { tail, .. } => {
+                let tail = tail.expect("a tail is running");
+                assert_eq!(tail.path, "/var/log/app.log");
+                assert!(tail.running);
+            }
+            RemoteStatusDto::Bootstrapping => panic!("Ready state"),
+        }
+        match remote_ssh_tail_stop(&ready_state(&client)).await {
+            Ok(RemoteStatusDto::Ready { tail, .. }) => assert!(tail.is_none()),
+            other => panic!("expected Ready, got {other:?}"),
+        }
+        assert!(client.tail.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_tail_child_with_no_stdout_ends_at_once_and_is_still_kept_to_be_killed() {
+        let tail: Arc<StdMutex<Option<TailSession>>> = Arc::new(StdMutex::new(None));
+        let sink = RecordingSink::default();
+        spawn_tail_reader(
+            sleeping_child(std::process::Stdio::null()),
+            "/var/log/a.log".to_string(),
+            tail.clone(),
+            sink.clone(),
+        );
+        let ended = sink.ended.lock().unwrap().clone();
+        assert_eq!(ended.len(), 1);
+        assert_eq!(ended[0].path, "/var/log/a.log");
+        assert_eq!(ended[0].reason, "the ssh child had no stdout pipe");
+        assert_eq!(
+            tail.lock().unwrap().as_ref().map(|s| s.path.clone()),
+            Some("/var/log/a.log".to_string())
+        );
+        assert!(stop_tail(&tail).is_ok());
+        assert!(tail.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_killed_tail_child_ends_its_stream_exactly_once() {
+        let tail: Arc<StdMutex<Option<TailSession>>> = Arc::new(StdMutex::new(None));
+        let sink = RecordingSink::default();
+        spawn_tail_reader(
+            sleeping_child(std::process::Stdio::piped()),
+            "/var/log/b.log".to_string(),
+            tail.clone(),
+            sink.clone(),
+        );
+        assert!(tail.lock().unwrap().is_some());
+        assert!(stop_tail(&tail).is_ok());
+        let ended = sink.wait_ended();
+        assert_eq!(ended.len(), 1, "exactly one ended marker");
+        assert_eq!(ended[0].path, "/var/log/b.log");
+        assert_eq!(ended[0].reason, "the remote tail stream ended");
+        assert!(
+            sink.lines.lock().unwrap().is_empty(),
+            "a silent child produced no lines"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_tail_cell_still_keeps_the_new_child() {
+        let tail: Arc<StdMutex<Option<TailSession>>> = Arc::new(StdMutex::new(None));
+        poison(&tail);
+        assert!(matches!(
+            stop_tail(&tail),
+            Err(RemoteError::Internal { message }) if message == "tail session mutex poisoned"
+        ));
+        let sink = RecordingSink::default();
+        spawn_tail_reader(
+            sleeping_child(std::process::Stdio::null()),
+            "/var/log/c.log".to_string(),
+            tail.clone(),
+            sink,
+        );
+        let mut guard = match tail.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut session = guard.take().expect("the child was stored despite the poison");
+        assert_eq!(session.path, "/var/log/c.log");
+        let _ = session.child.kill();
+        let _ = session.child.wait();
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_tunnel_cell_reads_as_failed_and_disconnect_is_internal() {
+        let client = empty_client();
+        poison(&client.tunnel);
+        match build_status(&client).await {
+            RemoteStatusDto::Ready { tunnel, .. } => match tunnel {
+                TunnelStatusDto::Failed { message } => {
+                    assert_eq!(message, "tunnel state mutex poisoned");
+                }
+                other => panic!("expected Failed, got {other:?}"),
+            },
+            RemoteStatusDto::Bootstrapping => panic!("Ready state"),
+        }
+        match remote_wg_disconnect(&ready_state(&client)).await {
+            Err(RemoteError::Internal { message }) => {
+                assert_eq!(message, "tunnel state mutex poisoned");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wg_operator_errors_keep_their_whole_explanation() {
+        match RemoteError::from(wg_operator::WgOperatorError::ServerNotConfigured {
+            iface: "wg-op".to_string(),
+            message: "not up".to_string(),
+        }) {
+            RemoteError::WgServerNotConfigured { iface, message } => {
+                assert_eq!(iface, "wg-op");
+                assert_eq!(message, "not up");
+            }
+            other => panic!("expected WgServerNotConfigured, got {other:?}"),
+        }
+        for (err, want) in [
+            (
+                wg_operator::WgOperatorError::Exec {
+                    message: "exec".to_string(),
+                },
+                "exec",
+            ),
+            (
+                wg_operator::WgOperatorError::Misconfigured {
+                    message: "misconfigured".to_string(),
+                },
+                "misconfigured",
+            ),
+            (
+                wg_operator::WgOperatorError::SubnetExhausted {
+                    message: "full".to_string(),
+                },
+                "full",
+            ),
+        ] {
+            match RemoteError::from(err) {
+                RemoteError::Wg { message } => assert_eq!(message, want),
+                other => panic!("expected Wg, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_cloud_cli_error_maps_to_cloud_with_its_message() {
+        match RemoteError::from(CloudCliError::CliNotFound {
+            cli: "aws".to_string(),
+        }) {
+            RemoteError::Cloud { message } => {
+                assert_eq!(message, "aws: command not found (is it installed and on PATH?)");
+            }
+            other => panic!("expected Cloud, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn internal_errors_name_what_failed() {
+        match poisoned("environment") {
+            RemoteError::Internal { message } => {
+                assert_eq!(message, "environment mutex poisoned");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
 }

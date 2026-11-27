@@ -167,12 +167,23 @@ impl MoneyState {
 /// `Err`: every failure mode is a [`MoneyInner`] variant the UI can render.
 pub async fn bootstrap(dirs: Option<(PathBuf, PathBuf)>) -> MoneyInner {
     let bus = dirs.map(|(store, source)| BusHandle::from_dirs(&store, &source));
+    bootstrap_with(bus, env::discover(), PAIRING_TIMEOUT).await
+}
 
-    let Some(resolved) = env::discover() else {
+/// The body of [`bootstrap`] over explicit inputs: the bus handle, whatever
+/// [`env::discover`] resolved, and the pairing timeout. Split out so every
+/// state transition can be driven from a test without the process
+/// environment.
+async fn bootstrap_with(
+    bus: Option<BusHandle>,
+    resolved: Option<ResolvedEnv>,
+    timeout: Duration,
+) -> MoneyInner {
+    let Some(resolved) = resolved else {
         return MoneyInner::NoEnvironment;
     };
 
-    match tokio::time::timeout(PAIRING_TIMEOUT, connect(&resolved)).await {
+    match tokio::time::timeout(timeout, connect(&resolved)).await {
         Ok(Ok((client, org_domain, sig_fpr))) => {
             let operator = operator_principal(&org_domain);
             MoneyInner::Ready(MoneyClient {
@@ -196,7 +207,7 @@ pub async fn bootstrap(dirs: Option<(PathBuf, PathBuf)>) -> MoneyInner {
             cloud_url: resolved.cloud_url,
             reason: format!(
                 "timed out after {:.0}s waiting for the Cloud to respond",
-                PAIRING_TIMEOUT.as_secs_f64()
+                timeout.as_secs_f64()
             ),
         },
     }
@@ -620,5 +631,206 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&scratch_dir);
+    }
+
+    // ==========================================================================
+    // pairing and the state machine against a loopback stub Cloud
+    // ==========================================================================
+
+    /// What one request to [`pairing_stub`] carried: its path and its
+    /// `Authorization` header, if any.
+    type SeenRequests = Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>;
+
+    /// A stub Cloud for the pairing ceremony: `POST /v1/pair/new` answers
+    /// `pair_new_status` with a code, `POST /v1/pair` redeems it for a device
+    /// of org `Acme Corp`. Every request's path and bearer is recorded.
+    fn pairing_stub(pair_new_status: &'static str) -> (String, SeenRequests) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind the stub");
+        let base = format!("http://{}", listener.local_addr().expect("stub address"));
+        let seen: SeenRequests = Arc::default();
+        let log = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                let mut reader = BufReader::new(stream.try_clone().expect("clone the stream"));
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                let path = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("")
+                    .to_string();
+                let mut authorization = None;
+                let mut content_length = 0usize;
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).is_err() {
+                        break;
+                    }
+                    let trimmed = header.trim_end();
+                    if trimmed.is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = trimmed.split_once(':') {
+                        let name = name.trim().to_ascii_lowercase();
+                        if name == "content-length" {
+                            content_length = value.trim().parse().unwrap_or(0);
+                        } else if name == "authorization" {
+                            authorization = Some(value.trim().to_string());
+                        }
+                    }
+                }
+                let mut body = vec![0u8; content_length];
+                reader.read_exact(&mut body).ok();
+                log.lock()
+                    .expect("request log")
+                    .push((path.clone(), authorization));
+                let (status, out) = match path.as_str() {
+                    "/v1/pair/new" => (pair_new_status, r#"{"code":"ABCD2345","expires_unix":0}"#),
+                    "/v1/pair" => (
+                        "200 OK",
+                        r#"{"device_id":"dev-1","org":"Acme Corp","role":"admin","device_token":"device-token-not-a-secret"}"#,
+                    ),
+                    _ => ("404 Not Found", r#"{"error":"not found"}"#),
+                };
+                let mut w = reader.into_inner();
+                let _ = write!(
+                    w,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{out}",
+                    out.len()
+                );
+                let _ = w.flush();
+            }
+        });
+        (base, seen)
+    }
+
+    fn resolved_at(base: &str) -> ResolvedEnv {
+        ResolvedEnv {
+            source: EnvSource::EnvFallback,
+            cloud_url: base.to_string(),
+            admin_bearer: "admin-key-not-a-secret".to_string(),
+        }
+    }
+
+    /// `MoneyInner` has no `Debug` (it holds a live client), so a failed match
+    /// names the variant it got instead.
+    fn variant(inner: &MoneyInner) -> &'static str {
+        match inner {
+            MoneyInner::Bootstrapping => "Bootstrapping",
+            MoneyInner::NoEnvironment => "NoEnvironment",
+            MoneyInner::PairingFailed { .. } => "PairingFailed",
+            MoneyInner::Ready(_) => "Ready",
+        }
+    }
+
+    /// The ceremony mints a code with the admin key, redeems it with the code
+    /// alone, attaches the device it was given, and folds the org into the
+    /// `agent_id`-safe domain every journal line is written under.
+    #[tokio::test]
+    async fn connect_pairs_attaches_the_device_and_folds_the_org_into_a_domain() {
+        let (base, seen) = pairing_stub("200 OK");
+        let Ok((client, org_domain, sig_fpr)) = connect(&resolved_at(&base)).await else {
+            panic!("connect must pair against a Cloud that answers both steps");
+        };
+        assert_eq!(org_domain, "acme-corp");
+        assert_eq!(sig_fpr, "software-signed");
+        assert!(
+            client.has_device(),
+            "the paired device must be attached, or every mutation fails closed"
+        );
+
+        let seen = seen.lock().expect("request log").clone();
+        assert_eq!(seen.len(), 2, "exactly mint then redeem: {seen:?}");
+        assert_eq!(seen[0].0, "/v1/pair/new");
+        assert_eq!(
+            seen[0].1.as_deref(),
+            Some("Bearer admin-key-not-a-secret"),
+            "minting a code is the admin key's act"
+        );
+        assert_eq!(seen[1].0, "/v1/pair");
+        assert_eq!(
+            seen[1].1, None,
+            "the one-time code is the credential; the admin key is not sent twice"
+        );
+    }
+
+    /// A Cloud that refuses the admin key leaves the panel `PairingFailed`,
+    /// naming the environment it tried and the Cloud's own refusal.
+    #[tokio::test]
+    async fn a_refused_pairing_is_pairing_failed_with_the_clouds_reason() {
+        let (base, seen) = pairing_stub("401 Unauthorized");
+        let inner = bootstrap_with(None, Some(resolved_at(&base)), PAIRING_TIMEOUT).await;
+        let (source, cloud_url, reason) = match inner {
+            MoneyInner::PairingFailed {
+                source,
+                cloud_url,
+                reason,
+            } => (source, cloud_url, reason),
+            other => panic!("expected PairingFailed, got {}", variant(&other)),
+        };
+        assert_eq!(source, EnvSource::EnvFallback);
+        assert_eq!(cloud_url, base);
+        assert!(
+            reason.starts_with("device pairing failed:"),
+            "the reason must say which step failed: {reason}"
+        );
+        assert!(reason.contains("401"), "the Cloud's status: {reason}");
+        assert_eq!(
+            seen.lock().expect("request log").len(),
+            1,
+            "a refused mint must not be followed by a redeem"
+        );
+    }
+
+    /// A Cloud that accepts the connection and never answers is a timeout the
+    /// panel can render, not a startup that hangs.
+    #[tokio::test]
+    async fn a_cloud_that_never_answers_is_pairing_failed_after_the_timeout() {
+        // Bound and never accepted: the connection completes in the backlog and
+        // the request is never answered.
+        let silent = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", silent.local_addr().expect("address"));
+        let started = Instant::now();
+        let inner =
+            bootstrap_with(None, Some(resolved_at(&base)), Duration::from_millis(300)).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the timeout must bound the wait"
+        );
+        let reason = match inner {
+            MoneyInner::PairingFailed { reason, .. } => reason,
+            other => panic!("expected PairingFailed, got {}", variant(&other)),
+        };
+        assert!(
+            reason.starts_with("timed out after"),
+            "a timeout says so: {reason}"
+        );
+        drop(silent);
+    }
+
+    /// Nothing resolved is the clean "no environment" state, never a pairing
+    /// attempt against a guessed URL.
+    #[tokio::test]
+    async fn nothing_resolved_is_no_environment() {
+        let inner = bootstrap_with(None, None, PAIRING_TIMEOUT).await;
+        assert!(
+            matches!(inner, MoneyInner::NoEnvironment),
+            "got {}",
+            variant(&inner)
+        );
+    }
+
+    #[test]
+    fn the_operator_principal_names_the_org_domain_and_one_user_segment() {
+        let op = operator_principal("acme-corp");
+        let user = op
+            .strip_prefix("user://acme-corp/")
+            .expect("the user:// scheme and the org domain");
+        assert!(!user.is_empty(), "a user segment is always present: {op}");
+        assert!(!user.contains('/'), "one segment only: {op}");
     }
 }

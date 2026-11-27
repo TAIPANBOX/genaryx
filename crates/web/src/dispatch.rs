@@ -1457,4 +1457,766 @@ mod tests {
         assert_eq!(block_action("user", true), "console.block_user");
         assert_eq!(block_action("anything-else", false), "console.unblock_user");
     }
+
+    // -- the whole dispatch table, on a box whose planes never resolved ------
+    //
+    // Every command below is driven through `dispatch` itself against a
+    // hermetic context: every plane in its `pending()` state (never
+    // `resolve()`d), no bus store, no vouchryx, no closure secret. Each one
+    // was read first to make sure it answers from that state without
+    // reaching a network outside loopback, spawning a binary or writing
+    // outside a temporary directory. Left out on purpose: the commands that
+    // read the process environment for an endpoint or a file (`keys_custody`,
+    // `record_status`, `record_verify`, `notifications_sent`,
+    // `routines_status`, `routines_history`, `onboard_status`), the three
+    // operator WireGuard commands, and `agent_block` (it always has one
+    // member, so it reaches the policy plane's environment).
+
+    use http_body_util::BodyExt;
+    use serde_json::json;
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "gw-dispatch-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
+
+    fn ctx_over(bus: genaryx_api::bus::AppState) -> Arc<Ctx> {
+        let cfg = crate::config::Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            state_dir: scratch_dir("state"),
+            ui_dir: None,
+            secure_cookies: false,
+            require_passkey: false,
+            delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
+            closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+            approver_key_file: None,
+            preview_key_file: None,
+        };
+        let (events_tx, _) = tokio::sync::broadcast::channel(16);
+        Arc::new(Ctx::bootstrap(cfg, bus, events_tx))
+    }
+
+    fn pending_ctx() -> Arc<Ctx> {
+        ctx_over(genaryx_api::bus::AppState {
+            events_dir: None,
+            source_events_dir: None,
+            mode: genaryx_api::bus::BusMode::Unavailable {
+                reason: "test".into(),
+            },
+        })
+    }
+
+    /// What one command answered: its status, its JSON body and its
+    /// `cache-control` header, if any.
+    struct Answer {
+        status: StatusCode,
+        body: Value,
+        cache: Option<String>,
+    }
+
+    async fn answer_of(resp: Response) -> Answer {
+        let status = resp.status();
+        let cache = resp
+            .headers()
+            .get(CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        Answer {
+            status,
+            body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            cache,
+        }
+    }
+
+    /// Dispatch a command this table knows. An `Err` (the unknown-name 404)
+    /// for one of them is itself the failure.
+    async fn run(ctx: &Arc<Ctx>, name: &str, args: Value) -> Answer {
+        match dispatch(ctx, name, args).await {
+            Ok(resp) => answer_of(resp).await,
+            Err(resp) => panic!(
+                "{name} is a dispatch arm, yet it answered as an unknown command ({})",
+                resp.status()
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn every_command_on_a_pending_plane_answers_422_bootstrapping() {
+        let ctx = pending_ctx();
+        let cases = [
+            (
+                "admission_baseline",
+                json!({ "evalset_path": "/nonexistent/evals.jsonl", "model": "m",
+                        "agent_id": "agent://acme.example/bot/a",
+                        "api_key": "test-key-not-a-secret" }),
+            ),
+            (
+                "admission_check",
+                json!({ "key_id": "k", "agent_id": "agent://acme.example/bot/a" }),
+            ),
+            ("credentials_gateway_retained_runs", json!({})),
+            ("credentials_posture", json!({})),
+            ("credentials_keys", json!({})),
+            ("crypto_scan_cbom", json!({ "path": "/nonexistent" })),
+            ("crypto_scan_evidence", json!({ "path": "/nonexistent" })),
+            ("crypto_scan_ncsc", json!({ "path": "/nonexistent" })),
+            ("crypto_verify_evidence", json!({ "file": "/nonexistent" })),
+            (
+                "drills_run",
+                json!({ "scenario_dir": "/nonexistent", "fail_on_skip": false }),
+            ),
+            (
+                "evidence_build",
+                json!({ "request": { "include_cloud": false, "include_qryx": false,
+                                     "include_idryx": false, "include_tokenfuse": false } }),
+            ),
+            ("identity_list_alerts", json!({})),
+            ("identity_list_identities", json!({})),
+            ("identity_list_remediations", json!({})),
+            ("identity_rescan", json!({})),
+            ("memory_forget", json!({ "memory_id": "m-1" })),
+            (
+                "memory_recall",
+                json!({ "query": "q", "limit": 3, "mode": "hybrid" }),
+            ),
+            ("memory_stats", json!({})),
+            ("memory_why", json!({ "memory_id": "m-1" })),
+            ("money_ack_incident", json!({ "id": "inc-1" })),
+            ("money_incidents", json!({})),
+            ("money_list_retained", json!({})),
+            (
+                "money_kill_run",
+                json!({ "run_id": "run-1", "reason": "runaway spend" }),
+            ),
+            ("money_overview", json!({})),
+            ("money_runs", json!({})),
+            ("money_spend_window", json!({})),
+            ("money_owners", json!({})),
+            ("money_savings", json!({})),
+            (
+                "money_set_budget",
+                json!({ "run_id": "run-1", "budget_usd": 1.5, "reason": "cap it" }),
+            ),
+            ("money_gateways", json!({})),
+            ("money_units", json!({})),
+            (
+                "money_set_unit_budget",
+                json!({ "unit": "sre", "budget_usd": 5.0, "reason": "month cap" }),
+            ),
+            (
+                "policy_decide_approval",
+                json!({ "id": "hold-1", "decision": "deny" }),
+            ),
+            ("policy_approval_preview", json!({ "id": "hold-1" })),
+            ("policy_grant_tool", json!({ "id": "hold-1" })),
+            ("policy_list_approvals", json!({})),
+            ("policy_list_policies", json!({})),
+            ("policy_enforcement_status", json!({})),
+            ("quality_list_baselines", json!({})),
+            ("quality_list_run_summaries", json!({})),
+            ("quality_run_scores", json!({ "run_id": "run-1" })),
+            (
+                "remote_set_environment",
+                json!({ "request": {
+                    "name": "campaign-1", "wireguard_go_bin": "",
+                    "wg_peer_public_key_hex": "bb", "wg_endpoint": "192.0.2.1:51820",
+                    "wg_allowed_ips": ["10.9.0.0/24"], "wg_persistent_keepalive": null,
+                    "wg_listen_port": null, "wg_local_ip": "10.9.0.2",
+                    "wg_peer_ip": "10.9.0.1", "ssh_host": "10.9.0.1", "ssh_port": 22,
+                    "ssh_user": "ops", "ssh_identity_file": "/nonexistent/id",
+                    "ssh_pinned_host_key": "ssh-ed25519 AAAA-test-only"
+                } }),
+            ),
+            ("remote_ssh_check_reachable", json!({})),
+            (
+                "remote_ssh_read_file",
+                json!({ "path": "/var/log/app.log" }),
+            ),
+            (
+                "remote_ssh_tail_start",
+                json!({ "path": "/var/log/app.log", "from_offset": 0 }),
+            ),
+            ("remote_ssh_tail_stop", json!({})),
+            ("remote_wg_connect", json!({})),
+            ("remote_wg_disconnect", json!({})),
+        ];
+        for (name, args) in cases {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(
+                a.status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{name}: {}",
+                a.body
+            );
+            assert_eq!(a.body["kind"], "bootstrapping", "{name}: {}", a.body);
+        }
+    }
+
+    #[tokio::test]
+    async fn every_plane_status_read_answers_200_with_the_bootstrapping_state() {
+        let ctx = pending_ctx();
+        for name in [
+            "money_status",
+            "policy_status",
+            "identity_status",
+            "credentials_status",
+            "crypto_status",
+            "drills_status",
+            "evidence_status",
+            "memory_status",
+            "quality_status",
+            "remote_status",
+        ] {
+            // A read that takes no arguments ignores whatever body arrives.
+            let a = run(&ctx, name, Value::Null).await;
+            assert_eq!(a.status, StatusCode::OK, "{name}: {}", a.body);
+            assert_eq!(a.body["state"], "bootstrapping", "{name}: {}", a.body);
+            assert_eq!(a.cache, None, "{name} is not marked no-store");
+        }
+        let a = run(&ctx, "admission_status", json!({})).await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        assert_eq!(a.body["gateway"]["state"], "bootstrapping", "{}", a.body);
+    }
+
+    #[tokio::test]
+    async fn bus_reads_on_a_box_with_no_store_say_they_measured_nothing() {
+        let ctx = pending_ctx();
+
+        let a = run(&ctx, "bus_status", json!({})).await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body, json!({ "kind": "unavailable", "reason": "test" }));
+
+        for (name, args) in [
+            ("bus_quarantine", json!({})),
+            ("egress_recent", json!({ "limit": 5 })),
+            ("stats_counts", json!({ "scan": 10 })),
+            ("stats_counts", json!({ "scan": 10, "window_days": 30 })),
+            (
+                "agent_stops",
+                json!({ "agent_id": "agent://acme.example/bot/a" }),
+            ),
+        ] {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(a.status, StatusCode::OK, "{name}: {}", a.body);
+            assert_eq!(a.body["measured"], false, "{name}: {}", a.body);
+            assert!(
+                a.body["note"]
+                    .as_str()
+                    .is_some_and(|n| n.contains("no event store")),
+                "{name} must say why it measured nothing: {}",
+                a.body
+            );
+        }
+
+        let a = run(
+            &ctx,
+            "agent_profile",
+            json!({ "agent_id": "agent://acme.example/bot/a" }),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body, Value::Null, "no store, no profile");
+
+        for (name, args) in [
+            (
+                "agent_events",
+                json!({ "agent_id": "agent://acme.example/bot/a", "limit": 5 }),
+            ),
+            ("run_events", json!({ "run_id": "run-1", "limit": 5 })),
+        ] {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(a.status, StatusCode::OK, "{name}");
+            assert_eq!(a.body, json!([]), "{name}: {}", a.body);
+        }
+
+        let a = run(&ctx, "agent_graph", json!({})).await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body["nodes"], json!([]), "{}", a.body);
+
+        let a = run(
+            &ctx,
+            "agent_slice",
+            json!({ "agent_id": "agent://acme.example/bot/a" }),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body["node"], Value::Null, "{}", a.body);
+        assert_eq!(a.body["parents"], json!([]), "{}", a.body);
+
+        // With no store the Bus Explorer falls back to its labelled demo rows,
+        // and never more of them than were asked for.
+        let a = run(&ctx, "recent_events", json!({ "limit": 3 })).await;
+        assert_eq!(a.status, StatusCode::OK);
+        let rows = a.body.as_array().expect("an array of events");
+        assert!(!rows.is_empty() && rows.len() <= 3, "{}", a.body);
+    }
+
+    #[tokio::test]
+    async fn copilot_commands_before_felyx_starts_answer_with_its_own_sentence() {
+        let ctx = pending_ctx();
+        for (name, args) in [
+            (
+                "copilot_ask",
+                json!({ "question": "which runs are over budget?" }),
+            ),
+            ("copilot_explain", json!({ "incident_id": "bus:1" })),
+            ("copilot_explain_case", json!({ "incident_id": "bus:1" })),
+        ] {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+            assert_eq!(
+                a.body,
+                json!("Copilot is still starting up; try again in a moment."),
+                "{name}"
+            );
+        }
+
+        let a = run(&ctx, "copilot_status", json!({})).await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body["enabled"], false);
+        assert_eq!(a.body["disabled_reason"], "Copilot is still starting up.");
+
+        // An approved proposal with no paired Money device is answered, and
+        // says it was not journaled rather than claiming it was.
+        let a = run(
+            &ctx,
+            "copilot_log_proposal_approved",
+            json!({ "kind": "kill_run", "target": "run-1", "params": {} }),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        assert_eq!(a.body["journaled"], false, "{}", a.body);
+        assert_eq!(
+            a.body["journal_error"],
+            "no paired Money device to journal against"
+        );
+    }
+
+    #[tokio::test]
+    async fn refusals_that_never_reach_a_plane_name_their_own_cause() {
+        let ctx = pending_ctx();
+        let agent = "agent://acme.example/bot/a";
+        let cases = [
+            (
+                "delegation_revoke",
+                json!({ "subject": agent, "reason": "compromised" }),
+                "not_configured",
+            ),
+            (
+                "delegation_revoke",
+                json!({ "subject": agent, "jti": "t-1", "reason": "compromised" }),
+                "exactly_one_target",
+            ),
+            (
+                "delegation_revoke",
+                json!({ "subject": "host://box", "reason": "compromised" }),
+                "invalid_subject",
+            ),
+            (
+                "agent_stop",
+                json!({ "subject": "not-an-agent", "reason": "runaway" }),
+                "invalid_subject",
+            ),
+            (
+                "agent_stop",
+                json!({ "subject": agent, "reason": "runaway" }),
+                "not_stopped",
+            ),
+            (
+                "agent_lift",
+                json!({ "subject": agent, "reason": "fixed" }),
+                "not_lifted",
+            ),
+            (
+                "money_close_retained",
+                json!({ "reservation_id": 1, "expected_revision": "0011223344556677",
+                        "evidence_kind": "no_charge", "evidence_ref": "ticket-1" }),
+                "not_configured",
+            ),
+            (
+                "money_close_retained",
+                json!({ "reservation_id": 1, "expected_revision": "not-hex",
+                        "evidence_kind": "no_charge", "evidence_ref": "ticket-1" }),
+                "invalid_args",
+            ),
+            (
+                "money_kill_run",
+                json!({ "run_id": "run-1", "reason": "   " }),
+                "break_glass_missing_reason",
+            ),
+            (
+                "money_set_unit_budget",
+                json!({ "unit": "unassigned", "budget_usd": 5.0, "reason": "cap" }),
+                "invalid_argument",
+            ),
+            (
+                "remote_cloud_list",
+                json!({ "provider": "no-such-cloud" }),
+                "invalid",
+            ),
+            (
+                "remote_hetzner_list",
+                json!({ "token": "", "label_selector": null }),
+                "invalid",
+            ),
+            ("remote_ssh_read_file", json!({ "path": " " }), "invalid"),
+            (
+                "remote_ssh_tail_start",
+                json!({ "path": "", "from_offset": 0 }),
+                "invalid",
+            ),
+            (
+                "onboard_generate",
+                json!({ "request": { "trust_domain": "NOT A DOMAIN", "path": "bot/a",
+                                     "unit": "sre", "owner": "ops" } }),
+                "invalid_input",
+            ),
+            (
+                "onboard_write_passport",
+                json!({ "request": { "passport_json": "not json",
+                                     "passport_path": "a.json", "overwrite": false } }),
+                "invalid_input",
+            ),
+            ("case_file", json!({ "incident_id": "bus:1" }), "no_store"),
+            (
+                "case_file",
+                json!({ "incident_id": "money:7" }),
+                "unsupported_source",
+            ),
+            (
+                "case_file",
+                json!({ "incident_id": "bus:seven" }),
+                "bad_incident_id",
+            ),
+            (
+                "case_seal",
+                json!({ "incident_id": "bus:1", "decision": { "outcome": "declined" } }),
+                "case",
+            ),
+            (
+                "case_pack",
+                json!({ "digest": "sha256:short" }),
+                "bad_digest",
+            ),
+            (
+                "case_pack",
+                json!({ "digest": format!("sha256:{}", "a".repeat(64)) }),
+                "no_store",
+            ),
+        ];
+        for (name, args, kind) in cases {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(
+                a.status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{name}: {}",
+                a.body
+            );
+            assert_eq!(a.body["kind"], kind, "{name}: {}", a.body);
+        }
+
+        // The seal names the case refusal it stopped at.
+        let a = run(
+            &ctx,
+            "case_seal",
+            json!({ "incident_id": "bus:1", "decision": { "outcome": "applied" } }),
+        )
+        .await;
+        assert_eq!(a.body["error"]["kind"], "no_store", "{}", a.body);
+    }
+
+    #[tokio::test]
+    async fn proofs_and_remedies_with_no_store_are_refused_not_proven() {
+        let ctx = pending_ctx();
+        for (name, args) in [
+            (
+                "budget_proof",
+                json!({ "incident_id": "bus:1", "per_run_usd": "0.5" }),
+            ),
+            (
+                "budget_proof",
+                json!({ "incident_id": "bus:1", "per_step_usd": 0.25, "max_steps": 10 }),
+            ),
+            (
+                "policy_proof",
+                json!({ "incident_id": "bus:1", "candidate": "deny_above_usd: 1" }),
+            ),
+            (
+                "remedy_check",
+                json!({ "incident_id": "bus:1",
+                        "remedy": { "kind": "stop_agent", "subject": "agent://a.example/b/c" } }),
+            ),
+        ] {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(
+                a.status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{name}: {}",
+                a.body
+            );
+            assert!(
+                a.body["kind"].is_string(),
+                "{name} names its refusal: {}",
+                a.body
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_unit_or_user_with_no_members_is_refused_and_nothing_is_recorded() {
+        let ctx = pending_ctx();
+        let a = run(
+            &ctx,
+            "unit_block",
+            json!({ "team": "sre", "blocked": true }),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            a.body,
+            json!({ "error": "nothing to block: no agents resolved for this unit" })
+        );
+        let a = run(
+            &ctx,
+            "user_block",
+            json!({ "user": "ops.lead", "blocked": true }),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            a.body,
+            json!({ "error": "nothing to block: no agents resolved for this user" })
+        );
+
+        // A refused enforcement leaves the console claiming nothing.
+        let a = run(&ctx, "lifecycle_blocks", json!({})).await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body, json!({ "agents": [], "units": [], "users": [] }));
+        let store = ctx.lifecycle.read().unwrap();
+        assert!(store.stopped_units.is_empty());
+        assert!(store.stopped_users.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_grant_answer_and_a_preview_are_never_cached() {
+        let ctx = pending_ctx();
+        for (name, args) in [
+            (
+                "policy_decide_approval",
+                json!({ "id": "hold-1", "decision": "grant", "seen_pvd": "sha256:x" }),
+            ),
+            ("policy_approval_preview", json!({ "id": "hold-1" })),
+        ] {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(a.cache.as_deref(), Some("no-store"), "{name}");
+        }
+        let a = run(&ctx, "policy_list_approvals", json!({})).await;
+        assert_eq!(a.cache, None, "an ordinary read carries no cache rule");
+    }
+
+    #[tokio::test]
+    async fn malformed_arguments_are_a_400_that_says_what_did_not_decode() {
+        let ctx = pending_ctx();
+        let needs_args = [
+            "admission_baseline",
+            "admission_check",
+            "agent_events",
+            "agent_slice",
+            "egress_recent",
+            "stats_counts",
+            "agent_profile",
+            "agent_stops",
+            "recent_events",
+            "case_file",
+            "copilot_ask",
+            "copilot_explain",
+            "copilot_explain_case",
+            "copilot_log_proposal_approved",
+            "crypto_scan_cbom",
+            "crypto_scan_evidence",
+            "crypto_scan_ncsc",
+            "crypto_verify_evidence",
+            "delegation_revoke",
+            "agent_stop",
+            "agent_lift",
+            "drills_run",
+            "evidence_build",
+            "memory_forget",
+            "memory_recall",
+            "memory_why",
+            "money_ack_incident",
+            "money_close_retained",
+            "money_kill_run",
+            "agent_block",
+            "unit_block",
+            "user_block",
+            "money_set_budget",
+            "money_set_unit_budget",
+            "onboard_generate",
+            "onboard_status",
+            "onboard_write_passport",
+            "policy_decide_approval",
+            "policy_approval_preview",
+            "policy_grant_tool",
+            "case_seal",
+            "remedy_check",
+            "case_pack",
+            "budget_proof",
+            "policy_proof",
+            "quality_run_scores",
+            "remote_cloud_list",
+            "remote_hetzner_list",
+            "remote_operator_wg_revoke",
+            "remote_set_environment",
+            "remote_ssh_read_file",
+            "remote_ssh_tail_start",
+            "run_events",
+        ];
+        for name in needs_args {
+            let a = run(&ctx, name, json!({})).await;
+            assert_eq!(a.status, StatusCode::BAD_REQUEST, "{name}: {}", a.body);
+            assert_eq!(a.body["error"], "bad arguments", "{name}");
+            assert!(
+                a.body["detail"].as_str().is_some_and(|d| !d.is_empty()),
+                "{name} says what did not decode: {}",
+                a.body
+            );
+        }
+
+        // Present but the wrong shape is refused the same way, never coerced.
+        for (name, args) in [
+            ("agent_events", json!({ "agent_id": "a", "limit": "ten" })),
+            (
+                "money_set_budget",
+                json!({ "run_id": "r", "budget_usd": "lots", "reason": "x" }),
+            ),
+            (
+                "policy_decide_approval",
+                json!({ "id": "h", "decision": "maybe" }),
+            ),
+            // `deny_unknown_fields`: a seal request carries nothing unasked.
+            (
+                "case_seal",
+                json!({ "incident_id": "bus:1", "decision": { "outcome": "declined" },
+                        "extra": true }),
+            ),
+            // An amount is text or a number, never a boolean.
+            (
+                "budget_proof",
+                json!({ "incident_id": "bus:1", "per_run_usd": true }),
+            ),
+        ] {
+            let a = run(&ctx, name, args).await;
+            assert_eq!(a.status, StatusCode::BAD_REQUEST, "{name}: {}", a.body);
+            assert_eq!(a.body["error"], "bad arguments", "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_command_is_a_404_that_names_it() {
+        let ctx = pending_ctx();
+        let Err(resp) = dispatch(&ctx, "no_such_command", json!({})).await else {
+            panic!("an unknown name must not dispatch");
+        };
+        let a = answer_of(resp).await;
+        assert_eq!(a.status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            a.body,
+            json!({ "error": "unknown command", "command": "no_such_command" })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_response_helpers_shape_ok_err_and_cache() {
+        let a = answer_of(ok(json!({ "n": 1 }))).await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body, json!({ "n": 1 }));
+        assert_eq!(a.cache, None);
+
+        let a = answer_of(reply::<u8, _>(Err(json!({ "kind": "refused" })))).await;
+        assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            a.body,
+            json!({ "kind": "refused" }),
+            "the error itself, unwrapped"
+        );
+
+        let a = answer_of(reply::<_, String>(Ok(7u8))).await;
+        assert_eq!(a.status, StatusCode::OK);
+        assert_eq!(a.body, json!(7));
+
+        let a = answer_of(no_store(reply::<u8, _>(Err("no".to_string())))).await;
+        assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(a.body, json!("no"));
+        assert_eq!(a.cache.as_deref(), Some("no-store"));
+
+        let decoded: Result<u32, Response> = decode(json!(42));
+        assert_eq!(decoded.ok(), Some(42));
+        let Err(refused) = decode::<u32>(json!("forty-two")) else {
+            panic!("a string is not a u32");
+        };
+        let a = answer_of(refused).await;
+        assert_eq!(a.status, StatusCode::BAD_REQUEST);
+        assert_eq!(a.body["error"], "bad arguments");
+    }
+
+    #[test]
+    fn an_owner_matches_on_its_last_path_segment_either_way() {
+        assert!(owner_matches("ops.lead", "ops.lead"));
+        assert!(owner_matches("user://acme/ops.lead", "ops.lead"));
+        assert!(owner_matches("ops.lead", "user://acme/ops.lead"));
+        assert!(owner_matches("user://a/ops.lead", "user://b/ops.lead"));
+        assert!(!owner_matches("user://acme/ops.lead", "ops"));
+        assert!(!owner_matches("ops.lead", "ops.lead2"));
+    }
+
+    #[test]
+    fn the_argument_defaults_are_a_quarter_a_month_and_twenty_thousand_lines() {
+        assert_eq!(default_profile_window(), 90);
+        assert_eq!(default_spend_days(), 30);
+        assert_eq!(default_stops_scan(), 20_000);
+    }
+
+    #[tokio::test]
+    async fn a_journal_handle_exists_only_when_both_bus_directories_do() {
+        assert!(wg_journal(&pending_ctx()).is_none());
+
+        let store = scratch_dir("store");
+        let source = scratch_dir("source");
+        let ctx = ctx_over(genaryx_api::bus::AppState {
+            events_dir: Some(store.clone()),
+            source_events_dir: None,
+            mode: genaryx_api::bus::BusMode::Unavailable {
+                reason: "test".into(),
+            },
+        });
+        assert!(wg_journal(&ctx).is_none(), "one directory is not enough");
+
+        let ctx = ctx_over(genaryx_api::bus::AppState {
+            events_dir: Some(store.clone()),
+            source_events_dir: Some(source.clone()),
+            mode: genaryx_api::bus::BusMode::Unavailable {
+                reason: "test".into(),
+            },
+        });
+        let handle = wg_journal(&ctx).expect("both directories give a handle");
+        assert_eq!(handle.store_db_path, store.join("console.sqlite"));
+        assert_eq!(handle.console_events_path, source.join("console.ndjson"));
+
+        // With a store directory, a well-formed digest is looked up there and
+        // reported missing, never read from anywhere else.
+        let a = run(
+            &ctx,
+            "case_pack",
+            json!({ "digest": format!("sha256:{}", "b".repeat(64)) }),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(a.body["kind"], "not_found", "{}", a.body);
+    }
 }
