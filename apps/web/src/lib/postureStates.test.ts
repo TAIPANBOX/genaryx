@@ -60,19 +60,19 @@ describe("plane health", () => {
   it.each(planes)("%s: unreachable is triggered and names the reason", (id, key) => {
     const f = byId(computePostureFindings(input({ [key]: unreachable } as Partial<PostureInput>)))[id];
     expect(f.state).toBe("triggered");
-    expect(f.detail).toContain("connection refused");
+    expect(f.whyItMatters).toContain("connection refused");
   });
 
   it.each(planes)("%s: not configured is unknown, never ok", (id, key) => {
     const f = byId(computePostureFindings(input({ [key]: notConfigured } as Partial<PostureInput>)))[id];
     expect(f.state).toBe("unknown");
-    expect(f.detail).toContain("not configured");
+    expect(f.whyItMatters).toContain("not configured");
   });
 
   it("money: a failed pairing is triggered, an absent Cloud is unknown", () => {
     const failed = byId(computePostureFindings(input({ moneyStatus: { state: "pairing_failed", reason: "bad key" } as never })));
     expect(failed.money_plane_health.state).toBe("triggered");
-    expect(failed.money_plane_health.detail).toContain("bad key");
+    expect(failed.money_plane_health.whyItMatters).toContain("bad key");
     const absent = byId(computePostureFindings(input({ moneyStatus: notConfigured })));
     expect(absent.money_plane_health.state).toBe("unknown");
   });
@@ -87,25 +87,25 @@ describe("plane health", () => {
     const off = byId(
       computePostureFindings(input({ copilotStatus: { enabled: false, disabled_reason: "no key", provider: null, local: null } as never })),
     );
-    expect(off.copilot_plane_health.detail).toBe("disabled: no key");
+    expect(off.copilot_plane_health.whyItMatters).toContain("disabled: no key");
     const offQuiet = byId(computePostureFindings(input({ copilotStatus: { enabled: false, disabled_reason: null } as never })));
-    expect(offQuiet.copilot_plane_health.detail).toBe("disabled.");
+    expect(offQuiet.copilot_plane_health.whyItMatters).toContain("disabled.");
     const on = byId(computePostureFindings(input({ copilotStatus: { enabled: true, provider: null, local: true } as never })));
     expect(on.copilot_plane_health.state).toBe("ok");
-    expect(on.copilot_plane_health.detail).toBe("enabled (unknown provider, local).");
+    expect(on.copilot_plane_health.whyItMatters).toContain("enabled (unknown provider, local).");
   });
 
   it("remote: no saved environment is unknown, a failed tunnel is triggered", () => {
     const none = byId(computePostureFindings(input({ remoteStatus: { state: "ready", environment: null, tunnel: { state: "disconnected" } } as never })));
     expect(none.remote_plane_health.state).toBe("unknown");
-    expect(none.remote_plane_health.detail).toContain("no remote environment saved");
+    expect(none.remote_plane_health.whyItMatters).toContain("no remote environment saved");
     const failed = byId(
       computePostureFindings(
         input({ remoteStatus: { state: "ready", environment: { name: "x" }, tunnel: { state: "failed", message: "handshake timeout" } } as never }),
       ),
     );
     expect(failed.remote_plane_health.state).toBe("triggered");
-    expect(failed.remote_plane_health.detail).toContain("handshake timeout");
+    expect(failed.remote_plane_health.whyItMatters).toContain("handshake timeout");
   });
 });
 
@@ -119,24 +119,24 @@ describe("feeds and freshness", () => {
     const ready = { state: "ready" } as never;
     const empty = byId(computePostureFindings(input({ identityStatus: ready, identityAlerts: [] })));
     expect(empty.detector_feed_freshness.state).toBe("triggered");
-    expect(empty.detector_feed_freshness.detail).toContain("no detector alerts recorded");
+    expect(empty.detector_feed_freshness.whyItMatters).toContain("no detector alerts recorded");
     const garbled = byId(computePostureFindings(input({ identityStatus: ready, identityAlerts: [{ time: "not a time" }] as never })));
     expect(garbled.detector_feed_freshness.state).not.toBe("ok");
-    expect(garbled.detector_feed_freshness.detail).toContain("unparseable timestamp");
+    expect(garbled.detector_feed_freshness.whyItMatters).toContain("unparseable timestamp");
   });
 
   it("the Cloud's runs: none in the window, or none with a readable time, is never fresh", () => {
     const none = byId(computePostureFindings(input({ moneyRuns: [] })));
     expect(none.cloud_ingest_freshness.state).not.toBe("ok");
-    expect(none.cloud_ingest_freshness.detail).toBe("no runs in the current window.");
+    expect(none.cloud_ingest_freshness.whyItMatters).toContain("no runs in the current window.");
     const garbled = byId(computePostureFindings(input({ moneyRuns: [{ last_seen: "?" }] as never })));
-    expect(garbled.cloud_ingest_freshness.detail).toBe("every run has an unparseable last_seen.");
+    expect(garbled.cloud_ingest_freshness.whyItMatters).toContain("every run has an unparseable last_seen.");
   });
 
   it("approvals: none pending is ok; pending with unreadable times says so", () => {
     expect(byId(computePostureFindings(input({ approvals: [] }))).approvals_waiting.state).toBe("ok");
     const garbled = byId(computePostureFindings(input({ approvals: [{ pending: true, requested_at: "?" }] as never })));
-    expect(garbled.approvals_waiting.detail).toBe("every pending approval has an unparseable requested_at.");
+    expect(garbled.approvals_waiting.whyItMatters).toContain("every pending approval has an unparseable requested_at.");
   });
 
   it("with nothing loaded at all, no plane claims to be healthy", () => {
