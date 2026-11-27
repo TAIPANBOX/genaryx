@@ -717,7 +717,7 @@ fn pick_file<'a>(files: &'a [PathBuf], source: &str) -> Option<&'a PathBuf> {
     files
         .iter()
         .find(|p| p.file_stem().and_then(|s| s.to_str()) == Some(source))
-        .or_else(|| files.first())
+        .or_else(|| files.last())
 }
 
 fn append_line(path: &Path, line: &str) -> std::io::Result<()> {

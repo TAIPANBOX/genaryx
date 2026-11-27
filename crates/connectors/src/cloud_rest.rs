@@ -609,7 +609,7 @@ fn classify_error(status: reqwest::StatusCode, bytes: &[u8]) -> ConnectorError {
             upgrade_url: envelope.error.upgrade_url,
         };
     }
-    if status.as_u16() == 403
+    if status.as_u16() == 401
         && let Ok(e) = serde_json::from_slice::<ErrorResponse>(bytes)
         && e.error == "signature_invalid"
     {

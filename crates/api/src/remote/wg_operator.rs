@@ -715,7 +715,7 @@ fn revoke_on(
         }
     })?;
     let before = read_state(backend)?;
-    let was_present = before.has_peer(&hex);
+    let was_present = !before.has_peer(&hex);
     remove_peer(backend, &hex)?;
     let after = read_state(backend)?;
     Ok(RemoteWgRevokeDto {

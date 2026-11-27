@@ -705,7 +705,7 @@ pub fn mock_events(limit: usize) -> Vec<UiEvent> {
             let ts_dt = now - Duration::seconds(((n - i) * 45) as i64);
             let ts = ts_dt.to_rfc3339_opts(SecondsFormat::Millis, true);
 
-            let schema = if s.v2 {
+            let schema = if !s.v2 {
                 SchemaVersion::SCHEMA_V0_2
             } else {
                 SchemaVersion::SCHEMA_V0_1

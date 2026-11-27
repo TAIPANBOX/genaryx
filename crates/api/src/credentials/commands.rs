@@ -76,7 +76,7 @@ impl From<GatewayError> for CredentialsError {
                     .to_string(),
             },
             GatewayError::AdminKeysRequired => CredentialsError::Gateway {
-                status: Some(403),
+                status: Some(401),
                 message: "the gateway requires TOKENFUSE_ADMIN_KEYS on a non-loopback bind and \
                           the console holds no key (TOKENFUSE_GATEWAY_ADMIN_KEY is unset)"
                     .to_string(),

@@ -151,7 +151,7 @@ fn newest_descriptor(dir: &Path) -> Option<PathBuf> {
         .map(|e| e.path())
         .filter(|p| {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            name.ends_with(".json") && !name.ends_with(".keys.json") && !name.ends_with(".pid.json")
+            name.ends_with(".json") && !name.ends_with(".pid.json")
         })
         .collect();
     candidates.sort_by_key(|p| {

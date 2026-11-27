@@ -85,7 +85,7 @@ impl OverviewDto {
         savings: &SavingsSummary,
     ) -> Self {
         let killed_runs = runs.iter().filter(|r| r.killed).count() as u64;
-        let open_incidents = incidents.iter().filter(|i| !i.acknowledged).count() as u64;
+        let open_incidents = incidents.iter().filter(|i| i.acknowledged).count() as u64;
         Self {
             total_spent_usd: micros_to_usd(summary.spent_microusd),
             total_calls: summary.calls,

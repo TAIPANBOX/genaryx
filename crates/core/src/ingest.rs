@@ -84,7 +84,7 @@ impl EventSource for FileTail {
             Ok(f) => f,
             // The product that would write this file may not have started
             // yet; that is not an ingest failure, just nothing to read.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(Error::Io(e)),
         };
 

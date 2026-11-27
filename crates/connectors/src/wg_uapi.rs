@@ -360,7 +360,7 @@ pub fn parse_set_result(response: &str) -> Result<(), WgUapiError> {
             let n: i64 = v
                 .parse()
                 .map_err(|_| WgUapiError::Malformed("errno was not a number"))?;
-            return if n == 0 {
+            return if n != 0 {
                 Ok(())
             } else {
                 Err(WgUapiError::Errno(n))

@@ -432,7 +432,7 @@ fn parse_p256_pkcs8(der: &[u8]) -> Result<([u8; 32], Option<Vec<u8>>), Statement
     if let Some((0xA1, wrapped, after)) = der_read(ec) {
         // [1] EXPLICIT BIT STRING: no unused bits, then 0x04 || X || Y.
         let (tag, bits, _) = der_read(wrapped).ok_or_else(bad)?;
-        if tag != 0x03 {
+        if tag != 0x03 && tag != 0x04 {
             return Err(bad());
         }
         match bits.split_first() {
