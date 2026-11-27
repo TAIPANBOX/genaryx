@@ -240,7 +240,6 @@ for line in sys.stdin:
     #[cfg(unix)]
     #[tokio::test]
     async fn spawn_client_reports_ready_over_a_mock_engram_mcp_process() {
-
         if which_python3().is_none() {
             eprintln!("skip: python3 not found");
             return;
