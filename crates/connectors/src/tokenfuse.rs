@@ -1171,7 +1171,8 @@ mod tests {
     /// does not is refused with a reason that says so.
     #[test]
     fn amounts_past_the_i64_microdollar_range_are_refused_by_name_not_wrapped() {
-        let runaway = "  runaway spend stopped:   $0.000000   (0 blocked call(s) across 0 budget break(s))\n";
+        let runaway =
+            "  runaway spend stopped:   $0.000000   (0 blocked call(s) across 0 budget break(s))\n";
         let cache = |amount: &str| {
             format!("{HEADER}{runaway}  cache saved:             {amount}\n{ROUTER}")
         };
@@ -1199,15 +1200,24 @@ mod tests {
         let detail = savings_failure(&with_runaway(
             "$9223372036855 (1 blocked call(s) across 1 budget break(s))",
         ));
-        assert!(detail.starts_with("USD amount out of range in runaway line"), "{detail}");
+        assert!(
+            detail.starts_with("USD amount out of range in runaway line"),
+            "{detail}"
+        );
         let detail = savings_failure(&format!(
             "{HEADER}{runaway}{CACHE}  router saved: $9223372036855\n"
         ));
-        assert!(detail.starts_with("USD amount out of range in router-saved line"), "{detail}");
+        assert!(
+            detail.starts_with("USD amount out of range in router-saved line"),
+            "{detail}"
+        );
         let detail = savings_failure(&format!(
             "{HEADER}{runaway}{CACHE}{ROUTER}    budget_exceeded  $9223372036855\n"
         ));
-        assert!(detail.starts_with("USD amount out of range in reason line"), "{detail}");
+        assert!(
+            detail.starts_with("USD amount out of range in reason line"),
+            "{detail}"
+        );
     }
 
     #[test]

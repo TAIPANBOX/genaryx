@@ -62,9 +62,14 @@ describe("useSession", () => {
   });
 
   it("a_box_that_cannot_be_reached_leaves_no_session_and_no_unhandled_rejection", async () => {
+    // Node's process, typed here because this package builds without @types/node.
+    type Listener = (reason: unknown) => void;
+    const node = (globalThis as unknown as {
+      process: { on(event: string, f: Listener): void; off(event: string, f: Listener): void };
+    }).process;
     const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => unhandled.push(reason);
-    process.on("unhandledRejection", onUnhandled);
+    const onUnhandled: Listener = (reason) => unhandled.push(reason);
+    node.on("unhandledRejection", onUnhandled);
     hooks.fetchSession.mockImplementationOnce(async () => {
       throw new TypeError("Failed to fetch");
     });
@@ -77,7 +82,7 @@ describe("useSession", () => {
       expect(hooks.fetchSession).toHaveBeenCalledTimes(1);
       expect(unhandled).toEqual([]);
     } finally {
-      process.off("unhandledRejection", onUnhandled);
+      node.off("unhandledRejection", onUnhandled);
     }
   });
 

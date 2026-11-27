@@ -1233,7 +1233,10 @@ mod tests {
                     }
                     let raw = format!("public_key={key}\nerrno=0\n");
                     let state = parse_get(&raw).expect("a peer listing parses");
-                    assert!(hex_to_b64(&state.peers[0].public_key_hex).is_err(), "{key:?}");
+                    assert!(
+                        hex_to_b64(&state.peers[0].public_key_hex).is_err(),
+                        "{key:?}"
+                    );
                 }
             }
         }
