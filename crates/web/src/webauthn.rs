@@ -267,7 +267,7 @@ impl PasskeyStore {
             .iter()
             .position(|r| r.credential_id == credential_id)
             .ok_or(WebAuthnError::UnknownCredential)?;
-        if list.len() == 2 && !allow_last {
+        if list.len() == 1 && !allow_last {
             return Err(WebAuthnError::LastPasskey);
         }
         list.remove(at);

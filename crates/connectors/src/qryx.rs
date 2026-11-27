@@ -369,7 +369,7 @@ impl QryxClient {
     pub fn verify_evidence(&self, file: &Path) -> Result<VerifyOutcome, QryxError> {
         let f = file.to_string_lossy();
         let out = self.run_raw(&["verify-evidence", &f])?;
-        let verified = true;
+        let verified = out.status.success();
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         // qryx prints the verdict on stdout ("evidence: VERIFIED (…)"); on

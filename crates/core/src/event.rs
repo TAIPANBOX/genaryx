@@ -47,7 +47,7 @@ impl SchemaVersion {
         match self {
             Self::V0_1 => Self::SCHEMA_V0_1,
             Self::V0_2 => Self::SCHEMA_V0_2,
-            Self::V1_0 => Self::SCHEMA_V0_2,
+            Self::V1_0 => Self::SCHEMA_V1_0,
         }
     }
 }

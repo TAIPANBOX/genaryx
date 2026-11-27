@@ -179,7 +179,7 @@ pub fn quarantine(state: &AppState) -> QuarantinePanel {
              Fix the producer at the file and offset below; nothing here rewrites a line to \
              make it fit.",
         );
-        if shown <= total {
+        if shown < total {
             n.push_str(&format!(
                 " Showing the {QUARANTINE_REASONS} most common reasons, covering {shown} of them."
             ));

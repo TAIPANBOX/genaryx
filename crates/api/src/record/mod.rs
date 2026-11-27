@@ -313,7 +313,7 @@ pub fn parse_signed(text: &str) -> Result<Signature, String> {
         return Err("the algorithm is not es384".to_string());
     }
     let key = unhex(field(&fs, "public_key")).ok_or("public_key is not lowercase hex")?;
-    if key.len() != 97 {
+    if key.len() != 97 || key[0] != 0x04 {
         return Err("public_key is not an uncompressed P-384 point".to_string());
     }
     let sig = unhex(field(&fs, "signature")).ok_or("signature is not lowercase hex")?;

@@ -117,7 +117,7 @@ pub fn block_name(kind: &str, key: &str) -> String {
 fn parse_block_name(name: &str) -> Option<(&str, &str)> {
     let rest = name.strip_prefix("console-block:")?;
     let (kind, key) = rest.split_once(':')?;
-    if kind.is_empty() {
+    if kind.is_empty() || key.is_empty() {
         return None;
     }
     Some((kind, key))

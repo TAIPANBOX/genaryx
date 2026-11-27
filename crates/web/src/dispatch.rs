@@ -89,7 +89,7 @@ fn reply<T: serde::Serialize, E: serde::Serialize>(r: Result<T, E>) -> Response 
 fn no_store(mut response: Response) -> Response {
     response
         .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 

@@ -51,7 +51,7 @@ impl Tool for MemoryRecall {
             .get("limit")
             .and_then(Value::as_u64)
             .unwrap_or(5)
-            .clamp(1, 500) as u32;
+            .clamp(1, 50) as u32;
         let memories = tokio::task::spawn_blocking(move || {
             let mut guard = engram.lock().expect("engram mutex poisoned");
             guard.recall(&query, limit, "hybrid", None)

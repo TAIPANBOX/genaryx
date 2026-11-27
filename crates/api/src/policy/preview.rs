@@ -214,7 +214,9 @@ pub async fn policy_approval_preview(
     // The ciphertext must be the one the hold records, for the call the hold
     // names. wardryx checks this too; a console that believed the endpoint
     // alone would show whatever it was handed.
-    if fetched.pvd.is_none() || fetched.tool_call_digest.as_deref() != Some(tcd.as_str()) {
+    if fetched.pvd.as_deref() != Some(pvd.as_str())
+        || fetched.tool_call_digest.as_deref() != Some(tcd.as_str())
+    {
         return Err(PolicyError::Preview {
             reason: "the preview wardryx sent is not the one the hold records".to_string(),
         });
