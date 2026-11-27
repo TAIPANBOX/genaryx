@@ -127,9 +127,12 @@ pub fn b64_to_hex(b64: &str) -> Result<String, WgUapiError> {
 fn decode_hex32(hex: &str) -> Result<[u8; 32], WgUapiError> {
     let hex = hex.trim();
     if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        // The prefix is cut by characters, not bytes: this value can come
+        // from the daemon's socket, and a byte cut through a multi-byte
+        // character panics.
+        let prefix: String = hex.chars().take(16).collect();
         return Err(WgUapiError::BadKey(format!(
-            "expected 64 hex characters, got {:?}",
-            &hex[..hex.len().min(16)]
+            "expected 64 hex characters, got {prefix:?}"
         )));
     }
     let mut out = [0u8; 32];
@@ -1206,6 +1209,40 @@ mod tests {
         // Whitespace around a real key (a pasted line) is not part of it.
         let b64 = hex_to_b64(PEER_A).unwrap();
         assert_eq!(b64_to_hex(&format!("  {b64}\n")).unwrap(), PEER_A);
+    }
+
+    /// A key the daemon (or whatever answers on its socket) sends back is
+    /// hostile input. A multi-byte character landing anywhere, at any length,
+    /// must come back as `BadKey`, never as a panic: the old error path sliced
+    /// the first 16 BYTES of the value and split a character in two.
+    #[test]
+    fn non_ascii_keys_from_the_daemon_are_refused_not_a_panic() {
+        for wide in ["\u{e9}", "\u{20ac}", "\u{1d11e}"] {
+            for len in [15usize, 16, 17, 63, 64, 65] {
+                for at in 0..len {
+                    let mut key: String = "a".repeat(at);
+                    key.push_str(wide);
+                    while key.len() < len {
+                        key.push('b');
+                    }
+                    let err = hex_to_b64(&key).expect_err("a non-hex key decoded");
+                    let text = bad_key_text(&err).expect("a BadKey");
+                    assert!(text.starts_with("expected 64 hex characters"), "{text}");
+
+                    for field in ["private_key", "interface_public_key"] {
+                        let raw = format!("{field}={key}\nlisten_port=51820\nerrno=0\n");
+                        let state = parse_get(&raw).expect("a bad key is dropped, not fatal");
+                        assert_eq!(state.public_key_hex, None, "{field}={key:?}");
+                    }
+                    let raw = format!("public_key={key}\nerrno=0\n");
+                    let state = parse_get(&raw).expect("a peer listing parses");
+                    assert!(
+                        hex_to_b64(&state.peers[0].public_key_hex).is_err(),
+                        "{key:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

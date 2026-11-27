@@ -27,9 +27,17 @@ export function useSession(): Session | null {
     if (MOCK) return;
     if (!isWebShell()) return;
     let cancelled = false;
-    void fetchSession().then((s) => {
-      if (!cancelled) setSession(s);
-    });
+    // A box that cannot be reached (network down, a non-JSON answer) leaves
+    // no session rather than an unhandled rejection: the badge simply does
+    // not appear, as for a signed-out user.
+    fetchSession().then(
+      (s) => {
+        if (!cancelled) setSession(s);
+      },
+      () => {
+        if (!cancelled) setSession(null);
+      },
+    );
     return () => {
       cancelled = true;
     };

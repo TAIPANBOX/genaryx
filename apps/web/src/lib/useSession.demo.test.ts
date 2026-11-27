@@ -61,6 +61,31 @@ describe("useSession", () => {
     expect(hooks.fetchSession).not.toHaveBeenCalled();
   });
 
+  it("a_box_that_cannot_be_reached_leaves_no_session_and_no_unhandled_rejection", async () => {
+    // Node's process, typed here because this package builds without @types/node.
+    type Listener = (reason: unknown) => void;
+    const node = (globalThis as unknown as {
+      process: { on(event: string, f: Listener): void; off(event: string, f: Listener): void };
+    }).process;
+    const unhandled: unknown[] = [];
+    const onUnhandled: Listener = (reason) => unhandled.push(reason);
+    node.on("unhandledRejection", onUnhandled);
+    hooks.fetchSession.mockImplementationOnce(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    try {
+      const initial = await firstRender(false, "/api");
+      // Node reports an unhandled rejection after the microtask queue drains.
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(initial).toBeNull();
+      expect(hooks.fetchSession).toHaveBeenCalledTimes(1);
+      expect(unhandled).toEqual([]);
+    } finally {
+      node.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("a_bare_preview_has_no_session_and_asks_nothing", async () => {
     const initial = await firstRender(false, "");
 
