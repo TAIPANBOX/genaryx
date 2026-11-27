@@ -253,4 +253,198 @@ mod tests {
         };
         assert!(!message.is_empty());
     }
+
+    // ---- drills_run end to end against a stand-in mockryx ----
+    //
+    // The same hermetic shape `admission::commands` uses for verdryx: a shell
+    // script in a temp dir plays the CLI and records what it was handed.
+
+    const FALLBACK_KEY: &str = "test-key-not-a-secret-fallback";
+    const GATEWAY: &str = "http://127.0.0.1:41000";
+
+    #[cfg(unix)]
+    fn scratch_dir(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "genaryx-drills-run-{tag}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// A stand-in mockryx that writes its argv and the key it was given to
+    /// `args.log`, then runs `tail` (the report and exit code).
+    #[cfg(unix)]
+    fn fake_mockryx(dir: &Path, tail: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("mockryx");
+        let log = dir.join("args.log");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\n\
+                 echo \"$@\" > '{log}'\n\
+                 echo \"key=$MOCKRYX_API_KEY\" >> '{log}'\n\
+                 {tail}\n",
+                log = log.display()
+            ),
+        )
+        .expect("write the stand-in");
+        let mut perms = std::fs::metadata(&script).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).expect("chmod");
+        script
+    }
+
+    fn ready_state(bin: &Path) -> DrillsState {
+        DrillsState {
+            inner: tokio::sync::Mutex::new(DrillsInner::Ready(DrillsClient {
+                client: MockryxClient::new(bin),
+                source: EnvSource::Taipan {
+                    name: "lab".to_string(),
+                },
+                mockryx_bin: bin.to_path_buf(),
+                gateway_url: GATEWAY.to_string(),
+                api_key: Some(FALLBACK_KEY.to_string()),
+                scenario_dir: None,
+            })),
+        }
+    }
+
+    /// `drills_run`, retried only on ETXTBSY (another test thread forking
+    /// while the script was still open for writing).
+    #[cfg(unix)]
+    async fn run_fake(
+        api_key: Option<&str>,
+        save: Option<&str>,
+        fail_on_skip: bool,
+        state: &DrillsState,
+    ) -> Result<MockryxReport, DrillsError> {
+        let mut last = None;
+        for _ in 0..5 {
+            let result = drills_run(
+                "/tmp/genaryx-drills-scenarios".to_string(),
+                api_key.map(str::to_string),
+                fail_on_skip,
+                save.map(str::to_string),
+                state,
+            )
+            .await;
+            let busy = matches!(
+                &result,
+                Err(DrillsError::Mockryx { message }) if message.contains("os error 26")
+            );
+            if !busy {
+                return result;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            last = Some(result);
+        }
+        last.expect("at least one attempt")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_blank_key_and_save_path_fall_back_and_a_gap_report_is_still_a_report() {
+        let dir = scratch_dir("fallback");
+        let bin = fake_mockryx(
+            &dir,
+            "printf '{\"run_id\":\"r-drill\",\"gateway\":\"%s\",\"generated_at\":\"t\",\"results\":[]}' \"$3\"\nexit 1",
+        );
+        let state = ready_state(&bin);
+        let report = run_fake(Some("   "), Some("  "), true, &state)
+            .await
+            .expect("exit 1 is a report with gaps, not an error");
+        assert_eq!(report.run_id, "r-drill");
+        assert_eq!(
+            report.gateway, GATEWAY,
+            "the client's gateway is the one drilled"
+        );
+        let log = std::fs::read_to_string(dir.join("args.log")).expect("the stand-in ran");
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "run --gateway http://127.0.0.1:41000 --format json --fail-on-skip /tmp/genaryx-drills-scenarios",
+                "key=test-key-not-a-secret-fallback",
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_explicit_key_and_save_path_are_handed_over_and_a_failed_run_is_an_error() {
+        let dir = scratch_dir("explicit");
+        let bin = fake_mockryx(&dir, "echo 'no scenarios here' >&2\nexit 2");
+        let state = ready_state(&bin);
+        let save = dir.join("report.json").display().to_string();
+        match run_fake(Some("test-key-explicit"), Some(&save), false, &state).await {
+            Err(DrillsError::Mockryx { message }) => {
+                assert_eq!(message, "mockryx exited 2: no scenarios here");
+            }
+            other => panic!("expected a Mockryx error, got {other:?}"),
+        }
+        let log = std::fs::read_to_string(dir.join("args.log")).expect("the stand-in ran");
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0],
+            format!(
+                "run --gateway http://127.0.0.1:41000 --format json --save {save} /tmp/genaryx-drills-scenarios"
+            )
+        );
+        assert_eq!(lines[1], "key=test-key-explicit");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_binary_that_cannot_spawn_is_a_mockryx_error_from_the_command() {
+        let state = ready_state(Path::new("/nonexistent/genaryx-drills-test/mockryx"));
+        match drills_run("/tmp/s".to_string(), None, false, None, &state).await {
+            Err(DrillsError::Mockryx { message }) => {
+                assert!(message.starts_with("mockryx spawn "), "{message}");
+            }
+            other => panic!("expected a Mockryx error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plane_that_is_not_ready_refuses_the_run_and_reports_its_state() {
+        let pending = DrillsState::pending();
+        assert!(matches!(
+            drills_run("/tmp/s".to_string(), None, false, None, &pending).await,
+            Err(DrillsError::Bootstrapping)
+        ));
+        assert!(matches!(
+            drills_status(&pending).await,
+            Ok(DrillsStatusDto::Bootstrapping)
+        ));
+        let none = DrillsState::pending();
+        *none.inner.lock().await = DrillsInner::NoEnvironment;
+        assert!(matches!(
+            drills_run("/tmp/s".to_string(), None, false, None, &none).await,
+            Err(DrillsError::NoEnvironment)
+        ));
+        assert!(matches!(
+            drills_status(&none).await,
+            Ok(DrillsStatusDto::NoEnvironment)
+        ));
+        let ready = ready_state(Path::new("/opt/mockryx"));
+        match drills_status(&ready).await {
+            Ok(DrillsStatusDto::Ready {
+                mockryx_bin,
+                has_api_key,
+                ..
+            }) => {
+                assert_eq!(mockryx_bin, "/opt/mockryx");
+                assert!(has_api_key);
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
 }

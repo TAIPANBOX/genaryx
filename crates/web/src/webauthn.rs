@@ -1107,4 +1107,154 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    fn store_dir(tag: &str) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "gw-webauthn-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn every_refusal_reads_as_what_happened() {
+        assert_eq!(
+            WebAuthnError::Malformed("clientDataJSON").to_string(),
+            "malformed clientDataJSON"
+        );
+        assert_eq!(
+            WebAuthnError::Mismatch("origin").to_string(),
+            "origin mismatch"
+        );
+        assert_eq!(
+            WebAuthnError::UserNotPresent.to_string(),
+            "user presence not asserted"
+        );
+        assert_eq!(
+            WebAuthnError::UserNotVerified.to_string(),
+            "user verification not asserted"
+        );
+        assert_eq!(
+            WebAuthnError::UnsupportedAttestation.to_string(),
+            "unsupported attestation format (only \"none\")"
+        );
+        assert_eq!(
+            WebAuthnError::UnsupportedKey("curve").to_string(),
+            "unsupported key: curve"
+        );
+        assert_eq!(
+            WebAuthnError::BadSignature.to_string(),
+            "signature verification failed"
+        );
+        assert_eq!(
+            WebAuthnError::CloneSuspected.to_string(),
+            "signature counter regressed (possible cloned authenticator)"
+        );
+        assert_eq!(
+            WebAuthnError::UnknownChallenge.to_string(),
+            "unknown or expired challenge"
+        );
+        assert_eq!(
+            WebAuthnError::WrongUser.to_string(),
+            "ceremony does not belong to this user"
+        );
+        assert_eq!(
+            WebAuthnError::UnknownCredential.to_string(),
+            "no passkey with that credential id"
+        );
+        assert_eq!(
+            WebAuthnError::LastPasskey.to_string(),
+            "this is the last enrolled passkey; removing it needs the operator password"
+        );
+        assert_eq!(
+            WebAuthnError::Store("disk".into()).to_string(),
+            "passkey store: disk"
+        );
+    }
+
+    #[test]
+    fn removal_refuses_what_is_not_there_and_the_last_key_without_leave() {
+        let dir = store_dir("remove");
+        let path = dir.join("passkeys.json");
+        let s = signer();
+        let store = PasskeyStore::open(path.clone()).unwrap();
+        let first = B64URL.encode(b"cred-1");
+        let second = B64URL.encode(b"cred-2");
+
+        assert_eq!(
+            store.remove("nobody", &first, true).unwrap_err(),
+            WebAuthnError::UnknownCredential
+        );
+        store.add("ops", enrolled(&s, 0)).unwrap();
+        let two = enrolled_with_id(&s, b"cred-2", 0);
+        store.add("ops", two).unwrap();
+        assert_eq!(
+            store.remove("ops", "cred-404", true).unwrap_err(),
+            WebAuthnError::UnknownCredential
+        );
+
+        // One of two goes on its own; the last one only with leave.
+        assert_eq!(store.remove("ops", &second, false), Ok(1));
+        assert_eq!(
+            store.remove("ops", &first, false).unwrap_err(),
+            WebAuthnError::LastPasskey
+        );
+        assert!(store.has_any("ops"), "a refused removal removes nothing");
+        assert_eq!(store.remove("ops", &first, true), Ok(0));
+        assert!(!store.has_any("ops"));
+
+        // The removal is on disk, not only in memory.
+        let reopened = PasskeyStore::open(path).unwrap();
+        assert!(reopened.for_user("ops").is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_counter_update_for_an_unknown_key_changes_nothing() {
+        let dir = store_dir("count");
+        let path = dir.join("passkeys.json");
+        let s = signer();
+        let store = PasskeyStore::open(path.clone()).unwrap();
+        store.add("ops", enrolled(&s, 3)).unwrap();
+        store.update_sign_count("ops", "cred-404", 99).unwrap();
+        store.update_sign_count("nobody", "cred-404", 99).unwrap();
+        let list = PasskeyStore::open(path).unwrap().for_user("ops");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].sign_count, 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_read_or_written_says_so() {
+        // A directory where the file should be cannot be read, and that is an
+        // error, never an empty store.
+        let dir = store_dir("unreadable");
+        std::fs::create_dir_all(dir.join("passkeys.json")).unwrap();
+        let Err(WebAuthnError::Store(why)) = PasskeyStore::open(dir.join("passkeys.json")) else {
+            panic!("a directory is not a passkey store");
+        };
+        assert!(why.starts_with("cannot read"), "{why}");
+
+        // A parent that turned into a file cannot take the write, and the
+        // enrollment is refused rather than kept in memory only.
+        let blocked = store_dir("blocked");
+        let store = PasskeyStore::open(blocked.join("sub").join("passkeys.json")).unwrap();
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("sub"), b"a file, not a directory").unwrap();
+        let Err(WebAuthnError::Store(why)) = store.add("ops", enrolled(&signer(), 0)) else {
+            panic!("a write that cannot land must fail");
+        };
+        assert!(why.starts_with("cannot create"), "{why}");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(blocked);
+    }
+
+    #[test]
+    fn hex_decodes_only_whole_valid_pairs() {
+        assert_eq!(hex_to_bytes("00ff7a"), Some(vec![0x00, 0xff, 0x7a]));
+        assert_eq!(hex_to_bytes(""), Some(Vec::new()));
+        assert_eq!(hex_to_bytes("abc"), None, "an odd length is refused");
+        assert_eq!(hex_to_bytes("zz"), None);
+    }
 }

@@ -387,4 +387,122 @@ mod tests {
         assert_eq!(graph["nodes"][0]["lifecycle"], "frozen");
         assert!(graph["nodes"][1].get("lifecycle").is_none());
     }
+
+    #[test]
+    fn the_blocks_are_served_sorted_by_kind() {
+        let mut store = LifecycleStore::default();
+        store.frozen_agents.insert(agent("agent://acme/sre/b"));
+        store.frozen_agents.insert(agent("agent://acme/sre/a"));
+        store.stopped_units.insert("treasury".to_string());
+        store.stopped_units.insert("lending".to_string());
+        store.stopped_users.insert("ops.lead".to_string());
+        assert_eq!(
+            store.to_json(),
+            serde_json::json!({
+                "agents": ["agent://acme/sre/a", "agent://acme/sre/b"],
+                "units": ["lending", "treasury"],
+                "users": ["ops.lead"],
+            })
+        );
+        assert_eq!(
+            LifecycleStore::default().to_json(),
+            serde_json::json!({ "agents": [], "units": [], "users": [] })
+        );
+    }
+
+    #[test]
+    fn a_stopped_user_reaches_only_the_agents_it_is_known_to_own() {
+        let mut store = LifecycleStore::default();
+        store.stopped_users.insert("ops.lead".to_string());
+        store
+            .agent_owners
+            .insert(agent("agent://acme/lending/scorer"), "ops.lead".to_string());
+        store
+            .agent_owners
+            .insert(agent("agent://acme/lending/other"), "other".to_string());
+        assert_eq!(
+            store.state_for("agent://acme/lending/scorer"),
+            Some("stopped")
+        );
+        assert_eq!(store.state_for("agent://acme/lending/other"), None);
+        // An agent with no owner on record is never badged.
+        assert_eq!(store.state_for("agent://acme/lending/unknown"), None);
+        // A malformed id has no team and no owner, so it is never stopped.
+        store.stopped_units.insert("lending".to_string());
+        assert_eq!(store.state_for("agent://acme/lending"), None);
+    }
+
+    #[test]
+    fn a_block_id_is_url_safe_and_names_the_kind() {
+        assert_eq!(
+            block_prefix("unit", "treasury"),
+            "console-block-unit-treasury"
+        );
+        assert_eq!(
+            block_prefix("agent", "agent://acme/sre/rca"),
+            "console-block-agent-agent---acme-sre-rca"
+        );
+        assert_eq!(sanitize("a.b c/d"), "a-b-c-d");
+        assert_eq!(
+            block_name("user", "ops.lead"),
+            "console-block:user:ops.lead"
+        );
+    }
+
+    #[test]
+    fn only_a_complete_block_name_parses_back() {
+        assert_eq!(
+            parse_block_name("console-block:unit:treasury"),
+            Some(("unit", "treasury"))
+        );
+        // The key keeps every colon after the kind.
+        assert_eq!(
+            parse_block_name("console-block:agent:agent://acme/sre/rca"),
+            Some(("agent", "agent://acme/sre/rca"))
+        );
+        assert_eq!(parse_block_name("console-block::treasury"), None);
+        assert_eq!(parse_block_name("console-block:unit:"), None);
+        assert_eq!(parse_block_name("console-block:unit"), None);
+        assert_eq!(parse_block_name("block:unit:treasury"), None);
+    }
+
+    #[test]
+    fn a_shape_the_projection_does_not_recognise_is_left_untouched() {
+        let mut store = LifecycleStore::default();
+        store.frozen_agents.insert(agent("agent://acme/sre/rca"));
+
+        let mut not_runs = serde_json::json!({ "agent_id": "agent://acme/sre/rca" });
+        let before = not_runs.clone();
+        project_runs(&mut not_runs, &store);
+        assert_eq!(not_runs, before, "an object is not a run list");
+
+        let mut runs = serde_json::json!([
+            { "run_id": "r1" },
+            "agent://acme/sre/rca",
+            { "run_id": "r2", "agent_id": 7 },
+        ]);
+        let before = runs.clone();
+        project_runs(&mut runs, &store);
+        assert_eq!(runs, before, "rows with no readable agent id are skipped");
+
+        let mut no_nodes = serde_json::json!({ "edges": [] });
+        let before = no_nodes.clone();
+        project_graph(&mut no_nodes, &store);
+        assert_eq!(no_nodes, before);
+
+        let mut graph = serde_json::json!({
+            "nodes": [{ "label": "no id" }, { "id": "agent://acme/sre/rca" }],
+        });
+        project_graph(&mut graph, &store);
+        assert!(graph["nodes"][0].get("lifecycle").is_none());
+        assert_eq!(graph["nodes"][1]["lifecycle"], "frozen");
+    }
+
+    #[tokio::test]
+    async fn a_block_with_no_agents_is_refused_before_anything_is_written() {
+        let err = block("unit", "treasury", &[]).await.unwrap_err();
+        assert_eq!(err, "nothing to block: no agents resolved for this unit");
+        let err = block("user", "ops.lead", &[]).await.unwrap_err();
+        assert_eq!(err, "nothing to block: no agents resolved for this user");
+    }
 }

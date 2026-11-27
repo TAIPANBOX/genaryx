@@ -318,3 +318,61 @@ impl Ctx {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tail_sink_forwards_each_line_and_the_end_in_order() {
+        let (tx, mut rx) = broadcast::channel(8);
+        let sink = SseTailSink(tx);
+        sink.line(RemoteTailLine {
+            path: "/var/log/app.log".to_string(),
+            line: "first".to_string(),
+        });
+        sink.ended(RemoteTailEnded {
+            path: "/var/log/app.log".to_string(),
+            reason: "stopped".to_string(),
+        });
+
+        match rx.try_recv().expect("the line arrives") {
+            RemoteTailEvent::Line(l) => {
+                assert_eq!(l.path, "/var/log/app.log");
+                assert_eq!(l.line, "first");
+            }
+            RemoteTailEvent::Ended(_) => panic!("the line comes before the end"),
+        }
+        match rx.try_recv().expect("the end arrives") {
+            RemoteTailEvent::Ended(e) => assert_eq!(e.reason, "stopped"),
+            RemoteTailEvent::Line(_) => panic!("only one line was sent"),
+        }
+        assert!(rx.try_recv().is_err(), "nothing else was sent");
+    }
+
+    #[test]
+    fn a_tail_with_nobody_listening_drops_its_lines_without_failing() {
+        let (tx, rx) = broadcast::channel::<RemoteTailEvent>(8);
+        drop(rx);
+        let sink = SseTailSink(tx.clone());
+        sink.line(RemoteTailLine {
+            path: "/var/log/app.log".to_string(),
+            line: "unheard".to_string(),
+        });
+        sink.ended(RemoteTailEnded {
+            path: "/var/log/app.log".to_string(),
+            reason: "stopped".to_string(),
+        });
+        assert_eq!(tx.receiver_count(), 0);
+        // A listener that arrives later sees only what is sent after it.
+        let mut late = tx.subscribe();
+        sink.line(RemoteTailLine {
+            path: "/var/log/app.log".to_string(),
+            line: "heard".to_string(),
+        });
+        match late.try_recv().expect("the later line arrives") {
+            RemoteTailEvent::Line(l) => assert_eq!(l.line, "heard"),
+            RemoteTailEvent::Ended(_) => panic!("a line was sent"),
+        }
+    }
+}

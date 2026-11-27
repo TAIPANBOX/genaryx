@@ -10,12 +10,18 @@
 //! were merged (2026-10-06): scratch paths all carry a per-file prefix,
 //! listeners bind port 0, and no file installs a global subscriber or hook.
 
+mod cloud_client_stub_test;
 mod cloud_rest_test;
 mod cloud_sse_test;
+mod engram_stand_in_test;
+mod evidence_pack_test;
 mod exit_gate_test;
 mod identity_360_test;
 mod idryx_agent_bom_test;
 mod killer_demo_test;
 mod live_shapes_test;
+mod loopback;
+mod stand_in;
+mod stand_in_cli_test;
 mod uapi_tls_pinning;
 mod wardryx_test;

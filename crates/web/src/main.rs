@@ -3342,4 +3342,621 @@ mod tests {
             "the held password still signs in: {body}"
         );
     }
+
+    // -- routes and branches the gate tests above do not reach -------------
+
+    /// A hermetic context like [`ctx_at`], with a UI directory of the test's
+    /// choosing and no IdP whatever the environment the suite runs in says:
+    /// these tests assert what a box WITHOUT one answers.
+    fn ctx_with(dir: PathBuf, ui_dir: Option<PathBuf>) -> Arc<Ctx> {
+        let cfg = Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            state_dir: dir,
+            ui_dir,
+            secure_cookies: false,
+            require_passkey: false,
+            delegation: genaryx_api::delegation::env::RevokeConfig::NotConfigured,
+            closure: genaryx_api::money::closure::ClosureConfig::NotConfigured,
+            approver_key_file: None,
+            preview_key_file: None,
+        };
+        let (events_tx, _) = tokio::sync::broadcast::channel(512);
+        let bus = genaryx_api::bus::AppState {
+            events_dir: None,
+            source_events_dir: None,
+            mode: genaryx_api::bus::BusMode::Unavailable {
+                reason: "test".into(),
+            },
+        };
+        let mut ctx = Ctx::bootstrap(cfg, bus, events_tx);
+        ctx.oidc = None;
+        Arc::new(ctx)
+    }
+
+    /// Any request through the router; status, headers and the raw body.
+    async fn raw(ctx: &Arc<Ctx>, req: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let resp = app(Arc::clone(ctx)).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, headers, bytes.to_vec())
+    }
+
+    /// GET with no session cookie.
+    async fn get_anon(ctx: &Arc<Ctx>, uri: &str) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
+        let (status, _, bytes) = raw(ctx, req).await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// POST a JSON body with no session cookie.
+    async fn post_anon(ctx: &Arc<Ctx>, uri: &str, body: Value) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let (status, _, bytes) = raw(ctx, req).await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    #[tokio::test]
+    async fn signing_out_revokes_the_session_and_expires_its_cookie() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+        assert_ne!(
+            post_command(&ctx, "money_status", Some(&sid)).await,
+            StatusCode::UNAUTHORIZED
+        );
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/logout")
+            .header("cookie", format!("{}={}", auth::COOKIE, sid))
+            .body(Body::empty())
+            .unwrap();
+        let (status, headers, bytes) = raw(&ctx, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({ "signed_in": false })
+        );
+        let cookie = headers
+            .get("set-cookie")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            cookie.starts_with(&format!("{}=", auth::COOKIE)),
+            "the cookie is replaced: {cookie:?}"
+        );
+        assert!(!cookie.contains(&sid), "the session id is not sent back");
+
+        // The session is gone on the server too, not only in the browser.
+        assert_eq!(
+            post_command(&ctx, "money_status", Some(&sid)).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn signing_out_with_no_session_still_answers_signed_out() {
+        let ctx = test_ctx();
+        let (status, body) = post_anon(&ctx, "/api/auth/logout", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({ "signed_in": false }));
+    }
+
+    #[tokio::test]
+    async fn the_session_route_names_the_signed_in_user_role_and_method() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("viewer", Role::Viewer, Method::Oidc);
+        let (status, body) = get_api(&ctx, "/api/auth/session", &sid).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["signed_in"], true, "{body}");
+        assert_eq!(body["user"], "viewer");
+        assert_eq!(body["role"], Role::Viewer.as_str());
+        assert_eq!(body["method"], Method::Oidc.as_str());
+        assert_eq!(body["configured"], false, "no operator.json on this box");
+        assert_eq!(body["oidc_available"], ctx.oidc.is_some());
+
+        // A cookie naming no live session is simply signed out.
+        let (status, body) = get_api(&ctx, "/api/auth/session", "no-such-session").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["signed_in"], false);
+        assert_eq!(body["user"], Value::Null);
+        assert_eq!(body["role"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn an_id_token_on_a_box_with_no_identity_provider_is_503() {
+        let ctx = ctx_with(test_dir(), None);
+        let (status, body) = post_anon(
+            &ctx,
+            "/api/auth/login",
+            json!({ "id_token": "header.payload.signature" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"], "OIDC is not configured on this box");
+
+        // A blank token is no token: the local account answers instead.
+        let (status, body) = post_anon(
+            &ctx,
+            "/api/auth/login",
+            json!({ "id_token": "   ", "username": "ops", "password": "x" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"], "no operator account on this box yet");
+    }
+
+    #[tokio::test]
+    async fn the_passkey_list_needs_a_session_and_says_what_the_box_requires() {
+        let ctx = test_ctx();
+        let (status, body) = get_anon(&ctx, "/api/webauthn/passkeys").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "not signed in");
+
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+        let (status, body) = get_api(&ctx, "/api/webauthn/passkeys", &sid).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["passkeys"], json!([]));
+        assert_eq!(body["webauthn_required"], false);
+        assert_eq!(body["policy_requires_passkey"], false);
+
+        enroll_test_passkey(&ctx, "admin");
+        let (_, body) = get_api(&ctx, "/api/webauthn/passkeys", &sid).await;
+        let keys = body["passkeys"].as_array().expect("a list");
+        assert_eq!(keys.len(), 1, "{body}");
+        assert_eq!(keys[0]["credential_id"], B64URL.encode(b"cred-1"));
+        assert_eq!(keys[0]["label"], "test key");
+        assert_eq!(body["webauthn_required"], true);
+
+        // Another caller's list is their own.
+        let other = ctx.sessions.create("other", Role::Admin, Method::Local);
+        let (_, body) = get_api(&ctx, "/api/webauthn/passkeys", &other).await;
+        assert_eq!(body["passkeys"], json!([]));
+
+        // The box's policy is reported whatever the caller has enrolled.
+        let firm = strict_ctx();
+        let sid = firm.sessions.create("admin", Role::Admin, Method::Local);
+        let (_, body) = get_api(&firm, "/api/webauthn/passkeys", &sid).await;
+        assert_eq!(body["policy_requires_passkey"], true);
+        assert_eq!(body["webauthn_required"], false);
+    }
+
+    #[tokio::test]
+    async fn a_corrupt_passkey_store_answers_503_on_every_passkey_route() {
+        let dir = test_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("passkeys.json"), "{ not json").unwrap();
+        let ctx = ctx_at(dir.clone(), false);
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+
+        let (status, body) = get_api(&ctx, "/api/webauthn/passkeys", &sid).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("passkey store unavailable")),
+            "{body}"
+        );
+        for (uri, body) in [
+            (
+                "/api/webauthn/register/start",
+                json!({ "operator_password": "x" }),
+            ),
+            (
+                "/api/webauthn/register/finish",
+                json!({ "credential_id": "c", "client_data_json": "",
+                        "attestation_object": "" }),
+            ),
+            (
+                "/api/webauthn/action/start",
+                json!({ "command": "money_kill_run", "args": {} }),
+            ),
+        ] {
+            let (status, answer) = post_api(&ctx, uri, &sid, None, body).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {answer}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn an_action_ceremony_needs_an_enrolled_passkey_and_a_ceremonial_command() {
+        let ctx = test_ctx();
+        let (status, _) = post_anon(
+            &ctx,
+            "/api/webauthn/action/start",
+            json!({ "command": "money_kill_run" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/action/start",
+            &sid,
+            None,
+            json!({ "command": "money_kill_run", "args": {} }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["error"],
+            "no passkey enrolled; enroll one before starting an action ceremony"
+        );
+
+        enroll_test_passkey(&ctx, "admin");
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/action/start",
+            &sid,
+            None,
+            json!({ "command": "money_status", "args": {} }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "this command carries no webauthn ceremony");
+
+        // The passkey lifecycle's own ceremony names are accepted, and the
+        // answer lists exactly the caller's enrolled credentials.
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/action/start",
+            &sid,
+            None,
+            json!({ "command": "webauthn_remove_passkey",
+                    "args": { "credential_id": B64URL.encode(b"cred-1") } }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["challenge"].as_str().is_some_and(|c| !c.is_empty()));
+        assert_eq!(body["rp_id"], ctx.webauthn_rp.rp_id.as_str());
+        assert_eq!(
+            body["allow_credentials"],
+            json!([{ "type": "public-key", "id": B64URL.encode(b"cred-1") }])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_registration_that_does_not_parse_is_refused_before_anything_is_enrolled() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+        let finish = |client_data: String, attestation: String| {
+            json!({
+                "credential_id": B64URL.encode(b"cred-9"),
+                "client_data_json": client_data,
+                "attestation_object": attestation,
+            })
+        };
+        let origin = ctx.webauthn_rp.origin.clone();
+        let never_minted = test_support::client_data("webauthn.create", "never-minted", &origin);
+        let no_challenge = B64URL.encode(br#"{"type":"webauthn.create"}"#);
+        let cases = [
+            (
+                finish("!!!".into(), String::new()),
+                StatusCode::BAD_REQUEST,
+                "client_data_json is not base64url",
+            ),
+            (
+                finish(B64URL.encode(b"{}"), "!!!".into()),
+                StatusCode::BAD_REQUEST,
+                "attestation_object is not base64url",
+            ),
+            (
+                finish(no_challenge, String::new()),
+                StatusCode::BAD_REQUEST,
+                "clientDataJSON carries no challenge",
+            ),
+            (
+                finish(B64URL.encode(never_minted), String::new()),
+                StatusCode::FORBIDDEN,
+                "webauthn:",
+            ),
+        ];
+        for (body, want, message) in cases {
+            let (status, answer) =
+                post_api(&ctx, "/api/webauthn/register/finish", &sid, None, body).await;
+            assert_eq!(status, want, "{answer}");
+            assert!(
+                answer["error"]
+                    .as_str()
+                    .is_some_and(|e| e.starts_with(message)),
+                "{answer}"
+            );
+        }
+
+        // A challenge minted for an action is not a registration challenge.
+        let purpose = webauthn::Purpose::Action {
+            command: "money_kill_run".to_string(),
+            args_sha256: "00".to_string(),
+        };
+        let challenge = ctx.webauthn_pending.mint("admin", purpose).unwrap();
+        let client_data = test_support::client_data("webauthn.create", &challenge, &origin);
+        let (status, answer) = post_api(
+            &ctx,
+            "/api/webauthn/register/finish",
+            &sid,
+            None,
+            finish(B64URL.encode(client_data), String::new()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+        assert!(enrolled_ids(&ctx, "admin").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_assertion_is_refused_before_any_signature_is_checked() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+        enroll_test_passkey(&ctx, "admin");
+        let args = json!({ "run_id": "run-1", "reason": "runaway spend" });
+        let envelope = |client_data: &str, auth_data: &str, signature: &str| {
+            let fields = json!({
+                "credential_id": B64URL.encode(b"cred-1"),
+                "client_data_json": client_data,
+                "authenticator_data": auth_data,
+                "signature": signature,
+            });
+            B64URL.encode(fields.to_string())
+        };
+        let with_challenge = B64URL.encode(br#"{"challenge":"c"}"#);
+        let cases = [
+            (
+                "%%%".to_string(),
+                "x-genaryx-webauthn is not base64url(JSON)",
+            ),
+            (
+                B64URL.encode(b"not json"),
+                "x-genaryx-webauthn is not base64url(JSON)",
+            ),
+            (envelope("!!!", "", ""), "client_data_json is not base64url"),
+            (
+                envelope(&with_challenge, "!!!", ""),
+                "authenticator_data is not base64url",
+            ),
+            (
+                envelope(&with_challenge, "", "!!!"),
+                "signature is not base64url",
+            ),
+            (
+                envelope(&B64URL.encode(b"{}"), "", ""),
+                "clientDataJSON carries no challenge",
+            ),
+        ];
+        for (header, message) in cases {
+            let (status, body) = post_api(
+                &ctx,
+                "/api/command/money_kill_run",
+                &sid,
+                Some(&header),
+                args.clone(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{message}: {body}");
+            assert_eq!(body["error"], message);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_assertion_on_a_registration_challenge_or_from_an_unknown_key_is_refused() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+        enroll_test_passkey(&ctx, "admin");
+        let args = json!({ "run_id": "run-1", "reason": "runaway spend" });
+
+        let purpose = webauthn::Purpose::Register;
+        let challenge = ctx.webauthn_pending.mint("admin", purpose).unwrap();
+        let header = assertion_header(&ctx, &challenge);
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_kill_run",
+            &sid,
+            Some(&header),
+            args.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("webauthn:")),
+            "{body}"
+        );
+
+        // Bound to exactly this command and these arguments, and signed by a
+        // credential this caller never enrolled.
+        let challenge = start_action(&ctx, &sid, "money_kill_run", &args.to_string()).await;
+        let header = assertion_header_for(&ctx, &challenge, b"cred-unknown");
+        let (status, body) = post_api(
+            &ctx,
+            "/api/command/money_kill_run",
+            &sid,
+            Some(&header),
+            args,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("webauthn:")),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_an_unknown_passkey_is_404_and_a_box_with_no_operator_has_no_password() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("admin", Role::Admin, Method::Local);
+        enroll_test_passkey(&ctx, "admin");
+
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            None,
+            json!({ "credential_id": B64URL.encode(b"cred-404") }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("webauthn:")),
+            "{body}"
+        );
+
+        let (status, body) = post_api(
+            &ctx,
+            "/api/webauthn/passkeys/remove",
+            &sid,
+            None,
+            json!({ "credential_id": B64URL.encode(b"cred-1"), "operator_password": "anything" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["webauthn"], "no_operator_account");
+        assert_eq!(enrolled_ids(&ctx, "admin").len(), 1);
+
+        let fresh = ctx.sessions.create("fresh", Role::Admin, Method::Local);
+        let (status, body) = register_start(&ctx, &fresh, Some("anything"), None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["webauthn"], "no_operator_account");
+    }
+
+    #[tokio::test]
+    async fn the_live_stream_needs_a_session() {
+        let ctx = test_ctx();
+        let (status, body) = get_anon(&ctx, "/api/events").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "not signed in");
+    }
+
+    #[tokio::test]
+    async fn the_live_stream_carries_the_bus_and_the_remote_tail_under_their_own_names() {
+        let ctx = test_ctx();
+        let sid = ctx.sessions.create("viewer", Role::Viewer, Method::Local);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/events")
+            .header("cookie", format!("{}={}", auth::COOKIE, sid))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app(Arc::clone(&ctx)).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            content_type.starts_with("text/event-stream"),
+            "{content_type}"
+        );
+
+        use genaryx_api::remote::commands::{RemoteTailEnded, RemoteTailLine};
+        let event = genaryx_api::events::mock_events(1).remove(0);
+        let agent = event.agent_id.clone();
+        assert!(ctx.events.send(event).is_ok(), "the stream is subscribed");
+        let tail = ctx::RemoteTailEvent::Line(RemoteTailLine {
+            path: "/var/log/app.log".to_string(),
+            line: "tail-line-marker".to_string(),
+        });
+        assert!(ctx.remote_tail.send(tail).is_ok(), "the tail listens");
+        let ended = ctx::RemoteTailEvent::Ended(RemoteTailEnded {
+            path: "/var/log/app.log".to_string(),
+            reason: "tail-ended-marker".to_string(),
+        });
+        assert!(ctx.remote_tail.send(ended).is_ok());
+
+        let mut body = resp.into_body();
+        let mut seen = String::new();
+        let wait = std::time::Duration::from_secs(2);
+        for _ in 0..8 {
+            if seen.contains(&agent)
+                && seen.contains("tail-line-marker")
+                && seen.contains("tail-ended-marker")
+            {
+                break;
+            }
+            let frame = tokio::time::timeout(wait, body.frame())
+                .await
+                .expect("a frame within two seconds")
+                .expect("the stream stays open")
+                .expect("a readable frame");
+            if let Ok(data) = frame.into_data() {
+                seen.push_str(&String::from_utf8_lossy(&data));
+            }
+        }
+        assert!(seen.contains(&agent), "the bus event arrives: {seen}");
+        assert!(seen.contains("remote:tail-line"), "{seen}");
+        assert!(seen.contains("tail-line-marker"), "{seen}");
+        assert!(seen.contains("remote:tail-ended"), "{seen}");
+        assert!(seen.contains("tail-ended-marker"), "{seen}");
+    }
+
+    #[tokio::test]
+    async fn a_ui_directory_is_served_and_an_unknown_path_falls_back_to_its_index() {
+        let ui = test_dir();
+        std::fs::create_dir_all(&ui).unwrap();
+        std::fs::write(
+            ui.join("index.html"),
+            "<!doctype html><title>console-index</title>",
+        )
+        .unwrap();
+        std::fs::write(ui.join("app.js"), "console.log('ui-bundle');").unwrap();
+        let ctx = ctx_with(test_dir(), Some(ui.clone()));
+
+        for (uri, marker) in [
+            ("/app.js", "ui-bundle"),
+            ("/incidents/42", "console-index"),
+            ("/", "console-index"),
+        ] {
+            let req = Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap();
+            let (status, h, bytes) = raw(&ctx, req).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            assert!(
+                String::from_utf8_lossy(&bytes).contains(marker),
+                "{uri} serves {marker}"
+            );
+            assert_eq!(
+                h.get("x-frame-options").and_then(|v| v.to_str().ok()),
+                Some("DENY"),
+                "{uri}"
+            );
+        }
+
+        // The API and the probe are not shadowed by the fallback.
+        let (status, body) = get_anon(&ctx, "/api/auth/session").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["signed_in"], false);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/healthz")
+            .body(Body::empty())
+            .unwrap();
+        let (status, _, bytes) = raw(&ctx, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(bytes, b"ok".to_vec());
+        let _ = std::fs::remove_dir_all(ui);
+    }
 }

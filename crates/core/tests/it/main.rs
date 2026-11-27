@@ -14,5 +14,7 @@ mod command_test;
 mod conform_test;
 mod console_chain_test;
 mod demo_test;
+mod event_test;
+mod ingest_edges_test;
 mod ingest_test;
 mod store_test;

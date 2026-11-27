@@ -14,21 +14,36 @@
 //! only the two `GENARYX_VOUCHRYX_*` variables, under its own `ENV_LOCK`; no
 //! other file here reads them.
 
+mod admission_check_test;
 mod agent_stop_test;
 mod approval_token_test;
 mod budget_proof_test;
+mod bus_state_test;
 mod case_file_test;
 mod case_seal_test;
 mod cloud_stub;
+mod copilot_commands_test;
+mod credentials_keys_test;
+mod crypto_commands_test;
 mod delegation_revoke_test;
+mod egress_panel_test;
+mod events_ui_test;
+mod evidence_build_test;
 mod felyx_bench_test;
 mod gateway_posture_test;
+mod identity_commands_test;
 mod keys_panel_test;
+mod keys_witness_test;
+mod memory_commands_test;
+mod money_commands_test;
 mod money_gateways_test;
 mod money_runs_budgets_test;
 mod money_runs_status_test;
 mod money_units_test;
+mod policy_decide_test;
+mod policy_preview_test;
 mod policy_proof_test;
+mod quality_commands_test;
 mod quarantine_is_visible_test;
 mod record_verify_test;
 mod remedy_check_test;

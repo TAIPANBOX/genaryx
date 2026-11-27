@@ -536,4 +536,267 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn evidence_that_does_not_fit_its_kind_or_the_gateways_bounds_is_refused() {
+        let refused = |a: CloseRetainedArgs| validate(&a).expect_err("must be refused");
+        // The revision is exactly 16 lowercase hex digits.
+        for rev in [
+            "",
+            "001122334455667",
+            "00112233445566778",
+            "0011223344556677 ",
+            "00112233445566AA",
+            "001122334455667g",
+        ] {
+            let e = refused(CloseRetainedArgs {
+                expected_revision: rev.to_string(),
+                ..args()
+            });
+            assert!(e.contains("expected_revision"), "{rev:?}: {e}");
+        }
+        // The reference names something, within 512 bytes, with no control
+        // character.
+        for ev in [
+            String::new(),
+            "   ".to_string(),
+            "x".repeat(513),
+            "line\nbreak".to_string(),
+            "tab\there".to_string(),
+        ] {
+            let e = refused(CloseRetainedArgs {
+                evidence_ref: ev.clone(),
+                ..args()
+            });
+            assert!(e.contains("evidence_ref"), "{ev:?}: {e}");
+        }
+        // Each kind carries exactly the amount it means.
+        let e = refused(CloseRetainedArgs {
+            observed_microusd: None,
+            ..args()
+        });
+        assert!(e.contains("needs observed_microusd"), "{e}");
+        let e = refused(CloseRetainedArgs {
+            observed_microusd: Some(-1),
+            ..args()
+        });
+        assert!(e.contains("cannot be negative"), "{e}");
+        let e = refused(CloseRetainedArgs {
+            evidence_kind: EvidenceKind::NoCharge,
+            observed_microusd: Some(0),
+            ..args()
+        });
+        assert!(e.contains("no_charge"), "{e}");
+        assert!(
+            validate(&CloseRetainedArgs {
+                evidence_kind: EvidenceKind::NoCharge,
+                observed_microusd: None,
+                ..args()
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_evidence_kinds_are_spelled_as_the_gateway_spells_them() {
+        assert_eq!(EvidenceKind::Observed.as_str(), "observed");
+        assert_eq!(EvidenceKind::NoCharge.as_str(), "no_charge");
+        assert_eq!(
+            serde_json::to_value(EvidenceKind::NoCharge).expect("serializes"),
+            serde_json::json!("no_charge")
+        );
+    }
+
+    #[test]
+    fn every_listing_failure_is_reported_as_itself() {
+        let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        match list_error(GatewayError::Json(json_err)) {
+            RetainedError::Unconfirmed { status, body } => {
+                assert_eq!(status, 200);
+                assert!(
+                    body.as_str()
+                        .is_some_and(|b| b.starts_with("not a retained list:")),
+                    "{body}"
+                );
+            }
+            other => panic!("a list that does not parse is unconfirmed, got {other:?}"),
+        }
+        assert_eq!(
+            list_error(GatewayError::ResponseTooLarge { limit: 65_536 }),
+            RetainedError::Unreachable {
+                detail: "the gateway's response exceeded 65536 bytes".to_string()
+            }
+        );
+        match list_error(GatewayError::Unauthorized) {
+            RetainedError::Refused {
+                status,
+                error,
+                message,
+            } => {
+                assert_eq!((status, error.as_str()), (401, "unauthorized"));
+                assert!(message.contains("TOKENFUSE_GATEWAY_ADMIN_KEY"), "{message}");
+            }
+            other => panic!("expected Refused 401, got {other:?}"),
+        }
+        match list_error(GatewayError::AdminKeysRequired) {
+            RetainedError::Refused { status, error, .. } => {
+                assert_eq!((status, error.as_str()), (403, "admin_keys_required"));
+            }
+            other => panic!("expected Refused 403, got {other:?}"),
+        }
+        // A bare 404 is the closure route switched off, never an empty list.
+        assert_eq!(
+            list_error(GatewayError::Api {
+                status: 404,
+                body: "not found".to_string()
+            }),
+            RetainedError::ClosureOff
+        );
+        // A 404 that names a kind is that refusal, not "off".
+        assert_eq!(
+            list_error(GatewayError::Api {
+                status: 404,
+                body: r#"{"type":"error","error":{"type":"no_such_org","message":"who?"}}"#
+                    .to_string()
+            }),
+            RetainedError::Refused {
+                status: 404,
+                error: "no_such_org".to_string(),
+                message: "who?".to_string()
+            }
+        );
+        // A status with a body that names nothing keeps the body as its words.
+        assert_eq!(
+            list_error(GatewayError::Api {
+                status: 502,
+                body: "<html>bad gateway</html>".to_string()
+            }),
+            RetainedError::Refused {
+                status: 502,
+                error: "unknown".to_string(),
+                message: "<html>bad gateway</html>".to_string()
+            }
+        );
+        assert_eq!(
+            list_error(GatewayError::Api {
+                status: 409,
+                body: r#"{"error":"busy"}"#.to_string()
+            }),
+            RetainedError::Refused {
+                status: 409,
+                error: "busy".to_string(),
+                message: r#"{"error":"busy"}"#.to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn every_error_kind_has_its_own_journal_word() {
+        let all = [
+            RetainedError::NotConfigured,
+            RetainedError::Bootstrapping,
+            RetainedError::NoEnvironment,
+            RetainedError::GatewayUnreachable {
+                reason: String::new(),
+            },
+            RetainedError::InvalidArgs {
+                reason: String::new(),
+            },
+            RetainedError::ClosureOff,
+            RetainedError::Refused {
+                status: 0,
+                error: String::new(),
+                message: String::new(),
+            },
+            RetainedError::Unconfirmed {
+                status: 0,
+                body: serde_json::Value::Null,
+            },
+            RetainedError::Unreachable {
+                detail: String::new(),
+            },
+        ];
+        let words: Vec<&str> = all.iter().map(kind_of).collect();
+        assert_eq!(
+            words,
+            vec![
+                "not_configured",
+                "bootstrapping",
+                "no_environment",
+                "gateway_unreachable",
+                "invalid_args",
+                "closure_off",
+                "refused",
+                "unconfirmed",
+                "unreachable",
+            ]
+        );
+        // Each word is the variant's own wire tag, so the journal and the
+        // answer name a failure the same way.
+        for e in &all {
+            let wire = serde_json::to_value(e).expect("serializes");
+            assert_eq!(wire["kind"], kind_of(e), "{e:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_gateway_plane_that_is_not_ready_answers_its_own_state() {
+        let state = CredentialsState::pending();
+        assert_eq!(
+            money_list_retained(&state).await.unwrap_err(),
+            RetainedError::Bootstrapping
+        );
+        *state.inner.lock().await = CredentialsInner::NoEnvironment;
+        assert_eq!(
+            money_list_retained(&state).await.unwrap_err(),
+            RetainedError::NoEnvironment
+        );
+        *state.inner.lock().await = CredentialsInner::Unreachable {
+            source: crate::credentials::env::EnvSource::Taipan {
+                name: "single".to_string(),
+            },
+            gateway_url: "http://127.0.0.1:9".to_string(),
+            reason: "probe refused".to_string(),
+        };
+        assert_eq!(
+            money_list_retained(&state).await.unwrap_err(),
+            RetainedError::GatewayUnreachable {
+                reason: "probe refused".to_string()
+            }
+        );
+    }
+
+    /// A refusal before any call is journaled under its own word, so the
+    /// journal can tell "no gateway" from "the gateway said no".
+    #[tokio::test]
+    async fn a_close_refused_because_the_plane_is_not_ready_is_journaled_as_such() {
+        let dir = std::env::temp_dir().join(format!(
+            "genaryx-retained-unit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let bus = BusHandle::from_dirs(&dir, &dir);
+        let secret_file = dir.join("closure.secret");
+        std::fs::write(&secret_file, "closure-secret-for-a-unit-test-0123456789\n")
+            .expect("write the secret");
+        let config = ClosureConfig::from_secret_file(secret_file.to_str())
+            .expect("a 32-byte secret resolves");
+        let state = CredentialsState::pending();
+        let err = money_close_retained(args(), &config, &state, Some(&bus))
+            .await
+            .expect_err("no gateway yet");
+        assert_eq!(err, RetainedError::Bootstrapping);
+        let body = std::fs::read_to_string(&bus.console_events_path).expect("journaled");
+        let line: serde_json::Value =
+            serde_json::from_str(body.lines().last().expect("a line")).expect("parses");
+        assert_eq!(line["data"]["action"], "console.close_retained");
+        assert_eq!(line["data"]["target"], "reservation:1");
+        assert_eq!(line["data"]["http_status"], 0);
+        assert_eq!(line["data"]["verify_result"], "refused:bootstrapping");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
