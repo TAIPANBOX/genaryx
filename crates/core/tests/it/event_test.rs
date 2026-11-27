@@ -114,7 +114,6 @@ fn a_console_event_round_trips_with_its_version_as_the_schema_string() {
     let mut wrong = v;
     wrong["schema_version"] = serde_json::json!("taipanbox.dev/agent-event/v0.3");
     let err = serde_json::from_value::<ConsoleEvent>(wrong)
-        .err()
-        .expect("an unknown version must not deserialize");
+        .expect_err("an unknown version must not deserialize");
     assert!(err.to_string().contains("unknown schema version"), "{err}");
 }
