@@ -78,6 +78,7 @@ beforeAll(async () => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   Element.prototype.scrollIntoView ??= function () {};
+  Element.prototype.scrollTo ??= function () {} as never;
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     const text = args.map(String).join(" ");
     if (/The above error occurred|Uncaught|Error: Minified React error/.test(text)) crashes.push(text);

@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const box = vi.hoisted(() => ({
   present: true,
+  web: true,
   calls: [] as { via: "plain" | "ceremony"; command: string; args: unknown }[],
   answer: (_command: string): unknown => ({ ok: true }),
 }));
@@ -30,7 +31,7 @@ vi.mock("./transport", async () => {
   const real = await vi.importActual<typeof import("./transport")>("./transport");
   return {
     hasBackend: () => box.present,
-    isWebShell: () => box.present,
+    isWebShell: () => box.present && box.web,
     webApiBase: () => "/api",
     subscribeBackend: async () => () => {},
     requiredRoleFromCommandError: real.requiredRoleFromCommandError,
@@ -76,10 +77,15 @@ import * as quarantine from "./quarantine";
 import * as replay from "./replay";
 import * as egress from "./egress";
 import * as busStatus from "./busStatus";
+import * as credentials from "./credentials";
+import * as download from "./download";
+import * as agentActions from "./agentActions";
+import * as retained from "./retainedClosure";
 import { CONSOLE_STATE_CHANGED_EVENT } from "./consoleState";
 
 beforeEach(() => {
   box.present = true;
+  box.web = true;
   box.calls = [];
   box.answer = () => ({ ok: true });
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -171,7 +177,7 @@ describe("with no box at all nothing reaches the transport", () => {
     ["evidence", () => evidence.buildEvidence({} as never), { kind: "build", message: "no backend available" }],
     ["admission", () => admission.runAdmissionCheck("k", "a"), { kind: "no_environment" }],
     ["onboard", () => onboard.fetchOnboardStatus(), { kind: "no_environment", message: "no backend available" }],
-    ["delegation", () => delegation.revokeDelegation("s", "r"), { kind: "no_environment" }],
+    ["delegation", () => delegation.revokeDelegation("s", "r"), { kind: "not_configured" }],
     ["egress", () => egress.fetchEgress(), { kind: "no_environment" }],
   ];
   it.each(cases)("%s refuses with its no-environment error", async (_l, run, expected) => {
@@ -505,5 +511,202 @@ describe("the small judgements the panels print", () => {
     const panel = (fetched: number, navigation_only: number) => ({ totals: { fetched, navigation_only } }) as never;
     expect(egress.navigationOnlyShare(panel(0, 0))).toBeNull();
     expect(egress.navigationOnlyShare(panel(8, 2))).toBe(0.25);
+  });
+});
+
+describe("the credentials plane", () => {
+  it("reads keys, held reservations and posture through their own commands", async () => {
+    await credentials.fetchCredentialsKeys();
+    await credentials.fetchGatewayRetainedRuns();
+    await credentials.fetchGatewayPosture();
+    expect(box.calls.map((c) => c.command)).toEqual([
+      "credentials_keys",
+      "credentials_gateway_retained_runs",
+      "credentials_posture",
+    ]);
+  });
+
+  it("normalises a refusal and refuses with no box", async () => {
+    box.answer = reject(new Error("503"));
+    await expect(credentials.fetchCredentialsKeys()).rejects.toEqual({ kind: "gateway", status: null, message: "503" });
+    box.answer = reject({ kind: "unreachable", reason: "x" });
+    await expect(credentials.fetchGatewayPosture()).rejects.toEqual({ kind: "unreachable", reason: "x" });
+    expect(await credentials.fetchCredentialsStatus()).toMatchObject({ state: "unreachable" });
+    box.present = false;
+    await expect(credentials.fetchGatewayRetainedRuns()).rejects.toEqual({ kind: "no_environment" });
+    expect(await credentials.fetchCredentialsStatus()).toEqual({ state: "no_environment" });
+  });
+
+  it("describes each error and ages a last-seen time", () => {
+    const d = credentials.describeCredentialsError;
+    expect(d({ kind: "bootstrapping" } as never)).toBe("Still connecting to the gateway.");
+    expect(d({ kind: "no_environment" })).toBe("No gateway found in this environment.");
+    expect(d({ kind: "unreachable", reason: "r" } as never)).toBe("Could not reach the gateway: r");
+    expect(d({ kind: "gateway", status: 401, message: "m" })).toBe("Gateway error 401: m");
+    expect(d({ kind: "gateway", status: null, message: "m" })).toBe("m");
+    expect(credentials.humanizeAge(-5)).toBe("just now");
+    expect(credentials.humanizeAge(44_000)).toBe("just now");
+    expect(credentials.humanizeAge(10 * 60_000)).toBe("10m ago");
+    expect(credentials.humanizeAge(5 * 3_600_000)).toBe("5h ago");
+    expect(credentials.humanizeAge(3 * 86_400_000)).toBe("3d ago");
+  });
+});
+
+describe("downloads", () => {
+  it("hand the browser one file of the right type, then let the object URL go", async () => {
+    vi.useFakeTimers();
+    const blobs: Blob[] = [];
+    const created = vi.fn((b: Blob) => {
+      blobs.push(b);
+      return `blob:${blobs.length}`;
+    });
+    const revoked = vi.fn();
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = created as never;
+    URL.revokeObjectURL = revoked as never;
+    const clicks: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clicks.push(this.download);
+    });
+    const meta: download.ExportMeta = { subject: "runs", environment: "demo", takenAt: "2026-11-26T00:00:00Z", windows: ["spend"] };
+
+    download.downloadCsv("runs.csv", [{ key: "id", header: "Run" }], [{ id: "run-1" }], meta);
+    download.downloadJson("runs.json", [{ id: "run-1" }], meta);
+    expect(clicks).toEqual(["runs.csv", "runs.json"]);
+    expect(blobs.map((b) => b.type)).toEqual(["text/csv;charset=utf-8", "application/json;charset=utf-8"]);
+    expect(await blobs[0].text()).toContain("Run\nrun-1\n");
+    expect(JSON.parse(await blobs[1].text()).rows).toEqual([{ id: "run-1" }]);
+    expect(revoked).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(0);
+    expect(revoked).toHaveBeenCalledTimes(2);
+    expect(document.querySelectorAll("a[download]")).toHaveLength(0);
+
+    remote.downloadWgOperatorConfig({ conf: "[Interface]\n" } as never, "operator.conf");
+    evidence.downloadEvidencePack({ zip_base64: btoa("PK\u0003\u0004"), filename: "pack.zip" } as never);
+    expect(clicks).toEqual(["runs.csv", "runs.json", "operator.conf", "pack.zip"]);
+    expect(blobs[2].type).toBe("text/plain");
+    expect(blobs[3].type).toBe("application/zip");
+    expect(new Uint8Array(await blobs[3].arrayBuffer())).toEqual(new Uint8Array([0x50, 0x4b, 3, 4]));
+    expect(revoked).toHaveBeenCalledTimes(4);
+
+    click.mockRestore();
+    URL.createObjectURL = original.create;
+    URL.revokeObjectURL = original.revoke;
+    vi.useRealTimers();
+  });
+});
+
+describe("the agent's record edits", () => {
+  it("are offered only where an ownership store answers (the preview), never on a real box", () => {
+    box.web = false;
+    expect(agentActions.canEditAgentRecord()).toBe(true);
+    box.web = true;
+    expect(agentActions.canEditAgentRecord()).toBe(false);
+    box.present = false;
+    expect(agentActions.canEditAgentRecord()).toBe(false);
+  });
+
+  it("on a real box say the store is missing and send nothing", async () => {
+    expect(await agentActions.setAgentBudget("agent://a/b", 5)).toEqual({ ok: false, reason: agentActions.EDIT_NEEDS_STORE });
+    expect(await agentActions.fetchOrgDirectory()).toBeNull();
+    expect(box.calls).toEqual([]);
+  });
+
+  it("send each edit as its own command and hand back the new record", async () => {
+    box.web = false;
+    box.answer = () => ({ agent_id: "agent://a/b" });
+    const rec = { ok: true, record: { agent_id: "agent://a/b" } };
+    expect(await agentActions.setAgentBudget("agent://a/b", 5)).toEqual(rec);
+    expect(await agentActions.reassignAgentUnit("agent://a/b", "treasury")).toEqual(rec);
+    expect(await agentActions.transferAgentOwner("agent://a/b", "j.carter")).toEqual(rec);
+    expect(await agentActions.setAgentBehaviour("agent://a/b", ["search"])).toEqual(rec);
+    expect(await agentActions.fetchOrgDirectory()).toEqual({ agent_id: "agent://a/b" });
+    expect(box.calls.map((c) => [c.command, c.args])).toEqual([
+      ["agent_set_budget", { agent_id: "agent://a/b", budget_usd: 5 }],
+      ["agent_reassign_unit", { agent_id: "agent://a/b", team: "treasury" }],
+      ["agent_transfer_owner", { agent_id: "agent://a/b", owner: "j.carter" }],
+      ["agent_set_behaviour", { agent_id: "agent://a/b", allowed: ["search"] }],
+      ["org_directory", undefined],
+    ]);
+  });
+
+  it("say why an edit did not land, in the box's words when it gave any", async () => {
+    box.web = false;
+    const reasons: [unknown, string][] = [
+      [{ error: "preview_only", command: "agent_set_budget" }, agentActions.EDIT_NEEDS_STORE],
+      ["owner unknown", "owner unknown"],
+      [{ error: "team not in directory" }, "team not in directory"],
+      [{ message: "budget below spend" }, "budget below spend"],
+      [{ error: 3 }, "the change did not land"],
+      ["", "the change did not land"],
+      [null, "the change did not land"],
+    ];
+    for (const [err, reason] of reasons) {
+      box.answer = reject(err);
+      expect(await agentActions.transferAgentOwner("a", "b")).toEqual({ ok: false, reason });
+    }
+    expect(await agentActions.fetchOrgDirectory()).toBeNull();
+  });
+});
+
+describe("closing a retained reservation", () => {
+  const args = { reservation_id: 7, expected_revision: "0123456789abcdef", evidence_kind: "observed", observed_microusd: 100, evidence_ref: "inv-1" } as never;
+
+  it("lists and closes through the right doors", async () => {
+    box.answer = (c) => (c === "money_list_retained" ? [{ reservation_id: 7 }] : { verify_result: "closed", operation_id: "genaryx-1" });
+    expect(await retained.listRetained()).toEqual([{ reservation_id: 7 }]);
+    expect(await retained.closeRetained(args)).toEqual({ verify_result: "closed", operation_id: "genaryx-1" });
+    expect(box.calls).toEqual([
+      { via: "plain", command: "money_list_retained", args: undefined },
+      { via: "ceremony", command: "money_close_retained", args },
+    ]);
+  });
+
+  it("never shows as closed what the gateway did not confirm", async () => {
+    box.answer = () => null;
+    await expect(retained.closeRetained(args)).rejects.toEqual({ kind: "unconfirmed", status: 0, body: null });
+    box.answer = () => ({ verify_result: "refused", operation_id: "x" });
+    await expect(retained.closeRetained(args)).rejects.toMatchObject({ kind: "unconfirmed" });
+  });
+
+  it("normalises a refusal, and refuses with no box", async () => {
+    box.answer = reject({ error: "role admin required" });
+    await expect(retained.listRetained()).rejects.toEqual({ kind: "role_required", role: "admin" });
+    await expect(retained.closeRetained(args)).rejects.toEqual({ kind: "role_required", role: "admin" });
+    box.answer = reject({ kind: "closure_off" });
+    await expect(retained.closeRetained(args)).rejects.toEqual({ kind: "closure_off" });
+    box.answer = reject(new Error("reset"));
+    await expect(retained.listRetained()).rejects.toEqual({ kind: "unreachable", detail: "reset" });
+    box.present = false;
+    await expect(retained.listRetained()).rejects.toEqual({ kind: "no_environment" });
+    await expect(retained.closeRetained(args)).rejects.toEqual({ kind: "no_environment" });
+  });
+
+  it("says every refusal in words", () => {
+    const d = retained.describeRetainedError;
+    expect(d({ kind: "bootstrapping" } as never)).toBe("Still connecting to the gateway.");
+    expect(d({ kind: "no_environment" })).toBe("No gateway configured for this environment.");
+    expect(d({ kind: "gateway_unreachable", reason: "dns" } as never)).toBe("Could not reach the gateway: dns");
+    expect(d({ kind: "invalid_args", reason: "bad ref" } as never)).toBe("bad ref");
+    expect(d({ kind: "closure_off" } as never)).toMatch(/TOKENFUSE_CLOSURE_SECRET/);
+    expect(d({ kind: "refused", status: 409, error: "stale_revision" } as never)).toBe("The gateway refused (409 stale_revision)");
+    expect(d({ kind: "unreachable", detail: "reset" })).toBe("No answer from the gateway: reset");
+    expect(d({ kind: "role_required", role: "admin" })).toBe("Closing a reservation needs the admin role.");
+  });
+
+  it("builds closure arguments only from evidence the gateway would accept", () => {
+    const row = { reservation_id: 7, revision: "0123456789abcdef" } as never;
+    expect(retained.buildCloseArgs(row, { evidenceKind: "observed", observedMicrousd: "12", evidenceRef: "a\u0007b" } as never)).toEqual({
+      ok: false,
+      reason: "The evidence reference cannot contain control characters.",
+    });
+    expect(retained.buildCloseArgs(row, { evidenceKind: "observed", observedMicrousd: "9".repeat(20), evidenceRef: "inv" } as never)).toEqual({
+      ok: false,
+      reason: "That micro-USD amount is too large.",
+    });
+    expect(retained.buildCloseArgs(row, { evidenceKind: "observed", observedMicrousd: "1", evidenceRef: "x".repeat(513) } as never)).toEqual({
+      ok: false,
+      reason: "The evidence reference is over 512 bytes.",
+    });
   });
 });

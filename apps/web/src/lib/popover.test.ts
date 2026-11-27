@@ -272,6 +272,7 @@ describe("useDraggableCard", () => {
     await act(async () => pointer(window, "pointerup", 60, 30));
 
     place = () => ({ left: 300, top: 300 });
+    await act(async () => r.render(createElement(Card)));
     await act(async () => window.dispatchEvent(new Event("resize")));
     expect(state.pos).toEqual({ left: 150, top: 120 });
     await act(async () => r.unmount());
@@ -282,6 +283,7 @@ describe("useDraggableCard", () => {
     place = () => ({ left: 100, top: 100 });
     const { h, r } = await mount();
     place = () => ({ left: 200, top: 220 });
+    await act(async () => r.render(createElement(Card)));
     await act(async () => window.dispatchEvent(new Event("resize")));
     expect(state.pos).toEqual({ left: 200, top: 220 });
     await act(async () => r.unmount());
