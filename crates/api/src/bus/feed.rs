@@ -1647,8 +1647,7 @@ mod tests {
         // The seed batch reaches the sink too (the receiver is subscribed
         // before the first poll); the feeder's own row follows it.
         let live = |sink: &Collect| {
-            sink
-                .0
+            sink.0
                 .lock()
                 .expect("sink lock")
                 .iter()
