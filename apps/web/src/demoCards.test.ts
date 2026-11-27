@@ -696,3 +696,90 @@ describe("the cloud inventory, provider by provider, in the demo world", () => {
     expect(listed).toBeGreaterThan(2);
   });
 });
+
+describe("the watch dock's width and a browser that will not store anything", () => {
+  it("drags wider to the left, clamps at its bounds, and remembers the width", async () => {
+    Element.prototype.setPointerCapture ??= function () {};
+    Element.prototype.releasePointerCapture ??= function () {};
+    localStorage.setItem("genaryx.watchDock", "false");
+    localStorage.removeItem("genaryx.watchDock.width");
+    const { WatchDock } = await import("./components/WatchDock");
+    const host = await show(createElement(WatchDock, { onOpenAgent: () => {}, onOpenUnit: () => {} }));
+    const handle = host.querySelector<HTMLElement>('[aria-label="Resize watch dock"]')!;
+    const fire = (type: string, x: number) => handle.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x }));
+    await act(async () => fire("pointerdown", 1000));
+    await act(async () => fire("pointermove", 900));
+    await act(async () => fire("pointerup", 900));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("360");
+    await act(async () => fire("pointerdown", 1000));
+    await act(async () => fire("pointermove", 0));
+    await act(async () => fire("pointerup", 0));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("560");
+    await act(async () => fire("pointerdown", 0));
+    await act(async () => fire("pointermove", 5000));
+    await act(async () => fire("pointerup", 5000));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("260");
+    // A move or release with no drag in progress changes nothing.
+    await act(async () => fire("pointermove", 10));
+    await act(async () => fire("pointerup", 10));
+    expect(localStorage.getItem("genaryx.watchDock.width")).toBe("260");
+  });
+
+  it("still renders, pins and collapses when the browser refuses storage", async () => {
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("private mode");
+    });
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    const { WatchDock, WatchToggleButton } = await import("./components/WatchDock");
+    const host = await show(
+      createElement(
+        "div",
+        null,
+        createElement(WatchDock, { onOpenAgent: () => {}, onOpenUnit: () => {} }),
+        createElement(WatchToggleButton, { kind: "agent", id: "agent://meridian.io/x/storage-less", label: "storage-less" }),
+      ),
+    );
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Pin storage-less to the watch dock"]')!.click());
+    const collapse = host.querySelector<HTMLButtonElement>('[aria-label="Collapse watch dock"]');
+    if (collapse) await act(async () => collapse.click());
+    expect((host.textContent ?? "").length).toBeGreaterThan(0);
+    get.mockRestore();
+    set.mockRestore();
+  });
+});
+
+describe("a pinned bus event", () => {
+  it("shows the event beside its row and closes on Escape or a click outside, never on a click inside", async () => {
+    const { PinnedEventOverlay } = await import("./components/PinnedEventOverlay");
+    const onClose = vi.fn();
+    const event = {
+      id: 7,
+      ts: "2026-11-27T01:00:00Z",
+      source: "tokenfuse",
+      type: "budget_exhausted",
+      agent_id: "agent://meridian.io/sre/rca-copilot",
+      run_id: "run-7",
+      env: "live",
+      severity: "high",
+      data: { spent_usd: 1.5 },
+    } as never;
+    const rect = { left: 100, right: 300, top: 120, bottom: 140, width: 200, height: 20 } as DOMRect;
+    await show(createElement(PinnedEventOverlay, { event, rect, onClose, onOpenAgent: () => {} }));
+    const overlay = document.body.lastElementChild as HTMLElement;
+    expect(overlay.textContent).toContain("budget_exhausted");
+    expect(overlay.textContent).toContain("pinned");
+
+    const card = overlay.querySelector<HTMLElement>(".gx-popover")!;
+    await act(async () => card.click());
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })));
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await act(async () => overlay.click());
+    expect(onClose).toHaveBeenCalledTimes(2);
+    await pressEverything(card, 20);
+  });
+});
