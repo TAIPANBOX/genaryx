@@ -679,8 +679,9 @@ The current release is v0.1.0 (2026-11-25):
 ghcr.io/taipanbox/genaryx:v0.1.0@sha256:4030bc819e7df40c2a307e68f33519476d0858570bbdccb9326fd5fad256d2ee
 ```
 
-The stacks still run the earlier `genaryx-console` image, which stack-k8s
-composes under its own version, until their next release pins this image.
+Both stacks run this image: stack-k8s has pinned it by digest since 1.19.0 and
+stack-single since 1.15.0, in place of the earlier `genaryx-console` image they
+each built under their own version.
 
 ## Architecture source of truth
 
