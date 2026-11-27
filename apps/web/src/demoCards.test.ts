@@ -139,24 +139,178 @@ describe("cards in the demo world", () => {
     }
   });
 
-  it("the delegation graph draws the demo's agents and opens one on click", async () => {
+  it("the delegation graph draws every demo agent's label, and a click on a node opens that agent", async () => {
     const { DelegationGraphView } = await import("./components/DelegationGraphView");
-    const graph = (await mock.mockInvoke("agent_graph")) as { nodes: { id: string }[] };
+    const { shortAgentLabel } = await import("./lib/graph");
+    const graph = (await mock.mockInvoke("agent_graph")) as { nodes: { id: string; x: number; y: number }[] };
     expect(graph.nodes.length).toBeGreaterThan(0);
-    const onOpenAgent = vi.fn();
-    const host = await show(createElement(DelegationGraphView, { onOpenAgent, height: 400 }));
-    const nodes = host.querySelectorAll("svg g, svg circle, svg rect");
-    expect(nodes.length).toBeGreaterThan(0);
-    const clickable = Array.from(host.querySelectorAll<SVGElement>("svg [role='button'], svg g[tabindex], svg g")).filter(
-      (g) => g.getAttribute("data-id") || g.getAttribute("tabindex") !== null || g.getAttribute("role") === "button",
+
+    // A canvas that records what is drawn, and a layout box of a real size.
+    const drawn: { op: string; args: unknown[] }[] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (target, prop: string) =>
+        prop in target ? target[prop] : (...args: unknown[]) => void drawn.push({ op: prop, args }),
+      set: (target, prop: string, value) => ((target[prop] = value), true),
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
+    Element.prototype.setPointerCapture ??= function () {};
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        cb: (entries: unknown[]) => void;
+        constructor(cb: (entries: unknown[]) => void) {
+          this.cb = cb;
+        }
+        observe(el: Element) {
+          this.cb([{ target: el, contentRect: { width: 800, height: 500 } }]);
+        }
+        unobserve() {}
+        disconnect() {}
+      },
     );
-    for (const g of clickable.slice(0, 3)) {
-      await act(async () => {
-        g.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
+
+    const onOpenAgent = vi.fn();
+    const host = await show(createElement(DelegationGraphView, { onOpenAgent, height: 500 }));
+    const scaleNow = () => ([...drawn].reverse().find((d) => d.op === "scale")!.args as number[])[0];
+    // Labels are drawn only once the graph is legible (scale over 0.35).
+    for (let i = 0; i < 10 && scaleNow() <= 0.35; i++) {
+      await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.click());
+    }
+    const labels = drawn.filter((d) => d.op === "fillText").map((d) => d.args[0]);
+    for (const n of graph.nodes) expect(labels).toContain(shortAgentLabel(n.id));
+
+    // Where the last frame put the graph: translate, then scale.
+    const lastTranslate = [...drawn].reverse().find((d) => d.op === "translate")!.args as number[];
+    const lastScale = [...drawn].reverse().find((d) => d.op === "scale")!.args as number[];
+    const target = graph.nodes[0];
+    const at = { x: lastTranslate[0] + target.x * lastScale[0], y: lastTranslate[1] + target.y * lastScale[0] };
+    const canvas = host.querySelector("canvas")!;
+    const fire = (type: string, x: number, y: number) =>
+      canvas.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y }));
+
+    await act(async () => fire("pointermove", at.x, at.y));
+    await act(async () => fire("pointerdown", at.x, at.y));
+    await act(async () => fire("pointerup", at.x, at.y));
+    expect(onOpenAgent).toHaveBeenCalledWith(target.id);
+
+    // A drag pans and opens nothing; zoom and fit redraw.
+    onOpenAgent.mockClear();
+    await act(async () => fire("pointerdown", at.x, at.y));
+    await act(async () => fire("pointermove", at.x + 40, at.y + 40));
+    await act(async () => fire("pointerup", at.x + 40, at.y + 40));
+    expect(onOpenAgent).not.toHaveBeenCalled();
+    await act(async () => fire("pointerleave", 0, 0));
+    const before = drawn.length;
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Zoom out"]')!.click());
+    await act(async () => canvas.dispatchEvent(new WheelEvent("wheel", { deltaY: -200, clientX: 100, clientY: 100, cancelable: true })));
+    for (const b of Array.from(host.querySelectorAll("button")).filter((x) => /^(Refresh|Reset view)$/.test(x.textContent ?? ""))) {
+      await act(async () => b.click());
     }
     await settle();
-    const opened = onOpenAgent.mock.calls.map((c) => c[0] as string);
-    expect(opened.every((id) => graph.nodes.some((n) => n.id === id))).toBe(true);
+    expect(drawn.length).toBeGreaterThan(before);
+
+    getContext.mockRestore();
+    vi.stubGlobal("ResizeObserver", Inert);
+  });
+});
+
+function typeInto(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function byPlaceholder(host: HTMLElement, placeholder: string): HTMLInputElement {
+  const el = host.querySelector<HTMLInputElement>(`[placeholder="${placeholder}"]`);
+  if (!el) throw new Error(`no field with placeholder ${placeholder}`);
+  return el;
+}
+
+function button(host: HTMLElement, text: RegExp): HTMLButtonElement {
+  const b = Array.from(host.querySelectorAll("button")).find((x) => text.test(x.textContent ?? ""));
+  if (!b) throw new Error(`no button matching ${text}`);
+  return b as HTMLButtonElement;
+}
+
+describe("Onboard in the demo world", () => {
+  it("proposes a bundle for exactly the agent typed in, and only once it is complete", async () => {
+    const { OnboardView } = await import("./components/OnboardView");
+    const host = await show(createElement(OnboardView));
+
+    const generate = () => button(host, /^Generat/);
+    await act(async () => {
+      typeInto(byPlaceholder(host, "bank.example"), "");
+      typeInto(byPlaceholder(host, "treasury/recon-batch"), "");
+    });
+    expect(generate().disabled).toBe(true);
+
+    await act(async () => {
+      typeInto(byPlaceholder(host, "bank.example"), "acme.example");
+      typeInto(byPlaceholder(host, "treasury/recon-batch"), "finops/forecaster");
+      typeInto(byPlaceholder(host, "user://bank.example/olena, or free text"), "user://acme.example/ops");
+    });
+    const unitField = host.querySelector<HTMLInputElement>('[placeholder="unit id (no identity map loaded - free text)"]');
+    if (unitField) await act(async () => typeInto(unitField, "finops"));
+    const select = host.querySelector<HTMLSelectElement>("select");
+    if (select && !unitField) {
+      await act(async () => {
+        select.value = select.options[select.options.length > 1 ? 1 : 0].value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+
+    await act(async () => button(host, /\+ Add folder/).click());
+    await act(async () => button(host, /\+ Add model/).click());
+    const removeFolder = host.querySelector<HTMLButtonElement>('[aria-label="Remove this folder"]');
+    const removeModel = host.querySelector<HTMLButtonElement>('[aria-label="Remove this model"]');
+    expect(removeFolder).not.toBeNull();
+    expect(removeModel).not.toBeNull();
+    await act(async () => removeFolder!.click());
+    await act(async () => removeModel!.click());
+
+    expect(generate().disabled).toBe(false);
+    await act(async () => generate().click());
+    await settle();
+
+    const text = host.textContent ?? "";
+    expect(text).toContain("Generated bundle");
+    expect(text).toContain("agent://acme.example/finops/forecaster");
+
+    // The demo keeps no disk: writing answers nothing, and the card must not
+    // claim a file was written.
+    await act(async () => button(host, /^Write to /).click());
+    await settle();
+    expect(host.textContent).not.toContain("written ·");
+  });
+});
+
+describe("Felyx in the demo world", () => {
+  it("answers a typed question with the mock's own answer, and shows the question", async () => {
+    const { CopilotView } = await import("./components/CopilotView");
+    const question = "how can I reduce cost?";
+    const expected = (await mock.mockInvoke("copilot_ask", { question })) as { text: string };
+    const host = await show(createElement(CopilotView, { explainRequest: null, onExplainRequestHandled: () => {} }));
+    const input = byPlaceholder(host, "Ask Felyx...");
+    const send = () => button(host, /^(Send|Asking\.\.\.)$/);
+    expect(send().disabled).toBe(true);
+    await act(async () => typeInto(input, question));
+    expect(send().disabled).toBe(false);
+    await act(async () => send().click());
+    await settle();
+    const text = host.textContent ?? "";
+    expect(text).toContain(question);
+    expect(text).toContain(expected.text.slice(0, 60));
+  });
+
+  it("explains an incident handed to it from elsewhere, once", async () => {
+    const { CopilotView } = await import("./components/CopilotView");
+    const handled = vi.fn();
+    const host = await show(
+      createElement(CopilotView, { explainRequest: { nonce: 1, incidentId: "bus:1" }, onExplainRequestHandled: handled }),
+    );
+    const expected = (await mock.mockInvoke("copilot_explain", { incident_id: "bus:1" })) as { text: string };
+    expect(handled).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain(expected.text.slice(0, 60));
   });
 });
