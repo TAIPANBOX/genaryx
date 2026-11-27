@@ -146,6 +146,9 @@ describe("the demo console, view by view", () => {
 
   it("every view asks its own plane when opened, and none of them crashes", async () => {
     const missing: string[] = [];
+    // Leave the overview first, so opening it is a real visit too.
+    await act(async () => navButton(VIEWS[VIEWS.length - 1].label).click());
+    await settle();
     for (const v of VIEWS) {
       seen.commands = [];
       await act(async () => {
@@ -188,7 +191,9 @@ describe("the demo console, view by view", () => {
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < Math.min(count, 6); i++) {
       const row = rows()[i];
-      const title = (row.querySelector(".m")?.textContent ?? "").trim();
+      const m = row.querySelector(".m")!.cloneNode(true) as HTMLElement;
+      m.querySelectorAll("button").forEach((b) => b.remove());
+      const title = (m.textContent ?? "").trim();
       await act(async () => row.click());
       await settle();
       const close = document.querySelector<HTMLButtonElement>('[aria-label="Close Incident 360"]');

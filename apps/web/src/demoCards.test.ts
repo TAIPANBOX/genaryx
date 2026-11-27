@@ -361,12 +361,85 @@ describe("the watch dock in the demo world", () => {
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Expand watch dock"]')!.click());
     expect(dock()).not.toBeNull();
 
-    // Opening a pinned agent hands its id to the shell.
-    const openers = Array.from(dock()!.querySelectorAll<HTMLElement>("button, [role='button']")).filter(
-      (b) => !(b.getAttribute("aria-label") ?? "").match(/^(Unpin|Collapse|Expand|Resize)/),
-    );
-    for (const b of openers) await act(async () => b.click());
+    // Opening a pinned agent or unit hands its id to the shell.
+    const openButtons = () => Array.from(dock()!.querySelectorAll<HTMLButtonElement>('button[title^="Open "]'));
+    const n = openButtons().length;
+    expect(n).toBeGreaterThan(0);
+    for (let i = 0; i < n; i++) {
+      const b = openButtons()[i];
+      if (b) await act(async () => b.click());
+    }
     await settle();
+    const pinned = [
+      ...JSON.parse(localStorage.getItem("genaryx.watch.agents") ?? "[]"),
+      ...JSON.parse(localStorage.getItem("genaryx.watch.units") ?? "[]"),
+    ];
     expect(onOpenAgent.mock.calls.length + onOpenUnit.mock.calls.length).toBeGreaterThan(0);
+    for (const [id] of [...onOpenAgent.mock.calls, ...onOpenUnit.mock.calls]) expect(pinned).toContain(id);
+  });
+});
+
+describe("the Remote tab in the demo world", () => {
+  it("every act that would reach a box says it was simulated, and the reads show what the demo has", async () => {
+    const { RemoteView } = await import("./components/RemoteView");
+    const host = await show(createElement(RemoteView));
+    const click = async (re: RegExp) => {
+      await act(async () => button(host, re).click());
+      await settle();
+    };
+    const note = "Simulated in the demo, nothing was done";
+
+    // A saved environment so the operational controls render.
+    const fill = (placeholder: string, value: string) => {
+      const el = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[placeholder="${placeholder}"]`);
+      if (el) typeInto(el, value);
+    };
+    await act(async () => {
+      fill("prod-stack", "demo-box");
+      fill("64 hex chars", "a".repeat(64));
+      fill("203.0.113.9:51820", "203.0.113.9:51820");
+      fill("10.9.0.1/32", "10.9.0.1/32");
+      fill("25", "25");
+      fill("10.9.0.2", "10.9.0.2");
+      fill("10.9.0.1", "10.9.0.1");
+      fill("203.0.113.9", "203.0.113.9");
+      fill("root", "root");
+      fill("/Users/you/.ssh/genaryx", "/keys/genaryx");
+      fill("ssh-ed25519 AAAAC3Nza...", "ssh-ed25519 AAAAC3NzaDEMO");
+    });
+    await click(/^(Save environment|Saving\.\.\.)$/);
+
+    await click(/^Connect$/);
+    expect(host.textContent).toContain("no tunnel was opened");
+
+    await click(/^Check reachable$/);
+    expect(host.textContent).toContain("no box was contacted");
+
+    await act(async () => fill("~/.taipan/environments/<name>.json", "/etc/genaryx/env.json"));
+    await click(/^Read$/);
+    expect(host.textContent).toContain("no file was read from any box");
+
+    await act(async () => fill("/var/log/taipan/gateway.log", "/var/log/taipan/gateway.log"));
+    await click(/^Start tail$/);
+    expect(host.textContent).toContain("no log was tailed from any box");
+
+    const lists = Array.from(host.querySelectorAll("button")).filter((b) => /^List servers$/.test(b.textContent ?? ""));
+    for (const b of lists) {
+      await act(async () => b.click());
+      await settle();
+    }
+    if (lists.length > 0) {
+      const hetzner = (await mock.mockInvoke("remote_hetzner_list")) as { name: string }[];
+      const text = host.textContent ?? "";
+      expect(hetzner.some((s) => text.includes(s.name)) || text.includes("prod-")).toBe(true);
+    }
+
+    const issue = Array.from(host.querySelectorAll("button")).find((b) => /Issue WireGuard config/.test(b.textContent ?? ""));
+    if (issue) {
+      await act(async () => issue.click());
+      await settle();
+      expect(host.textContent).toContain("no config was issued");
+    }
+    expect(host.textContent).toContain(note);
   });
 });
