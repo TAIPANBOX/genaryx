@@ -582,3 +582,86 @@ describe("on-demand scans and checks in the demo world", () => {
     }
   });
 });
+
+/** Press every control inside `host` once (fresh query each time, so a control
+ * that re-renders the card is not pressed stale), settling after each. */
+async function pressEverything(host: HTMLElement, limit = 80): Promise<number> {
+  const skip = /^(Close|×|Sign out)$/;
+  const controls = () =>
+    Array.from(host.querySelectorAll<HTMLElement>("button, [role='button'], [role='tab'], summary")).filter(
+      (b) => !(b as HTMLButtonElement).disabled && !skip.test((b.textContent ?? "").trim()) && b.getAttribute("aria-label") !== "Close",
+    );
+  let pressed = 0;
+  const n = Math.min(controls().length, limit);
+  for (let i = 0; i < n; i++) {
+    const b = controls()[i];
+    if (!b) break;
+    await act(async () => b.click());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    pressed += 1;
+  }
+  await settle();
+  return pressed;
+}
+
+describe("pressing every control on the cards, in the demo world", () => {
+  beforeAll(() => {
+    URL.createObjectURL = (() => "blob:demo") as never;
+    URL.revokeObjectURL = (() => {}) as never;
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async () => {} }, configurable: true });
+  });
+
+  async function firstAgent(): Promise<string> {
+    const runs = (await mock.mockInvoke("money_runs")) as MockRun[];
+    return runs[0].agent_id;
+  }
+
+  it("Agent 360 keeps showing its agent whatever is pressed", async () => {
+    const { Agent360 } = await import("./components/Agent360");
+    const agentId = await firstAgent();
+    const nav = vi.fn();
+    const host = await show(
+      createElement(Agent360, { agentId, onClose: () => {}, onOpenAgent: () => {}, onNavigate: nav, onOpenReplay: () => {} }),
+    );
+    expect(await pressEverything(host)).toBeGreaterThan(3);
+    expect(host.textContent).toContain(agentId);
+  });
+
+  it("the agent detail card keeps showing its agent whatever is pressed", async () => {
+    const { AgentDetailCard } = await import("./components/AgentDetailCard");
+    const agentId = await firstAgent();
+    const host = await show(createElement(AgentDetailCard, { agentId, onOpenFull: () => {}, onReplay: () => {} }));
+    expect(await pressEverything(host)).toBeGreaterThan(2);
+    expect(host.textContent).toContain(agentId.split("/").pop()!);
+  });
+
+  it("the owner and unit cards keep their subject whatever is pressed", async () => {
+    const { UserCard } = await import("./components/UserCard");
+    const { UnitCard } = await import("./components/UnitCard");
+    const u = await show(createElement(UserCard, { handle: "w.zhang", onOpenFullAgent: () => {} }));
+    await pressEverything(u);
+    expect(u.textContent).toContain("w.zhang");
+    const t = await show(createElement(UnitCard, { team: "finops", onOpenFullAgent: () => {} }));
+    await pressEverything(t);
+    expect(t.textContent?.toLowerCase()).toContain("finops");
+  });
+
+  it("passkeys, retained reservations and the memory timeline answer every control", async () => {
+    const { PasskeySettings } = await import("./components/PasskeySettings");
+    const { RetainedClosuresSection } = await import("./components/RetainedClosures");
+    const { MemoryTimeline } = await import("./components/MemoryTimeline");
+    for (const el of [
+      createElement(PasskeySettings),
+      createElement(RetainedClosuresSection),
+      createElement(MemoryTimeline, { onOpenAgent: () => {} }),
+    ]) {
+      const host = await show(el);
+      await pressEverything(host);
+      expect((host.textContent ?? "").length).toBeGreaterThan(0);
+    }
+  });
+});

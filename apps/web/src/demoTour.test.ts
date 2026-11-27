@@ -80,8 +80,10 @@ beforeAll(async () => {
   })) as unknown as typeof window.matchMedia;
   Element.prototype.scrollIntoView ??= function () {};
   Object.defineProperty(navigator, "clipboard", { value: { writeText: async () => {} }, configurable: true });
-  URL.createObjectURL ??= (() => "blob:demo") as never;
-  URL.revokeObjectURL ??= (() => {}) as never;
+  // vitest's own createObjectURL cannot read a jsdom Blob; a download only
+  // needs a URL to hand the anchor, and the anchor's click is stubbed below.
+  URL.createObjectURL = (() => "blob:demo") as never;
+  URL.revokeObjectURL = (() => {}) as never;
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   vi.spyOn(window, "confirm").mockReturnValue(true);
   Element.prototype.scrollTo ??= function () {} as never;
