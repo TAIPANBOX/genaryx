@@ -422,7 +422,6 @@ mod tests {
         // Ok. Proves the secret reaches the child through the environment and
         // never lands on argv, where anything reading the host process table
         // could see it. Mirrors the admission plane's fake-verdryx secret test.
-        use std::os::unix::fs::PermissionsExt;
 
         let base =
             std::env::temp_dir().join(format!("genaryx-mockryx-keytest-{}", std::process::id()));
@@ -439,10 +438,7 @@ mod tests {
             argv = argv_out.display(),
             env = env_out.display(),
         );
-        std::fs::write(&script, body).expect("write fake mockryx");
-        let mut perms = std::fs::metadata(&script).expect("stat").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod +x");
+        crate::test_exec::write_executable(&script, &body);
 
         let secret = "sk-mockryx-do-not-leak-42";
         let rep = MockryxClient::new(&script)

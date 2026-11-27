@@ -5,7 +5,6 @@
 use genaryx_api::proof::slots::Slots;
 use genaryx_api::record::{RecordConfig, VerifyState, WITNESS_ENV, verify_in};
 use std::ffi::OsString;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use trailryx_index::{Dimension, SegmentManifest};
@@ -89,8 +88,7 @@ fn fake_node_with(
          exit {code}\n"
     );
     let bin = dir.join("trailryx-node");
-    std::fs::write(&bin, script).expect("script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    crate::test_exec::write_executable(&bin, &script);
     bin
 }
 
@@ -106,8 +104,7 @@ fn fake_verify(dir: &Path, stdout: &str, code: i32) -> PathBuf {
          exit {code}\n"
     );
     let bin = dir.join("trailryx-verify");
-    std::fs::write(&bin, script).expect("script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    crate::test_exec::write_executable(&bin, &script);
     bin
 }
 

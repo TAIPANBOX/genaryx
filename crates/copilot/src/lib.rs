@@ -32,6 +32,10 @@ pub mod service;
 pub mod tools;
 pub mod untrusted;
 
+#[cfg(all(test, unix))]
+#[path = "../../connectors/src/test_exec.rs"]
+mod test_exec;
+
 pub use action::{ActionKind, CopilotAnnotation, ProposedAction, WithheldProposal};
 pub use agent::{Answer, CopilotError, Felyx, ToolInvocation};
 pub use config::{ConfigError, CopilotConfig, ProviderKind, SecretRef};

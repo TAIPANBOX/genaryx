@@ -25,3 +25,6 @@ mod stand_in;
 mod stand_in_cli_test;
 mod uapi_tls_pinning;
 mod wardryx_test;
+
+#[path = "../../src/test_exec.rs"]
+mod test_exec;

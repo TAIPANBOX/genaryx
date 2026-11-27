@@ -943,23 +943,16 @@ mod tests {
         // underlying SDK's own exception text echoing the credential it was
         // called with) rather than only unit-testing `redact_secret` in
         // isolation.
-        use std::os::unix::fs::PermissionsExt;
 
         let script = std::env::temp_dir().join(format!(
             "genaryx-admission-fake-verdryx-{}-{}.sh",
             std::process::id(),
             nanos()
         ));
-        std::fs::write(
+        crate::test_exec::write_executable(
             &script,
             "#!/bin/sh\necho \"auth failed for key $ANTHROPIC_API_KEY\" 1>&2\nexit 1\n",
-        )
-        .expect("write fixture script");
-        let mut perms = std::fs::metadata(&script)
-            .expect("stat fixture script")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod fixture script executable");
+        );
 
         let secret = "sk-ant-totally-real-secret-99";
         let err = spawn_verdryx(&script, &["eval"], "http://127.0.0.1:4100", secret)
@@ -1038,12 +1031,11 @@ mod tests {
     /// to `args.log`, then runs `eval_body` or `baseline_body` by subcommand.
     #[cfg(unix)]
     fn fake_verdryx(dir: &Path, eval_body: &str, baseline_body: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let script = dir.join("verdryx");
         let log = dir.join("args.log");
-        std::fs::write(
+        crate::test_exec::write_executable(
             &script,
-            format!(
+            &format!(
                 "#!/bin/sh\n\
                  echo \"$@\" >> '{log}'\n\
                  echo \"base=$ANTHROPIC_BASE_URL\" >> '{log}'\n\
@@ -1053,11 +1045,7 @@ mod tests {
                  esac\n",
                 log = log.display()
             ),
-        )
-        .expect("write the stand-in");
-        let mut perms = std::fs::metadata(&script).expect("stat").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod");
+        );
         script
     }
 

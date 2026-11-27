@@ -14,7 +14,6 @@ use genaryx_api::proof::slots::Slots;
 use genaryx_core::store::Store;
 use genaryx_core::{AgentEvent, ConsoleEvent, Provenance, SchemaVersion};
 use serde_json::json;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -92,8 +91,7 @@ fn fake_wardryx(dir: &Path, stdout: &str, stderr: &str, code: i32, sleep: u32) -
          exit {code}\n"
     );
     let bin = dir.join("wardryx");
-    std::fs::write(&bin, script).expect("script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    crate::test_exec::write_executable(&bin, &script);
     bin
 }
 

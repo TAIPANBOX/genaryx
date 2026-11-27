@@ -59,5 +59,9 @@ pub mod routines;
 pub mod seal;
 pub mod stats;
 
+#[cfg(all(test, unix))]
+#[path = "../../connectors/src/test_exec.rs"]
+mod test_exec;
+
 pub use bus::{AppState, BusMode};
 pub use events::UiEvent;

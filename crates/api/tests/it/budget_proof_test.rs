@@ -19,7 +19,6 @@ use genaryx_api::proof::slots::Slots;
 use genaryx_core::store::Store;
 use genaryx_core::{AgentEvent, ConsoleEvent, Provenance, SchemaVersion};
 use serde_json::json;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -140,8 +139,7 @@ fn fake_tokenfuse(dir: &Path, script: &Script) -> BudgetConfig {
          exit 0\n"
     );
     let bin = dir.join("tokenfuse");
-    std::fs::write(&bin, body).expect("script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    crate::test_exec::write_executable(&bin, &body);
     BudgetConfig {
         tokenfuse_bin: bin,
         trace_dir: Some(trace_dir),
