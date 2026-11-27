@@ -127,9 +127,12 @@ pub fn b64_to_hex(b64: &str) -> Result<String, WgUapiError> {
 fn decode_hex32(hex: &str) -> Result<[u8; 32], WgUapiError> {
     let hex = hex.trim();
     if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        // The prefix is cut by characters, not bytes: this value can come
+        // from the daemon's socket, and a byte cut through a multi-byte
+        // character panics.
+        let prefix: String = hex.chars().take(16).collect();
         return Err(WgUapiError::BadKey(format!(
-            "expected 64 hex characters, got {:?}",
-            &hex[..hex.len().min(16)]
+            "expected 64 hex characters, got {prefix:?}"
         )));
     }
     let mut out = [0u8; 32];

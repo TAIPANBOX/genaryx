@@ -383,33 +383,67 @@ impl TokenfuseClient {
 
 // ---- text-scrape parsing (I10) ----------------------------------------------
 
+/// Why a dollar figure was not read as money.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UsdParseError {
+    /// Not `[-]$<digits>[.<digits>]` at all.
+    NotMoney,
+    /// A well-formed figure whose microdollars do not fit in an `i64`
+    /// (beyond about $9.2e12 either way). Refused by name rather than
+    /// wrapped, since a wrapped amount is a different, plausible number.
+    OutOfRange,
+}
+
 /// Parse a `${:.6}`-formatted amount (`tokenfuse_core::money::Microusd`'s
 /// `Display` impl, confirmed against `crates/core/src/money.rs`) back into
 /// microdollars by exact decimal arithmetic - never a float multiply-then-
-/// round, which could drift for large amounts. Returns `None` for anything
-/// that does not look like `[-]$<digits>[.<digits>]`.
-fn parse_usd_to_microusd(s: &str) -> Option<i64> {
+/// round, which could drift for large amounts. The arithmetic is checked and
+/// done in `i128`, so both ends of the `i64` range are read exactly and
+/// anything past them is [`UsdParseError::OutOfRange`].
+fn parse_usd_to_microusd(s: &str) -> Result<i64, UsdParseError> {
+    use UsdParseError::{NotMoney, OutOfRange};
     let s = s.trim();
-    let (sign, s) = match s.strip_prefix('-') {
-        Some(rest) => (-1i64, rest),
-        None => (1i64, s),
+    let (negative, s) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s),
     };
-    let s = s.strip_prefix('$')?;
+    let s = s.strip_prefix('$').ok_or(NotMoney)?;
     let (int_part, frac_part) = s.split_once('.').unwrap_or((s, ""));
     if int_part.is_empty() || !int_part.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+        return Err(NotMoney);
     }
     if !frac_part.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+        return Err(NotMoney);
     }
-    let int_val: i64 = int_part.parse().ok()?;
-    let mut frac = frac_part.to_string();
-    frac.truncate(6);
-    while frac.len() < 6 {
-        frac.push('0');
-    }
-    let frac_val: i64 = frac.parse().ok()?;
-    Some(sign * (int_val * 1_000_000 + frac_val))
+    // All digits by now, so the only way this parse fails is overflow.
+    let int_val: i128 = int_part.parse().map_err(|_| OutOfRange)?;
+    let frac_val: i128 = frac_part
+        .bytes()
+        .chain(std::iter::repeat(b'0'))
+        .take(6)
+        .fold(0, |acc, b| acc * 10 + i128::from(b - b'0'));
+    let magnitude = int_val
+        .checked_mul(1_000_000)
+        .and_then(|m| m.checked_add(frac_val))
+        .ok_or(OutOfRange)?;
+    let signed = if negative { -magnitude } else { magnitude };
+    i64::try_from(signed).map_err(|_| OutOfRange)
+}
+
+/// [`parse_usd_to_microusd`] for one line of the savings report, with the
+/// failure named after the line it was on.
+fn usd_on_line(money: &str, what: &str, line: &str) -> Result<i64, TokenfuseError> {
+    parse_usd_to_microusd(money).map_err(|e| TokenfuseError::Parse {
+        command: "savings",
+        detail: match e {
+            UsdParseError::NotMoney => {
+                format!("could not parse USD amount in {what} line: {line:?}")
+            }
+            UsdParseError::OutOfRange => {
+                format!("USD amount out of range in {what} line: {line:?}")
+            }
+        },
+    })
 }
 
 /// Parse `savingscli.rs::run`'s printed report (see this module's doc
@@ -458,11 +492,7 @@ fn parse_savings_text(text: &str) -> Result<TokenfuseSavings, TokenfuseError> {
                     command: CMD,
                     detail: format!("no `(...)` clause in runaway line: {line:?}"),
                 })?;
-            out.blocked_spend_microusd =
-                parse_usd_to_microusd(money_str).ok_or_else(|| TokenfuseError::Parse {
-                    command: CMD,
-                    detail: format!("could not parse USD amount in runaway line: {line:?}"),
-                })?;
+            out.blocked_spend_microusd = usd_on_line(money_str, "runaway", line)?;
             let clause =
                 paren_rest
                     .trim_end()
@@ -493,18 +523,10 @@ fn parse_savings_text(text: &str) -> Result<TokenfuseSavings, TokenfuseError> {
             })?;
             saw_runaway = true;
         } else if let Some(rest) = trimmed.strip_prefix("cache saved:") {
-            out.cache_saved_microusd =
-                parse_usd_to_microusd(rest.trim()).ok_or_else(|| TokenfuseError::Parse {
-                    command: CMD,
-                    detail: format!("could not parse USD amount in cache-saved line: {line:?}"),
-                })?;
+            out.cache_saved_microusd = usd_on_line(rest, "cache-saved", line)?;
             saw_cache = true;
         } else if let Some(rest) = trimmed.strip_prefix("router saved:") {
-            out.router_saved_microusd =
-                parse_usd_to_microusd(rest.trim()).ok_or_else(|| TokenfuseError::Parse {
-                    command: CMD,
-                    detail: format!("could not parse USD amount in router-saved line: {line:?}"),
-                })?;
+            out.router_saved_microusd = usd_on_line(rest, "router-saved", line)?;
             saw_router = true;
         } else {
             // The only other line shape `savingscli.rs::run` ever prints: a
@@ -518,10 +540,7 @@ fn parse_savings_text(text: &str) -> Result<TokenfuseSavings, TokenfuseError> {
                     detail: format!("unrecognized savings output line: {line:?}"),
                 });
             };
-            let amount = parse_usd_to_microusd(money).ok_or_else(|| TokenfuseError::Parse {
-                command: CMD,
-                detail: format!("could not parse USD amount in reason line: {line:?}"),
-            })?;
+            let amount = usd_on_line(money, "reason", line)?;
             out.by_reason_microusd.insert((*reason).to_string(), amount);
         }
     }
@@ -666,15 +685,15 @@ mod tests {
 
     #[test]
     fn parses_a_microusd_amount_exactly_no_float_drift() {
-        assert_eq!(parse_usd_to_microusd("$28750.000404"), Some(28_750_000_404));
-        assert_eq!(parse_usd_to_microusd("$0.000000"), Some(0));
+        assert_eq!(parse_usd_to_microusd("$28750.000404"), Ok(28_750_000_404));
+        assert_eq!(parse_usd_to_microusd("$0.000000"), Ok(0));
         assert_eq!(
             parse_usd_to_microusd("  $14375.000202  "),
-            Some(14_375_000_202)
+            Ok(14_375_000_202)
         );
-        assert_eq!(parse_usd_to_microusd("$5"), Some(5_000_000)); // no fractional part at all
-        assert_eq!(parse_usd_to_microusd("not money"), None);
-        assert_eq!(parse_usd_to_microusd("$abc.def"), None);
+        assert_eq!(parse_usd_to_microusd("$5"), Ok(5_000_000)); // no fractional part at all
+        assert_eq!(parse_usd_to_microusd("not money"), Err(UsdParseError::NotMoney));
+        assert_eq!(parse_usd_to_microusd("$abc.def"), Err(UsdParseError::NotMoney));
     }
 
     // ---- parse_savings_text: REAL captured CLI output --------------------
@@ -1061,23 +1080,29 @@ mod tests {
             "$ 1",
             "$1e3",
             "USD 1",
-            "$99999999999999999999",
         ] {
             assert_eq!(
                 parse_usd_to_microusd(bad),
-                None,
+                Err(UsdParseError::NotMoney),
                 "{bad:?} was read as money"
             );
         }
-        assert_eq!(parse_usd_to_microusd("-$1.5"), Some(-1_500_000));
-        assert_eq!(parse_usd_to_microusd("  $12 "), Some(12_000_000));
+        assert_eq!(parse_usd_to_microusd("-$1.5"), Ok(-1_500_000));
+        assert_eq!(parse_usd_to_microusd("  $12 "), Ok(12_000_000));
         assert_eq!(
             parse_usd_to_microusd("$0.1234567"),
-            Some(123_456),
+            Ok(123_456),
             "truncated, not rounded"
         );
-        assert_eq!(parse_usd_to_microusd("$3.000001"), Some(3_000_001));
-        assert_eq!(parse_usd_to_microusd("$7."), Some(7_000_000));
+        assert_eq!(parse_usd_to_microusd("$3.000001"), Ok(3_000_001));
+        assert_eq!(parse_usd_to_microusd("$7."), Ok(7_000_000));
+        for over in ["$99999999999999999999", "-$9223372036854.775809"] {
+            assert_eq!(
+                parse_usd_to_microusd(over),
+                Err(UsdParseError::OutOfRange),
+                "{over:?}"
+            );
+        }
     }
 
     /// The `detail` of a savings parse failure, after checking it is one.
