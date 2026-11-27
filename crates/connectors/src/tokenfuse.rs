@@ -1051,14 +1051,31 @@ mod tests {
     #[test]
     fn an_amount_that_is_not_a_dollar_figure_is_refused_not_guessed() {
         for bad in [
-            "", "$", "$.5", "1.00", "$-1", "$1.2.3", "$1.x", "$ 1", "$1e3", "USD 1",
+            "",
+            "$",
+            "$.5",
+            "1.00",
+            "$-1",
+            "$1.2.3",
+            "$1.x",
+            "$ 1",
+            "$1e3",
+            "USD 1",
             "$99999999999999999999",
         ] {
-            assert_eq!(parse_usd_to_microusd(bad), None, "{bad:?} was read as money");
+            assert_eq!(
+                parse_usd_to_microusd(bad),
+                None,
+                "{bad:?} was read as money"
+            );
         }
         assert_eq!(parse_usd_to_microusd("-$1.5"), Some(-1_500_000));
         assert_eq!(parse_usd_to_microusd("  $12 "), Some(12_000_000));
-        assert_eq!(parse_usd_to_microusd("$0.1234567"), Some(123_456), "truncated, not rounded");
+        assert_eq!(
+            parse_usd_to_microusd("$0.1234567"),
+            Some(123_456),
+            "truncated, not rounded"
+        );
         assert_eq!(parse_usd_to_microusd("$3.000001"), Some(3_000_001));
         assert_eq!(parse_usd_to_microusd("$7."), Some(7_000_000));
     }
@@ -1103,7 +1120,10 @@ mod tests {
                 "$1.0 (1 blocked call(s) over 1 budget break(s))",
                 "expected the word \"across\"",
             ),
-            ("$1.0 (1 blocked across)", "could not read the budget-break count"),
+            (
+                "$1.0 (1 blocked across)",
+                "could not read the budget-break count",
+            ),
             (
                 "$1.0 (1 blocked call(s) across some budget break(s))",
                 "could not read the budget-break count",
@@ -1117,17 +1137,29 @@ mod tests {
         let runaway =
             "  runaway spend stopped:   $1.0   (1 blocked call(s) across 1 budget break(s))\n";
         let detail = savings_failure(&format!("{HEADER}{runaway}  cache saved: free\n{ROUTER}"));
-        assert!(detail.starts_with("could not parse USD amount in cache-saved line"), "{detail}");
+        assert!(
+            detail.starts_with("could not parse USD amount in cache-saved line"),
+            "{detail}"
+        );
         let detail = savings_failure(&format!("{HEADER}{runaway}{CACHE}  router saved: $-\n"));
-        assert!(detail.starts_with("could not parse USD amount in router-saved line"), "{detail}");
+        assert!(
+            detail.starts_with("could not parse USD amount in router-saved line"),
+            "{detail}"
+        );
         let detail = savings_failure(&format!(
             "{HEADER}{runaway}{CACHE}{ROUTER}    budget exceeded  $1.0\n"
         ));
-        assert!(detail.starts_with("unrecognized savings output line"), "{detail}");
+        assert!(
+            detail.starts_with("unrecognized savings output line"),
+            "{detail}"
+        );
         let detail = savings_failure(&format!(
             "{HEADER}{runaway}{CACHE}{ROUTER}    budget_exceeded  1.0\n"
         ));
-        assert!(detail.starts_with("could not parse USD amount in reason line"), "{detail}");
+        assert!(
+            detail.starts_with("could not parse USD amount in reason line"),
+            "{detail}"
+        );
         let detail = savings_failure(&format!("{HEADER}{CACHE}{ROUTER}"));
         assert!(detail.starts_with("missing one of the three"), "{detail}");
     }
@@ -1166,9 +1198,18 @@ mod tests {
             ("| 3 | m-a |\n", "is shorter than the header"),
             ("| x | m-a | 1 | 1 | 1 |\n", "non-numeric `calls` cell"),
             ("| -1 | m-a | 1 | 1 | 1 |\n", "non-numeric `calls` cell"),
-            ("| 3 | m-a | 1.5 | 1 | 1 |\n", "non-numeric `total_cost_microusd` cell"),
-            ("| 3 | m-a | 1 | 1 | many |\n", "non-numeric `total_tool_calls` cell"),
-            ("| 3 | m-a | 1 | ? | 1 |\n", "non-numeric `tool_calls_known_rows` cell"),
+            (
+                "| 3 | m-a | 1.5 | 1 | 1 |\n",
+                "non-numeric `total_cost_microusd` cell",
+            ),
+            (
+                "| 3 | m-a | 1 | 1 | many |\n",
+                "non-numeric `total_tool_calls` cell",
+            ),
+            (
+                "| 3 | m-a | 1 | ? | 1 |\n",
+                "non-numeric `tool_calls_known_rows` cell",
+            ),
         ];
         for (row, want) in cases {
             let detail = sql_failure(&format!("{COST_HEADER}{row}"));
@@ -1198,8 +1239,12 @@ mod tests {
             rows[1].cost_per_tool_call_microusd, None,
             "known rows but zero tool calls is no rate"
         );
-        let detail = sql_failure(&format!("{COST_HEADER}| 1 | m | 1 | 1 | 1 |\n").replace("model", "label"));
-        assert!(detail.contains("missing expected column `model`"), "{detail}");
+        let detail =
+            sql_failure(&format!("{COST_HEADER}| 1 | m | 1 | 1 | 1 |\n").replace("model", "label"));
+        assert!(
+            detail.contains("missing expected column `model`"),
+            "{detail}"
+        );
     }
 
     #[test]

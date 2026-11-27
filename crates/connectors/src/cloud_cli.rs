@@ -1111,7 +1111,11 @@ mod tests {
     fn hostile_shapes_parse_to_what_is_there_and_never_invent_a_field() {
         // A non-array where an array belongs is no rows, not a failure.
         assert!(parse_aws(r#"{"Reservations": 5}"#).unwrap().is_empty());
-        assert!(parse_aws(r#"{"Reservations":[{"Instances":"x"}]}"#).unwrap().is_empty());
+        assert!(
+            parse_aws(r#"{"Reservations":[{"Instances":"x"}]}"#)
+                .unwrap()
+                .is_empty()
+        );
         assert!(parse_gcp(r#"{"items": []}"#).unwrap().is_empty());
         assert!(parse_azure("{}").unwrap().is_empty());
         assert!(parse_ibm("null").unwrap().is_empty());
@@ -1122,15 +1126,25 @@ mod tests {
         assert_eq!(bare.len(), 1);
         assert_eq!(bare[0].id, "123", "a numeric id is kept as its digits");
         assert_eq!((bare[0].name.as_str(), bare[0].status.as_str()), ("", ""));
-        assert_eq!((bare[0].public_ip.clone(), bare[0].private_ip.clone()), (None, None));
+        assert_eq!(
+            (bare[0].public_ip.clone(), bare[0].private_ip.clone()),
+            (None, None)
+        );
 
         let gcp = parse_gcp(r#"[{"id":"1","name":"g","networkInterfaces":[{"networkIP":"","accessConfigs":[{"natIP":""}]}],"machineType":"e2-small"}]"#)
             .unwrap();
-        assert_eq!((gcp[0].public_ip.clone(), gcp[0].private_ip.clone()), (None, None));
-        assert_eq!(gcp[0].server_type, "e2-small", "a bare name has no path to strip");
+        assert_eq!(
+            (gcp[0].public_ip.clone(), gcp[0].private_ip.clone()),
+            (None, None)
+        );
+        assert_eq!(
+            gcp[0].server_type, "e2-small",
+            "a bare name has no path to strip"
+        );
 
-        let az = parse_azure(r#"[{"name":"vm-1","vmId":"","publicIps":"","privateIps":"10.0.0.4"}]"#)
-            .unwrap();
+        let az =
+            parse_azure(r#"[{"name":"vm-1","vmId":"","publicIps":"","privateIps":"10.0.0.4"}]"#)
+                .unwrap();
         assert_eq!(az[0].id, "vm-1", "no vmId falls back to the name");
         assert_eq!(az[0].public_ip, None);
         assert_eq!(az[0].private_ip.as_deref(), Some("10.0.0.4"));
@@ -1138,8 +1152,15 @@ mod tests {
 
         let ibm = parse_ibm(r#"[{"id":"i","primary_network_interface":{"primary_ip":{"address":"10.1.0.5"},"floating_ips":[]}}]"#)
             .unwrap();
-        assert_eq!(ibm[0].public_ip.as_deref(), Some("10.1.0.5"), "no floating IP falls back to the private one");
+        assert_eq!(
+            ibm[0].public_ip.as_deref(),
+            Some("10.1.0.5"),
+            "no floating IP falls back to the private one"
+        );
         let none = parse_ibm(r#"[{"id":"i"}]"#).unwrap();
-        assert_eq!((none[0].public_ip.clone(), none[0].private_ip.clone()), (None, None));
+        assert_eq!(
+            (none[0].public_ip.clone(), none[0].private_ip.clone()),
+            (None, None)
+        );
     }
 }

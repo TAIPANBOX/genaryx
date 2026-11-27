@@ -58,7 +58,12 @@ fn focus_export_hands_back_the_csv_the_tool_wrote_and_removes_its_file() {
     );
     assert_eq!(
         args[5..],
-        ["--from", "2026-11-01T00:00:00Z", "--to", "2026-11-02T00:00:00Z"]
+        [
+            "--from",
+            "2026-11-01T00:00:00Z",
+            "--to",
+            "2026-11-02T00:00:00Z"
+        ]
     );
     assert!(
         !Path::new(&args[4]).exists(),
@@ -148,7 +153,10 @@ fn savings_that_fail_or_print_something_else_are_errors() {
             command,
             code,
             stderr,
-        }) => assert_eq!((command, code, stderr.as_str()), ("savings", 2, "no data dir")),
+        }) => assert_eq!(
+            (command, code, stderr.as_str()),
+            ("savings", 2, "no data dir")
+        ),
         other => panic!("expected a Cli error, got {other:?}"),
     }
     let chatty = script(&dir, "chatty", "echo 'Welcome to TokenFuse!'\n");
@@ -218,7 +226,11 @@ fn cost_per_action_runs_both_fixed_queries_and_keys_each_table_by_its_label() {
 #[test]
 fn a_sql_error_on_stderr_is_a_failure_even_when_the_tool_exits_zero() {
     let dir = scratch_dir("cost-fail");
-    let quirk = script(&dir, "quirk", "echo 'sql error: no table calls' >&2\nexit 0\n");
+    let quirk = script(
+        &dir,
+        "quirk",
+        "echo 'sql error: no table calls' >&2\nexit 0\n",
+    );
     match retry_busy(|| TokenfuseClient::new(&quirk).cost_per_action(&dir)) {
         Err(TokenfuseError::Cli {
             command,
@@ -281,22 +293,31 @@ fn qryx_puts_its_flags_before_the_target_and_parses_every_format() {
         ncsc.discovery_2028.quantum_vulnerable_findings.is_empty(),
         "a Go null list reads as empty"
     );
-    assert_eq!(ncsc.highest_priority_2031.findings[0].asset_type, "public-key");
+    assert_eq!(
+        ncsc.highest_priority_2031.findings[0].asset_type,
+        "public-key"
+    );
     assert!(ncsc.full_migration_2035.findings.is_empty());
 
     let cbom = retry_busy(|| q.scan_cbom(target)).expect("cbom");
     assert_eq!(cbom["specVersion"], "1.6");
     let raw = retry_busy(|| q.scan_cbom_raw(target)).expect("cbom raw");
     assert_eq!(
-        raw,
-        b"{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"1.6\",\"components\":[]}\n",
+        raw, b"{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"1.6\",\"components\":[]}\n",
         "the raw form is the tool's bytes, unparsed"
     );
 
     let signed = retry_busy(|| q.scan_evidence(target, Some(key))).expect("evidence");
     assert_eq!(
         args(),
-        ["scan", "--format", "evidence", "--sign-key", "/keys/mldsa.pem", "/src"]
+        [
+            "scan",
+            "--format",
+            "evidence",
+            "--sign-key",
+            "/keys/mldsa.pem",
+            "/src"
+        ]
     );
     assert_eq!(signed.summary.score_pct, 75);
     assert_eq!(
@@ -415,7 +436,13 @@ fn idryx_detect_and_bom_pass_every_load_and_read_the_answer() {
     assert_eq!(bom, b"{\"bomFormat\":\"CycloneDX\"}");
     assert_eq!(
         recorded_args(&sidecar(&bin, "args")),
-        ["bom", "--format", "json", "--load", "tokenfuse:/bus/tokenfuse.ndjson"]
+        [
+            "bom",
+            "--format",
+            "json",
+            "--load",
+            "tokenfuse:/bus/tokenfuse.ndjson"
+        ]
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -496,7 +523,12 @@ async fn idryx_http_reads_parse_the_server_shapes_and_refuse_everything_else() {
     let targets: Vec<String> = stub.requests().into_iter().map(|r| r.target).collect();
     assert_eq!(
         targets,
-        ["/api/identities", "/api/alerts", "/api/remediations", "/healthz"]
+        [
+            "/api/identities",
+            "/api/alerts",
+            "/api/remediations",
+            "/healthz"
+        ]
     );
 
     let sick = serve(vec![

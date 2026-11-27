@@ -119,7 +119,11 @@ async fn every_source_lands_as_an_artifact_or_as_a_named_missing_one() {
             "500 Internal Server Error",
             "compliance store offline".to_string(),
         ),
-        ("GET /v1/audit/verify", "200 OK", r#"{"ok":true}"#.to_string()),
+        (
+            "GET /v1/audit/verify",
+            "200 OK",
+            r#"{"ok":true}"#.to_string(),
+        ),
     ]);
     let dir = scratch_dir("evidence-all");
     let qryx = QryxClient::new(script(&dir, "qryx", QRYX));
@@ -228,7 +232,10 @@ async fn failed_tools_are_named_with_their_reason_and_a_bare_break_is_still_a_br
     assert_eq!(missing.len(), 4, "{missing:?}");
     assert_eq!(missing[0].0, "Cloud compliance evidence");
     assert!(missing[0].1.contains("404"), "{missing:?}");
-    assert_eq!(missing[1], ("CBOM (CycloneDX)", "qryx exited 1: cbom writer crashed"));
+    assert_eq!(
+        missing[1],
+        ("CBOM (CycloneDX)", "qryx exited 1: cbom writer crashed")
+    );
     assert_eq!(missing[2].0, "Agent-BOM (CycloneDX)");
     assert!(missing[2].1.contains("spawn"), "{missing:?}");
     assert_eq!(missing[3].0, "TokenFuse FOCUS cost export");
@@ -267,7 +274,10 @@ async fn a_pack_of_nothing_is_refused() {
         },
     )
     .await;
-    assert!(matches!(nothing_asked, Err(EvidenceBuildError::NoArtifacts)));
+    assert!(matches!(
+        nothing_asked,
+        Err(EvidenceBuildError::NoArtifacts)
+    ));
 }
 
 /// A device whose key can no longer sign: the hardware went away mid-session.

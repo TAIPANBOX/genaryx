@@ -735,7 +735,11 @@ mod tests {
     }
 
     /// A compact JWS over exactly this header and payload, signed with `k`.
-    fn forge(k: &SoftwareSigner, header: &serde_json::Value, payload: &serde_json::Value) -> String {
+    fn forge(
+        k: &SoftwareSigner,
+        header: &serde_json::Value,
+        payload: &serde_json::Value,
+    ) -> String {
         let input = format!("{}.{}", b64(header), b64(payload));
         let sig = k.sign_raw(input.as_bytes()).unwrap();
         format!("{input}.{}", URL_SAFE_NO_PAD.encode(sig))
@@ -774,9 +778,21 @@ mod tests {
         let x = k.public_key_x963().unwrap();
         let mut cases: Vec<(serde_json::Value, &str)> = Vec::new();
         for (field, value, why) in [
-            ("alg", serde_json::json!("none"), "the algorithm is not ES256"),
-            ("alg", serde_json::json!("HS256"), "the algorithm is not ES256"),
-            ("typ", serde_json::json!("JWT"), "the type is not the approver statement type"),
+            (
+                "alg",
+                serde_json::json!("none"),
+                "the algorithm is not ES256",
+            ),
+            (
+                "alg",
+                serde_json::json!("HS256"),
+                "the algorithm is not ES256",
+            ),
+            (
+                "typ",
+                serde_json::json!("JWT"),
+                "the type is not the approver statement type",
+            ),
             (
                 "kid",
                 serde_json::json!("another-key"),
@@ -816,12 +832,18 @@ mod tests {
             ("a.b".to_string(), "not a compact JWS of three parts"),
             (format!("{good}.extra"), "not a compact JWS of three parts"),
             (String::new(), "not a compact JWS of three parts"),
-            (format!("!!.{}.{}", p[1], p[2]), "the header is not base64url"),
+            (
+                format!("!!.{}.{}", p[1], p[2]),
+                "the header is not base64url",
+            ),
             (
                 format!("{}.{}.{}", URL_SAFE_NO_PAD.encode("not json"), p[1], p[2]),
                 "the header is not JSON",
             ),
-            (format!("{}.{}.%%", p[0], p[1]), "the signature is not base64url"),
+            (
+                format!("{}.{}.%%", p[0], p[1]),
+                "the signature is not base64url",
+            ),
         ] {
             assert_eq!(malformed_reason(verify(&x, &jws, 1_010)), why, "{jws}");
         }
@@ -920,9 +942,14 @@ mod tests {
         assert!(verify(&x, &jws, 1_000 - MAX_FUTURE_SKEW_SECS).is_ok());
         assert!(matches!(
             verify(&x, &jws, 1_000 - MAX_FUTURE_SKEW_SECS - 1),
-            Err(StatementError::Claims("the statement is issued in the future"))
+            Err(StatementError::Claims(
+                "the statement is issued in the future"
+            ))
         ));
-        assert!(verify(&x, &jws, 1_119).is_ok(), "valid until the second before exp");
+        assert!(
+            verify(&x, &jws, 1_119).is_ok(),
+            "valid until the second before exp"
+        );
     }
 
     #[test]
@@ -1080,7 +1107,6 @@ mod loader_tests {
         }
     }
 
-
     // ---- the DER reader, held element by element --------------------------
 
     fn info(version: &[u8], alg_oid: &[u8], curve: &[u8], ec: &[u8]) -> Vec<u8> {
@@ -1128,19 +1154,30 @@ mod loader_tests {
             ("nothing", &[][..]),
             ("a tag alone", &[0x30][..]),
             ("a long form naming no length bytes", &[0x30, 0x80][..]),
-            ("a long form of five length bytes", &[0x30, 0x85, 0, 0, 0, 0, 1][..]),
+            (
+                "a long form of five length bytes",
+                &[0x30, 0x85, 0, 0, 0, 0, 1][..],
+            ),
             ("length bytes that are not there", &[0x30, 0x82, 0x01][..]),
             ("a length past the end", &[0x30, 0x03, 0x01][..]),
             ("a long length past the end", &[0x30, 0x81, 0x80, 0x00][..]),
         ] {
             assert!(der_read(bad).is_none(), "{name} was read");
         }
-        assert_eq!(der_read(&[0x05, 0x00, 0xff]), Some((0x05, &[][..], &[0xff][..])));
+        assert_eq!(
+            der_read(&[0x05, 0x00, 0xff]),
+            Some((0x05, &[][..], &[0xff][..]))
+        );
     }
 
     #[test]
     fn the_hand_built_structure_is_the_encoder_s_so_each_change_below_is_the_only_one() {
-        let good = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &[7u8; 32], &[]));
+        let good = info(
+            &[0],
+            OID_EC_PUBLIC_KEY,
+            OID_PRIME256V1,
+            &ec(&[1], &[7u8; 32], &[]),
+        );
         assert_eq!(good, pkcs8_der(&[7u8; 32], None));
         let (scalar, public) = parse_p256_pkcs8(&good).expect("the encoder's own output parses");
         assert_eq!((scalar, public), ([7u8; 32], None));
@@ -1156,7 +1193,12 @@ mod loader_tests {
         short_point.extend_from_slice(&public[..64]);
         let mut compressed = vec![0u8, 0x02];
         compressed.extend_from_slice(&public[1..33]);
-        let mut good = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &[]));
+        let mut good = info(
+            &[0],
+            OID_EC_PUBLIC_KEY,
+            OID_PRIME256V1,
+            &ec(&[1], &scalar, &[]),
+        );
         good.push(0x00);
         let rsa: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
         let p384: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
@@ -1166,17 +1208,38 @@ mod loader_tests {
             ("trailing bytes after the key", good),
             (
                 "PrivateKeyInfo version 1",
-                info(&[1], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &[])),
+                info(
+                    &[1],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[1], &scalar, &[]),
+                ),
             ),
-            ("an RSA algorithm", info(&[0], rsa, OID_PRIME256V1, &ec(&[1], &scalar, &[]))),
-            ("the P-384 curve", info(&[0], OID_EC_PUBLIC_KEY, p384, &ec(&[1], &scalar, &[]))),
+            (
+                "an RSA algorithm",
+                info(&[0], rsa, OID_PRIME256V1, &ec(&[1], &scalar, &[])),
+            ),
+            (
+                "the P-384 curve",
+                info(&[0], OID_EC_PUBLIC_KEY, p384, &ec(&[1], &scalar, &[])),
+            ),
             (
                 "a 31-byte scalar",
-                info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar[..31], &[])),
+                info(
+                    &[0],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[1], &scalar[..31], &[]),
+                ),
             ),
             (
                 "ECPrivateKey version 2",
-                info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[2], &scalar, &[])),
+                info(
+                    &[0],
+                    OID_EC_PUBLIC_KEY,
+                    OID_PRIME256V1,
+                    &ec(&[2], &scalar, &[]),
+                ),
             ),
             (
                 "a public key with unused bits",
@@ -1211,7 +1274,11 @@ mod loader_tests {
                     &[0],
                     OID_EC_PUBLIC_KEY,
                     OID_PRIME256V1,
-                    &ec(&[1], &scalar, &der_tlv(0xA1, &der_tlv(0x04, &bits_in_octets))),
+                    &ec(
+                        &[1],
+                        &scalar,
+                        &der_tlv(0xA1, &der_tlv(0x04, &bits_in_octets)),
+                    ),
                 ),
             ),
             (
@@ -1242,11 +1309,21 @@ mod loader_tests {
         bits.extend_from_slice(&public);
         let mut extra = params.clone();
         extra.extend(public_field(&bits));
-        let with_both = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &extra));
+        let with_both = info(
+            &[0],
+            OID_EC_PUBLIC_KEY,
+            OID_PRIME256V1,
+            &ec(&[1], &scalar, &extra),
+        );
         let (got_scalar, got_public) = parse_p256_pkcs8(&with_both).expect("parses");
         assert_eq!(got_scalar, scalar);
         assert_eq!(got_public.as_deref(), Some(public.as_slice()));
-        let params_only = info(&[0], OID_EC_PUBLIC_KEY, OID_PRIME256V1, &ec(&[1], &scalar, &params));
+        let params_only = info(
+            &[0],
+            OID_EC_PUBLIC_KEY,
+            OID_PRIME256V1,
+            &ec(&[1], &scalar, &params),
+        );
         assert_eq!(parse_p256_pkcs8(&params_only).expect("parses").1, None);
     }
 
@@ -1254,7 +1331,9 @@ mod loader_tests {
     fn a_pem_whose_body_or_scalar_is_wrong_is_refused_by_name() {
         let not_base64 = "-----BEGIN PRIVATE KEY-----\n%%%%\n-----END PRIVATE KEY-----\n";
         assert_eq!(
-            signer_from_pkcs8_pem(not_base64).err().map(|e| e.to_string()),
+            signer_from_pkcs8_pem(not_base64)
+                .err()
+                .map(|e| e.to_string()),
             Some("the approver key file's PEM body is not base64".to_string())
         );
         // A zero scalar is well-formed DER and is not a P-256 private key.
@@ -1273,9 +1352,12 @@ mod loader_tests {
             .trim()
             .to_string();
         let (head, tail) = body.split_at(20);
-        let wrapped = format!("-----BEGIN PRIVATE KEY-----\n{head}\n{tail}\n-----END PRIVATE KEY-----");
+        let wrapped =
+            format!("-----BEGIN PRIVATE KEY-----\n{head}\n{tail}\n-----END PRIVATE KEY-----");
         assert_eq!(
-            signer_from_pkcs8_pem(&wrapped).expect("loads").to_scalar_bytes(),
+            signer_from_pkcs8_pem(&wrapped)
+                .expect("loads")
+                .to_scalar_bytes(),
             [9u8; 32]
         );
     }

@@ -172,7 +172,8 @@ async fn any_other_status_carries_the_gateways_own_body() {
 
 #[tokio::test]
 async fn a_report_of_the_wrong_shape_is_a_shape_error_without_a_status() {
-    let (base, _log) = spawn_recording_cloud(vec![(KEYS, "200 OK", r#"{"keys":"no"}"#.to_string())]);
+    let (base, _log) =
+        spawn_recording_cloud(vec![(KEYS, "200 OK", r#"{"keys":"no"}"#.to_string())]);
     let state = admission_at(&base).await;
     let (status, message) =
         gateway_error(admission_check("k".to_string(), "agent://a/b".to_string(), &state).await);

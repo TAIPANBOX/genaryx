@@ -3723,10 +3723,7 @@ mod tests {
                 B64URL.encode(b"not json"),
                 "x-genaryx-webauthn is not base64url(JSON)",
             ),
-            (
-                envelope("!!!", "", ""),
-                "client_data_json is not base64url",
-            ),
+            (envelope("!!!", "", ""), "client_data_json is not base64url"),
             (
                 envelope(&with_challenge, "!!!", ""),
                 "authenticator_data is not base64url",

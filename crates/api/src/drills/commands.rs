@@ -360,7 +360,10 @@ mod tests {
             .await
             .expect("exit 1 is a report with gaps, not an error");
         assert_eq!(report.run_id, "r-drill");
-        assert_eq!(report.gateway, GATEWAY, "the client's gateway is the one drilled");
+        assert_eq!(
+            report.gateway, GATEWAY,
+            "the client's gateway is the one drilled"
+        );
         let log = std::fs::read_to_string(dir.join("args.log")).expect("the stand-in ran");
         let lines: Vec<&str> = log.lines().collect();
         assert_eq!(

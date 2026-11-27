@@ -1093,7 +1093,8 @@ mod tests {
 
     #[test]
     fn a_response_truncated_inside_a_peer_is_malformed_not_a_short_listing() {
-        let raw = format!("private_key={SERVER_PRIV}\npublic_key={PEER_A}\nallowed_ip=10.9.0.2/32\n");
+        let raw =
+            format!("private_key={SERVER_PRIV}\npublic_key={PEER_A}\nallowed_ip=10.9.0.2/32\n");
         let err = parse_get(&raw).unwrap_err();
         assert_eq!(malformed(&err), Some("response carried no errno"));
     }
@@ -1183,7 +1184,11 @@ mod tests {
         ));
         for raw in ["", "\n\n", "protocol_version=1\n", "errno 0\n"] {
             let err = parse_set_result(raw).unwrap_err();
-            assert_eq!(malformed(&err), Some("response carried no errno"), "{raw:?}");
+            assert_eq!(
+                malformed(&err),
+                Some("response carried no errno"),
+                "{raw:?}"
+            );
         }
     }
 
@@ -1230,8 +1235,11 @@ mod tests {
             body,
             format!("set=1\npublic_key={PEER_A}\nreplace_allowed_ips=true\n\n")
         );
-        let body =
-            render_add_peer(PEER_A, &["10.9.0.3/32".to_string(), "fd00::3/128".to_string()]).unwrap();
+        let body = render_add_peer(
+            PEER_A,
+            &["10.9.0.3/32".to_string(), "fd00::3/128".to_string()],
+        )
+        .unwrap();
         assert!(
             body.ends_with("allowed_ip=10.9.0.3/32\nallowed_ip=fd00::3/128\n\n"),
             "{body}"
@@ -1254,7 +1262,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(broken.public_key_b64(), None);
-        assert!(s.has_peer(&format!(" {PEER_B}\n")), "a pasted key is trimmed");
+        assert!(
+            s.has_peer(&format!(" {PEER_B}\n")),
+            "a pasted key is trimmed"
+        );
     }
 
     #[test]
@@ -1314,7 +1325,11 @@ mod tests {
     }
 
     fn committed_ca() -> PathBuf {
-        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ca.crt")).to_path_buf()
+        Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ca.crt"
+        ))
+        .to_path_buf()
     }
 
     fn transport(err: WgUapiError) -> (String, String) {
@@ -1327,8 +1342,11 @@ mod tests {
     #[test]
     fn a_tls_endpoint_nobody_listens_on_names_every_address_it_tried() {
         let addr = format!("127.0.0.1:{}", closed_port());
-        let (endpoint, message) =
-            transport(UapiSocket::tls(addr.clone(), committed_ca(), "t").state().unwrap_err());
+        let (endpoint, message) = transport(
+            UapiSocket::tls(addr.clone(), committed_ca(), "t")
+                .state()
+                .unwrap_err(),
+        );
         assert_eq!(endpoint, addr);
         assert!(
             message.starts_with("cannot connect to any of 1 address(es), last was 127.0.0.1:"),

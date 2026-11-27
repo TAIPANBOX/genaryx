@@ -137,9 +137,10 @@ async fn the_banner_is_disabled_with_a_reason_until_a_provider_is_ready() {
     );
     assert_eq!(s.provider, None);
 
-    let s = copilot_status(&copilot_of(CopilotInner::Failed("bad model setting".to_string())).await)
-        .await
-        .expect("never fails");
+    let s =
+        copilot_status(&copilot_of(CopilotInner::Failed("bad model setting".to_string())).await)
+            .await
+            .expect("never fails");
     assert!(!s.enabled);
     assert_eq!(s.disabled_reason.as_deref(), Some("bad model setting"));
 
@@ -154,7 +155,10 @@ async fn the_banner_is_disabled_with_a_reason_until_a_provider_is_ready() {
         "{:?}",
         s.disabled_reason
     );
-    assert_eq!((s.provider, s.model, s.endpoint, s.local), (None, None, None, None));
+    assert_eq!(
+        (s.provider, s.model, s.endpoint, s.local),
+        (None, None, None, None)
+    );
 }
 
 /// An enabled provider shows its residency: which provider, which model,
@@ -229,7 +233,10 @@ async fn a_case_read_is_refused_in_words_before_any_model_call() {
     let Err(e) = copilot_explain_case(&disabled, p.with(&bus), "money:5".to_string()).await else {
         panic!("a money incident was read as a case");
     };
-    assert_eq!(e, "No case: a money incident has no event row to start from.");
+    assert_eq!(
+        e,
+        "No case: a money incident has no event row to start from."
+    );
 }
 
 /// A case that does assemble still reaches no model when no provider is

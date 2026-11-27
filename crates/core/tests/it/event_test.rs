@@ -42,7 +42,10 @@ fn severity_reads_exactly_its_five_words_in_ladder_order() {
             Severity::Critical
         ]
     );
-    assert!(parsed.windows(2).all(|w| w[0] < w[1]), "ordered by severity");
+    assert!(
+        parsed.windows(2).all(|w| w[0] < w[1]),
+        "ordered by severity"
+    );
     for odd in ["High", "warning", "", " low"] {
         assert_eq!(Severity::parse(odd), None, "{odd:?}");
     }
@@ -69,7 +72,11 @@ fn an_envelope_keeps_unknown_keys_and_reads_severity_and_version_tolerantly() {
     assert_eq!(e.extra["vendor_field"]["kept"], serde_json::json!(true));
 
     let odd = event("taipanbox.dev/agent-event/v9", Some("apocalyptic"));
-    assert_eq!(odd.severity_typed(), None, "an unknown word is not a severity");
+    assert_eq!(
+        odd.severity_typed(),
+        None,
+        "an unknown word is not a severity"
+    );
     assert_eq!(odd.schema_version(), None);
 
     let quiet = event("taipanbox.dev/agent-event/v0.1", None);
@@ -109,8 +116,5 @@ fn a_console_event_round_trips_with_its_version_as_the_schema_string() {
     let err = serde_json::from_value::<ConsoleEvent>(wrong)
         .err()
         .expect("an unknown version must not deserialize");
-    assert!(
-        err.to_string().contains("unknown schema version"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("unknown schema version"), "{err}");
 }

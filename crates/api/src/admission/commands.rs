@@ -1159,11 +1159,7 @@ mod tests {
     #[test]
     fn an_unreadable_baseline_id_falls_back_to_the_requested_label() {
         let dir = scratch_dir("label");
-        let script = fake_verdryx(
-            &dir,
-            "printf 'Eval run r-adm-1\\n'",
-            "printf 'saved\\n'",
-        );
+        let script = fake_verdryx(&dir, "printf 'Eval run r-adm-1\\n'", "printf 'saved\\n'");
         let db = seed_store(&dir, true);
         let dto = run_fake(&script, &db).expect("the baseline completes");
         assert_eq!(dto.baseline_id_or_label, "admission-agent://acme.example/a");
@@ -1265,7 +1261,8 @@ mod tests {
     async fn run_blocking_hands_back_the_closures_own_result() {
         let ok = run_blocking(|| Ok::<u32, AdmissionError>(7)).await;
         assert!(matches!(ok, Ok(7)));
-        let err = run_blocking(|| Err::<u32, AdmissionError>(AdmissionError::VerdryxDbMissing)).await;
+        let err =
+            run_blocking(|| Err::<u32, AdmissionError>(AdmissionError::VerdryxDbMissing)).await;
         assert!(matches!(err, Err(AdmissionError::VerdryxDbMissing)));
     }
 }

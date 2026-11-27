@@ -374,13 +374,9 @@ async fn a_confirmed_kill_is_ok_and_journaled_as_break_glass() {
         r#"{"killed":"run-7"}"#.to_string(),
     )]);
     let state = signed_money_at(&base, Some(BusHandle::from_dirs(&bus_dir, &bus_dir))).await;
-    let out = money_kill_run(
-        "run-7".to_string(),
-        "runaway spend".to_string(),
-        &state,
-    )
-    .await
-    .expect("the Cloud confirmed the kill");
+    let out = money_kill_run("run-7".to_string(), "runaway spend".to_string(), &state)
+        .await
+        .expect("the Cloud confirmed the kill");
     assert_eq!(out.summary, "run run-7 killed");
     assert_eq!(out.http_status, 200);
     assert_eq!(out.verify_result, "killed:true");
@@ -591,7 +587,10 @@ async fn failures_before_any_answer_carry_no_status_and_name_their_step() {
     match money_kill_run("..".to_string(), "why".to_string(), &signed).await {
         Err(MoneyError::Cloud { status, message }) => {
             assert_eq!(status, None);
-            assert!(message.contains("cannot be used in a request path"), "{message}");
+            assert!(
+                message.contains("cannot be used in a request path"),
+                "{message}"
+            );
         }
         other => panic!("expected a path refusal, got {other:?}"),
     }
@@ -606,7 +605,10 @@ async fn failures_before_any_answer_carry_no_status_and_name_their_step() {
     match money_savings(&money_at(&dead).await).await {
         Err(MoneyError::Cloud { status, message }) => {
             assert_eq!(status, None);
-            assert!(message.starts_with("could not reach the Cloud"), "{message}");
+            assert!(
+                message.starts_with("could not reach the Cloud"),
+                "{message}"
+            );
         }
         other => panic!("expected a transport error, got {other:?}"),
     }

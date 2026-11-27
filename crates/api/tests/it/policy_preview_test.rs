@@ -181,7 +181,10 @@ async fn a_sealed_preview_opens_under_each_kem_and_is_remembered_as_seen() {
         assert_eq!(dto.expires_at.as_deref(), Some("2026-11-12T00:15:00Z"));
         let want: Value = serde_json::from_str(&v.document).expect("the vector's document");
         assert_eq!(dto.document, Some(want));
-        assert!(seen.confirms(OPERATOR, "ap_1", &v.pvd), "the open is recorded");
+        assert!(
+            seen.confirms(OPERATOR, "ap_1", &v.pvd),
+            "the open is recorded"
+        );
         assert!(!seen.confirms("user://wardryx.local/someone-else", "ap_1", &v.pvd));
     }
 }
@@ -269,7 +272,10 @@ async fn a_ciphertext_that_opens_to_another_document_is_refused_by_its_digest() 
 async fn a_preview_for_another_digest_than_the_hold_records_is_refused_before_opening() {
     for v in vectors() {
         let other = "3".repeat(64);
-        for (tcd, pvd) in [(v.tcd.as_str(), other.as_str()), (other.as_str(), v.pvd.as_str())] {
+        for (tcd, pvd) in [
+            (v.tcd.as_str(), other.as_str()),
+            (other.as_str(), v.pvd.as_str()),
+        ] {
             let seen = SeenPreviews::default();
             let reason = preview_reason(
                 open_with(
@@ -306,15 +312,24 @@ async fn a_hold_whose_digests_are_not_digests_is_refused_without_fetching() {
         let (base, log) = spawn_recording_cloud(vec![(HOLDS, "200 OK", holds)]);
         let state = policy_at(&base).await;
         let reason = preview_reason(
-            policy_approval_preview("ap_1".to_string(), &state, &key_of(v), &SeenPreviews::default())
-                .await,
+            policy_approval_preview(
+                "ap_1".to_string(),
+                &state,
+                &key_of(v),
+                &SeenPreviews::default(),
+            )
+            .await,
         );
         assert_eq!(
             reason,
             "the hold does not record a well-formed call or preview digest"
         );
         let paths: Vec<String> = log.lock().unwrap().iter().map(|s| s.path.clone()).collect();
-        assert_eq!(paths, vec![HOLDS.to_string()], "the preview is never fetched");
+        assert_eq!(
+            paths,
+            vec![HOLDS.to_string()],
+            "the preview is never fetched"
+        );
     }
 }
 
@@ -377,7 +392,10 @@ async fn a_hold_with_no_sealed_preview_reports_its_state_and_opens_nothing() {
             json!({"tool_call": {"name": "t", "digest": v.tcd}, "preview": {"state": "truncated"}}),
             "truncated",
         ),
-        (json!({"tool_call": {"name": "t", "digest": v.tcd}}), STATE_NONE),
+        (
+            json!({"tool_call": {"name": "t", "digest": v.tcd}}),
+            STATE_NONE,
+        ),
     ] {
         let seen = SeenPreviews::default();
         let dto = open_with(hold_list(context), None, &key_of(v), &seen)
@@ -417,8 +435,13 @@ async fn an_unknown_hold_and_a_gone_preview_are_wardryx_answers() {
         (PREVIEW, "410 Gone", r#"{"error":"gone"}"#.to_string()),
     ]);
     let state = policy_at(&base).await;
-    match policy_approval_preview("ap_1".to_string(), &state, &key_of(v), &SeenPreviews::default())
-        .await
+    match policy_approval_preview(
+        "ap_1".to_string(),
+        &state,
+        &key_of(v),
+        &SeenPreviews::default(),
+    )
+    .await
     {
         Err(PolicyError::Wardryx { status, .. }) => assert_eq!(status, Some(410)),
         other => panic!("expected a 410, got {other:?}"),
@@ -479,7 +502,10 @@ fn a_key_file_loads_or_says_what_is_wrong_with_it() {
     let missing = dir.join("absent.key");
     match PreviewKeyState::load(Some(&missing)) {
         PreviewKeyState::Failed(reason) => {
-            assert!(reason.starts_with(&missing.display().to_string()), "{reason}");
+            assert!(
+                reason.starts_with(&missing.display().to_string()),
+                "{reason}"
+            );
         }
         _ => panic!("a missing file must be Failed"),
     }
@@ -488,10 +514,7 @@ fn a_key_file_loads_or_says_what_is_wrong_with_it() {
     std::fs::write(&garbage, "not a preview key\n").expect("write");
     match PreviewKeyState::load(Some(&garbage)) {
         PreviewKeyState::Failed(reason) => {
-            assert!(
-                reason.contains("the preview key is not usable"),
-                "{reason}"
-            );
+            assert!(reason.contains("the preview key is not usable"), "{reason}");
             assert!(!reason.contains("not a preview key"), "no key text echoed");
         }
         _ => panic!("garbage must be Failed"),

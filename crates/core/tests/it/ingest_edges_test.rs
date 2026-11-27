@@ -67,7 +67,10 @@ fn a_missing_file_is_nothing_yet_but_an_unreadable_one_is_an_error() {
     // file so no filesystem reports its size as zero.
     std::fs::write(dir.join("present.ndjson"), "x\n").expect("write");
     let mut dir_tail = FileTail::new("t", &dir, 0);
-    assert!(dir_tail.poll().is_err(), "a directory is not an event stream");
+    assert!(
+        dir_tail.poll().is_err(),
+        "a directory is not an event stream"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -76,9 +79,10 @@ fn a_stopped_loop_returns_without_polling() {
     let dir = scratch("stopped");
     let path = dir.join("wardryx.ndjson");
     std::fs::write(&path, format!("{LINE_A}\n")).expect("write");
-    let mut svc = IngestService::new(Store::open_in_memory().expect("store"), "local")
-        .expect("service");
-    svc.add_file_source("filetail:wardryx", &path).expect("source");
+    let mut svc =
+        IngestService::new(Store::open_in_memory().expect("store"), "local").expect("service");
+    svc.add_file_source("filetail:wardryx", &path)
+        .expect("source");
     let stop = Arc::new(AtomicBool::new(true));
     svc.run_blocking(Duration::from_millis(1), stop)
         .expect("a stopped loop is not an error");
@@ -92,7 +96,8 @@ fn a_loop_ingests_until_it_is_told_to_stop() {
     std::fs::write(&path, format!("{LINE_A}\n")).expect("write");
     let db = dir.join("console.sqlite");
     let mut svc = IngestService::new(Store::open(&db).expect("store"), "local").expect("service");
-    svc.add_file_source("filetail:wardryx", &path).expect("source");
+    svc.add_file_source("filetail:wardryx", &path)
+        .expect("source");
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
     let reader = Store::open(&db).expect("a second reader");
@@ -123,8 +128,8 @@ fn a_pinned_stream_quarantines_a_line_claiming_another_source() {
     let dir = scratch("pinned");
     let path = dir.join("wardryx.ndjson");
     std::fs::write(&path, format!("{LINE_A}\n{LINE_B}\n")).expect("write");
-    let mut svc = IngestService::new(Store::open_in_memory().expect("store"), "local")
-        .expect("service");
+    let mut svc =
+        IngestService::new(Store::open_in_memory().expect("store"), "local").expect("service");
     svc.add_pinned_file_source("filetail:wardryx", &path, "wardryx")
         .expect("source");
     let stats = svc.poll_once().expect("poll");

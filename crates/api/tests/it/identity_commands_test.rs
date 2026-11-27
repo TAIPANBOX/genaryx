@@ -70,20 +70,28 @@ async fn each_read_carries_what_idryx_answered() {
     assert_eq!(ids.len(), 1);
     assert_eq!(ids[0].id, AGENT);
     assert!(ids[0].privileged);
-    assert_eq!(ids[0].on_behalf_of, vec!["user://acme.example/owner".to_string()]);
+    assert_eq!(
+        ids[0].on_behalf_of,
+        vec!["user://acme.example/owner".to_string()]
+    );
 
     let found = identity_list_alerts(&state).await.expect("alerts");
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].detector, "runaway_agent");
     assert_eq!(found[0].severity, "high");
 
-    let fixes = identity_list_remediations(&state).await.expect("remediations");
+    let fixes = identity_list_remediations(&state)
+        .await
+        .expect("remediations");
     assert_eq!(fixes.len(), 1);
     assert_eq!(fixes[0].kind, "right_size");
     assert_eq!(fixes[0].created_at, "", "absent on the wire, not invented");
 
     let paths: Vec<String> = log.lock().unwrap().iter().map(|s| s.path.clone()).collect();
-    assert_eq!(paths, ["/api/identities", "/api/alerts", "/api/remediations"]);
+    assert_eq!(
+        paths,
+        ["/api/identities", "/api/alerts", "/api/remediations"]
+    );
 }
 
 #[tokio::test]
@@ -145,11 +153,17 @@ async fn a_rescan_with_no_binary_is_unavailable_and_one_that_cannot_spawn_says_s
     match identity_rescan(&missing).await {
         Err(IdentityError::Idryx { status, message }) => {
             assert_eq!(status, None);
-            assert!(message.starts_with("idryx detect failed: spawn "), "{message}");
+            assert!(
+                message.starts_with("idryx detect failed: spawn "),
+                "{message}"
+            );
         }
         other => panic!("expected an Idryx error, got {other:?}"),
     }
-    assert!(log.lock().unwrap().is_empty(), "a rescan reads no REST route");
+    assert!(
+        log.lock().unwrap().is_empty(),
+        "a rescan reads no REST route"
+    );
 }
 
 #[tokio::test]

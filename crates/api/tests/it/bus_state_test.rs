@@ -89,7 +89,11 @@ fn a_store_that_cannot_be_opened_falls_back_rather_than_failing() {
     let root = scratch("unopenable-recent");
     let rows = recent_events(3, &state_at(Some(unopenable(&root))));
     let ids: Vec<i64> = rows.iter().map(|e| e.id).collect();
-    assert_eq!(ids, vec![41, 40, 39], "the mock timeline, capped at the limit");
+    assert_eq!(
+        ids,
+        vec![41, 40, 39],
+        "the mock timeline, capped at the limit"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

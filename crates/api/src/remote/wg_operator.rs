@@ -623,10 +623,7 @@ fn issue_on(
         )
     })?;
     let listen_port = state.listen_port.ok_or_else(|| {
-        not_configured(
-            iface,
-            format!("interface '{iface}' reports no listen port"),
-        )
+        not_configured(iface, format!("interface '{iface}' reports no listen port"))
     })?;
 
     let client_ip =
@@ -1183,10 +1180,9 @@ mod tests {
     }
 
     fn missing_socket_backend(tag: &str) -> PeerBackend {
-        PeerBackend::Uapi(UapiSocket::at(std::env::temp_dir().join(format!(
-            "gx-wgop-missing-{tag}-{}.sock",
-            std::process::id()
-        ))))
+        PeerBackend::Uapi(UapiSocket::at(
+            std::env::temp_dir().join(format!("gx-wgop-missing-{tag}-{}.sock", std::process::id())),
+        ))
     }
 
     #[test]
@@ -1263,8 +1259,7 @@ mod tests {
             ..Daemon::default()
         });
         let (_, message) = not_configured_message(
-            issue_on(&daemon.backend(), "wg-x", "198.51.100.9", String::new)
-                .expect_err("no port"),
+            issue_on(&daemon.backend(), "wg-x", "198.51.100.9", String::new).expect_err("no port"),
         );
         assert_eq!(message, "interface 'wg-x' reports no listen port");
         assert_eq!(daemon.requests().len(), 1);

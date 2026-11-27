@@ -1419,7 +1419,10 @@ mod tests {
             }
             RemoteStatusDto::Bootstrapping => panic!("a Ready state never reports Bootstrapping"),
         }
-        assert!(client.ssh.lock().unwrap().is_some(), "the new target is pinned");
+        assert!(
+            client.ssh.lock().unwrap().is_some(),
+            "the new target is pinned"
+        );
         assert_eq!(
             client
                 .environment
@@ -1591,8 +1594,13 @@ mod tests {
             Err(RemoteError::NoEnvironment)
         ));
         assert!(matches!(
-            remote_ssh_tail_start("/var/log/x.log".to_string(), 0, RecordingSink::default(), &state)
-                .await,
+            remote_ssh_tail_start(
+                "/var/log/x.log".to_string(),
+                0,
+                RecordingSink::default(),
+                &state
+            )
+            .await,
             Err(RemoteError::NoEnvironment)
         ));
         assert!(client.tail.lock().unwrap().is_none());
@@ -1722,7 +1730,9 @@ mod tests {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        let mut session = guard.take().expect("the child was stored despite the poison");
+        let mut session = guard
+            .take()
+            .expect("the child was stored despite the poison");
         assert_eq!(session.path, "/var/log/c.log");
         let _ = session.child.kill();
         let _ = session.child.wait();
@@ -1794,7 +1804,10 @@ mod tests {
             cli: "aws".to_string(),
         }) {
             RemoteError::Cloud { message } => {
-                assert_eq!(message, "aws: command not found (is it installed and on PATH?)");
+                assert_eq!(
+                    message,
+                    "aws: command not found (is it installed and on PATH?)"
+                );
             }
             other => panic!("expected Cloud, got {other:?}"),
         }

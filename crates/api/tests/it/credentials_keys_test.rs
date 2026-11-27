@@ -65,7 +65,12 @@ async fn the_key_report_is_the_gateways_own() {
 #[tokio::test]
 async fn each_refusal_is_named_in_the_operators_terms() {
     let cases = [
-        ("401 Unauthorized", r#"{"error":"unauthorized"}"#, Some(401), "TOKENFUSE_GATEWAY_ADMIN_KEY"),
+        (
+            "401 Unauthorized",
+            r#"{"error":"unauthorized"}"#,
+            Some(401),
+            "TOKENFUSE_GATEWAY_ADMIN_KEY",
+        ),
         (
             "403 Forbidden",
             r#"{"error":"admin_keys_required"}"#,

@@ -117,7 +117,12 @@ fn answer(stream: TcpStream, routes: &Routes, log: &Mutex<Vec<Seen>>) {
         .get(&key)
         .or_else(|| routes.get(&path))
         .cloned()
-        .unwrap_or_else(|| ("404 Not Found".to_string(), r#"{"error":"not found"}"#.to_string()));
+        .unwrap_or_else(|| {
+            (
+                "404 Not Found".to_string(),
+                r#"{"error":"not found"}"#.to_string(),
+            )
+        });
     let mut w = reader.into_inner();
     let _ = write!(
         w,

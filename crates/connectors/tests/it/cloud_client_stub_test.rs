@@ -22,7 +22,10 @@ fn ok(key: &'static str, body: &str) -> (&'static str, &'static str, String) {
 #[tokio::test]
 async fn every_read_reaches_its_route_with_the_bearer_and_parses_the_wire_shape() {
     let stub = serve(vec![
-        ok("GET /v1/summary", r#"{"runs":3,"calls":42,"spent_microusd":150000}"#),
+        ok(
+            "GET /v1/summary",
+            r#"{"runs":3,"calls":42,"spent_microusd":150000}"#,
+        ),
         ok("GET /v1/runs", RUN),
         ok(
             "GET /v1/agents",
@@ -66,7 +69,10 @@ async fn every_read_reaches_its_route_with_the_bearer_and_parses_the_wire_shape(
 
     let s = c.summary().await.expect("summary");
     assert_eq!((s.runs, s.calls, s.spent_microusd), (3, 42, 150_000));
-    assert_eq!(s.pii_calls, None, "an older Cloud's summary reports no PII figure");
+    assert_eq!(
+        s.pii_calls, None,
+        "an older Cloud's summary reports no PII figure"
+    );
 
     let runs = c.runs().await.expect("runs");
     assert_eq!(runs[0].run_id, "r1");
@@ -96,7 +102,11 @@ async fn every_read_reaches_its_route_with_the_bearer_and_parses_the_wire_shape(
     let units = c.units().await.expect("units").expect("the route exists");
     assert_eq!(units[0].month_spent_microusd, 5);
     assert_eq!(units[0].tool_calls, 0, "an absent column defaults");
-    let gateways = c.gateways().await.expect("gateways").expect("the route exists");
+    let gateways = c
+        .gateways()
+        .await
+        .expect("gateways")
+        .expect("the route exists");
     assert_eq!((gateways[0].pushes, gateways[0].calls), (4, 0));
 
     let window = c
@@ -132,7 +142,12 @@ async fn every_read_reaches_its_route_with_the_bearer_and_parses_the_wire_shape(
 async fn a_cloud_without_a_route_cannot_say_and_is_never_read_as_empty() {
     let stub = serve(Vec::new());
     let c = CloudClient::new(stub.base.clone(), "k").expect("client");
-    assert!(c.spend_window(30).await.expect("404 is an answer").is_none());
+    assert!(
+        c.spend_window(30)
+            .await
+            .expect("404 is an answer")
+            .is_none()
+    );
     assert!(c.unit_budgets().await.expect("404 is an answer").is_none());
     assert!(c.units().await.expect("404 is an answer").is_none());
     assert!(c.gateways().await.expect("404 is an answer").is_none());
@@ -255,7 +270,10 @@ async fn signed_mutations_verify_over_the_encoded_path_and_the_exact_body() {
             "POST /v1/units/ops%20team/budget",
             r#"{"unit":"ops team","budget_micros":5000000}"#,
         ),
-        ok("POST /v1/incidents/inc-1/ack", r#"{"acknowledged":"inc-1"}"#),
+        ok(
+            "POST /v1/incidents/inc-1/ack",
+            r#"{"acknowledged":"inc-1"}"#,
+        ),
     ]);
     let signer = SoftwareSigner::generate().expect("a software key");
     let public = signer.public_key_b64().expect("public key");
@@ -272,7 +290,10 @@ async fn signed_mutations_verify_over_the_encoded_path_and_the_exact_body() {
         .await
         .expect("unit budget");
     assert_eq!((u.unit.as_str(), u.budget_micros), ("ops team", 5_000_000));
-    assert_eq!(c.ack_incident("inc-1").await.expect("ack").acknowledged, "inc-1");
+    assert_eq!(
+        c.ack_incident("inc-1").await.expect("ack").acknowledged,
+        "inc-1"
+    );
 
     let seen = stub.requests();
     assert_eq!(seen.len(), 4);
@@ -332,7 +353,10 @@ async fn a_mutation_fails_closed_before_anything_is_sent() {
             "{bad:?} addressed something"
         );
     }
-    assert!(stub.requests().is_empty(), "a bad id never reaches the wire");
+    assert!(
+        stub.requests().is_empty(),
+        "a bad id never reaches the wire"
+    );
 
     assert!(matches!(
         c.kill_run("r2").await,
@@ -347,7 +371,10 @@ async fn a_mutation_fails_closed_before_anything_is_sent() {
 #[tokio::test]
 async fn pairing_mints_with_the_admin_key_and_redeems_with_the_code_alone() {
     let stub = serve(vec![
-        ok("POST /v1/pair/new", r#"{"code":"code-123","expires_unix":99}"#),
+        ok(
+            "POST /v1/pair/new",
+            r#"{"code":"code-123","expires_unix":99}"#,
+        ),
         ok(
             "POST /v1/pair",
             r#"{"device_id":"dev-9","org":"acme","role":"admin","device_token":"tok-not-a-real-secret"}"#,
@@ -397,7 +424,11 @@ async fn a_refused_pairing_code_is_an_error_and_nothing_is_redeemed() {
         c.pair("viewer-key", &signer).await,
         Err(ConnectorError::Api { status: 403, .. })
     ));
-    assert_eq!(stub.requests().len(), 1, "no redemption after a refused mint");
+    assert_eq!(
+        stub.requests().len(),
+        1,
+        "no redemption after a refused mint"
+    );
 }
 
 #[test]
@@ -414,8 +445,12 @@ fn an_evidence_manifest_is_signed_with_the_attached_device_key() {
     verify_es256_b64(&block.public_key_b64, manifest, &block.signature_b64)
         .expect("the block verifies over the manifest bytes");
     assert!(
-        verify_es256_b64(&block.public_key_b64, b"another manifest", &block.signature_b64)
-            .is_err(),
+        verify_es256_b64(
+            &block.public_key_b64,
+            b"another manifest",
+            &block.signature_b64
+        )
+        .is_err(),
         "and over nothing else"
     );
 }
@@ -439,21 +474,28 @@ async fn hetzner_lists_servers_with_an_encoded_selector_and_refuses_an_error_sta
         servers[0].price_hourly_eur, None,
         "an unreadable price is no price, never zero"
     );
-    assert_eq!((servers[0].cores, servers[0].location.as_str()), (2, "fsn1"));
+    assert_eq!(
+        (servers[0].cores, servers[0].location.as_str()),
+        (2, "fsn1")
+    );
     assert!(servers[0].labels.is_empty() && servers[0].created.is_empty());
     c.list_servers(None).await.expect("unfiltered");
     let seen = stub.requests();
-    assert_eq!(seen[0].target, "/servers?label_selector=managed-by%3Dtaipan");
+    assert_eq!(
+        seen[0].target,
+        "/servers?label_selector=managed-by%3Dtaipan"
+    );
     assert_eq!(seen[1].target, "/servers");
-    assert_eq!(seen[0].header("authorization"), Some("Bearer test-api-token"));
+    assert_eq!(
+        seen[0].header("authorization"),
+        Some("Bearer test-api-token")
+    );
 
-    let refusing = serve(vec![
-        (
-            "GET /servers",
-            "401 Unauthorized",
-            r#"{"error":{"code":"unauthorized"}}"#.to_string(),
-        ),
-    ]);
+    let refusing = serve(vec![(
+        "GET /servers",
+        "401 Unauthorized",
+        r#"{"error":{"code":"unauthorized"}}"#.to_string(),
+    )]);
     let c = HetznerClient::with_base(refusing.base.clone(), "t").expect("client");
     match c.list_servers(None).await {
         Err(HetznerError::Api { status, body }) => {

@@ -239,10 +239,19 @@ for line in sys.stdin:
             return;
         };
         for (args, want) in [
-            (json!({"query": "late refund"}), "q=late refund limit=5 mode=hybrid"),
-            (json!({"query": "q", "limit": 500}), "q=q limit=50 mode=hybrid"),
+            (
+                json!({"query": "late refund"}),
+                "q=late refund limit=5 mode=hybrid",
+            ),
+            (
+                json!({"query": "q", "limit": 500}),
+                "q=q limit=50 mode=hybrid",
+            ),
             (json!({"query": "q", "limit": 0}), "q=q limit=1 mode=hybrid"),
-            (json!({"query": "q", "limit": "ten"}), "q=q limit=5 mode=hybrid"),
+            (
+                json!({"query": "q", "limit": "ten"}),
+                "q=q limit=5 mode=hybrid",
+            ),
         ] {
             let got = MemoryRecall.run(&clients, &args).await.expect("recall");
             assert_eq!(got[0]["content"], want, "{args}");
@@ -276,7 +285,10 @@ for line in sys.stdin:
             .expect("why");
         assert_eq!(why["kind"], "episodic");
         assert_eq!(why["id"], "m9");
-        match MemoryWhy.run(&clients, &json!({"memory_id": "locked"})).await {
+        match MemoryWhy
+            .run(&clients, &json!({"memory_id": "locked"}))
+            .await
+        {
             Err(ToolError::Connector { tool, detail }) => {
                 assert_eq!(tool, "memory_why");
                 assert!(detail.contains("memory is locked"), "{detail}");

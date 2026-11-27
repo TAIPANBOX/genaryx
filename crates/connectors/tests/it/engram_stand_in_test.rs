@@ -83,7 +83,8 @@ fn a_scoped_client_starts_with_its_agent_and_reads_only_that_agent() {
     let Some(bin) = engram_mcp(&dir) else {
         return;
     };
-    let mut c = retry_busy(|| EngramClient::spawn(&bin, "/data/.engram", Some(BOT))).expect("spawn");
+    let mut c =
+        retry_busy(|| EngramClient::spawn(&bin, "/data/.engram", Some(BOT))).expect("spawn");
     assert_eq!(c.scope(), Some(BOT));
     assert_eq!(c.server_info()["serverInfo"]["name"], "engram-stand-in");
     assert_eq!(
@@ -92,7 +93,9 @@ fn a_scoped_client_starts_with_its_agent_and_reads_only_that_agent() {
         "the store and the agent travel as flags, nothing through the environment"
     );
 
-    let stats = c.stats(Some(BOT)).expect("stats for the server's own agent");
+    let stats = c
+        .stats(Some(BOT))
+        .expect("stats for the server's own agent");
     assert_eq!((stats.entities, stats.counts.episodic), (4, 2));
     assert!(matches!(c.stats(Some(OTHER)), Err(McpError::Scope(_))));
     assert!(matches!(
@@ -160,6 +163,10 @@ fn a_whole_file_client_names_no_agent_and_surfaces_every_failure_shape() {
 
 #[test]
 fn an_engram_binary_that_is_not_there_is_a_spawn_error() {
-    let r = EngramClient::spawn(Path::new("/nonexistent/genaryx-test/engram-mcp"), "db", None);
+    let r = EngramClient::spawn(
+        Path::new("/nonexistent/genaryx-test/engram-mcp"),
+        "db",
+        None,
+    );
     assert!(matches!(r, Err(McpError::Spawn { .. })));
 }

@@ -211,7 +211,10 @@ async fn a_grant_of_a_sealed_hold_nobody_opened_is_refused_and_journaled() {
         Err(PolicyError::Preview { reason }) => reason,
         other => panic!("expected a Preview refusal, got {other:?}"),
     };
-    assert!(reason.contains("no record of the person deciding opening"), "{reason}");
+    assert!(
+        reason.contains("no record of the person deciding opening"),
+        "{reason}"
+    );
     assert!(decides(&log).is_empty(), "nothing is sent to wardryx");
 
     let lines = journal(&bus);
@@ -229,7 +232,11 @@ async fn a_grant_of_a_sealed_hold_nobody_opened_is_refused_and_journaled() {
 #[tokio::test]
 async fn with_a_key_file_a_decision_no_passkey_confirmed_never_reaches_wardryx() {
     let (base, log) = spawn_recording_cloud(vec![
-        (HOLDS, "200 OK", holds(json!({"tool_call": {"name": "t", "digest": TCD}}))),
+        (
+            HOLDS,
+            "200 OK",
+            holds(json!({"tool_call": {"name": "t", "digest": TCD}})),
+        ),
         (DECIDE, "200 OK", granted()),
     ]);
     let (dir, bus) = scratch_bus("no-passkey");

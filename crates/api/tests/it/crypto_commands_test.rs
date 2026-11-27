@@ -23,7 +23,10 @@ async fn state_of(inner: CryptoInner) -> CryptoState {
 /// A qryx path that cannot exist: its directory was never created.
 fn absent_qryx() -> PathBuf {
     std::env::temp_dir()
-        .join(format!("genaryx-crypto-itest-absent-{}", std::process::id()))
+        .join(format!(
+            "genaryx-crypto-itest-absent-{}",
+            std::process::id()
+        ))
         .join("qryx")
 }
 

@@ -763,7 +763,10 @@ mod tests {
     #[test]
     fn a_missing_uapi_socket_is_a_configure_error_never_a_silent_success() {
         let missing = Path::new("/nonexistent/genaryx-wg-test/x.sock");
-        for r in [uapi_set(missing, "set=1\n\n"), uapi_get(missing).map(|_| ())] {
+        for r in [
+            uapi_set(missing, "set=1\n\n"),
+            uapi_get(missing).map(|_| ()),
+        ] {
             match r {
                 Err(WgError::Configure(m)) => {
                     assert!(m.starts_with("connect uapi:"), "{m}");

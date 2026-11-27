@@ -1644,22 +1644,25 @@ mod tests {
         assert!(store.event_count().expect("count") > 0, "seeded at startup");
         assert_eq!(store.quarantine_count().expect("count"), 0);
 
+        // The seed batch reaches the sink too (the receiver is subscribed
+        // before the first poll); the feeder's own row follows it.
+        let live = |sink: &Collect| {
+            sink
+                .0
+                .lock()
+                .expect("sink lock")
+                .iter()
+                .find(|e| e.run_id.as_deref() == Some("live-feed"))
+                .cloned()
+        };
         let deadline = std::time::Instant::now() + Duration::from_secs(8);
-        while sink.0.lock().expect("sink lock").is_empty() && std::time::Instant::now() < deadline
-        {
+        while live(&sink).is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
-        let first = sink
-            .0
-            .lock()
-            .expect("sink lock")
-            .first()
-            .cloned()
-            .expect("the demo feeder forwards a live row");
-        assert!(first.id < 0, "a live row has a synthetic id");
-        assert_eq!(first.env, "demo");
-        assert_eq!(first.agent_id, "agent://taipanbox.dev/demo/live-feed");
-        assert_eq!(first.run_id.as_deref(), Some("live-feed"));
+        let fed = live(&sink).expect("the demo feeder forwards a live row");
+        assert!(fed.id < 0, "a live row has a synthetic id");
+        assert_eq!(fed.env, "demo");
+        assert_eq!(fed.agent_id, "agent://taipanbox.dev/demo/live-feed");
         let _ = std::fs::remove_dir_all(&boot.events_dir);
     }
 }

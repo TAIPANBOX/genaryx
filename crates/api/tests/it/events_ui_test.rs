@@ -141,7 +141,10 @@ fn the_mock_timeline_is_newest_first_on_a_45_second_cadence_ending_near_now() {
 
     let ids: Vec<i64> = all.iter().map(|e| e.id).collect();
     let expected: Vec<i64> = (1..=MOCK_ROWS as i64).rev().collect();
-    assert_eq!(ids, expected, "newest first by id, like Store::recent_events");
+    assert_eq!(
+        ids, expected,
+        "newest first by id, like Store::recent_events"
+    );
 
     let times: Vec<DateTime<Utc>> = all
         .iter()
@@ -196,7 +199,11 @@ fn every_mock_row_carries_the_schema_version_its_source_emits() {
 fn only_the_delegated_rows_carry_an_on_behalf_of_chain() {
     let all = mock_events(MOCK_ROWS);
     let delegated: Vec<&UiEvent> = all.iter().filter(|e| !e.on_behalf_of.is_empty()).collect();
-    assert_eq!(delegated.len(), 8, "three runs carry the demo delegation chain");
+    assert_eq!(
+        delegated.len(),
+        8,
+        "three runs carry the demo delegation chain"
+    );
     for e in &delegated {
         assert_eq!(e.on_behalf_of.len(), 2, "{e:?}");
         assert!(e.on_behalf_of[0].starts_with("user://taipanbox.dev/"));
@@ -326,7 +333,11 @@ fn every_mock_event_type_gets_its_own_data_shape() {
         let mut expected: Vec<&str> = want.to_vec();
         got.sort_unstable();
         expected.sort_unstable();
-        assert_eq!(got, expected, "{} carries exactly its own keys", e.event_type);
+        assert_eq!(
+            got, expected,
+            "{} carries exactly its own keys",
+            e.event_type
+        );
 
         let run = run_of(&e) as usize;
         match e.event_type.as_str() {

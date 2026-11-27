@@ -73,8 +73,14 @@ async fn every_command_answers_the_panels_state_while_it_is_not_ready() {
             err_of("stats", memory_stats(None, &state).await),
             err_of(
                 "recall",
-                memory_recall("refund policy".to_string(), 5, "hybrid".to_string(), None, &state)
-                    .await,
+                memory_recall(
+                    "refund policy".to_string(),
+                    5,
+                    "hybrid".to_string(),
+                    None,
+                    &state,
+                )
+                .await,
             ),
             err_of("why", memory_why("mem-1".to_string(), &state).await),
             err_of("forget", memory_forget("mem-1".to_string(), &state).await),
@@ -109,10 +115,7 @@ async fn an_empty_agent_name_is_the_whole_file_view() {
 async fn a_scope_that_is_not_one_printable_word_is_refused_first() {
     let pending = MemoryState::pending();
     for bad in ["two words", "--db", "tab\there", "line\nbreak"] {
-        match err_of(
-            "stats",
-            memory_stats(Some(bad.to_string()), &pending).await,
-        ) {
+        match err_of("stats", memory_stats(Some(bad.to_string()), &pending).await) {
             MemoryError::Mcp { message } => {
                 assert!(message.contains("one printable word"), "{bad:?}: {message}");
             }

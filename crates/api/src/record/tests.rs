@@ -490,7 +490,9 @@ fn each_way_a_signed_file_is_not_one_is_named() {
             "signature is not 96 bytes",
         ),
         (
-            format!("generated_at=1\ngenerated_at=2\nalgorithm=es384\npublic_key={key}\nsignature={sig}\n"),
+            format!(
+                "generated_at=1\ngenerated_at=2\nalgorithm=es384\npublic_key={key}\nsignature={sig}\n"
+            ),
             "the field generated_at twice",
         ),
         (
@@ -577,7 +579,12 @@ fn a_signing_file_that_is_too_large_a_directory_or_garbled_is_unreadable() {
     let root = "ab".repeat(32);
 
     // Too large.
-    signing_file(&dir, "signed", &root, &"x".repeat(MAX_SIGNING_BYTES as usize + 1));
+    signing_file(
+        &dir,
+        "signed",
+        &root,
+        &"x".repeat(MAX_SIGNING_BYTES as usize + 1),
+    );
     match signature_of(&dir, &root) {
         Signature::Unreadable { reason } => {
             assert!(reason.contains("is larger than"), "{reason}");
