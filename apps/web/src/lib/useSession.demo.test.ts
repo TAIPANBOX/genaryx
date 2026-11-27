@@ -61,6 +61,26 @@ describe("useSession", () => {
     expect(hooks.fetchSession).not.toHaveBeenCalled();
   });
 
+  it("a_box_that_cannot_be_reached_leaves_no_session_and_no_unhandled_rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    hooks.fetchSession.mockImplementationOnce(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    try {
+      const initial = await firstRender(false, "/api");
+      // Node reports an unhandled rejection after the microtask queue drains.
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(initial).toBeNull();
+      expect(hooks.fetchSession).toHaveBeenCalledTimes(1);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("a_bare_preview_has_no_session_and_asks_nothing", async () => {
     const initial = await firstRender(false, "");
 

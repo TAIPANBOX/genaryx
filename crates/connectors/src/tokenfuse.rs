@@ -1164,6 +1164,52 @@ mod tests {
         assert!(detail.starts_with("missing one of the three"), "{detail}");
     }
 
+    /// Money at the edge of an i64 of microdollars. The old parser multiplied
+    /// the dollar part by 1_000_000 unchecked, so from about $9.2e12 it either
+    /// panicked (debug) or wrapped to a wrong figure (release). Every amount
+    /// that fits is read exactly, both ends included, and every amount that
+    /// does not is refused with a reason that says so.
+    #[test]
+    fn amounts_past_the_i64_microdollar_range_are_refused_by_name_not_wrapped() {
+        let runaway = "  runaway spend stopped:   $0.000000   (0 blocked call(s) across 0 budget break(s))\n";
+        let cache = |amount: &str| {
+            format!("{HEADER}{runaway}  cache saved:             {amount}\n{ROUTER}")
+        };
+
+        let s = parse_savings_text(&cache("$9223372036854.775807")).expect("i64::MAX fits");
+        assert_eq!(s.cache_saved_microusd, i64::MAX);
+        let s = parse_savings_text(&cache("-$9223372036854.775808")).expect("i64::MIN fits");
+        assert_eq!(s.cache_saved_microusd, i64::MIN);
+
+        for over in [
+            "$9223372036854.775808",
+            "-$9223372036854.775809",
+            "$9223372036855",
+            "$18446744073709.551616",
+            "$99999999999999999999",
+            "$99999999999999999999999999999999999999999",
+        ] {
+            let detail = savings_failure(&cache(over));
+            assert!(
+                detail.starts_with("USD amount out of range in cache-saved line"),
+                "{over:?}: {detail}"
+            );
+        }
+        // The other three money lines carry the same check.
+        let detail = savings_failure(&with_runaway(
+            "$9223372036855 (1 blocked call(s) across 1 budget break(s))",
+        ));
+        assert!(detail.starts_with("USD amount out of range in runaway line"), "{detail}");
+        let detail = savings_failure(&format!(
+            "{HEADER}{runaway}{CACHE}  router saved: $9223372036855\n"
+        ));
+        assert!(detail.starts_with("USD amount out of range in router-saved line"), "{detail}");
+        let detail = savings_failure(&format!(
+            "{HEADER}{runaway}{CACHE}{ROUTER}    budget_exceeded  $9223372036855\n"
+        ));
+        assert!(detail.starts_with("USD amount out of range in reason line"), "{detail}");
+    }
+
     #[test]
     fn a_report_with_nothing_blocked_has_no_reasons_and_blank_lines_are_skipped() {
         let text = format!(
