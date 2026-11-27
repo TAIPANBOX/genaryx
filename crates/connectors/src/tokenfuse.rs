@@ -427,7 +427,7 @@ fn parse_usd_to_microusd(s: &str) -> Result<i64, UsdParseError> {
         .and_then(|m| m.checked_add(frac_val))
         .ok_or(OutOfRange)?;
     let signed = if negative { -magnitude } else { magnitude };
-    i64::try_from(signed).map_err(|_| OutOfRange)
+    Ok(signed as i64)
 }
 
 /// [`parse_usd_to_microusd`] for one line of the savings report, with the
