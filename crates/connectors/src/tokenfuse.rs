@@ -692,8 +692,14 @@ mod tests {
             Ok(14_375_000_202)
         );
         assert_eq!(parse_usd_to_microusd("$5"), Ok(5_000_000)); // no fractional part at all
-        assert_eq!(parse_usd_to_microusd("not money"), Err(UsdParseError::NotMoney));
-        assert_eq!(parse_usd_to_microusd("$abc.def"), Err(UsdParseError::NotMoney));
+        assert_eq!(
+            parse_usd_to_microusd("not money"),
+            Err(UsdParseError::NotMoney)
+        );
+        assert_eq!(
+            parse_usd_to_microusd("$abc.def"),
+            Err(UsdParseError::NotMoney)
+        );
     }
 
     // ---- parse_savings_text: REAL captured CLI output --------------------
@@ -1070,16 +1076,7 @@ mod tests {
     #[test]
     fn an_amount_that_is_not_a_dollar_figure_is_refused_not_guessed() {
         for bad in [
-            "",
-            "$",
-            "$.5",
-            "1.00",
-            "$-1",
-            "$1.2.3",
-            "$1.x",
-            "$ 1",
-            "$1e3",
-            "USD 1",
+            "", "$", "$.5", "1.00", "$-1", "$1.2.3", "$1.x", "$ 1", "$1e3", "USD 1",
         ] {
             assert_eq!(
                 parse_usd_to_microusd(bad),
