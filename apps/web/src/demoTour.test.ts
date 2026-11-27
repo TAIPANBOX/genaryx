@@ -259,4 +259,26 @@ describe("the demo console, view by view", () => {
     }
     expect(Object.values(pressed).reduce((a, b) => a + b, 0)).toBeGreaterThan(100);
   }, 120_000);
+
+  it("pressing every control in the rail and the header leaves the console whole", async () => {
+    const outside = () =>
+      Array.from(document.querySelectorAll<HTMLElement>(".app button, .app [role='button']")).filter(
+        (b) => !b.closest(".main-col") && !(b as HTMLButtonElement).disabled && !/^(Sign out|Log out)$/i.test((b.textContent ?? "").trim()),
+      );
+    const n = Math.min(outside().length, 80);
+    expect(n).toBeGreaterThan(5);
+    for (let i = 0; i < n; i++) {
+      const b = outside()[i];
+      if (!b) break;
+      await act(async () => b.click());
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      for (const c of Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] [aria-label="Close"], [aria-label="Close Incident 360"]'))) {
+        await act(async () => c.click());
+      }
+    }
+    expect(crashes).toEqual([]);
+    expect(document.querySelector(".main-col")).not.toBeNull();
+  });
 });

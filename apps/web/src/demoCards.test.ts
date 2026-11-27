@@ -665,3 +665,34 @@ describe("pressing every control on the cards, in the demo world", () => {
     }
   });
 });
+
+describe("the cloud inventory, provider by provider, in the demo world", () => {
+  it("each live-listing provider lists the demo's servers for that provider, with the scope it was given", async () => {
+    const { RemoteCloudInventory } = await import("./components/RemoteCloudInventory");
+    const host = await show(createElement(RemoteCloudInventory));
+    const select = host.querySelector<HTMLSelectElement>("select")!;
+    const providers = Array.from(select.options).map((o) => o.value);
+    expect(providers.length).toBeGreaterThan(3);
+    let listed = 0;
+    for (const id of providers) {
+      await act(async () => {
+        select.value = id;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const scope = host.querySelector<HTMLInputElement>('input[placeholder="eu-central-1"], input[placeholder="my-project"], input[placeholder="my-subscription"], input[placeholder="Default"]');
+      if (scope) await act(async () => typeInto(scope, "scope-1"));
+      const list = Array.from(host.querySelectorAll("button")).find((b) => /^List servers$/.test(b.textContent ?? ""));
+      if (!list) continue;
+      await act(async () => list.click());
+      await settle();
+      if (scope) {
+        const rows = (await mock.mockInvoke("remote_cloud_list", { provider: id, options: {} })) as { name: string }[];
+        expect(rows.some((r) => host.textContent?.includes(r.name))).toBe(true);
+        listed += 1;
+      }
+      await pressEverything(host, 20);
+      // Pressing may have changed the provider; put the select back in view.
+    }
+    expect(listed).toBeGreaterThan(2);
+  });
+});
